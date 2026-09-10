@@ -32,7 +32,6 @@ pub struct Item {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ItemInput {
     pub id: Option<String>,
     pub expected_version: Option<i64>,
@@ -314,8 +313,9 @@ fn debug_data_dir(raw: Option<std::ffi::OsString>, standard: PathBuf) -> Result<
     if !path.is_absolute() {
         return Err(fail("HANNI_MVP_DATA_DIR must be an absolute path"));
     }
-    let legacy = dirs_like_legacy_path();
-    if path == legacy {
+    let legacy_documents = dirs_like_legacy_documents_path();
+    let legacy_app_data = standard.parent().unwrap_or(&standard).join("Hanni");
+    if path == legacy_documents || path == legacy_app_data {
         return Err(fail(
             "HANNI_MVP_DATA_DIR must not point to legacy Hanni data",
         ));
@@ -324,7 +324,7 @@ fn debug_data_dir(raw: Option<std::ffi::OsString>, standard: PathBuf) -> Result<
 }
 
 #[cfg(debug_assertions)]
-fn dirs_like_legacy_path() -> PathBuf {
+fn dirs_like_legacy_documents_path() -> PathBuf {
     std::env::var_os("USERPROFILE")
         .map(PathBuf::from)
         .unwrap_or_default()
@@ -510,9 +510,45 @@ mod tests {
     fn debug_isolation_requires_absolute_nonlegacy_path() {
         let standard = PathBuf::from("C:/safe/default");
         assert!(debug_data_dir(Some("relative".into()), standard.clone()).is_err());
+        assert!(debug_data_dir(Some("C:/safe/Hanni".into()), standard.clone()).is_err());
         assert_eq!(
             debug_data_dir(Some("C:/safe/test".into()), standard).unwrap(),
             PathBuf::from("C:/safe/test")
         );
+    }
+
+    #[test]
+    fn frontend_payload_uses_snake_case_inside_input_and_item_output() {
+        let create: ItemInput = serde_json::from_value(serde_json::json!({
+            "kind": "task", "title": "Create", "notes": "", "date": null,
+            "time": null, "duration_minutes": 25, "completed": false
+        }))
+        .unwrap();
+        assert_eq!(create.duration_minutes, 25);
+        assert_eq!(create.expected_version, None);
+        let update: ItemInput = serde_json::from_value(serde_json::json!({
+            "id": "item-1", "expected_version": 2, "kind": "task", "title": "Update",
+            "notes": "note", "date": "2026-09-10", "time": "09:30",
+            "duration_minutes": 30, "completed": true
+        }))
+        .unwrap();
+        assert_eq!(update.expected_version, Some(2));
+        let output = serde_json::to_value(Item {
+            id: "item-1".into(),
+            kind: "task".into(),
+            title: "Update".into(),
+            notes: "note".into(),
+            date: Some("2026-09-10".into()),
+            time: Some("09:30".into()),
+            duration_minutes: 30,
+            completed: true,
+            version: 3,
+            created_at: "created".into(),
+            updated_at: "updated".into(),
+        })
+        .unwrap();
+        assert_eq!(output["duration_minutes"], 30);
+        assert!(output.get("durationMinutes").is_none());
+        assert!(output.get("created_at").is_some());
     }
 }
