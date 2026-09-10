@@ -3,5 +3,5 @@
   "identifier": "main-capability",
   "description": "Allows the main Hanni MVP window to call its local Calendar commands.",
   "windows": ["main"],
-  "permissions": ["core:default", "hanni-mvp:default"]
+  "permissions": ["core:default"]
 }

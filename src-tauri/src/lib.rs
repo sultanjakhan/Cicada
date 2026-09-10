@@ -152,11 +152,13 @@ fn get_item(conn: &Connection, id: &str) -> Result<Item, String> {
 fn list(conn: &Connection) -> Result<Vec<Item>, String> {
     let mut statement = conn.prepare("SELECT id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at FROM items ORDER BY date IS NULL, date, time IS NULL, time, created_at, id")
         .map_err(|e| fail(format!("list items: {e}")))?;
-    statement
+    let rows = statement
         .query_map([], row_item)
-        .map_err(|e| fail(format!("list items: {e}")))?
+        .map_err(|e| fail(format!("list items: {e}")))?;
+    let items = rows
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| fail(format!("read item row: {e}")))
+        .map_err(|e| fail(format!("read item row: {e}")))?;
+    Ok(items)
 }
 
 fn save(conn: &mut Connection, input: ItemInput) -> Result<Item, String> {
@@ -348,15 +350,14 @@ fn app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 
 #[tauri::command]
 fn list_items(state: State<'_, AppState>) -> Result<Vec<Item>, String> {
-    list(&state.0.lock().map_err(|_| fail("database lock poisoned"))?)
+    let conn = state.0.lock().map_err(|_| fail("database lock poisoned"))?;
+    list(&conn)
 }
 
 #[tauri::command(rename_all = "camelCase")]
 fn save_item(input: ItemInput, state: State<'_, AppState>) -> Result<Item, String> {
-    save(
-        &mut state.0.lock().map_err(|_| fail("database lock poisoned"))?,
-        input,
-    )
+    let mut conn = state.0.lock().map_err(|_| fail("database lock poisoned"))?;
+    save(&mut conn, input)
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -366,12 +367,8 @@ fn set_completed(
     completed: bool,
     state: State<'_, AppState>,
 ) -> Result<Item, String> {
-    complete(
-        &mut state.0.lock().map_err(|_| fail("database lock poisoned"))?,
-        &id,
-        expected_version,
-        completed,
-    )
+    let mut conn = state.0.lock().map_err(|_| fail("database lock poisoned"))?;
+    complete(&mut conn, &id, expected_version, completed)
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -380,19 +377,14 @@ fn delete_item(
     expected_version: i64,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    remove(
-        &mut state.0.lock().map_err(|_| fail("database lock poisoned"))?,
-        &id,
-        expected_version,
-    )
+    let mut conn = state.0.lock().map_err(|_| fail("database lock poisoned"))?;
+    remove(&mut conn, &id, expected_version)
 }
 
 #[tauri::command]
 fn create_backup(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<String, String> {
-    backup(
-        &state.0.lock().map_err(|_| fail("database lock poisoned"))?,
-        &app_data_dir(&app)?,
-    )
+    let conn = state.0.lock().map_err(|_| fail("database lock poisoned"))?;
+    backup(&conn, &app_data_dir(&app)?)
 }
 
 pub fn run() {
