@@ -1,0 +1,23 @@
+[package]
+name = "hanni-mvp"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.98"
+
+[lib]
+name = "hanni_mvp_lib"
+crate-type = ["cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.6.3" }
+
+[dependencies]
+tauri = { version = "=2.11.1" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+rusqlite = { version = "=0.39.0", features = ["bundled", "backup"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
