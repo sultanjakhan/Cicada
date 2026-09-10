@@ -277,31 +277,39 @@ fn backup(conn: &Connection, data_dir: &Path) -> Result<String, String> {
         .create_new(true)
         .open(&destination)
         .map_err(|e| fail(format!("reserve backup destination: {e}")))?;
-    let mut output = Connection::open(&destination)
-        .map_err(|e| fail(format!("open backup destination: {e}")))?;
-    let backup = Backup::new(conn, &mut output).map_err(|e| fail(format!("start backup: {e}")))?;
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        if Instant::now() >= deadline {
-            return Err(fail("backup timed out"));
-        }
-        match backup
-            .step(64)
-            .map_err(|e| fail(format!("write backup: {e}")))?
-        {
-            StepResult::Done => break,
-            StepResult::More | StepResult::Busy | StepResult::Locked => {
-                std::thread::sleep(Duration::from_millis(5))
+    let copied = (|| -> Result<(), String> {
+        let mut output = Connection::open(&destination)
+            .map_err(|e| fail(format!("open backup destination: {e}")))?;
+        let backup =
+            Backup::new(conn, &mut output).map_err(|e| fail(format!("start backup: {e}")))?;
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            if Instant::now() >= deadline {
+                return Err(fail("backup timed out"));
             }
-            _ => std::thread::sleep(Duration::from_millis(5)),
+            match backup
+                .step(64)
+                .map_err(|e| fail(format!("write backup: {e}")))?
+            {
+                StepResult::Done => break,
+                StepResult::More | StepResult::Busy | StepResult::Locked => {
+                    std::thread::sleep(Duration::from_millis(5))
+                }
+                _ => std::thread::sleep(Duration::from_millis(5)),
+            }
         }
-    }
-    drop(backup);
-    let integrity: String = output
-        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
-        .map_err(|e| fail(format!("verify backup: {e}")))?;
-    if integrity != "ok" {
-        return Err(fail("backup integrity check failed"));
+        drop(backup);
+        let integrity: String = output
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .map_err(|e| fail(format!("verify backup: {e}")))?;
+        if integrity != "ok" {
+            return Err(fail("backup integrity check failed"));
+        }
+        Ok(())
+    })();
+    if let Err(error) = copied {
+        let _ = std::fs::remove_file(&destination);
+        return Err(error);
     }
     Ok(destination.to_string_lossy().into_owned())
 }
@@ -453,6 +461,7 @@ mod tests {
         let mut conn = memory();
         let mut bad = input("event");
         bad.date = None;
+        bad.time = None;
         assert!(save(&mut conn, bad).unwrap_err().contains("event requires"));
         let mut bad = input("task");
         bad.time = Some("25:00".into());
