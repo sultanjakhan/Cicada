@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Hanni — локальный календарь задач и событий">
+  <title>Hanni MVP</title>
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <a class="brand" href="#" aria-label="Hanni, сегодня"><span class="brand-mark">h</span><span>hanni<span class="brand-section">Календарь</span></span></a>
+      <div class="header-actions"><span class="storage-badge" id="storageBadge"><i></i> На устройстве</span><button class="icon-button" id="settingsButton" aria-label="Настройки" title="Настройки">⚙</button></div>
+    </header>
+    <div id="previewBanner" class="preview-banner" hidden>Предпросмотр интерфейса · записи только в этой вкладке браузера</div>
+    <main class="workspace" id="workspace">
+      <section class="calendar-pane" aria-label="Календарь">
+        <div class="calendar-toolbar">
+          <div class="period-controls"><h1 id="periodTitle">Календарь</h1><div class="date-navigation"><button class="icon-button" id="previousButton" aria-label="Предыдущий период">‹</button><button class="subtle-button" id="todayButton">Сегодня</button><button class="icon-button" id="nextButton" aria-label="Следующий период">›</button></div></div>
+          <div class="view-actions"><div class="segmented" aria-label="Вид календаря"><button data-view="week" aria-pressed="true">Неделя</button><button data-view="month" aria-pressed="false">Месяц</button><button data-view="list" aria-pressed="false">Список</button></div><button class="primary-button" id="newButton"><span aria-hidden="true">＋</span> Создать</button></div>
+        </div>
+        <div class="filter-bar"><div class="type-filters" aria-label="Фильтр записей"><button data-filter="all" class="filter active" aria-pressed="true">Все</button><button data-filter="task" class="filter" aria-pressed="false"><i class="dot task-dot"></i>Задачи</button><button data-filter="event" class="filter" aria-pressed="false"><i class="dot event-dot"></i>События</button></div><div class="secondary-filters"><button class="subtle-button" id="undatedButton">Без даты <span id="undatedCount">0</span></button><label class="completed-filter"><input type="checkbox" id="showCompleted"> Завершённые</label></div></div>
+        <div id="errorBanner" class="error-banner" role="alert" hidden><span></span><button id="retryButton">Повторить</button></div>
+        <div id="calendar" class="calendar-content" aria-busy="true"><div class="empty-state"><div class="loading-spinner"></div><p>Открываем календарь…</p></div></div>
+        <footer class="calendar-footer"><span id="recordSummary">Ваш день, в вашем ритме</span><span class="keyboard-hint"><kbd>N</kbd> создать запись</span></footer>
+      </section>
+      <aside id="editor" class="editor-panel" aria-labelledby="editorTitle" hidden>
+        <div class="editor-heading"><div><span class="eyebrow" id="editorEyebrow">НОВАЯ ЗАПИСЬ</span><h2 id="editorTitle">Добавить в календарь</h2></div><button class="icon-button" id="closeEditor" aria-label="Закрыть редактор">×</button></div>
+        <form id="recordForm">
+          <div class="segmented kind-switch" aria-label="Тип записи"><button type="button" data-kind="task" aria-pressed="true">Задача</button><button type="button" data-kind="event" aria-pressed="false">Событие</button></div>
+          <label class="field">Название<input name="title" id="titleInput" required maxlength="200" placeholder="Что запланируем?" autocomplete="off"></label>
+          <label class="field">Дата <span class="optional" id="dateHint">можно без даты</span><input name="date" type="date" min="1900-01-01" max="9999-12-31"></label>
+          <div class="field-row"><label class="field">Время <span class="optional">необязательно</span><input name="time" type="time"></label><label class="field" id="durationField">Длительность, мин<input name="duration_minutes" type="number" min="1" max="1440" step="1" value="60"></label></div>
+          <p class="field-help" id="timeHint">Без времени — запись на день.</p>
+          <label class="field">Заметка <span class="optional">необязательно</span><textarea name="notes" rows="4" maxlength="10000" placeholder="Детали, которые стоит помнить"></textarea></label>
+          <label class="completed-editor" id="completedField"><input type="checkbox" name="completed"> Задача завершена</label>
+          <div id="formError" class="form-error" role="alert" hidden></div>
+          <div class="editor-footer"><button type="submit" class="primary-button" id="saveButton">Сохранить</button><button type="button" class="danger-button" id="deleteButton" hidden>Удалить</button></div>
+        </form>
+      </aside>
+    </main>
+  </div>
+  <dialog id="confirmDialog" class="small-dialog"><h2 id="confirmTitle"></h2><p id="confirmText"></p><form method="dialog" class="dialog-actions"><button class="subtle-button" value="cancel">Отмена</button><button class="primary-button" value="confirm" id="confirmAction">Продолжить</button></form></dialog>
+  <dialog id="settingsDialog" class="small-dialog"><div class="dialog-title"><h2>Настройки</h2><button class="icon-button" id="closeSettings" aria-label="Закрыть настройки">×</button></div><p class="settings-intro">Календарь хранится на этом устройстве. Облако и аккаунт не нужны.</p><label class="field">Оформление<select id="themeSelect"><option value="system">Как в системе</option><option value="light">Светлое</option><option value="dark">Тёмное</option></select></label><hr><h3>Резервная копия</h3><p class="muted">Создать отдельную копию базы календаря, чтобы сохранить записи.</p><button class="subtle-button" id="backupButton">Создать копию</button><p id="backupResult" class="backup-result" role="status"></p><p class="version-label">Hanni MVP · 0.1.0</p></dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

@@ -17,10 +17,10 @@ jobs:
         with:
           python-version: '3.12'
       - uses: dtolnay/rust-toolchain@stable
-      - run: npm ci
-      - run: npm test
-      - run: npm run check:privacy
-      - run: npm run build
+      - run: npm.cmd ci
+      - run: npm.cmd test
+      - run: npm.cmd run check:privacy
+      - run: npm.cmd run build
       - run: cargo test --locked
         working-directory: src-tauri
-      - run: npm run tauri -- build --debug --no-bundle
+      - run: .\node_modules\.bin\tauri.cmd build --debug --no-bundle

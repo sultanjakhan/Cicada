@@ -50,12 +50,13 @@ def main():
         denylist = json.loads(args.denylist.read_text(encoding='utf-8'))
         if not isinstance(denylist, list) or any(not isinstance(v, str) or not v for v in denylist):
             parser.error('denylist must be a JSON array of nonempty strings')
-    root = Path(subprocess.check_output(['git', 'rev-parse', '--show-toplevel'], text=True).strip())
-    raw = subprocess.check_output(['git', 'ls-files', '-z'], cwd=root)
+    root = Path(subprocess.check_output(['git', 'rev-parse', '--show-toplevel'], encoding='utf-8').strip())
+    raw = subprocess.check_output(['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], cwd=root)
     checked = skipped = 0; findings = []
-    for value in raw.split(b'\0'):
+    for value in sorted(set(raw.split(b'\0'))):
         if not value: continue
         relative = value.decode('utf-8'); path = root / relative
+        if not path.is_file(): continue
         findings.extend((relative, 0, code) for code in path_rules(relative))
         if '/vendor/' in relative or '/icons/' in relative or relative.endswith(('.min.js', '.min.css')):
             skipped += 1; continue
