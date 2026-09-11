@@ -1,4 +1,4 @@
-import { invoke as defaultInvoke } from '../../state.js';
+import { invoke as defaultInvoke } from './state.js';
 import { escapeHtml } from './utils.js';
 import { createCalendarDialog } from './calendar-dialog.js';
 
@@ -185,7 +185,7 @@ export async function mountCalendarGoals(element, dependencies = {}) {
       try {
         const currentValue = numeric ? (fields.current_value.value === '' ? null : Number(fields.current_value.value)) : (goal?.current_value ?? null);
         if (currentValue != null && (!Number.isFinite(currentValue) || currentValue < 0)) { editor.showError('Укажи неотрицательный прогресс или очисти поле.', fields.current_value); return; }
-        await api('save_calendar_goal', { id: goal?.id || null, title, targetValue, unit: numeric ? fields.unit.value.trim() : (goal?.unit || ''), deadline, goalKind: fields.goal_kind.value || null, description: fields.description.value.trim(), criteria: fields.criteria.value.trim(), parentGoalId: parentSelect.value ? Number(parentSelect.value) : null, clearParent: !!goal?.parent_goal_id && !parentSelect.value, currentValue });
+        await api('save_calendar_goal', { id: goal?.id || null, title, targetValue, unit: numeric ? fields.unit.value.trim() : (goal?.unit || ''), deadline, goalKind: fields.goal_kind.value || null, description: fields.description.value.trim(), criteria: fields.criteria.value.trim(), parentGoalId: parentSelect.value ? String(parentSelect.value) : null, clearParent: !!goal?.parent_goal_id && !parentSelect.value, currentValue });
         // Saving succeeded. Close before rereading: a failed refresh must not offer Create again.
         editor.setPending(false); editor.close();
         window.dispatchEvent(new window.Event('task-state-changed'));

@@ -1,4 +1,4 @@
-import { invoke as defaultInvoke } from '../../state.js';
+import { invoke as defaultInvoke } from './state.js';
 import { rankTasks as defaultRankTasks } from './task-picker-sort.js';
 import { loadCategoryWeights } from './task-picker-view.js';
 import { ICONS } from './icons.js';
@@ -400,7 +400,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     if (await write && value === JSON.stringify(saved)) needsSave = false;
   }
   async function resolveTask(block, planned, state) {
-    const execution = state.execution?.blockId === String(block.id) && keyOf(state.execution.task) === keyOf(block) ? state.execution.task : null;
+    const execution = state.execution?.blockId === Number(block.id) && keyOf(state.execution.task) === keyOf(block) ? state.execution.task : null;
     const occurrence = validDate(block.completion_date) || execution?.completion_date;
     const known = execution || planned.find(task => keyOf(task) === keyOf(block) && (!occurrence || task.completion_date === occurrence)) ||
       [state.selection, state.completed].find(task => keyOf(task) === keyOf(block) && (!occurrence || task.completion_date === occurrence));
@@ -427,9 +427,9 @@ export function mountCalendarNow(element, dependencies = {}) {
     const before = JSON.stringify(state);
     if (active) {
       const task = await resolveTask(active, planned, state);
-      state.execution = { blockId: String(active.id), date: active.date, task }; state.completed = null;
+      state.execution = { blockId: Number(active.id), date: active.date, task }; state.completed = null;
     } else if (state.execution) {
-      const block = blocks.find(item => String(item.id) === state.execution.blockId);
+      const block = blocks.find(item => Number(item.id) === state.execution.blockId);
       let task = planned.find(item => keyOf(item) === keyOf(state.execution.task) &&
         (item.source_type !== 'schedule' || item.completion_date === state.execution.task.completion_date));
       // A paused note may be completed from All tasks while its due date is outside
@@ -485,14 +485,14 @@ export function mountCalendarNow(element, dependencies = {}) {
           sourceType: operation.task.source_type, sourceId: String(operation.task.source_id), failIfActive: true,
           completionDate: operation.task.completion_date || operation.task.date || localDate(),
         });
-        saved.execution = { blockId: String(blockId), date: active?.date || localDate(), task: taskOf(operation.task) }; saved.completed = null;
+        saved.execution = { blockId: Number(blockId), date: active?.date || localDate(), task: taskOf(operation.task) }; saved.completed = null;
       } else {
-        if (active && String(active.id) !== operation.execution.blockId) throw new Error('different-active');
+        if (active && Number(active.id) !== operation.execution.blockId) throw new Error('different-active');
         if (operation.kind === 'pause') {
           if (active) await api('pause_task_block', { blockId: operation.execution.blockId });
           else {
             const blocks = await api('get_timeline_blocks', { date: operation.execution.date });
-            if (!blocks.some(block => String(block.id) === operation.execution.blockId && !block.is_active)) throw new Error('missing-block');
+            if (!blocks.some(block => Number(block.id) === operation.execution.blockId && !block.is_active)) throw new Error('missing-block');
           }
           saved.execution = operation.execution;
         } else {

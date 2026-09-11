@@ -1,4 +1,4 @@
-import { S, TAB_ICONS } from '../../state.js';
+import { S, TAB_ICONS } from './state.js';
 import { escapeHtml } from './utils.js';
 const defaultPanes = [{id:'dash', label:'Дашборд'}, {id:'table',label:'Таблица'}, {id:'goals',label:'Цели'}, {id:'notes',label:'Заметки'}];
 const load = () => { try { return JSON.parse(localStorage.getItem('hanni_mvp_panes') || '{}'); } catch { return {}; } };

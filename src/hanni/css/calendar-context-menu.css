@@ -1,0 +1,36 @@
+.calendar-record-menu { position: fixed; z-index: 12000; width: 244px; max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); overflow-y: auto; box-sizing: border-box; padding: 6px; border: 1px solid var(--border-default); border-radius: 10px; background: var(--bg-card); color: var(--text-primary); box-shadow: 0 8px 30px #0003; }
+.calendar-record-menu button { display: block; width: 100%; min-height: 40px; padding: 8px 12px; font: inherit; font-size: 13px; color: inherit; background: transparent; border: 0; border-radius: 5px; text-align: left; cursor: pointer; }
+.calendar-record-menu button:hover, .calendar-record-menu button:focus { background: var(--bg-hover); outline: 2px solid var(--text-secondary); outline-offset: -2px; }
+.calendar-record-menu button:disabled { opacity: .5; cursor: wait; }
+.calendar-record-menu-error { padding: 4px 10px; margin: 4px 0; font-size: 12px; line-height: 1.5; color: var(--text-primary); }
+.calendar-record-menu-error[hidden] { display: none; }
+.calv-record-shell { position: relative; display: flex; min-width: 0; align-items: stretch; border-bottom: 1px solid var(--border-default); }
+.calv-record-shell > .calv-record { min-width: 0; flex: 1; border-bottom: 0; }
+.calv-record-shell--actions { display: grid; grid-template-columns: minmax(0, 1fr) 32px; }
+.calv-record-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; padding: 0 6px 8px; }
+.calv-record-action { min-height: 36px; padding: 6px 10px; border: 1px solid var(--border-default); border-radius: 7px; background: var(--bg-card); color: var(--text-primary); font: inherit; font-size: 12px; cursor: pointer; }
+.calv-record-action[data-record-action="start"], .calv-record-action[data-record-action="pause"] { color: var(--accent-green); border-color: var(--accent-green); }
+.calv-record-action:hover { background: var(--bg-hover); }
+.calv-record-action:focus-visible { outline: 2px solid var(--accent-green); outline-offset: 2px; }
+.calv-record-action:disabled { opacity: .55; cursor: wait; }
+[data-period="day"] .calv-untimed-record.calv-record-shell--actions { grid-template-columns: minmax(0, 1fr) auto 28px; align-items: center; }
+[data-period="day"] .calv-untimed-record > .calv-record { grid-column: 1; grid-row: 1; }
+[data-period="day"] .calv-untimed-record > .calv-record-actions { grid-column: 2; grid-row: 1; padding: 6px; }
+[data-period="day"] .calv-untimed-record > .calv-record-more { grid-column: 3; grid-row: 1; }
+@media (max-width: 640px) {
+  [data-period="day"] .calv-untimed-record.calv-record-shell--actions { grid-template-columns: minmax(0, 1fr) 28px; }
+  [data-period="day"] .calv-untimed-record > .calv-record-actions { grid-column: 1 / -1; grid-row: 2; }
+  [data-period="day"] .calv-untimed-record > .calv-record-more { grid-column: 2; }
+}
+.calv-action-status { margin: 0 0 10px; color: var(--text-secondary); font-size: 13px; }
+.calv-action-status:empty { display: none; }
+.calv-action-status.is-error { color: var(--color-red); }
+.calv-record-shell > .calv-record-more { flex: 0 0 32px; align-self: center; width: 32px; min-height: 32px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--text-secondary); font-size: 22px; cursor: pointer; }
+.calv-record-shell > .calv-record-more:hover { background: var(--bg-hover); color: var(--text-primary); }
+.calv-record-shell.calv-grid-record { position: absolute; padding: 0; flex-direction: row; align-items: stretch; }
+.calv-record-shell.calv-grid-record > .calv-record { display: flex; flex-direction: column; padding: 4px 3px; min-height: 0; overflow: hidden; gap: 3px; }
+.calv-record-shell.calv-grid-record--short > .calv-record { flex-direction: row; align-items: center; }
+.calv-record-shell.calv-grid-record > .calv-record-more { flex-basis: 26px; width: 26px; min-height: 0; height: 100%; max-height: 32px; align-self: flex-start; font-size: 20px; line-height: 1; }
+.calendar-task-overview .cto-list li { display: flex; align-items: center; min-width: 0; }
+.calendar-task-overview .cto-task { flex: 1; min-width: 0; }
+.calendar-task-overview .cto-task-more { flex: 0 0 40px; padding: 0; border: 0; font-size: 22px; background: transparent; }

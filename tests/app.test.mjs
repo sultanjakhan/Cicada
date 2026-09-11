@@ -2,149 +2,90 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
-import * as dates from '../src/dates.js';
-import { layoutSegments } from '../src/layout.js';
-import { previewStore } from '../src/preview-store.js';
+import { build } from 'vite';
 
 const html = await readFile(new URL('../src/index.html', import.meta.url), 'utf8');
-const app = (await readFile(new URL('../src/app.js', import.meta.url), 'utf8')).replace(/^import .*;\r?\n/gm, '');
-const settle = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)); };
+const result = await build({
+  configFile: false, root: new URL('../src', import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'),
+  logLevel: 'silent',
+  build: { write: false, lib: { entry: 'app.js', formats: ['iife'], name: 'HanniUnderTest' },
+    rolldownOptions: { output: { codeSplitting: false } } }
+});
+const bundle = (Array.isArray(result) ? result[0] : result).output.find(file => file.type === 'chunk').code;
+const settle = async () => { for (let i = 0; i < 12; i++) await new Promise(resolve => setImmediate(resolve)); };
 
-async function launch(t, decorate = store => store) {
-  const dom = new JSDOM(html, { url: 'http://localhost/?preview=1', runScripts: 'outside-only', pretendToBeVisual: true });
-  const { window } = dom;
-  // Imported date helpers and evaluated app must share a Date realm, as they do in the app.
-  window.Date = Date;
-  t.after(() => window.close());
-  window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
-  window.HTMLDialogElement.prototype.close = function (value) {
-    this.returnValue = value ?? this.returnValue;
-    this.open = false;
-    this.dispatchEvent(new window.Event('close'));
-  };
-  const store = decorate(previewStore(window.sessionStorage));
-  window.testApi = { ...dates, layoutSegments, createStore: async () => store };
-  await window.eval(`(async () => { const { ${Object.keys(window.testApi).join(', ')} } = window.testApi; ${app}\n })()`);
-  const query = selector => window.document.querySelector(selector);
-  const click = async selector => { assert.ok(query(selector), `Missing ${selector}`); query(selector).click(); await settle(); };
-  const fill = (name, value) => {
-    const field = query('#recordForm').elements.namedItem(name);
-    field.value = value;
-    field.dispatchEvent(new window.Event('input', { bubbles: true }));
-  };
-  return { window, store, query, click, fill };
+async function launch(t) {
+  const dom = new JSDOM(html, { url: 'http://localhost/', runScripts: 'outside-only', pretendToBeVisual: true });
+  const w = dom.window, calls = [], settings = new Map(), errors = [];
+  w.structuredClone = structuredClone;
+  w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+  w.ResizeObserver = class { observe() {} disconnect() {} };
+  w.HTMLElement.prototype.scrollIntoView = function () {};
+  w.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
+  w.HTMLDialogElement.prototype.close = function () { this.open = false; this.dispatchEvent(new w.Event('close')); };
+  w.addEventListener('error', event => errors.push(event.message));
+  w.__TAURI__ = { core: { invoke: async (command, args = {}) => {
+    calls.push({ command, args });
+    if (['get_calendar_records','get_calendar_tasks','get_goals','get_calendar_task_goals','get_timeline_blocks','get_task_pins','get_notes','get_all_events'].includes(command)) return [];
+    if (command === 'get_active_block') return null;
+    if (command === 'get_ui_state' || command === 'get_app_setting') return settings.get(args.key) || null;
+    if (command === 'set_ui_state' || command === 'set_app_setting') { settings.set(args.key, args.value); return; }
+    if (command === 'list_event_categories') return [{ id: 'general', name: 'Общее', color: '#9B9B9B', icon: '' }];
+    if (command === 'get_calendar_task_minutes') return 0;
+    if (command === 'create_backup') return 'example-backup.db';
+    throw new Error('Unexpected IPC: ' + command);
+  } }, event: { listen: async () => () => {}, emit: async () => {} } };
+  for (const name of ['highlight.min.js','marked.min.js','vendor/purify.min.js']) w.eval(await readFile(new URL('../src/public/' + name, import.meta.url), 'utf8'));
+  w.eval(bundle);
+  await settle();
+  t.after(async () => {
+    w.document.querySelector('#evm-close')?.click();
+    await settle();
+    dom.window.close();
+  });
+  const click = async selector => { const el = w.document.querySelector(selector); assert.ok(el, 'Missing ' + selector); el.click(); await settle(); return el; };
+  return { w, calls, click, errors };
 }
 
-test('empty start; create, edit, complete, reopen and delete a task through the rendered form', async t => {
-  const { store, query, click, fill, window } = await launch(t);
-  assert.equal((await store.list()).length, 0);
-  await click('#newButton');
-  fill('title', 'Example task');
-  fill('date', '');
-  await click('#saveButton');
-  assert.equal(query('#editor').hidden, true);
-  await click('#undatedButton');
-  assert.match(query('#calendar').textContent, /Example task/);
-  await click('[data-item]');
-  fill('title', 'Edited task');
-  await click('#saveButton');
-  assert.equal((await store.list())[0].version, 2);
-  await click('[data-complete]');
-  assert.equal((await store.list())[0].completed, true);
-  assert.equal(query('[data-item]'), null);
-  const checkbox = query('#showCompleted');
-  checkbox.checked = true;
-  checkbox.dispatchEvent(new window.Event('change', { bubbles: true }));
-  await click('[data-item]');
-  await click('#deleteButton');
-  assert.equal(query('#confirmDialog').open, true);
-  query('#confirmDialog').close('confirm');
-  await settle();
-  assert.equal((await store.list()).length, 0);
-  assert.equal(query('#editor').hidden, true);
-});
-
-test('shared event editor persists a cross-midnight event and renders escaped text in every view', async t => {
-  const { store, query, click, fill } = await launch(t);
-  await click('#newButton');
-  await click('[data-kind="event"]');
-  assert.equal(query('#recordForm').elements.date.required, true);
-  assert.equal(query('#completedField').hidden, true);
-  fill('title', '<img src=x onerror=alert(1)>');
-  fill('date', dates.todayKey());
-  fill('time', '23:30');
-  fill('duration_minutes', '90');
-  await click('#saveButton');
-  const [item] = await store.list();
-  assert.equal(item.kind, 'event');
-  assert.equal(item.duration_minutes, 90);
-  for (const view of ['week', 'month', 'list']) {
-    await click(`[data-view="${view}"]`);
-    assert.match(query('#calendar').textContent, /<img src=x onerror=alert\(1\)>/);
-    assert.equal(query('#calendar img'), null);
+test('installed shell boots the original workspace and all four panes with only Calendar in the sidebar', async t => {
+  const { w, click, calls, errors } = await launch(t);
+  assert.equal(w.document.title, 'Hanni MVP');
+  assert.deepEqual([...w.document.querySelectorAll('#tab-list [data-tab-id]')].map(el => el.dataset.tabId), ['calendar']);
+  assert.deepEqual([...w.document.querySelectorAll('.uni-tab')].map(el => el.textContent), ['Дашборд','Таблица','Цели','Заметки']);
+  assert.ok(w.document.querySelector('[data-calendar-now]'));
+  for (const [pane, selector] of [['table','.calendar-workspace-table'],['goals','.calendar-goals'],['notes','.calendar-notes']]) {
+    await click('[data-pane="' + pane + '"]');
+    assert.equal(w.document.querySelector('.uni-tab.active').dataset.pane, pane);
+    if (pane !== 'table') assert.ok(w.document.querySelector(selector), selector);
   }
+  assert.ok(calls.some(call => call.command === 'get_calendar_records'));
+  assert.ok(calls.some(call => call.command === 'get_notes'));
+  assert.equal(w.document.getElementById('mvp-alert').hidden, true, w.document.getElementById('mvp-alert').textContent);
+  assert.deepEqual(errors, []);
 });
 
-test('unsaved edits require explicit discard and a failed save keeps the entered text', async t => {
-  const { query, click, fill } = await launch(t, store => ({ ...store, save: async () => { throw new Error('Simulated storage failure'); } }));
-  await click('#newButton');
-  fill('title', 'Keep this draft');
-  await click('#saveButton');
-  assert.equal(query('#editor').hidden, false);
-  assert.equal(query('#titleInput').value, 'Keep this draft');
-  assert.match(query('#formError').textContent, /Simulated storage failure/);
-  await click('#closeEditor');
-  query('#confirmDialog').close('cancel');
+test('original shared Task/Event editor opens from the dashboard', async t => {
+  const { w, click } = await launch(t);
+  await click('[data-overview-create]');
+  assert.ok(w.document.querySelector('#evm-form'));
+  assert.ok(w.document.querySelector('#evm-title'));
+  assert.ok(w.document.querySelector('#evm-goal'));
+  const toggle = w.document.querySelector('[data-editor-type="event"]');
+  assert.ok(toggle, 'shared event switch');
+  toggle.click();
   await settle();
-  assert.equal(query('#editor').hidden, false);
-  await click('#closeEditor');
-  query('#confirmDialog').close('confirm');
-  await settle();
-  assert.equal(query('#editor').hidden, true);
+  assert.ok(w.document.querySelector('#evm-date'));
+  assert.equal(w.document.getElementById('mvp-alert').hidden, true);
 });
 
-test('filtered next-day list groups a cross-midnight continuation under the selected day', async t => {
-  const { query, store, click } = await launch(t);
-  const today = dates.todayKey();
-  const fields = { kind: 'event', notes: '', completed: false, duration_minutes: 90, expected_version: null };
-  await store.save({ ...fields, title: 'Across midnight', date: dates.addDays(today, -1), time: '23:30' });
-  for (let i = 0; i < 3; i++) await store.save({ ...fields, title: `Example ${i}`, date: today, time: null });
-  await click('#retryButton');
-  await click('[data-view="month"]');
-  await click(`[data-day-list="${today}"]`);
-  assert.equal(query('.agenda-group h2').textContent, `${dates.formatDay(today)}Сегодня`);
-  assert.equal(query('.agenda-time').textContent, '↳ 00:00');
-});
-
-test('form stays disabled until an in-flight save finishes', async t => {
-  let release;
-  const { query, click, fill } = await launch(t, store => ({ ...store, save: input => new Promise(resolve => { release = async () => resolve(await store.save(input)); }) }));
-  await click('#newButton');
-  fill('title', 'Save once');
-  await click('#saveButton');
-  assert.equal(query('#titleInput').disabled, true);
-  assert.equal(query('[data-kind="event"]').disabled, true);
-  await release();
-  await settle();
-  assert.equal(query('#editor').hidden, true);
-  assert.equal(query('#titleInput').disabled, false);
-});
-
-test('native adapter sends the exact command and argument contract', async t => {
-  const dom = new JSDOM('', { url: 'http://localhost/', runScripts: 'outside-only' });
-  t.after(() => dom.window.close());
-  const calls = [];
-  dom.window.__TAURI__ = { core: { invoke: async (...args) => { calls.push(JSON.parse(JSON.stringify(args))); } } };
-  const source = (await readFile(new URL('../src/store.js', import.meta.url), 'utf8')).replace('export async function', 'async function').replaceAll('import.meta.env.DEV', 'false');
-  const store = await dom.window.eval(`(async () => { ${source}; return createStore(); })()`);
-  await store.list();
-  await store.save({ title: 'Example', expected_version: 2 });
-  await store.complete({ id: 'example-id', version: 3, completed: false });
-  await store.remove({ id: 'example-id', version: 4 });
-  await store.backup();
-  assert.deepEqual(calls, [
-    ['list_items'], ['save_item', { input: { title: 'Example', expected_version: 2 } }],
-    ['set_completed', { id: 'example-id', expectedVersion: 3, completed: true }],
-    ['delete_item', { id: 'example-id', expectedVersion: 4 }], ['create_backup'],
-  ]);
+test('MVP settings preserve the separate name, theme and local backup action', async t => {
+  const { w, click, calls } = await launch(t);
+  await click('#tab-bar-bottom [aria-label="Настройки"]');
+  assert.equal(w.document.getElementById('mvp-settings').open, true);
+  const select = w.document.getElementById('mvp-theme');
+  select.value = 'dark'; select.dispatchEvent(new w.Event('change'));
+  assert.equal(w.document.documentElement.dataset.theme, 'dark');
+  await click('#mvp-backup');
+  assert.ok(calls.some(call => call.command === 'create_backup'));
+  assert.match(w.document.getElementById('mvp-backup-result').textContent, /example-backup.db/);
 });

@@ -1,6 +1,6 @@
 // ── js/utils.js — Shared utilities, Markdown, skeletons, helpers ──
 
-import { invoke, S, TAB_REGISTRY, TAB_ICONS, TAB_SETTINGS_DEFS, saveTabCustom, getTabIcon, getTabDesc, loadTabSetting, saveTabSetting, tabLoaders } from '../../state.js';
+import { invoke, S, TAB_REGISTRY, TAB_ICONS, TAB_SETTINGS_DEFS, saveTabCustom, getTabIcon, getTabDesc, loadTabSetting, saveTabSetting, tabLoaders } from './state.js';
 import { showEmojiPicker } from './emoji-picker.js';
 import { sanitizeMarkdownHtml } from './markdown-security.js';
 

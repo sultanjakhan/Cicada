@@ -1,7 +1,7 @@
 // calendar-category-manager.js — manage calendar event categories (rename,
 // recolor, change icon, delete) and the "add category" modal.
 
-import { invoke } from '../../state.js';
+import { invoke } from './state.js';
 import { escapeHtml } from './utils.js';
 import { loadCategories, invalidateCategoriesCache, CATEGORY_PALETTE } from './calendar-categories.js';
 import { showEmojiPicker } from './emoji-picker.js';

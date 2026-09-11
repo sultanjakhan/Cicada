@@ -1,6 +1,6 @@
 // task-picker-view.js — Presentation for the "Запустить таск" picker body.
 // Pure HTML building (no event wiring); the widget owns state and wiring.
-import { invoke } from '../../state.js';
+import { invoke } from './state.js';
 import { escapeHtml } from './utils.js';
 import { rankTasks, nowMinutes } from './task-picker-sort.js';
 

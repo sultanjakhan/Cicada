@@ -1,7 +1,7 @@
 // calendar-event-modal.js — Create / edit calendar event modal with
 // DB-driven categories and 5-level priority picker.
 
-import { S, invoke } from '../../state.js';
+import { S, invoke } from './state.js';
 import { escapeHtml } from './utils.js';
 import { loadCategories } from './calendar-categories.js';
 import { showCategoryManager, showAddCategory } from './calendar-category-manager.js';
@@ -465,7 +465,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
     // New unlinked records do not depend on optional goals. Editing must still
     // wait, because clearing an unknown existing link would lose user data.
     if (!goalsReady && isEdit) { overlay.querySelector('.evm-advanced').open = true; showError('Дождись загрузки целей или повтори её.', goalRetry.hidden ? null : goalRetry); return; }
-    const desiredGoalId = goalSelect.value ? Number(goalSelect.value) : null;
+    const desiredGoalId = goalSelect.value ? String(goalSelect.value) : null;
     if (kind === 'task') {
       if (title.length > 500) { showError('Сократи название задачи до 500 символов.', titleInput); return; }
       const dueDate = noDate.checked ? null : dateInput.value;

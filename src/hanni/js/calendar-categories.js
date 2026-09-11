@@ -1,7 +1,7 @@
 // calendar-categories.js — data layer for DB-managed calendar event categories.
 // Shared by calendar-event-modal.js and calendar-category-manager.js.
 
-import { invoke } from '../../state.js';
+import { invoke } from './state.js';
 
 // Quick-pick palette for the color swatches (mirrors the seed colors).
 export const CATEGORY_PALETTE = [

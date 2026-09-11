@@ -1,7 +1,7 @@
 const canRefreshHealthView = () => true;
 const mayCommitHealthView = () => true;
 const retryHealthViewRefresh = () => {};
-import { S, invoke, tabLoaders, TAB_ICONS } from '../../state.js';
+import { S, invoke, tabLoaders, TAB_ICONS } from './state.js';
 import { ICONS } from './icons.js';
 import { escapeHtml } from './utils.js';
 import { renderUnifiedLayout, savePaneState } from './unified-layout.js';
@@ -31,11 +31,11 @@ export async function executeCalendarTaskAction(record, action) {
     await invoke('start_task_block', { sourceType: 'note', sourceId: String(record.source_id), failIfActive: true, completionDate: record.date || views.iso(new Date()) });
   } else if (action === 'pause') {
     if (!sameTask) throw new Error('Состояние задачи изменилось. Обнови календарь перед паузой.');
-    await invoke('pause_task_block', { blockId: String(active.id) });
+    await invoke('pause_task_block', { blockId: Number(active.id) });
   } else if (action === 'finish') {
     // Closing an old block must never finish a concurrently restarted session.
     // Pause is idempotent; note completion atomically rejects any new active block.
-    if (sameTask) await invoke('pause_task_block', { blockId: String(active.id) });
+    if (sameTask) await invoke('pause_task_block', { blockId: Number(active.id) });
     try { await invoke('complete_calendar_task', { id: String(record.source_id) }); }
     catch (error) {
       if (sameTask) throw Object.assign(new Error('Не удалось завершить задачу после паузы. Её текущий статус обновлён. ' + (error?.message || 'Попробуй ещё раз.')), { refreshRequired: true });
@@ -157,7 +157,7 @@ async function showRecord(record, returnFocus = null, initialFocus = null) {
       modal.querySelector('.cm-actions').prepend(edit);
     }
     modal.querySelector('[type=submit]').disabled = false;
-    submit(modal, () => invoke('set_calendar_task_goal', { sourceType: record.source_type, sourceId: String(record.source_id), goalId: select.value ? Number(select.value) : null }));
+    submit(modal, () => invoke('set_calendar_task_goal', { sourceType: record.source_type, sourceId: String(record.source_id), goalId: select.value ? String(select.value) : null }));
     if (initialFocus === 'goal') select.focus();
   } catch { modal.querySelector('[role=status]').textContent = 'Не удалось загрузить цель. Закрой и открой запись повторно.'; }
 }

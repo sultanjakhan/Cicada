@@ -1,4 +1,4 @@
-import { invoke as defaultInvoke } from '../../state.js';
+import { invoke as defaultInvoke } from './state.js';
 import { escapeHtml, initBlockEditor, blocksToPlainText } from './utils.js';
 import { createCalendarDialog } from './calendar-dialog.js';
 
