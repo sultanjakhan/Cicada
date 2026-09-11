@@ -31,7 +31,12 @@ fn item_value(
     blocks: Option<String>,
     status: String,
 ) -> Value {
-    json!({"id":item.id,"title":item.title,"content":item.notes,"description":item.notes,"date":item.date,"time":item.time,"duration_minutes":item.duration_minutes,"category":category,"color":color,"priority":priority,"completed":item.completed,"version":item.version,"created_at":item.created_at,"updated_at":item.updated_at,"source":"manual","linked_tab":"","tags":tags,"archived":archived,"tab_name":if item.kind=="task" {"calendar"} else {""},"status":if item.completed && status=="task" {"done"} else {&status},"due_date":if item.kind=="task" {item.date.clone()} else {None},"content_blocks":blocks})
+    let duration_minutes = if item.kind == "task" && item.duration_minutes == 0 {
+        None
+    } else {
+        Some(item.duration_minutes)
+    };
+    json!({"id":item.id,"title":item.title,"content":item.notes,"description":item.notes,"date":item.date,"time":item.time,"duration_minutes":duration_minutes,"category":category,"color":color,"priority":priority,"completed":item.completed,"version":item.version,"created_at":item.created_at,"updated_at":item.updated_at,"source":"manual","linked_tab":"","tags":tags,"archived":archived,"tab_name":if item.kind=="task" {"calendar"} else {""},"status":if item.completed && status=="task" {"done"} else {&status},"due_date":if item.kind=="task" {item.date.clone()} else {None},"content_blocks":blocks})
 }
 fn load(conn: &Connection, id: &str) -> Result<Value, String> {
     let item = get_item(conn, id)?;
@@ -63,17 +68,17 @@ fn item_id(value: &str) -> Result<&str, String> {
     }
 }
 fn validate_title(value: &str) -> Result<(), String> {
-    if value.trim().is_empty() || value.trim().chars().count() > 200 {
-        Err(fail("title must contain 1 to 200 characters"))
+    if value.trim().is_empty() || value.trim().chars().count() > 500 {
+        Err(fail("title must contain 1 to 500 characters"))
     } else {
         Ok(())
     }
 }
 fn duration(value: i64) -> Result<(), String> {
-    if (1..=1440).contains(&value) {
+    if (1..=5_256_000).contains(&value) {
         Ok(())
     } else {
-        Err(fail("duration_minutes must be between 1 and 1440"))
+        Err(fail("duration_minutes must be a positive safe duration"))
     }
 }
 
@@ -316,7 +321,7 @@ pub fn get_calendar_tasks(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| fail(e.to_string()))?;
     drop(s);
-    ids.into_iter().map(|id|{let v=load(&conn,&id)?;Ok(json!({"source_type":"note","source_id":id,"title":v["title"],"date":v["due_date"],"planned_time":null,"duration_minutes":v["duration_minutes"],"completed":v["completed"],"status_extra":v["status"],"priority":v["priority"],"tracking_mode":"track"}))}).collect()
+    ids.into_iter().map(|id|{let v=load(&conn,&id)?;let (active,minutes,has_work):(bool,i64,bool)=conn.query_row("SELECT COALESCE(MAX(is_active),0)!=0,COALESCE(SUM(CASE WHEN is_active=0 THEN duration_minutes ELSE 0 END),0),COUNT(*)>0 FROM timeline_blocks WHERE source_type='note' AND source_id=?1",[&id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(|e|fail(e.to_string()))?;Ok(json!({"source_type":"note","source_id":id,"title":v["title"],"date":v["due_date"],"planned_time":null,"duration_minutes":v["duration_minutes"],"completed":v["completed"],"status_extra":v["status"],"priority":v["priority"],"tracking_mode":"check","is_active":active,"actual_minutes":minutes,"has_work":has_work}))}).collect()
 }
 #[tauri::command]
 pub fn get_calendar_task(id: String, state: State<'_, AppState>) -> Result<Value, String> {
@@ -398,6 +403,12 @@ pub fn save_calendar_task(
 }
 #[tauri::command]
 pub fn complete_calendar_task(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let conn = lock(&state)?;
+    let active:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM timeline_blocks WHERE source_type='note' AND source_id=?1 AND is_active=1)",[&id],|r|r.get(0)).map_err(|e|fail(e.to_string()))?;
+    drop(conn);
+    if active {
+        return Err(fail("task has an active work block"));
+    }
     update_note_status(id, "done".into(), state)
 }
 #[tauri::command(rename_all = "camelCase")]
@@ -409,7 +420,7 @@ pub fn get_calendar_records(
     validate_date(&start)?;
     validate_date(&end)?;
     let conn = lock(&state)?;
-    let mut s=conn.prepare("SELECT id,kind FROM items WHERE archived=0 AND status!='note' AND ((date BETWEEN ?1 AND ?2) OR (kind='task' AND date IS NULL)) ORDER BY date,time,id").map_err(|e|fail(e.to_string()))?;
+    let mut s=conn.prepare("SELECT id,kind FROM items WHERE archived=0 AND status!='note' AND ((kind='event' AND date<=?2 AND (time='' OR datetime(date || ' ' || substr(time,1,5), '+' || duration_minutes || ' minutes')>?1)) OR (kind='task' AND (date BETWEEN ?1 AND ?2 OR date IS NULL))) ORDER BY date,time,id").map_err(|e|fail(e.to_string()))?;
     let rows = s
         .query_map(params![start, end], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
@@ -417,7 +428,7 @@ pub fn get_calendar_records(
         .map_err(|e| fail(e.to_string()))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| fail(e.to_string()))?;
-    rows.into_iter().map(|(id,kind)|{let v=load(&conn,&id)?;Ok(json!({"source_type":if kind=="event" {"event"}else{"note"},"source_id":id,"title":v["title"],"date":v["date"],"planned_time":v["time"],"duration_minutes":v["duration_minutes"],"category":v["category"],"color":v["color"],"completed":v["completed"],"status_extra":v["status"],"priority":v["priority"],"tracking_mode":"track"}))}).collect()
+    rows.into_iter().map(|(id,kind)|{let v=load(&conn,&id)?;let source=if kind=="event" {"event"}else{"note"};let (active,minutes,has_work):(bool,i64,bool)=conn.query_row("SELECT COALESCE(MAX(is_active),0)!=0,COALESCE(SUM(CASE WHEN is_active=0 THEN duration_minutes ELSE 0 END),0),COUNT(*)>0 FROM timeline_blocks WHERE source_type=?1 AND source_id=?2",params![source,&id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(|e|fail(e.to_string()))?;Ok(json!({"source_type":source,"source_id":id,"title":v["title"],"date":v["date"],"planned_time":v["time"],"duration_minutes":v["duration_minutes"],"category":v["category"],"color":v["color"],"completed":v["completed"],"status_extra":v["status"],"priority":v["priority"],"tracking_mode":if source=="note" {"check"}else{"track"},"is_active":active,"actual_minutes":minutes,"has_work":has_work}))}).collect()
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -749,7 +760,8 @@ pub fn get_calendar_task_minutes(
     state: State<'_, AppState>,
 ) -> Result<i64, String> {
     let conn = lock(&state)?;
-    conn.query_row("SELECT COALESCE(SUM(duration_minutes),0) FROM timeline_blocks WHERE source_type=?1 AND source_id=?2 AND is_active=0 AND (?3 IS NULL OR completion_date=?3)",params![source_type,source_id,completion_date],|r|r.get(0)).map_err(|e|fail(e.to_string()))
+    let _ = completion_date;
+    conn.query_row("SELECT COALESCE(SUM(duration_minutes),0) FROM timeline_blocks WHERE source_type=?1 AND source_id=?2 AND is_active=0",params![source_type,source_id],|r|r.get(0)).map_err(|e|fail(e.to_string()))
 }
 
 // The current Workspace always loads these auxiliary lists. Routine is out of

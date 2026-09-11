@@ -192,6 +192,8 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
             .commit()
             .map_err(|e| fail(format!("commit v3 migration: {e}")))?;
     }
+    conn.execute("INSERT OR IGNORE INTO event_categories(id,name,color,icon,sort_order,created_at) VALUES('general','general','#9B9B9B','',0,?1)", [Utc::now().to_rfc3339()])
+        .map_err(|e| fail(format!("seed generic category: {e}")))?;
     Ok(())
 }
 
