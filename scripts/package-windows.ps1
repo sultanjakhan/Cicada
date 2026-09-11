@@ -40,7 +40,8 @@ try {
         installer = $installerName
         installer_sha256 = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
         executable = 'hanni-mvp.exe'
-        executable_sha256 = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant()
+        unbundled_executable_sha256 = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant()
+        executable_hash_note = 'Tauri patches the bundle marker inside the NSIS payload. This hash identifies the unbundled build output, not the installed executable.'
         authenticode_status = [string](Get-AuthenticodeSignature -LiteralPath $installerPath).Status
     }
     $manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $packageDirectory 'manifest.json') -Encoding UTF8
