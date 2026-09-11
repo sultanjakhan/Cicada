@@ -141,6 +141,7 @@ pub fn update_event(
     color: Option<String>,
     completed: Option<bool>,
     priority: Option<i64>,
+    expected_version: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let conn = lock(&state)?;
@@ -161,9 +162,9 @@ pub fn update_event(
     if let Some(value) = duration_minutes {
         duration(value)?;
     }
-    let affected=conn.execute("UPDATE items SET title=COALESCE(?1,title),notes=COALESCE(?2,notes),date=?3,time=COALESCE(?4,time),duration_minutes=COALESCE(?5,duration_minutes),completed=COALESCE(?6,completed),category=COALESCE(?7,category),color=COALESCE(?8,color),priority=COALESCE(?9,priority),version=version+1,updated_at=?10 WHERE id=?11 AND kind='event'",params![title.map(|v|v.trim().to_string()),description,new_date,time,duration_minutes,completed.map(|v|v as i64),category,color,priority,now(),id]).map_err(|e|fail(e.to_string()))?;
+    let affected=conn.execute("UPDATE items SET title=COALESCE(?1,title),notes=COALESCE(?2,notes),date=?3,time=COALESCE(?4,time),duration_minutes=COALESCE(?5,duration_minutes),completed=COALESCE(?6,completed),category=COALESCE(?7,category),color=COALESCE(?8,color),priority=COALESCE(?9,priority),version=version+1,updated_at=?10 WHERE id=?11 AND kind='event' AND (?12 IS NULL OR version=?12)",params![title.map(|v|v.trim().to_string()),description,new_date,time,duration_minutes,completed.map(|v|v as i64),category,color,priority,now(),id,expected_version]).map_err(|e|fail(e.to_string()))?;
     if affected != 1 {
-        Err(fail("event not found"))
+        Err(fail("event changed elsewhere or was deleted"))
     } else {
         Ok(())
     }
@@ -254,16 +255,17 @@ pub fn update_note(
     due_date: Option<String>,
     content_blocks: Option<String>,
     priority: Option<i64>,
+    expected_version: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     date(&due_date)?;
     let conn = lock(&state)?;
     let n = now();
-    let changed=conn.execute("UPDATE items SET title=?1,notes=?2,tags=?3,archived=COALESCE(?4,archived),date=COALESCE(?5,date),content_blocks=COALESCE(?6,content_blocks),priority=COALESCE(?7,priority),version=version+1,updated_at=?8 WHERE id=?9 AND kind='task'",params![title.trim(),content,tags,archived.map(|v|v as i64),due_date,content_blocks,priority,n,id]).map_err(|e|fail(e.to_string()))?;
+    let changed=conn.execute("UPDATE items SET title=?1,notes=?2,tags=?3,archived=COALESCE(?4,archived),date=COALESCE(?5,date),content_blocks=COALESCE(?6,content_blocks),priority=COALESCE(?7,priority),version=version+1,updated_at=?8 WHERE id=?9 AND kind='task' AND (?10 IS NULL OR version=?10)",params![title.trim(),content,tags,archived.map(|v|v as i64),due_date,content_blocks,priority,n,id,expected_version]).map_err(|e|fail(e.to_string()))?;
     if changed == 1 {
         Ok(())
     } else {
-        Err(fail("note not found"))
+        Err(fail("note changed elsewhere or was deleted"))
     }
 }
 #[tauri::command]
@@ -330,6 +332,7 @@ pub fn save_calendar_task(
     due_date: Option<String>,
     estimate_minutes: Option<i64>,
     goal_id: Option<String>,
+    expected_version: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     validate_title(&title)?;
@@ -340,9 +343,9 @@ pub fn save_calendar_task(
     let item_id = match id {
         Some(id) => {
             let conn = lock(&state)?;
-            let changed=conn.execute("UPDATE items SET title=?1,date=?2,duration_minutes=COALESCE(?3,duration_minutes),status='task',completed=0,updated_at=?4,version=version+1 WHERE id=?5 AND kind='task'",params![title.trim(),due_date,estimate_minutes,now(),id]).map_err(|e|fail(e.to_string()))?;
+            let changed=conn.execute("UPDATE items SET title=?1,date=?2,duration_minutes=COALESCE(?3,duration_minutes),status='task',completed=0,updated_at=?4,version=version+1 WHERE id=?5 AND kind='task' AND (?6 IS NULL OR version=?6)",params![title.trim(),due_date,estimate_minutes,now(),id,expected_version]).map_err(|e|fail(e.to_string()))?;
             if changed != 1 {
-                return Err(fail("task not found"));
+                return Err(fail("task changed elsewhere or was deleted"));
             }
             id
         }
@@ -433,6 +436,25 @@ pub fn save_calendar_goal(
     }
     let conn = lock(&state)?;
     let id = id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    if let Some(parent) = parent_goal_id.as_deref() {
+        if clear_parent || parent == id {
+            return Err(fail("goal cannot be its own parent"));
+        }
+        let exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM calendar_goals WHERE id=?1)",
+                [parent],
+                |r| r.get(0),
+            )
+            .map_err(|e| fail(e.to_string()))?;
+        if !exists {
+            return Err(fail("parent goal not found"));
+        }
+        let cycle: bool=conn.query_row("WITH RECURSIVE descendants(id) AS (SELECT id FROM calendar_goals WHERE parent_goal_id=?1 UNION ALL SELECT g.id FROM calendar_goals g JOIN descendants d ON g.parent_goal_id=d.id) SELECT EXISTS(SELECT 1 FROM descendants WHERE id=?2)",params![id,parent],|r|r.get(0)).map_err(|e|fail(e.to_string()))?;
+        if cycle {
+            return Err(fail("goal parent would create a cycle"));
+        }
+    }
     let n = now();
     conn.execute("INSERT INTO calendar_goals(id,title,target_value,current_value,unit,deadline,goal_kind,description,criteria,parent_goal_id,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?11) ON CONFLICT(id) DO UPDATE SET title=excluded.title,target_value=excluded.target_value,current_value=excluded.current_value,unit=excluded.unit,deadline=excluded.deadline,goal_kind=excluded.goal_kind,description=excluded.description,criteria=excluded.criteria,parent_goal_id=excluded.parent_goal_id,updated_at=excluded.updated_at",params![id,title.trim(),target_value,current_value,unit,deadline,goal_kind.unwrap_or_else(||"goal".into()),description,criteria,if clear_parent{None}else{parent_goal_id},n]).map_err(|e|fail(e.to_string()))?;
     Ok(id)
@@ -467,7 +489,32 @@ pub fn set_calendar_task_goal(
         return Err(fail("invalid source type"));
     }
     let conn = lock(&state)?;
+    let expected_kind = if source_type == "note" {
+        "task"
+    } else {
+        "event"
+    };
+    let exists: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM items WHERE id=?1 AND kind=?2)",
+            params![&source_id, expected_kind],
+            |r| r.get(0),
+        )
+        .map_err(|e| fail(e.to_string()))?;
+    if !exists {
+        return Err(fail("source record not found"));
+    }
     if let Some(goal) = goal_id {
+        let goal_exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM calendar_goals WHERE id=?1)",
+                [&goal],
+                |r| r.get(0),
+            )
+            .map_err(|e| fail(e.to_string()))?;
+        if !goal_exists {
+            return Err(fail("goal not found"));
+        }
         conn.execute("INSERT INTO calendar_task_goals(source_type,source_id,goal_id,created_at) VALUES(?1,?2,?3,?4) ON CONFLICT(source_type,source_id) DO UPDATE SET goal_id=excluded.goal_id",params![source_type,source_id,goal,now()]).map_err(|e|fail(e.to_string()))?;
     } else {
         conn.execute(
@@ -586,6 +633,23 @@ pub fn start_task_block(
     state: State<'_, AppState>,
 ) -> Result<i64, String> {
     let conn = lock(&state)?;
+    let expected_kind = if source_type == "note" {
+        "task"
+    } else if source_type == "event" {
+        "event"
+    } else {
+        return Err(fail("invalid source type"));
+    };
+    let exists: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM items WHERE id=?1 AND kind=?2 AND archived=0)",
+            params![&source_id, expected_kind],
+            |r| r.get(0),
+        )
+        .map_err(|e| fail(e.to_string()))?;
+    if !exists {
+        return Err(fail("source record not found"));
+    }
     if fail_if_active.unwrap_or(false)
         && conn
             .query_row(
