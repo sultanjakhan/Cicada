@@ -5,10 +5,13 @@ export function invoke(command, args) {
 }
 export const listen = (...args) => window.__TAURI__.event.listen(...args);
 export const emit = (...args) => window.__TAURI__.event.emit(...args);
-export const IS_MOBILE = /android/i.test(navigator.userAgent) || window.innerWidth < 640;
+const FORCE_MOBILE = (() => { try { return localStorage.getItem('hanni_force_mobile') === '1'; } catch { return false; } })();
+export const IS_MOBILE = /android/i.test(navigator.userAgent) || window.innerWidth < 640 || FORCE_MOBILE;
 export const IS_DESKTOP = !IS_MOBILE;
+document.documentElement.classList.add(IS_MOBILE ? 'mobile' : 'desktop');
+if (FORCE_MOBILE) document.documentElement.classList.add('mobile-preview');
 export const S = {
-  APP_VERSION: '0.2.0', activeTab: 'calendar', openTabs: ['calendar'], activeSubTab: {},
+  APP_VERSION: '0.2.1', activeTab: 'calendar', openTabs: ['calendar'], activeSubTab: {},
   tabCustomizations: {}, theme: localStorage.getItem('hanni_theme') || 'light',
   calendarYear: new Date().getFullYear(), calendarMonth: new Date().getMonth(),
   selectedCalendarDate: null, calWeekOffset: 0, calDayDate: null,

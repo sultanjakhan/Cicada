@@ -8,7 +8,9 @@
     "Preserved MVP application identity and database",
     "UUID record and goal IDs; numeric timer IDs",
     "Routine and cross-project integrations excluded",
-    "Calendar-specific unified layout with original markup"
+    "Calendar-specific unified layout with original markup",
+    "Upstream navigation, boot splash and Calendar general settings, restricted to one project",
+    "Upstream refresh lifecycle without cloud or Health integrations"
   ],
   "files": [
     {
@@ -369,6 +371,30 @@
       "path": "src/hanni/js/health-view-refresh.js",
       "upstream_path": "desktop/src/js/health-view-refresh.js",
       "upstream_sha256": "279d568c1ec258f70994d31f0a001c234bec996ac3c49de427bb453655ae44b5",
+      "verbatim": false
+    },
+    {
+      "path": "src/app.js",
+      "upstream_path": "desktop/src/main.js",
+      "upstream_sha256": "b5ee93473a0f5de57589788061e5df2818c3cebb809b110d641a7e39eff2c45f",
+      "verbatim": false
+    },
+    {
+      "path": "src/index.html",
+      "upstream_path": "desktop/src/index.html",
+      "upstream_sha256": "5251a989d5804e74591407a8b1da3adb0f05b9642a06365e21a35fd851efd892",
+      "verbatim": false
+    },
+    {
+      "path": "src/hanni/js/tabs.js",
+      "upstream_path": "desktop/src/js/tabs.js",
+      "upstream_sha256": "a27a21ce82fd6655458b851999a1ac2a28fc085ed6f2f0caf282d0c87065f6f9",
+      "verbatim": false
+    },
+    {
+      "path": "src/hanni/js/state.js",
+      "upstream_path": "desktop/src/js/state.js",
+      "upstream_sha256": "186a0214ebbaca6780d2ec435ffcb183640d11d0b5a80127c63b5f335cc50add",
       "verbatim": false
     }
   ]

@@ -7,9 +7,9 @@ test('workspace keeps the four Calendar panes and excludes Routine', async () =>
   for (const pane of ['dash', 'table', 'goals', 'notes']) assert.match(source, new RegExp(`id:'${pane}'`));
   assert.doesNotMatch(source, /calendar-routine\.js|id:'routine'|renderRoutine/);
 });
-test('workspace has no shopping, template, or health-refresh dependency', async () => {
-  const text = (await Promise.all(['calendar-workspace.js', 'calendar-event-modal.js'].map(read))).join('\n');
-  assert.doesNotMatch(text, /shopping-list\.js|calendar-event-templates\.js|health-view-refresh\.js/);
+test('workspace has no other project or cloud Health integration', async () => {
+  const text = (await Promise.all(['calendar-workspace.js', 'calendar-event-modal.js', 'health-view-refresh.js'].map(read))).join('\n');
+  assert.doesNotMatch(text, /shopping-list\.js|calendar-event-templates\.js|health-auto-sync\.js|cloud_relay_status|background-sync|cloud-relay-updated/);
 });
 test('calendar source IDs stay strings for the UUID backend', async () => {
   const source = await read('calendar-workspace.js');
