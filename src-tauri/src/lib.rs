@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 mod calendar_compat;
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 pub struct AppState(Mutex<Connection>);
 
@@ -142,6 +142,7 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
             ("archived", "INTEGER NOT NULL DEFAULT 0"),
             ("tags", "TEXT NOT NULL DEFAULT ''"),
             ("content_blocks", "TEXT"),
+            ("status", "TEXT NOT NULL DEFAULT 'task'"),
         ] {
             if !columns.iter().any(|column| column == name) {
                 transaction
@@ -155,6 +156,7 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
           CREATE TABLE IF NOT EXISTS calendar_goals (id TEXT PRIMARY KEY, title TEXT NOT NULL, target_value REAL NOT NULL DEFAULT 1, current_value REAL, unit TEXT NOT NULL DEFAULT '', deadline TEXT, goal_kind TEXT NOT NULL DEFAULT 'goal', description TEXT NOT NULL DEFAULT '', criteria TEXT NOT NULL DEFAULT '', parent_goal_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS calendar_task_goals (source_type TEXT NOT NULL, source_id TEXT NOT NULL, goal_id TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(source_type, source_id));
           CREATE TABLE IF NOT EXISTS ui_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS timeline_blocks (id INTEGER PRIMARY KEY AUTOINCREMENT, source_type TEXT NOT NULL, source_id TEXT NOT NULL, date TEXT NOT NULL, start_time TEXT NOT NULL, end_time TEXT, duration_minutes INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 0, completion_date TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);")
           .map_err(|e| fail(format!("create calendar v2 tables: {e}")))?;
         transaction
@@ -163,6 +165,30 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
         transaction
             .commit()
             .map_err(|e| fail(format!("commit v2 migration: {e}")))?;
+    }
+    if version < 3 {
+        let transaction = conn
+            .unchecked_transaction()
+            .map_err(|e| fail(format!("begin v3 migration: {e}")))?;
+        if transaction
+            .prepare("SELECT status FROM items LIMIT 1")
+            .is_err()
+        {
+            transaction
+                .execute(
+                    "ALTER TABLE items ADD COLUMN status TEXT NOT NULL DEFAULT 'task'",
+                    [],
+                )
+                .map_err(|e| fail(format!("migrate item status: {e}")))?;
+        }
+        transaction.execute_batch("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);")
+            .map_err(|e| fail(format!("create app settings: {e}")))?;
+        transaction
+            .pragma_update(None, "user_version", SCHEMA_VERSION)
+            .map_err(|e| fail(format!("write database version: {e}")))?;
+        transaction
+            .commit()
+            .map_err(|e| fail(format!("commit v3 migration: {e}")))?;
     }
     Ok(())
 }
@@ -484,7 +510,9 @@ pub fn run() {
             calendar_compat::finish_task_block,
             calendar_compat::get_calendar_task_minutes,
             calendar_compat::get_schedules,
-            calendar_compat::get_task_pins
+            calendar_compat::get_task_pins,
+            calendar_compat::get_app_setting,
+            calendar_compat::set_app_setting
         ])
         .run(tauri::generate_context!())
         .expect("run Hanni MVP");
@@ -644,7 +672,7 @@ mod tests {
         assert_eq!(
             conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
                 .unwrap(),
-            2
+            3
         );
     }
 }

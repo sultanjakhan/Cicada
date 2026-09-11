@@ -27,14 +27,15 @@ fn item_value(
     archived: bool,
     tags: String,
     blocks: Option<String>,
+    status: String,
 ) -> Value {
-    json!({"id":item.id,"title":item.title,"content":item.notes,"description":item.notes,"date":item.date,"time":item.time,"duration_minutes":item.duration_minutes,"category":category,"color":color,"priority":priority,"completed":item.completed,"version":item.version,"created_at":item.created_at,"updated_at":item.updated_at,"source":"manual","linked_tab":"","tags":tags,"archived":archived,"tab_name":if item.kind=="task" {"calendar"} else {""},"status":if item.kind=="task" {if item.completed {"done"} else {"task"}} else {"note"},"due_date":if item.kind=="task" {item.date.clone()} else {None},"content_blocks":blocks})
+    json!({"id":item.id,"title":item.title,"content":item.notes,"description":item.notes,"date":item.date,"time":item.time,"duration_minutes":item.duration_minutes,"category":category,"color":color,"priority":priority,"completed":item.completed,"version":item.version,"created_at":item.created_at,"updated_at":item.updated_at,"source":"manual","linked_tab":"","tags":tags,"archived":archived,"tab_name":if item.kind=="task" {"calendar"} else {""},"status":if item.completed && status=="task" {"done"} else {&status},"due_date":if item.kind=="task" {item.date.clone()} else {None},"content_blocks":blocks})
 }
 fn load(conn: &Connection, id: &str) -> Result<Value, String> {
     let item = get_item(conn, id)?;
     let meta = conn
         .query_row(
-            "SELECT category,color,priority,archived,tags,content_blocks FROM items WHERE id=?1",
+            "SELECT category,color,priority,archived,tags,content_blocks,status FROM items WHERE id=?1",
             [id],
             |r| {
                 Ok((
@@ -43,13 +44,13 @@ fn load(conn: &Connection, id: &str) -> Result<Value, String> {
                     r.get(2)?,
                     r.get::<_, i64>(3)? != 0,
                     r.get(4)?,
-                    r.get(5)?,
+                    r.get(5)?,r.get(6)?,
                 ))
             },
         )
         .map_err(|e| fail(format!("read calendar item: {e}")))?;
     Ok(item_value(
-        &item, meta.0, meta.1, meta.2, meta.3, meta.4, meta.5,
+        &item, meta.0, meta.1, meta.2, meta.3, meta.4, meta.5, meta.6,
     ))
 }
 fn item_id(value: &str) -> Result<&str, String> {
@@ -158,11 +159,11 @@ pub fn get_notes(
     let conn = lock(&state)?;
     let mut q = "SELECT id FROM items WHERE kind='task'".to_string();
     if filter.as_deref() == Some("tasks") {
-        q.push_str(" AND archived=0");
+        q.push_str(" AND archived=0 AND status IN ('task','done')");
     } else if filter.as_deref() == Some("tab:calendar") {
-        q.push_str(" AND archived=0");
+        q.push_str(" AND archived=0 AND status='note'");
     } else {
-        q.push_str(" AND archived=0");
+        q.push_str(" AND status='note'");
     }
     if search.as_deref().is_some_and(|v| !v.trim().is_empty()) {
         q.push_str(" AND (title LIKE ?1 OR notes LIKE ?1)");
@@ -202,7 +203,8 @@ pub fn create_note(
     let mut conn = lock(&state)?;
     let id = Uuid::new_v4().to_string();
     let n = now();
-    conn.execute("INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags) VALUES(?1,'task',?2,?3,?4,NULL,30,?5,1,?6,?6,'task','#9B9B9B',?7,0,?8)",params![id,title.trim(),content,due_date,status.as_deref()==Some("done") as i64,n,priority.unwrap_or(0),tags]).map_err(|e|fail(e.to_string()))?;
+    let record_status = status.unwrap_or_else(|| "note".into());
+    conn.execute("INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,status) VALUES(?1,'task',?2,?3,?4,NULL,30,?5,1,?6,?6,'task','#9B9B9B',?7,0,?8,?9)",params![id,title.trim(),content,due_date,(record_status=="done") as i64,n,priority.unwrap_or(0),tags,record_status]).map_err(|e|fail(e.to_string()))?;
     Ok(id)
 }
 #[tauri::command(rename_all = "camelCase")]
@@ -257,12 +259,26 @@ pub fn get_calendar_tasks(
     state: State<'_, AppState>,
 ) -> Result<Vec<Value>, String> {
     let conn = lock(&state)?;
-    let mut s=conn.prepare(if include_completed.unwrap_or(false){"SELECT id FROM items WHERE kind='task' AND archived=0 ORDER BY date IS NULL,date,id"}else{"SELECT id FROM items WHERE kind='task' AND archived=0 AND completed=0 ORDER BY date IS NULL,date,id"}).map_err(|e|fail(e.to_string()))?;
+    let mut s=conn.prepare(if include_completed.unwrap_or(false){"SELECT id FROM items WHERE kind='task' AND archived=0 AND status IN ('task','done') ORDER BY date IS NULL,date,id"}else{"SELECT id FROM items WHERE kind='task' AND archived=0 AND status='task' AND completed=0 ORDER BY date IS NULL,date,id"}).map_err(|e|fail(e.to_string()))?;
     s.query_map([],|r|r.get::<_,String>(0)).map_err(|e|fail(e.to_string()))?.collect::<Result<Vec<_>,_>>().map_err(|e|fail(e.to_string()))?.into_iter().map(|id|{let v=load(&conn,&id)?;Ok(json!({"source_type":"note","source_id":id,"title":v["title"],"date":v["due_date"],"planned_time":null,"duration_minutes":v["duration_minutes"],"completed":v["completed"],"status_extra":v["status"],"priority":v["priority"],"tracking_mode":"track"}))}).collect()
 }
 #[tauri::command]
 pub fn get_calendar_task(id: String, state: State<'_, AppState>) -> Result<Value, String> {
-    get_note(id, state)
+    let conn = lock(&state)?;
+    let mut value = load(&conn, &id)?;
+    if value["status"] != "task" && value["status"] != "done" {
+        return Err(fail("task not found"));
+    }
+    let goal: Option<String> = conn
+        .query_row(
+            "SELECT goal_id FROM calendar_task_goals WHERE source_type='note' AND source_id=?1",
+            [&id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| fail(e.to_string()))?;
+    value["goal_id"] = json!(goal);
+    Ok(value)
 }
 #[tauri::command(rename_all = "camelCase")]
 pub fn save_calendar_task(
@@ -276,22 +292,21 @@ pub fn save_calendar_task(
     let item_id = match id {
         Some(id) => {
             let conn = lock(&state)?;
-            conn.execute("UPDATE items SET title=?1,date=?2,duration_minutes=COALESCE(?3,duration_minutes),updated_at=?4,version=version+1 WHERE id=?5 AND kind='task'",params![title.trim(),due_date,estimate_minutes,now(),id]).map_err(|e|fail(e.to_string()))?;
+            let changed=conn.execute("UPDATE items SET title=?1,date=?2,duration_minutes=COALESCE(?3,duration_minutes),status='task',completed=0,updated_at=?4,version=version+1 WHERE id=?5 AND kind='task'",params![title.trim(),due_date,estimate_minutes,now(),id]).map_err(|e|fail(e.to_string()))?;
+            if changed != 1 {
+                return Err(fail("task not found"));
+            }
             id
         }
-        None => create_note(
-            title,
-            "".into(),
-            "".into(),
-            Some("task".into()),
-            due_date,
-            None,
-            state.clone(),
-        )?,
+        None => {
+            let mut conn = lock(&state)?;
+            let id = Uuid::new_v4().to_string();
+            let n = now();
+            conn.execute("INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,status) VALUES(?1,'task',?2,'',?3,NULL,COALESCE(?4,30),0,1,?5,?5,'task','#9B9B9B',0,0,'','task')",params![id,title.trim(),due_date,estimate_minutes,n]).map_err(|e|fail(e.to_string()))?;
+            id
+        }
     };
-    if let Some(goal) = goal_id {
-        set_calendar_task_goal("note".into(), item_id.clone(), Some(goal), state)?;
-    }
+    set_calendar_task_goal("note".into(), item_id.clone(), goal_id, state)?;
     Ok(item_id)
 }
 #[tauri::command]
@@ -307,7 +322,7 @@ pub fn get_calendar_records(
     validate_date(&start)?;
     validate_date(&end)?;
     let conn = lock(&state)?;
-    let mut s=conn.prepare("SELECT id,kind FROM items WHERE archived=0 AND ((date BETWEEN ?1 AND ?2) OR (kind='task' AND date IS NULL)) ORDER BY date,time,id").map_err(|e|fail(e.to_string()))?;
+    let mut s=conn.prepare("SELECT id,kind FROM items WHERE archived=0 AND status!='note' AND ((date BETWEEN ?1 AND ?2) OR (kind='task' AND date IS NULL)) ORDER BY date,time,id").map_err(|e|fail(e.to_string()))?;
     let rows = s
         .query_map(params![start, end], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
@@ -335,10 +350,13 @@ pub fn set_ui_state(key: String, value: String, state: State<'_, AppState>) -> R
 }
 
 #[tauri::command]
-pub fn get_goals(state: State<'_, AppState>) -> Result<Vec<Value>, String> {
+pub fn get_goals(
+    _tab_name: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<Value>, String> {
     let conn = lock(&state)?;
     let mut s=conn.prepare("SELECT id,title,target_value,current_value,unit,deadline,goal_kind,description,criteria,parent_goal_id FROM calendar_goals ORDER BY created_at").map_err(|e|fail(e.to_string()))?;
-    s.query_map([],|r|Ok(json!({"id":r.get::<_,String>(0)?,"title":r.get::<_,String>(1)?,"target_value":r.get::<_,f64>(2)?,"current_value":r.get::<_,Option<f64>>(3)?,"unit":r.get::<_,String>(4)?,"deadline":r.get::<_,Option<String>>(5)?,"goal_kind":r.get::<_,String>(6)?,"description":r.get::<_,String>(7)?,"criteria":r.get::<_,String>(8)?,"parent_goal_id":r.get::<_,Option<String>>(9)?}))).map_err(|e|fail(e.to_string()))?.collect::<Result<_,_>>().map_err(|e|fail(e.to_string()))
+    s.query_map([],|r|Ok(json!({"id":r.get::<_,String>(0)?,"title":r.get::<_,String>(1)?,"target_value":r.get::<_,f64>(2)?,"current_value":r.get::<_,Option<f64>>(3)?,"unit":r.get::<_,String>(4)?,"deadline":r.get::<_,Option<String>>(5)?,"goal_kind":r.get::<_,String>(6)?,"description":r.get::<_,String>(7)?,"criteria":r.get::<_,String>(8)?,"parent_goal_id":r.get::<_,Option<String>>(9)?,"status":"active"}))).map_err(|e|fail(e.to_string()))?.collect::<Result<_,_>>().map_err(|e|fail(e.to_string()))
 }
 #[tauri::command(rename_all = "camelCase")]
 pub fn save_calendar_goal(
@@ -596,4 +614,73 @@ pub fn get_schedules(state: State<'_, AppState>) -> Result<Vec<Value>, String> {
 pub fn get_task_pins(state: State<'_, AppState>) -> Result<Vec<Value>, String> {
     let _ = lock(&state)?;
     Ok(Vec::new())
+}
+
+#[tauri::command]
+pub fn get_app_setting(key: String, state: State<'_, AppState>) -> Result<Option<String>, String> {
+    let conn = lock(&state)?;
+    conn.query_row("SELECT value FROM app_settings WHERE key=?1", [key], |r| {
+        r.get(0)
+    })
+    .optional()
+    .map_err(|e| fail(e.to_string()))
+}
+
+#[tauri::command]
+pub fn set_app_setting(
+    key: String,
+    value: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let conn = lock(&state)?;
+    conn.execute("INSERT INTO app_settings(key,value,updated_at) VALUES(?1,?2,?3) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at", params![key,value,now()])
+        .map_err(|e| fail(e.to_string()))?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn timer_closes_and_marks_only_a_task_complete() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::init_schema(&conn).unwrap();
+        conn.execute("INSERT INTO items(id,kind,title,notes,duration_minutes,completed,version,created_at,updated_at) VALUES('task','task','T','',30,0,1,'a','a')",[]).unwrap();
+        conn.execute("INSERT INTO timeline_blocks(source_type,source_id,date,start_time,is_active,completion_date,created_at,updated_at) VALUES('note','task','2026-09-11','00:00',1,'2026-09-11','a','a')",[]).unwrap();
+        stop(&conn, 1, true).unwrap();
+        assert_eq!(
+            conn.query_row("SELECT completed FROM items WHERE id='task'", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT is_active FROM timeline_blocks WHERE id=1",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+    }
+    #[test]
+    fn goal_link_schema_keeps_task_when_goal_is_removed() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::init_schema(&conn).unwrap();
+        conn.execute("INSERT INTO items(id,kind,title,notes,duration_minutes,completed,version,created_at,updated_at) VALUES('task','task','T','',30,0,1,'a','a')",[]).unwrap();
+        conn.execute(
+            "INSERT INTO calendar_goals(id,title,created_at,updated_at) VALUES('goal','G','a','a')",
+            [],
+        )
+        .unwrap();
+        conn.execute("INSERT INTO calendar_task_goals(source_type,source_id,goal_id,created_at) VALUES('note','task','goal','a')",[]).unwrap();
+        conn.execute("DELETE FROM calendar_task_goals WHERE goal_id='goal'; DELETE FROM calendar_goals WHERE id='goal';",[]).unwrap();
+        assert_eq!(
+            conn.query_row("SELECT count(*) FROM items WHERE id='task'", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+    }
 }
