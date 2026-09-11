@@ -12,7 +12,9 @@ use std::{
 use tauri::{Manager, State};
 use uuid::Uuid;
 
-const SCHEMA_VERSION: i64 = 1;
+mod calendar_compat;
+
+const SCHEMA_VERSION: i64 = 2;
 
 pub struct AppState(Mutex<Connection>);
 
@@ -121,9 +123,46 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
     CREATE INDEX IF NOT EXISTS items_calendar_order ON items(date, time, created_at);",
     )
     .map_err(|e| fail(format!("initialize database schema: {e}")))?;
-    if version < SCHEMA_VERSION {
-        conn.pragma_update(None, "user_version", SCHEMA_VERSION)
+    // v2 is additive: existing MVP records retain their ids and versions.
+    if version < 2 {
+        let transaction = conn
+            .unchecked_transaction()
+            .map_err(|e| fail(format!("begin v2 migration: {e}")))?;
+        let columns: Vec<String> = transaction
+            .prepare("PRAGMA table_info(items)")
+            .map_err(|e| fail(format!("inspect items schema: {e}")))?
+            .query_map([], |row| row.get(1))
+            .map_err(|e| fail(format!("inspect items schema: {e}")))?
+            .collect::<Result<_, _>>()
+            .map_err(|e| fail(format!("inspect items schema: {e}")))?;
+        for (name, declaration) in [
+            ("category", "TEXT NOT NULL DEFAULT 'general'"),
+            ("color", "TEXT NOT NULL DEFAULT '#9B9B9B'"),
+            ("priority", "INTEGER NOT NULL DEFAULT 0"),
+            ("archived", "INTEGER NOT NULL DEFAULT 0"),
+            ("tags", "TEXT NOT NULL DEFAULT ''"),
+            ("content_blocks", "TEXT"),
+        ] {
+            if !columns.iter().any(|column| column == name) {
+                transaction
+                    .execute_batch(&format!(
+                        "ALTER TABLE items ADD COLUMN {name} {declaration};"
+                    ))
+                    .map_err(|e| fail(format!("migrate items: {e}")))?;
+            }
+        }
+        transaction.execute_batch("CREATE TABLE IF NOT EXISTS event_categories (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, color TEXT NOT NULL, icon TEXT NOT NULL DEFAULT '', sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS calendar_goals (id TEXT PRIMARY KEY, title TEXT NOT NULL, target_value REAL NOT NULL DEFAULT 1, current_value REAL, unit TEXT NOT NULL DEFAULT '', deadline TEXT, goal_kind TEXT NOT NULL DEFAULT 'goal', description TEXT NOT NULL DEFAULT '', criteria TEXT NOT NULL DEFAULT '', parent_goal_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS calendar_task_goals (source_type TEXT NOT NULL, source_id TEXT NOT NULL, goal_id TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(source_type, source_id));
+          CREATE TABLE IF NOT EXISTS ui_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS timeline_blocks (id INTEGER PRIMARY KEY AUTOINCREMENT, source_type TEXT NOT NULL, source_id TEXT NOT NULL, date TEXT NOT NULL, start_time TEXT NOT NULL, end_time TEXT, duration_minutes INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 0, completion_date TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);")
+          .map_err(|e| fail(format!("create calendar v2 tables: {e}")))?;
+        transaction
+            .pragma_update(None, "user_version", SCHEMA_VERSION)
             .map_err(|e| fail(format!("write database version: {e}")))?;
+        transaction
+            .commit()
+            .map_err(|e| fail(format!("commit v2 migration: {e}")))?;
     }
     Ok(())
 }
@@ -410,7 +449,42 @@ pub fn run() {
             save_item,
             set_completed,
             delete_item,
-            create_backup
+            create_backup,
+            calendar_compat::get_events,
+            calendar_compat::get_all_events,
+            calendar_compat::create_event,
+            calendar_compat::update_event,
+            calendar_compat::delete_event,
+            calendar_compat::get_notes,
+            calendar_compat::get_note,
+            calendar_compat::create_note,
+            calendar_compat::update_note,
+            calendar_compat::update_note_status,
+            calendar_compat::toggle_note_archive,
+            calendar_compat::get_calendar_tasks,
+            calendar_compat::get_calendar_task,
+            calendar_compat::save_calendar_task,
+            calendar_compat::complete_calendar_task,
+            calendar_compat::get_calendar_records,
+            calendar_compat::get_ui_state,
+            calendar_compat::set_ui_state,
+            calendar_compat::get_goals,
+            calendar_compat::save_calendar_goal,
+            calendar_compat::delete_goal,
+            calendar_compat::get_calendar_task_goals,
+            calendar_compat::set_calendar_task_goal,
+            calendar_compat::list_event_categories,
+            calendar_compat::create_event_category,
+            calendar_compat::update_event_category,
+            calendar_compat::delete_event_category,
+            calendar_compat::get_timeline_blocks,
+            calendar_compat::get_active_block,
+            calendar_compat::start_task_block,
+            calendar_compat::pause_task_block,
+            calendar_compat::finish_task_block,
+            calendar_compat::get_calendar_task_minutes,
+            calendar_compat::get_schedules,
+            calendar_compat::get_task_pins
         ])
         .run(tauri::generate_context!())
         .expect("run Hanni MVP");
@@ -551,5 +625,26 @@ mod tests {
         assert_eq!(output["duration_minutes"], 30);
         assert!(output.get("durationMinutes").is_none());
         assert!(output.get("created_at").is_some());
+    }
+
+    #[test]
+    fn v1_items_survive_calendar_workspace_migration() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE items (id TEXT PRIMARY KEY NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', date TEXT, time TEXT, duration_minutes INTEGER NOT NULL, completed INTEGER NOT NULL DEFAULT 0, version INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+          INSERT INTO items VALUES ('existing','task','Kept','text','2026-09-11',NULL,30,0,4,'a','b'); PRAGMA user_version=1;").unwrap();
+        init_schema(&conn).unwrap();
+        assert_eq!(get_item(&conn, "existing").unwrap().version, 4);
+        assert_eq!(
+            conn.query_row("SELECT category FROM items WHERE id='existing'", [], |r| {
+                r.get::<_, String>(0)
+            })
+            .unwrap(),
+            "general"
+        );
+        assert_eq!(
+            conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
     }
 }
