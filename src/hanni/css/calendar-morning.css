@@ -1,0 +1,4 @@
+.calendar-morning { display:flex; align-items:center; gap:8px; }
+.calendar-morning__button { white-space:nowrap; }
+.calendar-morning__status { color:#b42318; font-size:13px; }
+.calendar-morning__status:empty { display:none; }

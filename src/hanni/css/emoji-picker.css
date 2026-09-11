@@ -1,0 +1,114 @@
+/* ── Emoji picker (Notion-style, shared singleton) ── */
+
+.emoji-picker-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 199;
+}
+
+.emoji-picker {
+  position: fixed;
+  width: 320px;
+  height: 380px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+}
+
+.emoji-picker-search {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+}
+
+.emoji-picker-search input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+}
+
+.emoji-picker-search input:focus {
+  border-color: var(--border-active);
+}
+
+.emoji-picker-cats {
+  display: flex;
+  gap: 1px;
+  padding: 4px var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+  min-height: 36px;
+}
+
+.emoji-cat-btn {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0.5;
+  transition: background var(--transition-fast), opacity var(--transition-fast);
+}
+
+.emoji-cat-btn:hover,
+.emoji-cat-btn.active {
+  background: var(--bg-hover);
+  opacity: 1;
+}
+
+.emoji-picker-grid {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  padding: var(--space-1) var(--space-2) var(--space-2);
+}
+
+.emoji-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  padding: 6px 0 3px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.emoji-section-grid {
+  display: grid;
+  grid-template-columns: repeat(9, 1fr);
+  gap: 1px;
+}
+
+.emoji-pick-btn {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.emoji-pick-btn:hover {
+  background: var(--bg-hover);
+}
+
+.emoji-pick-btn.hidden {
+  display: none;
+}

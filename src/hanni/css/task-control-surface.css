@@ -1,0 +1,62 @@
+/* Keep current work visible beside the page heading. */
+#task-control-widget.task-widget,
+.mobile #task-control-widget.task-widget.tw-running {
+  position:absolute; top:16px; right:20px; bottom:auto; left:auto;
+  transform:none; align-items:center; max-width:min(300px,calc(100% - 32px));
+}
+#task-control-widget .tw-btn {
+  width:auto; min-width:144px; min-height:48px; height:auto; padding:12px 22px;
+  border-radius:999px; gap:10px; color:var(--text-primary); font-size:15px; font-weight:600;
+  background:var(--bg-elevated); box-shadow:var(--shadow-card);
+}
+#task-control-widget .tw-btn:hover { transform:none; }
+#task-control-widget .tw-btn:focus-visible { outline:2px solid var(--accent-blue); outline-offset:4px; }
+#task-control-widget .tw-btn.tw-active { animation:none; background:var(--bg-elevated); color:var(--text-primary); border-color:var(--color-green); }
+#task-control-widget .tw-btn .tw-active-title { max-width:220px; white-space:normal; text-align:left; }
+#task-control-widget .tw-active-copy { display:flex; flex-direction:column-reverse; align-items:flex-start; gap:4px; }
+#task-control-widget .tw-active-time { font-size:12px; color:var(--text-secondary); white-space:normal; text-align:left; }
+.tw-dialog {
+  width:min(520px,calc(100vw - 32px)); max-width:calc(100vw - 32px);
+  max-height:calc(100dvh - 48px); margin:auto; padding:0; border:1px solid var(--border-default);
+  border-radius:20px; color:var(--text-primary); background:var(--bg-elevated); overflow:auto;
+  box-shadow:0 24px 80px #0003; overscroll-behavior:contain;
+}
+.tw-dialog::backdrop { background:#0005; }
+#task-control-widget .tw-dialog .tw-panel {
+  width:100%; max-width:none; max-height:none; margin:0; padding:0; border:0;
+  border-radius:0; box-shadow:none; overflow:visible;
+}
+.tw-dialog .tw-panel-header { padding:18px 22px 10px; font-size:20px; border:0; }
+.tw-dialog .tw-panel-close { width:40px; height:40px; font-size:26px; border-radius:10px; }
+.tw-dialog .tw-panel-body { padding:8px 16px 16px; }
+.tw-dialog .tw-item { min-height:48px; padding:12px; font-size:14px; }
+.tw-dialog .tw-add-row { padding:12px 20px; }
+.tw-dialog .tw-add-input { min-height:36px; }
+.tw-dialog .tw-start-error { margin:0; padding:0 22px 12px; color:var(--color-red); font-size:14px; }
+.tw-dialog .tw-start-error:empty { display:none; }
+.tw-morning-card { margin:0 22px 10px; padding:22px; border:1px solid var(--border-default); border-radius:14px; background:var(--bg-hover); }
+.tw-morning-card h3 { margin:0 0 6px; font-size:23px; font-weight:600; }
+.tw-morning-card p { margin:0 0 18px; line-height:1.5; color:var(--text-secondary); font-size:14px; }
+.tw-morning-card .calendar-morning { display:block; }
+.tw-morning-card .calendar-morning__button { width:100%; min-height:50px; padding:12px 20px; border:0; border-radius:10px; background:var(--color-green); color:var(--bg-elevated); font:inherit; font-size:16px; font-weight:650; cursor:pointer; }
+.tw-morning-card .calendar-morning__button:disabled { opacity:.65; cursor:default; }
+.tw-morning-card .calendar-morning__status { display:block; margin-top:10px; }
+.tw-morning-card .calendar-morning__status:empty { display:none; }
+.tw-day-start .tw-morning-card {
+  margin:var(--space-2) var(--space-6) var(--space-6); padding:0;
+  border:0; background:transparent;
+}
+.tw-day-start .calendar-morning__button {
+  min-height:calc(var(--space-8) * 3); padding:var(--space-6);
+  border-radius:var(--radius-xl); font-size:var(--space-6); font-weight:700;
+}
+.tw-day-start .calendar-morning__button:focus-visible {
+  outline:calc(var(--space-1) / 2) solid var(--accent-blue); outline-offset:var(--space-1);
+}
+.tw-other-tasks { border-top:1px solid var(--border-default); }
+.tw-other-tasks > summary { padding:16px 22px; cursor:pointer; font-size:14px; color:var(--text-secondary); }
+@media(max-width:640px) {
+  #task-control-widget.task-widget,.mobile #task-control-widget.task-widget.tw-running { top:8px; right:12px; bottom:auto; max-width:240px; }
+  .tw-dialog { max-height:calc(100dvh - 32px); }
+  .tw-morning-card { margin:0 16px 10px; padding:18px; }
+}

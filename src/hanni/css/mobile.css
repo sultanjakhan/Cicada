@@ -1,0 +1,466 @@
+/* ── Mobile preview mode (force-mobile via localStorage flag) ──
+   Constrains body width to 360px so desktop dev window can preview mobile. */
+.mobile-preview body, html.mobile-preview body { max-width: 360px; min-width: 360px; margin-left: 0; box-shadow: 2px 0 0 var(--accent-blue, #4f8cff); overflow-x: hidden; }
+.mobile-preview { background: var(--bg-base, #1a1a1a); }
+
+/* ── Mobile fixes (toolbar + FAB + Day-grid) ── */
+
+/* Eliminate Android WebView's 300ms click delay + flaky tap-to-click on
+   interactive elements. Without `touch-action: manipulation` the browser
+   waits to see if the tap is a double-tap-to-zoom and frequently drops
+   the click on quick or off-center taps — symptom: "кнопки не нажимаются"
+   on FAB widgets (tw-btn/mw-btn/nw-btn/qw-btn), drawer rows, and chips. */
+.mobile button,
+.mobile [role="button"],
+.mobile a,
+.mobile .tab-item,
+.mobile .mw-btn,
+.mobile .nw-btn,
+.mobile .qw-btn,
+.mobile .tw-btn,
+.mobile .setting-pill,
+.mobile .tab-settings-tab,
+.mobile .sub-tab-pill,
+.mobile .uni-tab,
+.mobile #mobile-hamburger,
+.mobile #tab-add,
+.mobile .tab-dropdown-item {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+
+/* Unified page header: the tab name is already shown in #mobile-header,
+   so the big icon + title + description block is a duplicate that eats
+   ~100px of a small screen. Collapse it to a slim one-liner. */
+.mobile .uni-header { padding: 4px 0 0; margin-bottom: 4px; }
+.mobile .uni-header-icon { font-size: 18px; width: auto; height: auto; }
+.mobile .uni-header-name { font-size: 16px; }
+.mobile .uni-header-desc { display: none; }
+
+/* Sub-tab bar (Дашборд / Таблица / Цели / Заметки / Память):
+   on narrow viewports the last tab gets cut off. Make the row
+   horizontally scrollable so all tabs remain reachable. */
+.mobile .uni-tabs {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  flex-wrap: nowrap;
+}
+.mobile .uni-tabs::-webkit-scrollbar { display: none; }
+.mobile .uni-tab { flex-shrink: 0; padding: 8px 10px; font-size: 13px; }
+
+/* "+ Событие" toolbar buttons → icon-only on mobile to fit narrow header */
+.mobile #day-add-event,
+.mobile #ctl-add,
+.mobile #cal-add-event,
+.mobile #week-add-event {
+  font-size: 0;
+  padding: 6px;
+  min-width: 32px;
+  line-height: 1;
+}
+.mobile #day-add-event::before,
+.mobile #ctl-add::before,
+.mobile #cal-add-event::before,
+.mobile #week-add-event::before {
+  content: '+';
+  font-size: 18px;
+  font-weight: 600;
+}
+
+/* Hide FAB widgets while drawer sidebar is open (no accidental clicks) */
+body:has(#tab-bar.drawer-open) #task-control-widget,
+body:has(#tab-bar.drawer-open) #quotes-widget,
+body:has(#tab-bar.drawer-open) #music-widget,
+body:has(#tab-bar.drawer-open) #notification-widget,
+body:has(#tab-bar.drawer-open) #focus-widget,
+body:has(#tab-bar.drawer-open) #chat-overlay { display: none !important; }
+
+/* Day-grid: tighter rows on mobile so labels don't wrap into 3 lines */
+.mobile .day-timeline { --day-hour-px: 44px; --day-label-width: 32px; }
+.mobile .day-now-line .wk-now-time {
+  left: var(--space-2); right: auto;
+}
+.mobile .day-hour-label {
+  font-size: 10px; min-width: 32px; max-width: 32px;
+  padding-left: 4px; padding-right: 2px;
+}
+.mobile .day-event {
+  padding: 4px 6px; gap: 4px; font-size: 12px;
+}
+.mobile .day-event-time { font-size: 10px; min-width: 36px; }
+.mobile .day-event-title { font-size: 12px; line-height: 1.2; }
+.mobile .day-event-dur { font-size: 10px; }
+
+/* ── Mobile Layout — ChatGPT/Claude-style drawer sidebar ── */
+
+/* Hide drag region on mobile */
+.mobile #drag-region { display: none; }
+
+/* App body: full width column on mobile */
+.mobile #app-body {
+  flex-direction: column;
+}
+
+/* ── Top header bar with hamburger ── */
+.mobile #mobile-header {
+  display: flex;
+  align-items: center;
+  height: 48px;
+  /* Tauri/Wry Android draws under the status bar. env(safe-area-inset-top)
+     often resolves to 0 in WebView, so use max() to guarantee at least
+     enough room for the system clock/icons (~36dp on Samsung). */
+  padding: max(env(safe-area-inset-top, 0px), 36px) var(--space-3) 0;
+  box-sizing: content-box;
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+  z-index: 50;
+  gap: var(--space-2);
+}
+
+.mobile #mobile-hamburger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--text-primary);
+  border-radius: var(--radius-md);
+  flex-shrink: 0;
+}
+.mobile #mobile-hamburger:active {
+  background: var(--bg-hover);
+}
+
+.mobile #mobile-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+/* ── Tab bar → drawer sidebar (hidden by default) ── */
+.mobile #tab-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 280px;
+  min-width: 280px;
+  z-index: 300;
+  transform: translateX(-100%);
+  transition: transform 0.18s ease;
+  flex-direction: column;
+  border-right: 1px solid var(--border-subtle);
+  background: var(--bg-sidebar);
+  /* Match safe-area top so drawer items aren't hidden behind notch. */
+  padding: calc(max(env(safe-area-inset-top, 0px), 36px) + var(--space-3)) 0 var(--space-3);
+}
+.mobile #tab-bar.drawer-open {
+  transform: translateX(0);
+}
+
+/* Backdrop when drawer is open */
+.mobile .drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 299;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  pointer-events: none;
+}
+.mobile .drawer-backdrop.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Tab list inside drawer: vertical, full width, with labels */
+.mobile #tab-list {
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  gap: 2px;
+  padding: 0 var(--space-2);
+  flex: 1;
+}
+
+/* Tab items: horizontal row with icon + label */
+.mobile .tab-item {
+  width: 100%;
+  height: 40px;
+  justify-content: flex-start;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+  flex-direction: row;
+}
+
+/* Show label next to icon in drawer */
+.mobile .tab-item-label {
+  display: inline;
+  font-size: 14px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mobile .tab-item.active .tab-item-label {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* Active indicator: left bar like desktop */
+.mobile .tab-item.active::after {
+  left: 0;
+  right: unset;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  height: unset;
+  border-radius: 0 2px 2px 0;
+}
+
+/* Show tab add button in drawer */
+.mobile #tab-add {
+  margin: var(--space-2) var(--space-2) 0;
+  width: calc(100% - var(--space-4));
+}
+
+/* Bottom section in drawer */
+.mobile #tab-bar-bottom {
+  padding: var(--space-2);
+  border-top: 1px solid var(--border-subtle);
+}
+.mobile #tab-bar-bottom .tab-item {
+  width: 100%;
+  justify-content: flex-start;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+}
+
+/* ── Sub-sidebar: overlay drawer ── */
+.mobile #sub-sidebar {
+  display: none;
+}
+.mobile #sub-sidebar.mobile-open {
+  display: flex;
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 280px;
+  z-index: 300;
+  box-shadow: var(--shadow-lg);
+}
+
+.mobile .sub-sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+  z-index: 299;
+}
+
+/* ── Content area: full width ── */
+/* Reserve space for the Android nav bar (3-button or gesture pill).
+   env(safe-area-inset-bottom) only resolves to >0 when the WebView is
+   configured edge-to-edge; fallback covers older Tauri/Android. */
+.mobile #content-area {
+  padding-bottom: max(env(safe-area-inset-bottom, 0px), 48px);
+}
+
+/* Bottom-anchored fixed elements: shift above the nav bar. */
+.mobile #version-overlay {
+  bottom: calc(max(env(safe-area-inset-bottom, 0px), 48px) + var(--space-1));
+}
+.mobile .music-widget,
+.mobile .notification-widget,
+.mobile .task-control-widget,
+.mobile #task-control-widget,
+.mobile .quotes-widget {
+  margin-bottom: max(env(safe-area-inset-bottom, 0px), 48px);
+}
+
+/* Touch-friendly targets */
+.mobile .sub-tab-pill {
+  padding: 8px 16px;
+  font-size: 13px;
+  min-height: 36px;
+}
+
+/* Wider content padding */
+.mobile .tab-content {
+  padding-left: var(--space-4) !important;
+  padding-right: var(--space-4) !important;
+}
+.mobile .page-content {
+  padding: 0 var(--space-4);
+}
+
+/* Page headers: smaller on mobile */
+.mobile .page-header-title {
+  font-size: 24px;
+}
+.mobile .page-header-icon-btn {
+  font-size: 24px;
+  margin-bottom: var(--space-1);
+}
+.mobile .page-header-icon-btn.page-header-icon-svg svg {
+  width: 24px;
+  height: 24px;
+}
+
+/* Drawer border-right leaks ~1px on the right edge when the drawer is
+   off-screen (translateX -100%) on devices with subpixel rounding.
+   The visual artefact looks like an unexplained vertical line. */
+.mobile #tab-bar { border-right: none; }
+
+/* The desktop drag region for traffic-light window controls has no
+   purpose on Android — and a stray inset can swallow taps near the top. */
+.mobile #drag-region { display: none; }
+
+/* Right-rail FAB widgets are 40-px circles pinned bottom-right. On a
+   narrow 360-px viewport they sit on top of Calendar's Sunday column and
+   Calendar's own "+ Событие" button — earlier I reserved a 48-px right
+   gutter on every view, but that clipped the very `+` it was trying to
+   protect. Instead, slim the FABs to 32 px and dim them to 55 % opacity
+   so they never compete visually with primary actions in the page. They
+   fade up to full opacity on touch, so the affordance stays. */
+.mobile .mw-btn,
+.mobile .nw-btn,
+.mobile .qw-btn,
+.mobile .tw-btn {
+  width: 32px;
+  height: 32px;
+}
+.mobile .music-widget,
+.mobile .notification-widget,
+.mobile .quotes-widget,
+.mobile .task-widget,
+.mobile #task-control-widget {
+  right: 6px;
+}
+.mobile .task-widget.tw-running,
+.mobile #task-control-widget.tw-running {
+  top: calc(env(safe-area-inset-top, 0px) + var(--space-2));
+  bottom: auto;
+  margin-bottom: 0;
+}
+.mobile .tw-running .tw-btn.tw-active {
+  width: auto;
+  max-width: calc(100vw - var(--space-4));
+  opacity: 1;
+}
+/* Apply opacity to the FAB *trigger* only — not the whole widget, or
+   the popover/panel inherits the fade and becomes unreadable. The
+   open popover must be fully opaque. */
+.mobile .mw-btn,
+.mobile .nw-btn,
+.mobile .qw-btn,
+.mobile .tw-btn {
+  opacity: 0.55;
+  transition: opacity 0.15s;
+}
+.mobile .mw-btn:active,
+.mobile .nw-btn:active,
+.mobile .qw-btn:active,
+.mobile .tw-btn:active {
+  opacity: 1;
+}
+
+/* FAB popover-панели на мобиле раскладываются от правого края FAB-кнопки
+   вверх. Дефолтная .tw-panel — 360 px (на 360-px вьюпорте уходит за
+   левый край); остальные 280 px чуть теснят правый край. Перетягиваем
+   max-width на безопасное значение под viewport, чтобы любая панель
+   гарантированно влезала независимо от длины элементов. */
+.mobile .tw-panel,
+.mobile .ap-panel,
+.mobile .qp-panel,
+.mobile .nw-panel {
+  width: auto;
+  max-width: calc(100vw - 16px);
+  min-width: 260px;
+}
+
+/* Command palette: full width on mobile */
+.mobile .cmd-palette {
+  width: 100%;
+  max-width: 100%;
+  border-radius: 0;
+  margin-top: 0;
+}
+.mobile .cmd-palette-overlay {
+  padding-top: 0;
+  align-items: flex-start;
+}
+
+/* Modals: full screen on mobile */
+.mobile .modal-overlay {
+  align-items: flex-end;
+}
+.mobile .modal-content {
+  width: 100%;
+  max-width: 100%;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  max-height: 90vh;
+}
+
+/* Tab dropdown: full screen on mobile */
+.mobile #tab-dropdown {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-width: 100%;
+  max-height: unset;
+  border-radius: 0;
+  border: none;
+  /* Room for the status bar/notch + the × close header on top. */
+  padding: calc(env(safe-area-inset-top, 0px) + 52px) var(--space-3) var(--space-3);
+}
+
+/* Close (×) for the full-screen mobile tab picker (no "outside" to tap). */
+#tab-dropdown-close { display: none; }
+.mobile #tab-dropdown-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 6px);
+  right: 8px;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 30px;
+  line-height: 1;
+}
+
+/* Data tables: horizontal scroll */
+.mobile .data-table-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Keyboard avoidance */
+.mobile #app-body {
+  height: 100dvh;
+}
+
+/* Hide desktop-only elements */
+.mobile .desktop-only { display: none !important; }
+.desktop .mobile-only { display: none !important; }
+
+/* Hide mobile header on desktop */
+#mobile-header { display: none; }

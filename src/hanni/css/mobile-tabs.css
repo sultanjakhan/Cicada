@@ -1,0 +1,119 @@
+/* ── Mobile Tab-specific Responsive — grids, tables, components ── */
+
+/* ── Grid layouts: single column ── */
+.mobile .module-grid,
+.mobile .integrations-grid,
+.mobile .proactive-styles-grid,
+.mobile .prop-type-grid {
+  grid-template-columns: 1fr;
+}
+
+/* ── Calendar Month: keep 7 cols, stretch the grid to fill the viewport ──
+   Fixed 56px rows left half the screen as dead space below the month.
+   Grid rows share the leftover height (~header/nav chrome ≈ 330px) instead;
+   minmax keeps a sane floor so 6-row months degrade to scrolling. */
+.mobile .cal-grid {
+  grid-auto-rows: minmax(52px, 1fr);
+  min-height: calc(100vh - 330px);
+  min-height: calc(100dvh - 330px);
+}
+.mobile .cal-day {
+  min-height: 52px;
+  padding: 2px;
+}
+/* Tighter month chrome: nav row and view pills */
+.mobile .calendar-nav { margin-bottom: 4px; gap: 4px; }
+.mobile .day-mode-tabs { margin-bottom: 4px; }
+.mobile .cal-day-num {
+  font-size: 11px; width: 18px; height: 18px;
+}
+/* Hiding pills entirely left the month blank — show colored dots instead
+   so the user can tell which days have events without losing tap-targets. */
+.mobile .cal-pills {
+  display: flex; flex-direction: row; flex-wrap: wrap;
+  gap: 2px; padding: 0 2px; justify-content: center; align-items: center;
+}
+.mobile .cal-pill {
+  width: 5px; height: 5px; border-radius: 50%;
+  padding: 0; margin: 0; font-size: 0;
+  border: none !important; flex: 0 0 auto;
+}
+.mobile .cal-pill-more {
+  font-size: 9px; padding: 0 2px;
+  background: transparent; color: var(--text-muted);
+  border: none;
+}
+.mobile .cal-weekday {
+  padding: 4px 2px; font-size: 9px; letter-spacing: 0; text-align: center;
+}
+
+/* Week view: keep 7 day cols, narrower hour gutter */
+.mobile .wk-header,
+.mobile .wk-allday,
+.mobile .wk-grid {
+  grid-template-columns: 32px repeat(7, 1fr);
+}
+.mobile .wk-hdr-d { font-size: 14px; }
+.mobile .wk-hdr-wd { font-size: 9px; }
+.mobile .wk-time { font-size: 9px; }
+
+/* DatabaseView completion calendar — keep 7 cols but smaller */
+.mobile .dbv-cal-grid {
+  grid-template-columns: repeat(7, 1fr);
+  font-size: 11px;
+}
+
+/* ── Stats grids: 2 columns on mobile ── */
+.mobile .dashboard-stats,
+.mobile .health-metrics {
+  grid-template-columns: repeat(2, 1fr);
+}
+.mobile .sports-stats,
+.mobile .welcome-stats {
+  grid-template-columns: 1fr;
+}
+
+/* ── Gallery grids: smaller minmax on mobile ── */
+.mobile .dbv-gallery-grid {
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+
+/* ── DatabaseView tables: horizontal scroll ── */
+.mobile .dbv-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.mobile .database-view {
+  min-width: 600px;
+}
+
+/* ── Chat: full width messages ── */
+.mobile .chat-message {
+  max-width: 100%;
+}
+.mobile #input-area {
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+/* ── Focus ring: smaller on mobile ── */
+.mobile .focus-ring-container {
+  width: 150px;
+  height: 150px;
+}
+.mobile .focus-current-timer {
+  font-size: 28px;
+}
+
+/* ── Settings: full width on mobile ── */
+.mobile .settings-page {
+  padding: var(--space-4);
+  max-width: 100%;
+}
+.mobile .settings-grid {
+  grid-template-columns: 1fr;
+}
+
+/* ── Emoji picker: fewer columns ── */
+.mobile .emoji-grid {
+  grid-template-columns: repeat(7, 1fr);
+}

@@ -1,0 +1,22 @@
+/* An observed start instant, outside task records and their controls. */
+.calv-day-start {
+  display:flex; align-items:center; gap:var(--space-2); max-width:100%;
+  padding:var(--space-2) var(--space-3); margin:var(--space-2) 0;
+  border-radius:var(--radius-sm); background:var(--color-green-bg);
+  color:var(--text-primary); font-size:var(--space-3); font-weight:600;
+  line-height:1.4; font-variant-numeric:tabular-nums;
+}
+.calv-day-start::before {
+  content:''; flex:0 0 var(--space-2); width:var(--space-2); height:var(--space-2);
+  border-radius:50%; background:var(--color-green);
+}
+.calv-day-start--timeline {
+  position:absolute; z-index:2; left:0; right:0; margin:0;
+  border-top:calc(var(--space-1) / 2) solid var(--color-green);
+  border-radius:0; padding:var(--space-1) var(--space-2);
+  background:var(--bg-card); pointer-events:none;
+}
+.calv-month-cell .calv-day-start {
+  gap:var(--space-1); padding:var(--space-1); margin:0; flex-wrap:wrap;
+  font-size:calc(var(--space-3) - var(--space-1) / 2);
+}

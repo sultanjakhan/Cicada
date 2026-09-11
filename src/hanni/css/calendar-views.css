@@ -1,0 +1,66 @@
+﻿.calv-record, .calv-month-cell, .calv-day-heading { cursor: pointer; }
+.calendar-mvp .calv-month-cell:focus-visible { outline-offset: -3px; }
+.calv-empty { margin: 12px 0; color: var(--text-secondary); font-size: 13px; }
+.calv-agenda { margin-top: 20px; }
+.calv-agenda h3 { font-size: 13px; font-weight: 650; margin: 0 0 10px; }
+.calv-record { display: grid; width: 100%; grid-template-columns: 112px minmax(0, 1fr); min-height: 52px; gap: 4px 12px; padding: 13px 10px; border: 0; border-bottom: 1px solid var(--border-default); border-radius: 0; background: transparent; color: var(--text-primary); text-align: left; }
+.calv-record:hover { background: var(--bg-soft); }
+.calv-record strong { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.calv-record-time { grid-row: 1 / 3; font-size: 12px; font-variant-numeric: tabular-nums; }
+.calv-record-meta { grid-column: 2; font-size: 11px; color: var(--text-secondary); }
+.calv-month { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 1px; background: var(--border-default); border: 1px solid var(--border-default); border-radius: 8px; overflow: hidden; }
+.calv-weekday { background: var(--bg-soft); color: var(--text-secondary); text-align: center; padding: 10px 2px; font-size: 12px; }
+.calv-month-cell { display: flex; min-width: 0; min-height: 100px; flex-direction: column; gap: 5px; padding: 8px; border: 0; border-radius: 0; background: var(--bg-card); color: var(--text-primary); text-align: left; }
+.calv-month-cell[aria-pressed="true"] { background: var(--accent-green-soft); box-shadow: inset 0 0 0 2px var(--accent-green); }
+.calv-month-cell[data-outside="true"] { background: var(--bg-soft); }
+.calv-month-cell:hover { box-shadow: inset 0 0 0 1px var(--accent-green); }
+.calv-month-cell[aria-pressed="true"]:hover { box-shadow: inset 0 0 0 2px var(--accent-green); }
+.calv-month-cell[aria-current="date"] .calv-date-number { display: inline-flex; align-self: flex-start; align-items: center; justify-content: center; min-width: 24px; min-height: 24px; border-radius: 50%; background: var(--accent-green); color: var(--bg-card); }
+.calv-date-number { font-size: 13px; font-weight: 650; }
+.calv-month-preview { display: block; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11px; color: var(--text-secondary); }
+.calv-day-count { margin-top: auto; font-size: 10px; color: var(--text-secondary); }
+.calv-time-scroll { overflow: auto; max-height: max(240px, calc(100dvh - 96px)); box-sizing: border-box; border: 1px solid var(--border-default); border-radius: 8px; overscroll-behavior: contain; overflow-anchor: none; }
+.calv-time-board { width: 100%; }
+.calv-time-board--week { min-width: 910px; }
+.calv-time-head, .calv-time-body { display: grid; grid-template-columns: 54px repeat(var(--calv-days), minmax(0, 1fr)); }
+.calv-time-head { position: sticky; top: 0; z-index: 3; background: var(--bg-card); border-bottom: 1px solid var(--border-default); }
+.calv-time-corner { align-self: center; font-size: 12px; color: var(--text-secondary); padding-left: 5px; }
+.calv-day-heading { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-height: 66px; padding: 6px 4px; border: 0; border-left: 1px solid var(--border-default); border-radius: 0; color: var(--text-primary); background: var(--bg-card); }
+.calv-day-weekday { font-size: 12px; line-height: 1.3; font-weight: 500; }
+.calv-day-number { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; min-height: 28px; font-size: 18px; line-height: 1; font-weight: 650; }
+.calv-day-heading[aria-pressed="true"] { color: var(--accent-green); background: var(--accent-green-soft); box-shadow: inset 0 -2px var(--accent-green); }
+.calv-day-heading[aria-current="date"] .calv-day-number { border-radius: 50%; background: var(--accent-green); color: var(--bg-card); }
+.calv-hours, .calv-day-column { position: relative; }
+.calv-hours { position: sticky; left: 0; z-index: 2; background: var(--bg-card); }
+.calv-time-corner { position: sticky; left: 0; z-index: 4; background: var(--bg-card); }
+.calv-hours span { position: absolute; left: 5px; color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+.calv-day-column { border-left: 1px solid var(--border-default); background: repeating-linear-gradient(to bottom, transparent 0, transparent 75px, var(--border-default) 75px, var(--border-default) 76px); }
+.calv-grid-record { box-sizing: border-box; position: absolute; display: flex; min-height: 0; flex-direction: column; gap: 3px; padding: 4px 6px; overflow: hidden; border: 1px solid var(--accent-green); border-radius: 5px; color: var(--text-primary); background: var(--accent-green-soft); }
+.calv-grid-record strong { font-size: 11px; line-height: 1.2; }
+.calv-grid-record .calv-record-time { font-size: 10px; }
+.calv-grid-record .calv-record-meta { display: none; }
+.calv-grid-record--short { flex-direction: row; align-items: center; gap: 5px; padding: 1px 3px; }
+.calv-grid-record--short .calv-record-time { flex: 0 0 auto; }
+.calv-grid-record--short strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.calv-scroll-hint { color: var(--text-secondary); font-size: 12px; margin: 10px 0; }
+.calv-disclosure { margin: 12px 0; border: 1px solid var(--border-default); border-radius: 10px; overflow: hidden; background: var(--bg-card); }
+.calv-disclosure > summary { cursor: pointer; padding: 12px 14px; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.calv-disclosure > summary::marker { color: var(--text-secondary); }
+.calv-disclosure-count { display: inline-block; min-width: 22px; margin-left: 8px; padding: 2px 6px; border-radius: 6px; background: var(--bg-soft); text-align: center; font-size: 11px; color: var(--text-secondary); }
+.calv-disclosure[open] > summary { border-bottom: 1px solid var(--border-default); }
+.calv-disclosure .calv-agenda { margin: 12px 14px; }
+.calv-disclosure .calv-record:last-child { border-bottom: 0; }
+.calv-time-jumps { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin: 10px 0; color: var(--text-secondary); font-size: 12px; }
+.calv-time-jumps button { cursor: pointer; min-height: 32px; padding: 5px 9px; border: 0; border-radius: 6px; font: inherit; color: var(--text-secondary); background: transparent; }
+.calv-time-jumps button:hover { background: var(--bg-soft); color: var(--text-primary); }
+.calv-grid-record:hover { background: var(--accent-green-soft); box-shadow: inset 0 0 0 1px var(--accent-green); }
+@media (max-width: 640px) {
+  .calv-month-cell { min-height: 59px; padding: 5px 2px; align-items: center; }
+  .calv-month-preview { display: none; }
+  .calv-weekday { padding: 9px 0; font-size: 12px; }
+  .calv-day-count { font-size: 9px; }
+  .calv-month-cell[aria-current="date"] .calv-date-number { align-self: center; }
+  .calv-record:not(.calv-grid-record) { grid-template-columns: 84px minmax(0, 1fr); padding: 12px 4px; gap: 4px 8px; }
+  .calv-record-time { font-size: 11px; }
+  .calv-record:not(.calv-grid-record) strong { font-size: 12px; }
+}
