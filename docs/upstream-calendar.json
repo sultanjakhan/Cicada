@@ -1,0 +1,369 @@
+{
+  "repository": "sultanjakhan/hanni",
+  "commit": "d759deebcb4faf5b1ada402535f3727e371e20bb",
+  "source_version": "1.2.0",
+  "scope": "Current Calendar workspace: Dashboard, Table, Goals, Notes. Routine excluded.",
+  "adaptations": [
+    "Single Calendar shell and local-only IPC bridge",
+    "Preserved MVP application identity and database",
+    "UUID record and goal IDs; numeric timer IDs",
+    "Routine and cross-project integrations excluded",
+    "Calendar-specific unified layout with original markup"
+  ],
+  "files": [
+    {
+      "path": "src/hanni/js/calendar-categories.js",
+      "upstream_path": "desktop/src/js/calendar-categories.js",
+      "upstream_sha256": "0cfafe2b5f2fd1176839609a85c4804e5c67e659abdddf749188ba23162183ee",
+      "verbatim": false
+    },
+    {
+      "path": "src/hanni/js/calendar-category-manager.js",
+      "upstream_path": "desktop/src/js/calendar-category-manager.js",
+      "upstream_sha256": "3250e3a99212484d8ef8d9e6f248de5adb24b56c3c693e5beeabe27031f7f74c",
+      "verbatim": false
+    },
+    {
+      "path": "src/hanni/js/calendar-context-menu.js",
+      "upstream_path": "desktop/src/js/calendar-context-menu.js",
+      "upstream_sha256": "bd171362207727bfca90f1d05bdb9606d7ca46b0f7a2ee65a93de02adf5de77a",
+      "verbatim": false
+    },
+    {
+      "path": "src/hanni/js/calendar-dashboard-tasks.js",
+      "upstream_path": "desktop/src/js/calendar-dashboard-tasks.js",
+      "upstream_sha256": "dc4dd8b31b4fadc29fe4bb922037db92a784eede703cce627456c70abf7e2e20",
+      "verbatim": false
+    },
+    {
+      "path": "src/hanni/js/calendar-day-start.js",
+      "upstream_path": "desktop/src/js/calendar-day-start.js",
+      "upstream_sha256": "1bf03de62a81fecbcb22ad9582df770c906a9447d1311d8dc3bf407f0ead5f28",
+      "verbatim": false
+    },
+    {
+      "path": "src/hanni/js/calendar-dialog.js",
+      "upstream_path": "desktop/src/js/calendar-dialog.js",
+      "upstream_sha256": "a6cb0550ec61af456c508e73c20abbcb854ec4621e5dd3d532cff22cadb29bba",
+      "verbatim": false
+    },
+    {
+      "path": "src/hanni/js/calendar-event-modal.js",
+      "upstream_path": "desktop/src/js/calendar-event-modal.js",
+      "upstream_sha256": "9c6e61bd0d1bd2ca1d908841811c36be71715646d8cc119b1b73c082f9bc7e37",
+      "verbatim": false
+    },
+    {
+      "path": "src/hanni/js/calendar-goals.js",
+      "upstream_path": "desktop/src/js/calendar-goals.js",
+      "upstream_sha256": "5058baa322854927958e68f4e928470f03d8b9cc5f4a9fbcf13f687f48a23f32",
+      "verbatim": false
+    },
+    {
+      "path": "src/hanni/js/calendar-grid-viewport.js",
+      "upstream_path": "desktop/src/js/calendar-grid-viewport.js",
+      "upstream_sha256": "365673c1899f5d79e78b863d88da872d9b695da91214167c7c530f757c65bb03",
+      "verbatim": false
+    },
+    {
+      "path": "src/hanni/js/calendar-notes.js",
+      "upstream_path": "desktop/src/js/calendar-notes.js",
+      "upstream_sha256": "65515b97633c9c2c5bcdba3a7c7a31dd8c5faf3df66db5bc3e802316d8e4f4bc",
+      "verbatim": false
+    },
+    {
+      "path": "src/hanni/js/calendar-now.js",
+      "upstream_path": "desktop/src/js/calendar-now.js",
+      "upstream_sha256": "8b8f8d1f2174f019eedd70f2949376216bc1234760739dffd18241c06d4460d3",
+      "verbatim": false
+    },
+    {
+      "path": "src/hanni/js/calendar-views.js",
+      "upstream_path": "desktop/src/js/calendar-views.js",
+      "upstream_sha256": "4a4a221a34e169a29e953cee6ac0c3eded9c26669c18697109c314828c1cbfda",
+      "verbatim": false
+    },
+    {
+      "path": "src/hanni/js/calendar-workspace.js",
+      "upstream_path": "desktop/src/js/calendar-workspace.js",
+      "upstream_sha256": "d424d364806d8742314aa9105667ee7b91b521cdf1a93e08d5475b59d9025759",
+      "verbatim": false
+    },
+    {
+      "path": "src/hanni/js/effective-priority.js",
+      "upstream_path": "desktop/src/js/effective-priority.js",
+      "upstream_sha256": "111b4a0394701f8aab558eb093642fbc82ea36c4915de4e1ef58041d4f4a3b87",
+      "verbatim": false
+    },
+    {
+      "path": "src/hanni/js/emoji-data.js",
+      "upstream_path": "desktop/src/js/emoji-data.js",
+      "upstream_sha256": "829aee89a898c0041a974781520d95a46f46815db52d3fc3f9074f79a5eb8735",
+      "verbatim": false
+    },
+    {
+      "path": "src/hanni/js/emoji-picker.js",
+      "upstream_path": "desktop/src/js/emoji-picker.js",
+      "upstream_sha256": "6748fa687284ee4e46b3937a472c8f6060e124ea0c8746171dbb2ab722b7656c",
+      "verbatim": false
+    },
+    {
+      "path": "src/hanni/js/icons.js",
+      "upstream_path": "desktop/src/js/icons.js",
+      "upstream_sha256": "eb777d54bacbaf493be4a1769f50d3926f4d3b6a15f66b625c6621b6ff6c5b1f",
+      "verbatim": false
+    },
+    {
+      "path": "src/hanni/js/markdown-security.js",
+      "upstream_path": "desktop/src/js/markdown-security.js",
+      "upstream_sha256": "3745ac43449c02a37281e55cb4af2385ada425c8049d6ef7b6dc696e93de6f01",
+      "verbatim": false
+    },
+    {
+      "path": "src/hanni/js/task-picker-sort.js",
+      "upstream_path": "desktop/src/js/task-picker-sort.js",
+      "upstream_sha256": "433f7d55da8fa7456f2c15c8f29d32f6ffef20305a204b1f0b6ea45b12f3b6bb",
+      "verbatim": false
+    },
+    {
+      "path": "src/hanni/js/task-picker-view.js",
+      "upstream_path": "desktop/src/js/task-picker-view.js",
+      "upstream_sha256": "f3b8b330bbfce08cf4f5ba0eff63b87590231bfd9b8ceb92e80a99c156601b80",
+      "verbatim": false
+    },
+    {
+      "path": "src/hanni/js/unified-layout.js",
+      "upstream_path": "desktop/src/js/db-view/unified-layout.js",
+      "upstream_sha256": "a021251f3134040d3519fa41b5de8f639e02afa60dd5156ea5eab4cdcd6a19d2",
+      "verbatim": false
+    },
+    {
+      "path": "src/hanni/js/utils.js",
+      "upstream_path": "desktop/src/js/utils.js",
+      "upstream_sha256": "4b17bae2ae253fd99e68520956ef9c0564c0b909d19e21a40f49009ee1e07a8c",
+      "verbatim": false
+    },
+    {
+      "path": "src/hanni/css/base.css",
+      "upstream_path": "desktop/src/css/base.css",
+      "upstream_sha256": "70527934bd7dcca568c47cdd01f0ce6f4ed93685f871cdae64b3cd386d713029",
+      "verbatim": true
+    },
+    {
+      "path": "src/hanni/css/calendar-context-menu.css",
+      "upstream_path": "desktop/src/css/calendar-context-menu.css",
+      "upstream_sha256": "9a964d7a7d44248fe8117b2703173e383189f1050311907e9295751acab4e51b",
+      "verbatim": true
+    },
+    {
+      "path": "src/hanni/css/calendar-dashboard-tasks.css",
+      "upstream_path": "desktop/src/css/calendar-dashboard-tasks.css",
+      "upstream_sha256": "2f05a547a3ef8aba2460182d90a0a302d4c857f208afe23efdea17064b1ff163",
+      "verbatim": true
+    },
+    {
+      "path": "src/hanni/css/calendar-day-start.css",
+      "upstream_path": "desktop/src/css/calendar-day-start.css",
+      "upstream_sha256": "22d3f41948b1b55a7a0c275ecdbbad0419c34bb89a0b1f25cfba03a7533132b4",
+      "verbatim": true
+    },
+    {
+      "path": "src/hanni/css/calendar-editor-shell.css",
+      "upstream_path": "desktop/src/css/calendar-editor-shell.css",
+      "upstream_sha256": "42216a94afe5785ddf9f3d2e55fb4522089968aad9ffe68ac143e240a7d0cf85",
+      "verbatim": true
+    },
+    {
+      "path": "src/hanni/css/calendar-event-modal.css",
+      "upstream_path": "desktop/src/css/calendar-event-modal.css",
+      "upstream_sha256": "a4e0fe77320e3a94686102862ff6d8879939624edc4f9be6225f938a75726563",
+      "verbatim": true
+    },
+    {
+      "path": "src/hanni/css/calendar-goal-card.css",
+      "upstream_path": "desktop/src/css/calendar-goal-card.css",
+      "upstream_sha256": "24d33e200e74eeba499b2049c688cd0af2d0c8042a4d0b143a9ba66a34200be9",
+      "verbatim": true
+    },
+    {
+      "path": "src/hanni/css/calendar-morning.css",
+      "upstream_path": "desktop/src/css/calendar-morning.css",
+      "upstream_sha256": "3a46afdce6b94535b929328c264446e918d6348e1d151768b8fe6b2d1dac32d5",
+      "verbatim": true
+    },
+    {
+      "path": "src/hanni/css/calendar-now.css",
+      "upstream_path": "desktop/src/css/calendar-now.css",
+      "upstream_sha256": "2eb467f0cfbb2fdd509a53badb5b97f4d9904c9492b2a1e3f305d5bd20ebb515",
+      "verbatim": true
+    },
+    {
+      "path": "src/hanni/css/calendar-panels.css",
+      "upstream_path": "desktop/src/css/calendar-panels.css",
+      "upstream_sha256": "c5e35c3879502cb8bcebdad810641b19f4e15cd991e919e787f164ac316e0f0f",
+      "verbatim": true
+    },
+    {
+      "path": "src/hanni/css/calendar-planning-panels.css",
+      "upstream_path": "desktop/src/css/calendar-planning-panels.css",
+      "upstream_sha256": "b2a8dc092dad1868d2a53a80ea2232ab19ff4ba1104413e7282373a87324015d",
+      "verbatim": true
+    },
+    {
+      "path": "src/hanni/css/calendar-views.css",
+      "upstream_path": "desktop/src/css/calendar-views.css",
+      "upstream_sha256": "266d5f9534e90911ad63300c83be0efb65d827224cdad1317e468f4685765a68",
+      "verbatim": true
+    },
+    {
+      "path": "src/hanni/css/calendar-workspace.css",
+      "upstream_path": "desktop/src/css/calendar-workspace.css",
+      "upstream_sha256": "ac2ad831ee045f6fa0860cba4f0779e4a0004af0c9854946fb8e107fb160468b",
+      "verbatim": true
+    },
+    {
+      "path": "src/hanni/css/database-view.css",
+      "upstream_path": "desktop/src/css/database-view.css",
+      "upstream_sha256": "7679b9948ce2cc217cc19882ee34f70c8ab6e9c240be23d37d12da10833b312a",
+      "verbatim": true
+    },
+    {
+      "path": "src/hanni/css/emoji-picker.css",
+      "upstream_path": "desktop/src/css/emoji-picker.css",
+      "upstream_sha256": "09964f28642ed9b0690dbe5d7b8f0c2699d3e3ee08b9cbd022ea43227dc54bec",
+      "verbatim": true
+    },
+    {
+      "path": "src/hanni/css/layout.css",
+      "upstream_path": "desktop/src/css/layout.css",
+      "upstream_sha256": "7b61ec973e6ae55b7adf44dab9edd4b7ef1717fa2e807812a701c525552172fd",
+      "verbatim": true
+    },
+    {
+      "path": "src/hanni/css/mobile-tabs.css",
+      "upstream_path": "desktop/src/css/mobile-tabs.css",
+      "upstream_sha256": "af3a47f983b43476c72bde854844e2f8b1e2f9264f454d80b76c3c5d36dfe302",
+      "verbatim": true
+    },
+    {
+      "path": "src/hanni/css/mobile.css",
+      "upstream_path": "desktop/src/css/mobile.css",
+      "upstream_sha256": "51d26e3f8858b0cfb2612b0d48f54af5e86c383c2be057f028c849fc68ad50b2",
+      "verbatim": true
+    },
+    {
+      "path": "src/hanni/css/settings.css",
+      "upstream_path": "desktop/src/css/settings.css",
+      "upstream_sha256": "cb4fd33f9f5a561b6d28b914d76184ba0d9376f5def3490873fad510fc511b1e",
+      "verbatim": true
+    },
+    {
+      "path": "src/hanni/css/tabs-data.css",
+      "upstream_path": "desktop/src/css/tabs-data.css",
+      "upstream_sha256": "6de4a60a82dd8bbf7c4552fa452bc6709353066c3f97a32d61c4fb9c4b85a057",
+      "verbatim": true
+    },
+    {
+      "path": "src/hanni/css/tabs-main.css",
+      "upstream_path": "desktop/src/css/tabs-main.css",
+      "upstream_sha256": "e8c88b89249b2de1ab0a7bdb4c50539a4a54dc3d7bbff42819ee0cf0f1a86c32",
+      "verbatim": true
+    },
+    {
+      "path": "src/hanni/css/task-control-surface.css",
+      "upstream_path": "desktop/src/css/task-control-surface.css",
+      "upstream_sha256": "c2d083e659c5060f53f467d507958795de72fc27875f35a524b007d07b3b64b7",
+      "verbatim": true
+    },
+    {
+      "path": "src/hanni/css/timeline.css",
+      "upstream_path": "desktop/src/css/timeline.css",
+      "upstream_sha256": "f6495cb683a8e988967e15c125daf95666939b07bde8f4a18d87dc60f88bbee9",
+      "verbatim": true
+    },
+    {
+      "path": "src/public/highlight.min.js",
+      "upstream_path": "desktop/src/highlight.min.js",
+      "upstream_sha256": "c4a399dd6f488bc97a3546e3476747b3e714c99c57b9473154c6fb8d259b9381",
+      "verbatim": true
+    },
+    {
+      "path": "src/public/hljs-theme.css",
+      "upstream_path": "desktop/src/hljs-theme.css",
+      "upstream_sha256": "a81cf033c6922c63d00266a1d44b762a981949d21f9e959b8043302bb00a40da",
+      "verbatim": true
+    },
+    {
+      "path": "src/public/marked.min.js",
+      "upstream_path": "desktop/src/marked.min.js",
+      "upstream_sha256": "6983cab3d6e007962bca2f0354f81ce1662ace34b73b8f3198758b33a97182fb",
+      "verbatim": true
+    },
+    {
+      "path": "src/public/vendor/checklist.min.js",
+      "upstream_path": "desktop/src/vendor/checklist.min.js",
+      "upstream_sha256": "c6e7d3cbe53af03fcb9a10c89607164485a253537e428a4afae961566ffbff9d",
+      "verbatim": true
+    },
+    {
+      "path": "src/public/vendor/code.min.js",
+      "upstream_path": "desktop/src/vendor/code.min.js",
+      "upstream_sha256": "ea43829cdc5b3e8a73bb9dd36892ed25c97589de5995420438f46803bbb0534b",
+      "verbatim": true
+    },
+    {
+      "path": "src/public/vendor/delimiter.min.js",
+      "upstream_path": "desktop/src/vendor/delimiter.min.js",
+      "upstream_sha256": "89db0b30a837bc06a9fd0b800793c207b9e84cf89a88763225b5989f4da1036e",
+      "verbatim": true
+    },
+    {
+      "path": "src/public/vendor/drag-drop.min.js",
+      "upstream_path": "desktop/src/vendor/drag-drop.min.js",
+      "upstream_sha256": "fc24a0daca4255929a25f77f817f28376e315bd4a9462a99d9b0800374b983d0",
+      "verbatim": true
+    },
+    {
+      "path": "src/public/vendor/editorjs.min.js",
+      "upstream_path": "desktop/src/vendor/editorjs.min.js",
+      "upstream_sha256": "823092df899a2e733ed11585334eab59855c288b37cf44956bf89a9d417d2dd6",
+      "verbatim": true
+    },
+    {
+      "path": "src/public/vendor/header.min.js",
+      "upstream_path": "desktop/src/vendor/header.min.js",
+      "upstream_sha256": "a84f1c358ee3965d3d427198aea808c764b21f7171d9ff19bc151708dd373e71",
+      "verbatim": true
+    },
+    {
+      "path": "src/public/vendor/inline-code.min.js",
+      "upstream_path": "desktop/src/vendor/inline-code.min.js",
+      "upstream_sha256": "495eeb674d0848fd07810bd2335fa08c569ee05739bb15756d5774e433e32cd0",
+      "verbatim": true
+    },
+    {
+      "path": "src/public/vendor/list.min.js",
+      "upstream_path": "desktop/src/vendor/list.min.js",
+      "upstream_sha256": "debc67131a021fc794652fabe1cab901eec73abfdc8859be51d612a3e709886e",
+      "verbatim": true
+    },
+    {
+      "path": "src/public/vendor/marker.min.js",
+      "upstream_path": "desktop/src/vendor/marker.min.js",
+      "upstream_sha256": "2e00d5c67aa28122f24aecb1c5baf68b9f363fbcd8edb606ea00e0ad64459c39",
+      "verbatim": true
+    },
+    {
+      "path": "src/public/vendor/purify.min.js",
+      "upstream_path": "desktop/src/vendor/purify.min.js",
+      "upstream_sha256": "c2f26ea4fc0d88141c9aa430eb515ac86fce59418ceebd85fa475b87a8d6c3e6",
+      "verbatim": true
+    },
+    {
+      "path": "src/public/vendor/quote.min.js",
+      "upstream_path": "desktop/src/vendor/quote.min.js",
+      "upstream_sha256": "5148cdbf4318d30da8b1756b004e899773761755e143ab986fffc848328f41ee",
+      "verbatim": true
+    }
+  ]
+}

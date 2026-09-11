@@ -13,6 +13,8 @@ use tauri::{Manager, State};
 use uuid::Uuid;
 
 mod calendar_compat;
+#[cfg(test)]
+mod workspace_ipc_tests;
 
 const SCHEMA_VERSION: i64 = 3;
 
