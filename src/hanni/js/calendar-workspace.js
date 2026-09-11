@@ -1,6 +1,4 @@
-const canRefreshHealthView = () => true;
-const mayCommitHealthView = () => true;
-const retryHealthViewRefresh = () => {};
+import { canRefreshHealthView, mayCommitHealthView, retryHealthViewRefresh, startHealthViewRefresh } from './health-view-refresh.js';
 import { S, invoke, tabLoaders, TAB_ICONS } from './state.js';
 import { ICONS } from './icons.js';
 import { escapeHtml } from './utils.js';
@@ -377,6 +375,7 @@ export async function mountCalendarTable(el) {
 }
 
 export async function loadCalendarWorkspace(el) {
+  startHealthViewRefresh();
   cleanupWorkspace(); tabLoaders.cleanupCalendar = cleanupWorkspace;
   const loadRevision = workspaceRevision;
   const { mountCalendarNow } = await import('./calendar-now.js');

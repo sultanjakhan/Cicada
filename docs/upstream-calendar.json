@@ -364,6 +364,12 @@
       "upstream_path": "desktop/src/vendor/quote.min.js",
       "upstream_sha256": "5148cdbf4318d30da8b1756b004e899773761755e143ab986fffc848328f41ee",
       "verbatim": true
+    },
+    {
+      "path": "src/hanni/js/health-view-refresh.js",
+      "upstream_path": "desktop/src/js/health-view-refresh.js",
+      "upstream_sha256": "279d568c1ec258f70994d31f0a001c234bec996ac3c49de427bb453655ae44b5",
+      "verbatim": false
     }
   ]
 }
