@@ -122,7 +122,13 @@ pub fn create_event(
     if !time.is_empty() {
         validate_time(&time)?;
     }
-    duration(duration_minutes)?;
+    if time.is_empty() {
+        if duration_minutes != 0 {
+            duration(duration_minutes)?;
+        }
+    } else {
+        duration(duration_minutes)?;
+    }
     let conn = lock(&state)?;
     let id = Uuid::new_v4().to_string();
     let n = now();
@@ -154,13 +160,18 @@ pub fn update_event(
     if let Some(ref value) = title {
         validate_title(value)?;
     }
+    let effective_time = time
+        .as_deref()
+        .unwrap_or(current.time.as_deref().unwrap_or(""));
     if let Some(ref value) = time {
         if !value.is_empty() {
             validate_time(value)?;
         }
     }
     if let Some(value) = duration_minutes {
-        duration(value)?;
+        if !(effective_time.is_empty() && value == 0) {
+            duration(value)?;
+        }
     }
     let affected=conn.execute("UPDATE items SET title=COALESCE(?1,title),notes=COALESCE(?2,notes),date=?3,time=COALESCE(?4,time),duration_minutes=COALESCE(?5,duration_minutes),completed=COALESCE(?6,completed),category=COALESCE(?7,category),color=COALESCE(?8,color),priority=COALESCE(?9,priority),version=version+1,updated_at=?10 WHERE id=?11 AND kind='event' AND (?12 IS NULL OR version=?12)",params![title.map(|v|v.trim().to_string()),description,new_date,time,duration_minutes,completed.map(|v|v as i64),category,color,priority,now(),id,expected_version]).map_err(|e|fail(e.to_string()))?;
     if affected != 1 {
@@ -340,24 +351,49 @@ pub fn save_calendar_task(
     if let Some(value) = estimate_minutes {
         duration(value)?;
     }
+    let mut conn = lock(&state)?;
+    let transaction = conn.transaction().map_err(|e| fail(e.to_string()))?;
+    if let Some(goal) = goal_id.as_deref() {
+        let exists: bool = transaction
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM calendar_goals WHERE id=?1)",
+                [goal],
+                |r| r.get(0),
+            )
+            .map_err(|e| fail(e.to_string()))?;
+        if !exists {
+            return Err(fail("goal not found"));
+        }
+    }
     let item_id = match id {
         Some(id) => {
-            let conn = lock(&state)?;
-            let changed=conn.execute("UPDATE items SET title=?1,date=?2,duration_minutes=COALESCE(?3,duration_minutes),status='task',completed=0,updated_at=?4,version=version+1 WHERE id=?5 AND kind='task' AND (?6 IS NULL OR version=?6)",params![title.trim(),due_date,estimate_minutes,now(),id,expected_version]).map_err(|e|fail(e.to_string()))?;
+            let changed=transaction.execute("UPDATE items SET title=?1,date=?2,duration_minutes=COALESCE(?3,duration_minutes),updated_at=?4,version=version+1 WHERE id=?5 AND kind='task' AND status IN ('task','done') AND (?6 IS NULL OR version=?6)",params![title.trim(),due_date,estimate_minutes,now(),id,expected_version]).map_err(|e|fail(e.to_string()))?;
             if changed != 1 {
                 return Err(fail("task changed elsewhere or was deleted"));
             }
             id
         }
         None => {
-            let conn = lock(&state)?;
+            if expected_version.is_some() {
+                return Err(fail("new task cannot have expected version"));
+            }
             let id = Uuid::new_v4().to_string();
             let n = now();
-            conn.execute("INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,status) VALUES(?1,'task',?2,'',?3,NULL,COALESCE(?4,30),0,1,?5,?5,'task','#9B9B9B',0,0,'','task')",params![id,title.trim(),due_date,estimate_minutes,n]).map_err(|e|fail(e.to_string()))?;
+            transaction.execute("INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,status) VALUES(?1,'task',?2,'',?3,NULL,COALESCE(?4,30),0,1,?5,?5,'task','#9B9B9B',0,0,'','task')",params![id,title.trim(),due_date,estimate_minutes,n]).map_err(|e|fail(e.to_string()))?;
             id
         }
     };
-    set_calendar_task_goal("note".into(), item_id.clone(), goal_id, state)?;
+    if let Some(goal) = goal_id {
+        transaction.execute("INSERT INTO calendar_task_goals(source_type,source_id,goal_id,created_at) VALUES('note',?1,?2,?3) ON CONFLICT(source_type,source_id) DO UPDATE SET goal_id=excluded.goal_id",params![&item_id,goal,now()]).map_err(|e|fail(e.to_string()))?;
+    } else {
+        transaction
+            .execute(
+                "DELETE FROM calendar_task_goals WHERE source_type='note' AND source_id=?1",
+                [&item_id],
+            )
+            .map_err(|e| fail(e.to_string()))?;
+    }
+    transaction.commit().map_err(|e| fail(e.to_string()))?;
     Ok(item_id)
 }
 #[tauri::command]
