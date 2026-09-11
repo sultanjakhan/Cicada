@@ -1,7 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Hanni MVP",
-  "version": "0.1.0",
+  "mainBinaryName": "hanni-mvp",
+  "version": "0.1.1",
   "identifier": "app.hanni.mvp",
   "build": {
     "frontendDist": "../dist",
@@ -16,5 +17,18 @@
       "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:1420; img-src 'self' asset: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"
     }
   },
-  "bundle": { "active": false }
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "Hanni MVP",
+    "icon": ["icons/icon.ico", "icons/icon.png"],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "startMenuFolder": "Hanni MVP",
+        "installerIcon": "icons/icon.ico",
+        "languages": ["Russian", "English"]
+      }
+    }
+  }
 }

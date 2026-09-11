@@ -12,3 +12,4 @@ Do not modify the legacy application, its repositories, data, locks or releases.
 - Validate relevant behavior with `npm test`, `npm run check:privacy`, `npm run build` and Rust tests. UI, native persistence, builds and hosted checks are different evidence levels; report them separately.
 - No automatic import from legacy Hanni, remote sync, telemetry, updater, projects, goals or AI in this MVP. Add scope only when requested.
 - Keep this repository private until a separate publication review and license decision.
+- Build and install this MVP from this repository only. The Windows identity is `Hanni MVP` / `app.hanni.mvp` / `hanni-mvp.exe`; preserve it across updates. `npm run package:windows` emits an installer and source/hash manifest from a clean commit. Install it beside legacy Hanni, with its own shortcuts and data directory.

@@ -10,7 +10,7 @@
 <body>
   <div class="app">
     <header class="app-header">
-      <a class="brand" href="#" aria-label="Hanni, сегодня"><span class="brand-mark">h</span><span>hanni<span class="brand-section">Календарь</span></span></a>
+      <a class="brand" href="#" aria-label="Hanni MVP, сегодня"><span class="brand-mark">M</span><span>hanni <span class="mvp-badge">MVP</span><span class="brand-section">Календарь</span></span></a>
       <div class="header-actions"><span class="storage-badge" id="storageBadge"><i></i> На устройстве</span><button class="icon-button" id="settingsButton" aria-label="Настройки" title="Настройки">⚙</button></div>
     </header>
     <div id="previewBanner" class="preview-banner" hidden>Предпросмотр интерфейса · записи только в этой вкладке браузера</div>
@@ -42,7 +42,7 @@
     </main>
   </div>
   <dialog id="confirmDialog" class="small-dialog"><h2 id="confirmTitle"></h2><p id="confirmText"></p><form method="dialog" class="dialog-actions"><button class="subtle-button" value="cancel">Отмена</button><button class="primary-button" value="confirm" id="confirmAction">Продолжить</button></form></dialog>
-  <dialog id="settingsDialog" class="small-dialog"><div class="dialog-title"><h2>Настройки</h2><button class="icon-button" id="closeSettings" aria-label="Закрыть настройки">×</button></div><p class="settings-intro">Календарь хранится на этом устройстве. Облако и аккаунт не нужны.</p><label class="field">Оформление<select id="themeSelect"><option value="system">Как в системе</option><option value="light">Светлое</option><option value="dark">Тёмное</option></select></label><hr><h3>Резервная копия</h3><p class="muted">Создать отдельную копию базы календаря, чтобы сохранить записи.</p><button class="subtle-button" id="backupButton">Создать копию</button><p id="backupResult" class="backup-result" role="status"></p><p class="version-label">Hanni MVP · 0.1.0</p></dialog>
+  <dialog id="settingsDialog" class="small-dialog"><div class="dialog-title"><h2>Настройки</h2><button class="icon-button" id="closeSettings" aria-label="Закрыть настройки">×</button></div><p class="settings-intro">Календарь хранится на этом устройстве. Облако и аккаунт не нужны.</p><label class="field">Оформление<select id="themeSelect"><option value="system">Как в системе</option><option value="light">Светлое</option><option value="dark">Тёмное</option></select></label><hr><h3>Резервная копия</h3><p class="muted">Создать отдельную копию базы календаря, чтобы сохранить записи.</p><button class="subtle-button" id="backupButton">Создать копию</button><p id="backupResult" class="backup-result" role="status"></p><p class="version-label">Hanni MVP · 0.1.1</p></dialog>
   <div id="toast" class="toast" role="status" hidden></div>
   <script type="module" src="/app.js"></script>
 </body>
