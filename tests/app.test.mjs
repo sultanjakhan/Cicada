@@ -32,7 +32,6 @@ async function launch(t) {
     if (command === 'set_ui_state' || command === 'set_app_setting') { settings.set(args.key, args.value); return; }
     if (command === 'list_event_categories') return [{ id: 'general', name: 'Общее', color: '#9B9B9B', icon: '' }];
     if (command === 'get_calendar_task_minutes') return 0;
-    if (command === 'create_backup') return 'example-backup.db';
     throw new Error('Unexpected IPC: ' + command);
   } }, event: { listen: async () => () => {}, emit: async () => {} } };
   for (const name of ['highlight.min.js','marked.min.js','vendor/purify.min.js']) w.eval(await readFile(new URL('../src/public/' + name, import.meta.url), 'utf8'));
@@ -60,7 +59,6 @@ test('installed shell boots the original workspace and all four panes with only 
   }
   assert.ok(calls.some(call => call.command === 'get_calendar_records'));
   assert.ok(calls.some(call => call.command === 'get_notes'));
-  assert.equal(w.document.getElementById('mvp-alert').hidden, true, w.document.getElementById('mvp-alert').textContent);
   assert.deepEqual(errors, []);
 });
 
@@ -75,17 +73,20 @@ test('original shared Task/Event editor opens from the dashboard', async t => {
   toggle.click();
   await settle();
   assert.ok(w.document.querySelector('#evm-date'));
-  assert.equal(w.document.getElementById('mvp-alert').hidden, true);
 });
 
-test('MVP settings preserve the separate name, theme and local backup action', async t => {
-  const { w, click, calls } = await launch(t);
-  await click('#tab-bar-bottom [aria-label="Настройки"]');
-  assert.equal(w.document.getElementById('mvp-settings').open, true);
-  const select = w.document.getElementById('mvp-theme');
+test('settings use the original page flow with only appearance retained', async t => {
+  const { w, click } = await launch(t);
+  assert.ok(w.document.getElementById('boot-splash'));
+  await click('#tab-bar-bottom [aria-label="\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438"]');
+  assert.ok(w.document.querySelector('.settings-page'));
+  assert.equal(w.document.querySelector('.settings-page-title').textContent, '\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438 \u2014 \u041a\u0430\u043b\u0435\u043d\u0434\u0430\u0440\u044c');
+  const select = w.document.querySelector('[data-theme-setting]');
+  assert.ok(select);
   select.value = 'dark'; select.dispatchEvent(new w.Event('change'));
   assert.equal(w.document.documentElement.dataset.theme, 'dark');
-  await click('#mvp-backup');
-  assert.ok(calls.some(call => call.command === 'create_backup'));
-  assert.match(w.document.getElementById('mvp-backup-result').textContent, /example-backup.db/);
+  await click('#tab-bar-bottom [aria-label="\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438"]');
+  assert.equal(w.document.querySelector('.settings-page'), null);
+  assert.equal(w.document.querySelector('#mvp-settings'), null);
+  assert.equal(w.document.querySelector('#mvp-alert'), null);
 });

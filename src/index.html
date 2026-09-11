@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:1420; img-src 'self' asset: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
 <title>Hanni MVP</title>
 <script src="/theme-boot.js"></script>
 <link rel="stylesheet" href="/hljs-theme.css">
@@ -11,6 +12,12 @@
 <script src="/vendor/purify.min.js"></script>
 </head>
 <body>
+<style>
+@keyframes hanni-spin { to { transform: rotate(360deg); } }
+#boot-splash { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; background:var(--bg-primary,#fff); color:var(--text-secondary,#888); font:14px -apple-system,system-ui,sans-serif; z-index:99999; transition:opacity 180ms ease; }
+#boot-splash .spinner { width:30px; height:30px; border:3px solid var(--border-color,#e6e6e6); border-top-color:var(--accent-blue,#3b82f6); border-radius:50%; animation:hanni-spin .7s linear infinite; }
+</style>
+<div id="boot-splash"><div class="spinner"></div><span>Загрузка…</span></div>
 <div id="drag-region"></div>
 <div id="app-body">
   <div id="mobile-header">
@@ -18,18 +25,8 @@
     <span id="mobile-title">Hanni MVP</span>
   </div>
   <div id="tab-bar"><div id="tab-list"></div><div id="tab-bar-bottom"></div></div>
-  <div id="content-area">
-    <div id="view-calendar" class="view active"><div id="calendar-content" class="tab-content"></div></div>
-  </div>
+  <div id="content-area"><div id="view-calendar" class="view active"><div id="calendar-content" class="tab-content"></div></div></div>
 </div>
-<div id="mvp-alert" class="mvp-alert" role="alert" hidden><span></span><button type="button">Закрыть</button></div>
-<dialog id="mvp-settings" class="mvp-settings" aria-labelledby="mvp-settings-title">
-  <h2 id="mvp-settings-title">Hanni MVP</h2>
-  <label>Тема <select id="mvp-theme"><option value="light">Светлая</option><option value="dark">Тёмная</option></select></label>
-  <p>Календарь · <span class="version-label">v0.2.0</span></p>
-  <p id="mvp-backup-result" role="status"></p>
-  <footer><button id="mvp-backup" type="button">Создать резервную копию</button><button id="mvp-settings-close" type="button">Закрыть</button></footer>
-</dialog>
 <script src="/vendor/editorjs.min.js"></script>
 <script src="/vendor/header.min.js"></script>
 <script src="/vendor/list.min.js"></script>

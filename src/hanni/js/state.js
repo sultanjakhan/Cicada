@@ -9,6 +9,7 @@ export const IS_MOBILE = /android/i.test(navigator.userAgent) || window.innerWid
 export const IS_DESKTOP = !IS_MOBILE;
 export const S = {
   APP_VERSION: '0.2.0', activeTab: 'calendar', openTabs: ['calendar'], activeSubTab: {},
+  settingsOpen: false,
   tabCustomizations: {}, theme: localStorage.getItem('hanni_theme') || 'light',
   calendarYear: new Date().getFullYear(), calendarMonth: new Date().getMonth(),
   selectedCalendarDate: null, calWeekOffset: 0, calDayDate: null,
