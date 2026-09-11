@@ -75,18 +75,19 @@ test('original shared Task/Event editor opens from the dashboard', async t => {
   assert.ok(w.document.querySelector('#evm-date'));
 });
 
-test('settings use the original page flow with only appearance retained', async t => {
-  const { w, click } = await launch(t);
-  assert.ok(w.document.getElementById('boot-splash'));
+test('Calendar settings retain only upstream general definitions and restore the workspace', async t => {
+  const { w, click, calls } = await launch(t);
+  await click('[data-pane="table"]');
+  assert.equal(w.document.querySelector('.uni-tab.active').dataset.pane, 'table');
   await click('#tab-bar-bottom [aria-label="\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438"]');
-  assert.ok(w.document.querySelector('.settings-page'));
   assert.equal(w.document.querySelector('.settings-page-title').textContent, '\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438 \u2014 \u041a\u0430\u043b\u0435\u043d\u0434\u0430\u0440\u044c');
-  const select = w.document.querySelector('[data-theme-setting]');
-  assert.ok(select);
-  select.value = 'dark'; select.dispatchEvent(new w.Event('change'));
-  assert.equal(w.document.documentElement.dataset.theme, 'dark');
-  await click('#tab-bar-bottom [aria-label="\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438"]');
-  assert.equal(w.document.querySelector('.settings-page'), null);
+  assert.equal(w.document.querySelectorAll('.setting-pills').length, 2);
+  assert.equal(w.document.querySelector('[data-theme-setting]'), null);
   assert.equal(w.document.querySelector('#mvp-settings'), null);
-  assert.equal(w.document.querySelector('#mvp-alert'), null);
+  await click('[data-setting-key="first_day"] [data-value="sun"]');
+  assert.ok(calls.some(call => call.command === 'set_app_setting' && call.args.key === 'tab_calendar_first_day' && call.args.value === 'sun'));
+  await click('#tab-bar-bottom [aria-label="\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438"]');
+  assert.ok(w.document.querySelector('[data-calendar-records]'));
+  assert.equal(w.document.querySelector('.uni-tab.active').dataset.pane, 'table');
+  assert.equal(calls.some(call => call.command === 'create_backup'), false);
 });

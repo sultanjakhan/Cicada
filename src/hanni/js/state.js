@@ -9,7 +9,6 @@ export const IS_MOBILE = /android/i.test(navigator.userAgent) || window.innerWid
 export const IS_DESKTOP = !IS_MOBILE;
 export const S = {
   APP_VERSION: '0.2.0', activeTab: 'calendar', openTabs: ['calendar'], activeSubTab: {},
-  settingsOpen: false,
   tabCustomizations: {}, theme: localStorage.getItem('hanni_theme') || 'light',
   calendarYear: new Date().getFullYear(), calendarMonth: new Date().getMonth(),
   selectedCalendarDate: null, calWeekOffset: 0, calDayDate: null,
@@ -31,7 +30,15 @@ export const TAB_DESCRIPTIONS = { calendar: 'События и расписан�
 export function saveTabCustom() { localStorage.setItem('hanni_tab_custom', JSON.stringify(S.tabCustomizations)); }
 export function getTabIcon(id) { return TAB_ICONS[id] || ''; }
 export function getTabDesc(id) { return S.tabCustomizations[id]?.desc ?? TAB_DESCRIPTIONS[id] ?? ''; }
-export const TAB_SETTINGS_DEFS = { calendar: [] };
+export const TAB_SETTINGS_DEFS = { calendar: [
+  { key: 'first_day', label: 'Первый день недели', type: 'select', options: [
+    { value: 'mon', label: 'Понедельник' }, { value: 'sun', label: 'Воскресенье' },
+  ], default: 'mon' },
+  { key: 'default_view', label: 'Вид по умолчанию', type: 'select', options: [
+    { value: 'Месяц', label: 'Месяц' }, { value: 'Неделя', label: 'Неделя' },
+    { value: 'День', label: 'День' }, { value: 'Список', label: 'Список' },
+  ], default: 'Месяц' },
+] };
 export const tabLoaders = {};
 export async function loadTabSetting(tabId, key) { return invoke('get_app_setting', { key: 'tab_' + tabId + '_' + key }); }
 export async function saveTabSetting(tabId, key, value) { return invoke('set_app_setting', { key: 'tab_' + tabId + '_' + key, value: String(value) }); }
