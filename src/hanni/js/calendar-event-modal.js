@@ -129,6 +129,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
   const initTab = event?.linked_tab || '';
   const initEnd = rangeEnd(initDate, initTime, initDur) || { date: initDate, time: initTime };
   let savedEventId = taskId ?? (isEdit ? String(eventId) : null);
+  let savedVersion = task?.version ?? event?.version ?? null;
   let changed = false;
   let persistedGoalId = task?.goal_id ?? null;
   let goalsReady = false;
@@ -387,6 +388,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
       const value = await invoke('get_calendar_task', { id: taskId });
       if (!overlay.isConnected || options.isCurrent?.() === false) return;
       task = value; recordReady = true;
+      savedVersion = task.version ?? null;
       titleInput.value = task.title; dateInput.value = task.date || ''; noDate.checked = !task.date; estimateInput.value = task.duration_minutes ?? '';
       showError(''); showRecordState(); updateEditorType();
       if (isTopModal()) (options.initialFocus === 'date' ? (noDate.checked ? noDate : dateInput) : titleInput).focus();
@@ -477,7 +479,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
       if (desiredGoalId != null && !availableGoalIds.has(String(desiredGoalId))) { showError('Связанная цель недоступна. Выбери другую цель или «Без цели».', goalSelect); return; }
       setPending(true);
       try {
-        savedEventId = await invoke('save_calendar_task', { id: savedEventId, title, dueDate, estimateMinutes, goalId: desiredGoalId });
+        savedEventId = await invoke('save_calendar_task', { id: savedEventId, title, dueDate, estimateMinutes, goalId: desiredGoalId, expectedVersion: savedVersion });
         changed = true; overlay.remove(); notifyChange();
       } catch (error) { setPending(false); showError('Не удалось сохранить задачу. Введённые данные сохранены в форме: ' + error); }
       return;
@@ -505,12 +507,15 @@ export async function showEventModal(eventId = null, initialDate = null, options
           title, description: desc, date, time,
           durationMinutes: dur, category: cat, color: catColor,
           completed: null, priority: pri, linkedTab,
+          expectedVersion: savedVersion,
         });
+        if (savedVersion != null) savedVersion++;
       } else {
         savedEventId = await invoke('create_event', {
           title, description: desc, date, time,
           durationMinutes: dur, category: cat, color: catColor, priority: pri, linkedTab,
         });
+        savedVersion = 1;
       }
       changed = true;
       if (desiredGoalId !== persistedGoalId) {

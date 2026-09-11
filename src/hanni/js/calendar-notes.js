@@ -188,7 +188,7 @@ export async function mountCalendarNotes(element, dependencies = {}) {
           const fresh = await api('get_note', { id });
           if (!current(value)) return;
           if (!isCalendarNote(fresh) || fresh.archived || fresh.updated_at !== value.baseUpdatedAt) { value.conflict = true; throw new Error('changed'); }
-          await api('update_note', { id, title, content, tags: fresh.tags || '', pinned: null, archived: null, tabName: null, status: null, dueDate: null, reminderAt: null, contentBlocks: value.rich ? JSON.stringify(value.output) : null, priority: null });
+          await api('update_note', { id, title, content, tags: fresh.tags || '', pinned: null, archived: null, tabName: null, status: null, dueDate: null, reminderAt: null, contentBlocks: value.rich ? JSON.stringify(value.output) : null, priority: null, expectedVersion: fresh.version ?? null });
         } else id = await api('create_note', { title, content, tags: '', tabName: 'calendar', status: 'note', dueDate: null, reminderAt: null, priority: null });
         value.committed = true; drafts.delete(value.key);
         if (current(value)) { setBusy(value, false); value.dialog.close({ skipBeforeClose: true }); await refresh('Заметка сохранена.'); }

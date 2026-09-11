@@ -222,6 +222,14 @@ fn dashboard_timer_uses_numeric_blocks_and_can_finish_a_paused_task() {
     assert!(block.is_i64());
     let active = call(&view, "get_active_block", json!({})).unwrap();
     assert_eq!(active["id"], block);
+    let tasks = call(
+        &view,
+        "get_calendar_tasks",
+        json!({"includeCompleted":true}),
+    )
+    .unwrap();
+    assert_eq!(tasks[0]["is_active"], true);
+    assert!(call(&view, "complete_calendar_task", json!({"id":task})).is_err());
     assert_eq!(
         active["date"],
         chrono::Local::now().format("%Y-%m-%d").to_string()
@@ -233,6 +241,13 @@ fn dashboard_timer_uses_numeric_blocks_and_can_finish_a_paused_task() {
     )
     .is_err());
     call(&view, "pause_task_block", json!({"blockId":block})).unwrap();
+    let tasks = call(
+        &view,
+        "get_calendar_tasks",
+        json!({"includeCompleted":true}),
+    )
+    .unwrap();
+    assert_eq!(tasks[0]["is_active"], false);
     assert!(call(&view, "get_active_block", json!({}))
         .unwrap()
         .is_null());
@@ -241,4 +256,134 @@ fn dashboard_timer_uses_numeric_blocks_and_can_finish_a_paused_task() {
         call(&view, "get_note", json!({"id":task})).unwrap()["status"],
         "done"
     );
+}
+
+#[test]
+fn stale_forms_and_missing_goals_cannot_overwrite_or_leave_phantom_tasks() {
+    let (_app, view) = fixture();
+    assert!(call(
+        &view,
+        "save_calendar_task",
+        json!({"id":null,"title":"Missing goal",
+        "dueDate":null,"estimateMinutes":30,"goalId":"missing-goal"})
+    )
+    .is_err());
+    assert_eq!(
+        call(
+            &view,
+            "get_calendar_tasks",
+            json!({"includeCompleted":true})
+        )
+        .unwrap(),
+        json!([])
+    );
+    let id = call(
+        &view,
+        "save_calendar_task",
+        json!({"id":null,"title":"Task",
+        "dueDate":null,"estimateMinutes":30,"goalId":null}),
+    )
+    .unwrap();
+    call(
+        &view,
+        "save_calendar_task",
+        json!({"id":id,"title":"New title",
+        "dueDate":null,"estimateMinutes":30,"goalId":null,"expectedVersion":1}),
+    )
+    .unwrap();
+    assert!(call(
+        &view,
+        "save_calendar_task",
+        json!({"id":id,"title":"Stale title",
+        "dueDate":null,"estimateMinutes":30,"goalId":null,"expectedVersion":1})
+    )
+    .is_err());
+    let fresh = call(&view, "get_calendar_task", json!({"id":id})).unwrap();
+    assert_eq!(fresh["title"], "New title");
+    call(
+        &view,
+        "save_calendar_task",
+        json!({"id":id,"title":"New title",
+        "dueDate":null,"estimateMinutes":null,"goalId":null,"expectedVersion":fresh["version"]}),
+    )
+    .unwrap();
+    assert!(
+        call(&view, "get_calendar_task", json!({"id":id})).unwrap()["duration_minutes"].is_null()
+    );
+    call(&view, "complete_calendar_task", json!({"id":id})).unwrap();
+    let done = call(&view, "get_calendar_task", json!({"id":id})).unwrap();
+    call(
+        &view,
+        "save_calendar_task",
+        json!({"id":id,"title":"Edited completed task",
+        "dueDate":null,"estimateMinutes":30,"goalId":null,"expectedVersion":done["version"]}),
+    )
+    .unwrap();
+    assert_eq!(
+        call(&view, "get_calendar_task", json!({"id":id})).unwrap()["completed"],
+        true
+    );
+    let parent = goal(&view, "Parent", Value::Null);
+    let child = goal(&view, "Child", parent.clone());
+    assert!(call(
+        &view,
+        "save_calendar_goal",
+        json!({"id":parent,"title":"Parent","targetValue":1.0,
+        "unit":"","deadline":null,"goalKind":"long_term","description":"","criteria":"",
+        "parentGoalId":child,"clearParent":false,"currentValue":null})
+    )
+    .is_err());
+}
+
+#[test]
+fn event_form_accepts_all_day_and_cross_midnight_and_rejects_stale_updates() {
+    let (_app, view) = fixture();
+    let id = call(
+        &view,
+        "create_event",
+        json!({"title":"All day","description":"",
+        "date":"2026-09-11","time":"","durationMinutes":0,"category":"general",
+        "color":"#9B9B9B","priority":0}),
+    )
+    .unwrap();
+    call(
+        &view,
+        "update_event",
+        json!({"id":id,"title":"Overnight","time":"23:30",
+        "durationMinutes":120,"expectedVersion":1}),
+    )
+    .unwrap();
+    assert!(call(
+        &view,
+        "update_event",
+        json!({"id":id,"title":"Stale","expectedVersion":1})
+    )
+    .is_err());
+    let events = call(&view, "get_all_events", json!({})).unwrap();
+    assert_eq!(events[0]["title"], "Overnight");
+    assert_eq!(events[0]["duration_minutes"], 120);
+    let following_day = call(
+        &view,
+        "get_calendar_records",
+        json!({"start":"2026-09-12","end":"2026-09-12"}),
+    )
+    .unwrap();
+    assert!(following_day
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|record| record["source_id"] == id));
+    call(
+        &view,
+        "update_event",
+        json!({"id":id,"durationMinutes":2880,"expectedVersion":2}),
+    )
+    .unwrap();
+    assert!(call(
+        &view,
+        "create_event",
+        json!({"title":"","description":"","date":"2026-09-11",
+        "time":"10:00","durationMinutes":30,"category":"general","color":"#9B9B9B"})
+    )
+    .is_err());
 }

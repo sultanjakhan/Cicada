@@ -372,7 +372,7 @@ pub fn save_calendar_task(
     }
     let item_id = match id {
         Some(id) => {
-            let changed=transaction.execute("UPDATE items SET title=?1,date=?2,duration_minutes=COALESCE(?3,duration_minutes),updated_at=?4,version=version+1 WHERE id=?5 AND kind='task' AND status IN ('task','done') AND (?6 IS NULL OR version=?6)",params![title.trim(),due_date,estimate_minutes,now(),id,expected_version]).map_err(|e|fail(e.to_string()))?;
+            let changed=transaction.execute("UPDATE items SET title=?1,date=?2,duration_minutes=COALESCE(?3,0),updated_at=?4,version=version+1 WHERE id=?5 AND kind='task' AND status IN ('task','done') AND (?6 IS NULL OR version=?6)",params![title.trim(),due_date,estimate_minutes,now(),id,expected_version]).map_err(|e|fail(e.to_string()))?;
             if changed != 1 {
                 return Err(fail("task changed elsewhere or was deleted"));
             }
@@ -384,7 +384,7 @@ pub fn save_calendar_task(
             }
             let id = Uuid::new_v4().to_string();
             let n = now();
-            transaction.execute("INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,status) VALUES(?1,'task',?2,'',?3,NULL,COALESCE(?4,30),0,1,?5,?5,'task','#9B9B9B',0,0,'','task')",params![id,title.trim(),due_date,estimate_minutes,n]).map_err(|e|fail(e.to_string()))?;
+            transaction.execute("INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,status) VALUES(?1,'task',?2,'',?3,NULL,COALESCE(?4,0),0,1,?5,?5,'task','#9B9B9B',0,0,'','task')",params![id,title.trim(),due_date,estimate_minutes,n]).map_err(|e|fail(e.to_string()))?;
             id
         }
     };
@@ -404,13 +404,14 @@ pub fn save_calendar_task(
 #[tauri::command]
 pub fn complete_calendar_task(id: String, state: State<'_, AppState>) -> Result<(), String> {
     let conn = lock(&state)?;
-    let active:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM timeline_blocks WHERE source_type='note' AND source_id=?1 AND is_active=1)",[&id],|r|r.get(0)).map_err(|e|fail(e.to_string()))?;
-    drop(conn);
-    if active {
-        return Err(fail("task has an active work block"));
+    let changed=conn.execute("UPDATE items SET completed=1,status='done',version=version+1,updated_at=?1 WHERE id=?2 AND kind='task' AND archived=0 AND status IN ('task','done') AND NOT EXISTS(SELECT 1 FROM timeline_blocks WHERE source_type='note' AND source_id=?2 AND is_active=1)",params![now(),id]).map_err(|e|fail(e.to_string()))?;
+    if changed == 1 {
+        Ok(())
+    } else {
+        Err(fail("task is active or no longer available"))
     }
-    update_note_status(id, "done".into(), state)
 }
+
 #[tauri::command(rename_all = "camelCase")]
 pub fn get_calendar_records(
     start: String,
@@ -420,7 +421,7 @@ pub fn get_calendar_records(
     validate_date(&start)?;
     validate_date(&end)?;
     let conn = lock(&state)?;
-    let mut s=conn.prepare("SELECT id,kind FROM items WHERE archived=0 AND status!='note' AND ((kind='event' AND date<=?2 AND (time='' OR datetime(date || ' ' || substr(time,1,5), '+' || duration_minutes || ' minutes')>?1)) OR (kind='task' AND (date BETWEEN ?1 AND ?2 OR date IS NULL))) ORDER BY date,time,id").map_err(|e|fail(e.to_string()))?;
+    let mut s=conn.prepare("SELECT id,kind FROM items WHERE archived=0 AND status!='note' AND ((kind='event' AND date<=?2 AND ((date>=?1 AND NULLIF(time,'') IS NULL) OR (NULLIF(time,'') IS NOT NULL AND datetime(date || ' ' || substr(time,1,5), '+' || duration_minutes || ' minutes')>datetime(?1)))) OR (kind='task' AND (date BETWEEN ?1 AND ?2 OR date IS NULL))) ORDER BY date,time,id").map_err(|e|fail(e.to_string()))?;
     let rows = s
         .query_map(params![start, end], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
