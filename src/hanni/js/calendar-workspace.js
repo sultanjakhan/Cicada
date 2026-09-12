@@ -393,7 +393,7 @@ export async function loadCalendarWorkspace(el) {
     if (tab) tab.focus();
     else if (heading) { heading.tabIndex = -1; heading.focus(); }
   };
-  const config = { title:'Календарь', headerIcon:TAB_ICONS.calendar, subtitle:'События и расписание', hideMemory:true, accessibleTabs:true, beforeRender:cleanupWorkspace, isCurrent:() => S.activeTab === 'calendar',
+  const config = { title:'Календарь', headerIcon:TAB_ICONS.calendar, subtitle:'События и расписание', hideDescription:true, hideMemory:true, accessibleTabs:true, beforeRender:cleanupWorkspace, isCurrent:() => S.activeTab === 'calendar',
     panes: [{id:'dash',label:'Дашборд'}, {id:'table',label:'Таблица'}, {id:'goals',label:'Цели'}, {id:'notes',label:'Заметки'}],
     toolbarActions: [{ label: 'Создать', title: 'Создать задачу или событие', icon: '<span aria-hidden="true">+</span>', onClick: button => {
       const revision = workspaceRevision;

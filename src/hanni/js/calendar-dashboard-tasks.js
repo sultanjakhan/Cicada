@@ -13,24 +13,22 @@ export function mountCalendarDashboardTasks(element, dependencies) {
   let disposed = false, revision = 0, loading = false, failed = false, expanded = false, page = 0;
   element.classList.add('calendar-task-overview');
   element.innerHTML = `<section aria-labelledby="${prefix}-title">
-    <div class="cto-heading"><h2 id="${prefix}-title" tabindex="-1" data-overview-title>Другие задачи на сегодня</h2><button type="button" data-overview-toggle aria-expanded="false" aria-controls="${prefix}-all" disabled>Все задачи</button></div>
-    <p class="cto-description">Задачи всех целей и без цели. Текущая задача показана выше.</p>
+    <div class="cto-heading"><h2 id="${prefix}-title" tabindex="-1" data-overview-title>Задачи</h2><div class="cto-filters" role="group" aria-label="Показать задачи"><button type="button" data-overview-today-filter aria-pressed="true" aria-controls="${prefix}-today" disabled>Сегодня <span data-overview-today-count></span></button><button type="button" data-overview-toggle aria-pressed="false" aria-controls="${prefix}-all" disabled>Все <span data-overview-all-count></span></button></div></div>
+    <p class="cto-description" data-overview-description></p>
     <p class="cto-message" data-overview-message role="status" aria-live="polite"></p>
     <button type="button" data-overview-retry hidden>Повторить загрузку</button>
-    <div data-overview-today></div>
+    <div id="${prefix}-today" data-overview-today></div>
     <div id="${prefix}-all" class="cto-all" data-overview-all hidden>
-      <div class="cto-heading"><h3 tabindex="-1" data-overview-all-title>Все незавершённые задачи</h3><button type="button" data-overview-close aria-label="Закрыть список задач">×</button></div>
-      <p class="cto-description">Включая текущую задачу. События доступны в календаре.</p>
       <div data-overview-groups></div>
-      <div class="cto-pagination" data-overview-pagination hidden><button type="button" data-overview-prev>Назад</button><span data-overview-page role="status"></span><button type="button" data-overview-next>Далее</button></div>
     </div>
+    <div class="cto-pagination" data-overview-pagination hidden><button type="button" data-overview-prev>Назад</button><span data-overview-page role="status"></span><button type="button" data-overview-next>Далее</button></div>
   </section>`;
   const query = name => element.querySelector(`[data-overview-${name}]`);
-  const title = query('title'), toggle = query('toggle'), message = query('message'), retry = query('retry');
+  const title = query('title'), toggle = query('toggle'), todayFilter = query('today-filter'), message = query('message'), retry = query('retry');
   const today = query('today'), all = query('all'), groups = query('groups'), pagination = query('pagination');
   const dateLabel = value => {
     const parsed = new Date(`${value}T12:00:00`);
-    return Number.isFinite(parsed.getTime()) ? new Intl.DateTimeFormat('ru', { day: 'numeric', month: 'short', year: 'numeric' }).format(parsed) : String(value);
+    return Number.isFinite(parsed.getTime()) ? new Intl.DateTimeFormat('ru', { day: 'numeric', month: 'short', ...(parsed.getFullYear() === now().getFullYear() ? {} : { year: 'numeric' }) }).format(parsed) : String(value);
   };
   const groupOf = row => row.is_active ? 'active' : !row.date ? 'undated' : row.date < date ? 'past' : row.date === date ? 'today' : 'future';
   const groupLabels = { active: 'В работе', past: 'Просроченные', today: 'Сегодня', future: 'Позже', undated: 'Без даты' };
@@ -51,12 +49,15 @@ export function mountCalendarDashboardTasks(element, dependencies) {
       button.dataset.overviewTask = taskKey(row); button.dataset.overviewScope = scope;
       const name = document.createElement('span'); name.className = 'cto-task-title'; name.textContent = row.title;
       const meta = document.createElement('span'); meta.className = 'cto-task-meta';
-      const parts = [row.date ? dateLabel(row.date) : 'Без даты'];
+      const minutes = Number(row.duration_minutes || row.target_minutes);
+      const parts = [];
+      if (row.date && row.date !== date) parts.push(dateLabel(row.date));
+      if (minutes > 0) parts.push(`${minutes} мин`);
       if (taskKey(row) === current.key) parts.push(current.state === 'active' ? 'В работе · сейчас' : current.state === 'paused' ? 'На паузе · сейчас' : 'Сейчас');
       else if (row.is_active) parts.push('В работе');
       else if (row.has_work || row.actual_minutes > 0) parts.push('На паузе');
       meta.textContent = parts.join(' · ');
-      button.append(name, meta); item.append(button);
+      button.append(name); if (parts.length) button.append(meta); item.append(button);
       if (dependencies.mountMenu) {
         const more = document.createElement('button'); more.type = 'button'; more.className = 'cto-task-more'; more.textContent = '⋯';
         more.dataset.recordMenu = ''; more.dataset.overviewMenuTask = taskKey(row); more.dataset.overviewScope = scope;
@@ -75,26 +76,30 @@ export function mountCalendarDashboardTasks(element, dependencies) {
     element.setAttribute('aria-busy', String(loading));
     message.textContent = failed ? 'Не удалось обновить список задач. Повтори загрузку.' : loading ? (rows ? 'Обновляем задачи…' : 'Загружаем задачи…') : '';
     retry.hidden = !failed; retry.disabled = loading;
-    toggle.disabled = rows === null;
+    toggle.disabled = todayFilter.disabled = rows === null;
     if (rows === null) return;
     const focused = document.activeElement;
     const focusedKey = element.contains(focused) ? focused.dataset.overviewTask || focused.dataset.overviewMenuTask : null;
     const focusedScope = focused?.dataset.overviewScope;
     const items = ordered(), todayItems = items.filter(row => row.date === date && taskKey(row) !== current.key);
-    title.textContent = `Другие задачи на сегодня · ${todayItems.length}`;
-    toggle.textContent = `${expanded ? 'Закрыть все задачи' : 'Все задачи'} · ${items.length}`;
-    toggle.setAttribute('aria-expanded', String(expanded)); all.hidden = !expanded;
+    query('today-count').textContent = String(todayItems.length);
+    query('all-count').textContent = String(items.length);
+    todayFilter.setAttribute('aria-label', `Сегодня: ${todayItems.length} задач, без текущей`);
+    toggle.setAttribute('aria-label', `Все незавершённые задачи: ${items.length}`);
+    toggle.setAttribute('aria-pressed', String(expanded)); todayFilter.setAttribute('aria-pressed', String(!expanded));
+    all.hidden = !expanded; today.hidden = expanded;
+    query('description').textContent = expanded ? 'Все незавершённые, включая текущую задачу.' : current.key ? 'Текущая задача показана выше.' : '';
+    query('description').hidden = !query('description').textContent;
+    const visibleItems = expanded ? items : todayItems;
+    page = Math.max(0, Math.min(page, Math.ceil(visibleItems.length / PAGE_SIZE) - 1));
+    const slice = visibleItems.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
     today.replaceChildren();
-    if (todayItems.length) today.append(taskList(todayItems.slice(0, 3), 'today'));
-    else empty(today, 'Других задач на сегодня нет. Можно посмотреть задачи на другие даты и без даты.');
-    if (todayItems.length > 3) {
-      const rest = document.createElement('button'); rest.type = 'button'; rest.className = 'cto-more'; rest.dataset.overviewMore = '';
-      rest.textContent = `Ещё ${todayItems.length - 3} на сегодня`; today.append(rest);
+    if (!expanded) {
+      if (slice.length) today.append(taskList(slice, 'today'));
+      else empty(today, current.key ? 'Других задач на сегодня нет.' : 'На сегодня задач нет. Можно выбрать задачу во вкладке «Все».');
     }
-    page = Math.max(0, Math.min(page, Math.ceil(items.length / PAGE_SIZE) - 1));
     groups.replaceChildren();
     if (expanded) {
-      const slice = items.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
       for (const [group, label] of Object.entries(groupLabels)) {
         const groupRows = slice.filter(row => groupOf(row) === group);
         if (!groupRows.length) continue;
@@ -103,10 +108,10 @@ export function mountCalendarDashboardTasks(element, dependencies) {
       }
       if (!items.length) empty(groups, 'Незавершённых задач пока нет.');
     }
-    pagination.hidden = items.length <= PAGE_SIZE;
+    pagination.hidden = visibleItems.length <= PAGE_SIZE;
     query('prev').disabled = page === 0;
-    query('next').disabled = (page + 1) * PAGE_SIZE >= items.length;
-    query('page').textContent = items.length ? `${page * PAGE_SIZE + 1}–${Math.min((page + 1) * PAGE_SIZE, items.length)} из ${items.length}` : '';
+    query('next').disabled = (page + 1) * PAGE_SIZE >= visibleItems.length;
+    query('page').textContent = visibleItems.length ? `${page * PAGE_SIZE + 1}–${Math.min((page + 1) * PAGE_SIZE, visibleItems.length)} из ${visibleItems.length}` : '';
     if (focusedKey && !focused.isConnected) (findRowButton(focusedKey, focusedScope, 'recordMenu' in focused.dataset) || title).focus();
   }
   async function refresh() {
@@ -127,18 +132,11 @@ export function mountCalendarDashboardTasks(element, dependencies) {
       if (!disposed && request === revision) { loading = false; render(); }
     }
   }
-  function expandToday() {
-    expanded = true;
-    const index = ordered().findIndex(row => row.date === date && taskKey(row) !== current.key);
-    page = Math.max(0, Math.floor(index / PAGE_SIZE)); render(); groups.scrollTop = 0; query('all-title').focus();
-  }
   const onClick = event => {
     const button = event.target.closest('button'); if (!button || !element.contains(button) || button.disabled) return;
-    if (button === toggle) { expanded = !expanded; render(); if (expanded) { groups.scrollTop = 0; query('all-title').focus(); } }
-    else if (button === query('close')) { expanded = false; render(); toggle.focus(); }
+    if (button === toggle || button === todayFilter) { expanded = button === toggle; page = 0; render(); }
     else if (button === retry) void refresh();
-    else if ('overviewMore' in button.dataset) expandToday();
-    else if (button === query('prev') || button === query('next')) { page += button === query('prev') ? -1 : 1; render(); groups.scrollTop = 0; query('all-title').focus(); }
+    else if (button === query('prev') || button === query('next')) { page += button === query('prev') ? -1 : 1; render(); title.focus(); }
     else if ('overviewTask' in button.dataset) {
       const key = button.dataset.overviewTask, scope = button.dataset.overviewScope;
       const row = rows?.find(value => taskKey(value) === key);
@@ -146,7 +144,7 @@ export function mountCalendarDashboardTasks(element, dependencies) {
     }
   };
   const onExternal = () => { void refresh(); };
-  const onKey = event => { if (event.key === 'Escape' && expanded && all.contains(event.target)) { event.preventDefault(); event.stopPropagation(); expanded = false; render(); toggle.focus(); } };
+  const onKey = event => { if (event.key === 'Escape' && expanded && all.contains(event.target)) { event.preventDefault(); event.stopPropagation(); expanded = false; page = 0; render(); todayFilter.focus(); } };
   element.addEventListener('click', onClick);
   element.addEventListener('keydown', onKey);
   window.addEventListener('task-state-changed', onExternal); window.addEventListener('focus', onExternal);

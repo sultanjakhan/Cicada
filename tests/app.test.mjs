@@ -80,7 +80,9 @@ test('one persistent header action opens the shared Task/Event editor and restor
   const { w, click } = await launch(t);
   assert.equal(w.document.querySelector('[data-overview-create]'), null);
   const trigger = w.document.querySelector('.uni-header-action');
-  assert.ok(trigger.closest('.uni-header'));
+  assert.ok(trigger.closest('.uni-navigation'));
+  assert.ok(trigger.closest('.uni-navigation').querySelector('.uni-tabs'));
+  assert.equal(w.document.querySelector('.uni-header-desc'), null);
   assert.equal(trigger.closest('.uni-content'), null);
   trigger.focus();
   await click('.uni-header-action');

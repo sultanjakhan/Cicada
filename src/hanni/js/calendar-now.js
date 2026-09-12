@@ -61,13 +61,13 @@ export function mountCalendarNow(element, dependencies = {}) {
   element.classList.toggle('calendar-now--compact', dependencies.compact === true);
   element.innerHTML = `
     <section class="calendar-now__goal" aria-labelledby="${prefix}-goal-label ${prefix}-goal-title">
-      <div class="calendar-now__goal-top"><p class="calendar-now__eyebrow" id="${prefix}-goal-label">Главная цель</p><span data-ui="goal-status" class="calendar-now__goal-status"></span></div>
-      <h2 id="${prefix}-goal-title" data-ui="goal-title"></h2>
+      <div class="calendar-now__goal-top"><p class="calendar-now__eyebrow" id="${prefix}-goal-label">Главная цель</p><button type="button" data-action="open-goal" class="calendar-now__quiet" aria-label="Сменить главную цель" aria-haspopup="dialog"><span data-action-label>Выбрать цель</span></button></div>
+      <h2 id="${prefix}-goal-title"><button type="button" data-action="goal-details" class="calendar-now__goal-link" aria-haspopup="dialog" hidden><span data-ui="goal-title"></span><span class="calendar-now__button-icon" aria-hidden="true">${ICONS.arrowRight}</span></button><span data-ui="goal-empty"></span></h2>
+      <span data-ui="goal-status" class="calendar-now__goal-status" hidden></span>
+      <p data-ui="goal-stage" class="calendar-now__goal-stage" hidden></p>
       <p data-ui="goal-meta" class="calendar-now__goal-meta" hidden></p>
       <p data-ui="goal-hint" class="calendar-now__goal-hint" hidden></p>
       <div class="calendar-now__goal-actions">
-        <button type="button" data-action="goal-details" class="calendar-now__secondary" aria-haspopup="dialog" hidden>${buttonContent('arrowRight', 'Открыть цель')}</button>
-        <button type="button" data-action="open-goal" class="calendar-now__quiet" aria-haspopup="dialog">${buttonContent('switch', 'Выбрать цель')}</button>
         <button type="button" data-action="browse-goals" class="calendar-now__quiet" hidden>Все цели</button>
       </div>
     </section>
@@ -352,8 +352,21 @@ export function mountCalendarNow(element, dependencies = {}) {
     ui.card.setAttribute('aria-busy', String(busy || reading));
     const goal = selectedGoal();
     ui['goal-title'].textContent = goal?.title || (!snapshot ? 'Загружаем цель…' : saved.goalId ? 'Выбранная цель недоступна' : 'Выбери, к чему хочешь прийти');
-    ui['goal-status'].textContent = !snapshot ? '' : goal ? 'Выбрана' : saved.goalId ? 'Недоступна' : 'Не выбрана';
-    ui['goal-status'].hidden = !snapshot;
+    ui['goal-empty'].textContent = goal ? '' : ui['goal-title'].textContent;
+    ui['goal-empty'].hidden = !!goal;
+    ui['goal-status'].textContent = !snapshot || goal ? '' : saved.goalId ? 'Недоступна' : 'Не выбрана';
+    ui['goal-status'].hidden = !snapshot || !!goal;
+    const linkedGoal = snapshot?.links.find(link => keyOf(link) === keyOf(task));
+    const branch = [], visited = new Set();
+    let node = snapshot?.goals.find(item => String(item.id) === String(linkedGoal?.goal_id));
+    while (node && !visited.has(String(node.id))) {
+      visited.add(String(node.id)); branch.unshift(node);
+      if (String(node.id) === String(goal?.id)) break;
+      node = snapshot.goals.find(item => String(item.id) === String(node.parent_goal_id));
+    }
+    const isGoalBranch = goal && branch.length > 1 && String(branch[0].id) === String(goal.id);
+    ui['goal-stage'].textContent = isGoalBranch ? `Этап: ${branch.slice(1).map(item => item.title).join(' → ')}` : '';
+    ui['goal-stage'].hidden = !isGoalBranch;
     ui['goal-meta'].textContent = goalDateLabel(goal?.deadline) ? `Срок: ${goalDateLabel(goal.deadline)}` : '';
     ui['goal-meta'].hidden = !ui['goal-meta'].textContent;
     ui['goal-hint'].textContent = !snapshot || goal ? '' : saved.goalId ? 'Выбери другую цель или сохрани новую.' : 'Цель можно сохранить без срока и без готового плана.';
@@ -361,7 +374,9 @@ export function mountCalendarNow(element, dependencies = {}) {
     actions['goal-details'].hidden = !goal;
     actions['goal-details'].disabled = busy || reading || !!failure;
     actions['browse-goals'].hidden = !!goal || !snapshot;
-    actions['open-goal'].querySelector('[data-action-label]').textContent = goal ? 'Сменить цель' : 'Выбрать цель';
+    actions['open-goal'].querySelector('[data-action-label]').textContent = goal ? 'Сменить' : 'Выбрать цель';
+    actions['open-goal'].setAttribute('aria-label', goal ? 'Сменить главную цель' : 'Выбрать главную цель');
+    actions['browse-goals'].parentElement.hidden = !!goal || !snapshot;
     actions['open-goal'].classList.toggle('calendar-now__primary', !goal);
     actions['open-goal'].classList.toggle('calendar-now__quiet', !!goal);
     actions['open-goal'].disabled = !!active || busy || reading || !!failure || !snapshot || !!saved.completed;

@@ -923,6 +923,34 @@ test('a paused note completed outside today is reconciled from its authoritative
    assert.equal(data.count('finish_task_block'), 0);
 
   });
+test('main goal shows the current task branch without repeating its title or inventing progress', async t => {
+   const data = backend();
+   data.goals.push({id:'stage-a',title:'Данные',parent_goal_id:'goal-a'}, {id:'stage-b',title:'SQL',parent_goal_id:'stage-a'});
+   data.links[0].goal_id='stage-b';
+   const x = await mount(t,data);
+   assert.equal(x.ui('goal-stage').textContent,'Этап: Данные → SQL');
+   assert.equal(x.ui('goal-stage').hidden,false);
+   assert.doesNotMatch(x.host.querySelector('.calendar-now__goal').textContent,/Вопросы к интервью|%/);
+   assert.equal(data.count('start_task_block'),0);
+   data.links[0].goal_id='goal-a';
+   await x.refresh();
+   assert.equal(x.ui('goal-stage').hidden,true,'direct root link needs no duplicate root breadcrumb');
+});
+
+test('an unrelated or broken goal branch is never presented as part of the main goal', async t => {
+   const data=backend();
+   const x=await mount(t,data);
+   await x.click('start');
+   data.goals.push({id:'broken',title:'Чужой этап',parent_goal_id:'missing'});
+   data.links[0].goal_id='broken';
+   await x.refresh();
+   assert.equal(x.ui('goal-stage').hidden,true);
+   data.goals.at(-1).parent_goal_id='broken';
+   await x.refresh();
+   assert.equal(x.ui('goal-stage').hidden,true,'cycle terminates safely');
+   assert.equal(x.host.dataset.state,'active','goal metadata does not interrupt the timer');
+});
+
 test('main goal has its own result and named details without duplicating current task or inventing progress', async t =>{
    const data = backend();
    data.goals[0] ={
@@ -930,11 +958,12 @@ test('main goal has its own result and named details without duplicating current
       };
    data.links.push(clone(data.links[1]));
    const x = await mount(t, data), card = x.host.querySelector('.calendar-now__goal');
-   assert.equal(x.ui('goal-status').textContent, 'Выбрана');
+   assert.equal(x.ui('goal-status').hidden, true);
    assert.equal(x.ui('goal-title').textContent, data.goals[0].title);
    assert.equal(card.querySelector('script'), null);
    assert.match(x.ui('goal-meta').textContent, /1 октября 2026/);
-   assert.equal(x.action('open-goal').textContent.trim(), 'Сменить цель');
+   assert.equal(x.action('open-goal').getAttribute('aria-label'), 'Сменить главную цель');
+   assert.equal(x.action('goal-details').querySelector('[data-ui="goal-title"]'), x.ui('goal-title'));
    assert.equal(card.querySelector('[data-action="start"]'), null);
    assert.doesNotMatch(card.textContent, /Вопросы к интервью/);
    const writesBefore = data.count('set_ui_state');

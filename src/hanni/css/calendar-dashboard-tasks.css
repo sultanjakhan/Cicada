@@ -1,7 +1,11 @@
-.calendar-task-overview { max-width: 960px; min-width: 0; margin: 28px auto 0; color: var(--text-primary, #202725); }
+.calendar-task-overview { max-width: 960px; min-width: 0; margin: 24px auto 0; padding:20px 24px; border:1px solid var(--border-default); border-radius:16px; background:var(--bg-card); color: var(--text-primary, #202725); }
 .calendar-task-overview, .calendar-task-overview * { box-sizing: border-box; }
 .calendar-task-overview [hidden] { display: none !important; }
-.calendar-task-overview .cto-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 20px; }
+.calendar-task-overview .cto-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 24px; margin-bottom:10px; }
+.calendar-task-overview .cto-filters { display:flex; align-items:center; gap:4px; }
+.calendar-task-overview .cto-filters button { display:inline-flex; align-items:center; gap:8px; min-height:36px; padding:6px 10px; border-color:transparent; background:transparent; color:var(--text-secondary); font-size:13px; }
+.calendar-task-overview .cto-filters button[aria-pressed="true"] { background:var(--bg-hover); color:var(--text-primary); }
+.calendar-task-overview .cto-filters span { font-size:12px; font-variant-numeric:tabular-nums; }
 .calendar-task-overview h2 { font-size: 17px; margin: 0; line-height: 1.4; }
 .calendar-task-overview h3 { font-size: 17px; margin: 0; }
 .calendar-task-overview h4 { font-size: 13px; color: var(--text-secondary, #59645f); margin: 22px 0 8px; }
@@ -12,20 +16,19 @@
 .calendar-task-overview button:not(:disabled):hover { background: var(--bg-hover, #f4f6f4); }
 .calendar-task-overview :focus-visible { outline: 3px solid var(--cto-focus, #216e4e); outline-offset: 3px; }
 [data-theme="dark"] .calendar-task-overview { --cto-focus: #8acfa9; }
-.calendar-task-overview .cto-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border-default, #d7dfda); }
-.calendar-task-overview .cto-list li { margin: 0; border-bottom: 1px solid var(--border-default, #d7dfda); }
+.calendar-task-overview .cto-list { list-style: none; margin: 0; padding: 0; }
+.calendar-task-overview .cto-list li { margin: 0; border-bottom: 1px solid var(--border-subtle); }
+.calendar-task-overview .cto-list li:last-child { border-bottom:0; }
 .calendar-task-overview .cto-task { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 12px; text-align: left; padding: 12px 4px; border: 0; border-radius: 0; background: transparent; }
 .calendar-task-overview .cto-task-title { min-width: 0; overflow-wrap: anywhere; font-size: 14px; line-height: 1.5; }
 .calendar-task-overview .cto-task-meta { flex-shrink: 0; max-width: 40%; color: var(--text-secondary, #59645f); font-size: 12px; line-height: 1.5; }
-.calendar-task-overview .cto-more { margin-top: 10px; }
-.calendar-task-overview .cto-all { position: fixed; z-index: 30; top: 110px; right: 80px; bottom: 24px; width: min(360px, calc(100vw - 104px)); display: flex; flex-direction: column; padding: 20px; border: 1px solid var(--border-default, #d7dfda); border-radius: 16px; background: var(--bg-card, #fff); box-shadow: 0 12px 40px rgb(0 0 0 / .16); }
-.calendar-task-overview [data-overview-groups] { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px; margin: 0 -4px; }
+.calendar-task-overview .cto-all { position:static; min-width:0; }
+.calendar-task-overview [data-overview-groups] { min-width:0; }
 .calendar-task-overview .cto-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 14px; font-size: 13px; }
 @media (max-width: 600px) {
-  .calendar-task-overview { margin-top: 24px; }
+  .calendar-task-overview { margin-top: 24px; padding:16px; }
   .calendar-task-overview .cto-heading { align-items: flex-start; }
   .calendar-task-overview .cto-task { flex-direction: column; align-items: flex-start; gap: 4px; }
   .calendar-task-overview .cto-task-meta { max-width: 100%; }
   .calendar-task-overview .cto-pagination { flex-wrap: wrap; }
-  .calendar-task-overview .cto-all { right: 12px; bottom: 12px; width: calc(100vw - 24px); }
 }

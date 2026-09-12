@@ -145,3 +145,38 @@ goal criteria are available in Goals/editing, not all on the homepage. This is
 native candidate evidence, not a claim that the owner's installed application
 has already been updated. Packaging/install results belong in the local hash
 manifest and acceptance record.
+
+## Native DEV homepage iteration, 2026-09-12
+
+The owner requested changes in the running native DEV rather than another
+installer. Vite serves the frontend to a debug Tauri host with its own SQLite
+and WebView2 directories. The machine-local `.local/dev/` launcher, profile and
+hot-reload proof are ignored; they contain no import from the owner's installed
+profile. The helper console stays hidden. Only an explicit DEV launch opens its
+window; subsequent acceptance clicks/resizes use another inactive desktop.
+
+The Calendar icon and heading now share a center line; the redundant default
+description is omitted from the header without deleting stored metadata.
+Create sits beside the four pane buttons outside the scroll area. The main goal
+opens from its title, has a quiet Change action, and shows the current task's
+actual descendant path when it belongs to the selected goal. Missing/cyclic or
+unrelated paths are not presented as part of that goal. The Now card and timer
+flow are unchanged. Settings uses a simpler adjustment icon.
+
+Today and All are mutually exclusive views of one inline task list. Today shows
+every other incomplete task assigned to the local day (50 rows per page for
+large lists). All also includes the current task and tasks on other dates or
+without a date. The five-task fixture now shows all five Today rows; the old
+three-row preview and extra-count button are removed. Repeated Today dates are
+replaced with available duration estimates. Row details and context actions
+keep their original handlers.
+
+Validation: 106 JavaScript checks, frontend build and privacy guard passed.
+Focused cases cover filtering, counters, pagination, completion refresh and safe
+goal paths. Native DEV MCP checked the real linked fixture, both list views,
+task/goal detail closing and focus return, goal picker cancellation, settings
+return, sticky creation and 24-by-24 icons at a 640-pixel viewport. Light and
+dark screenshots are retained in ignored
+`.local/background-qa/home-ux-20260912/`. Its desktop remained inactive. No
+installer or backend change is part of this iteration; the earlier packaged
+CSP and Calendar settings limits remain separate.

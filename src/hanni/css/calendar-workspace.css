@@ -3,7 +3,7 @@
 /* Every pane shares a fixed frame; the right rail keeps the existing quick actions. */
 #calendar-content.calendar-workspace { display:flex; flex-direction:column; min-height:0; overflow:hidden; padding:0 76px 0 24px; }
 #calendar-content.calendar-workspace > .uni-header,
-#calendar-content.calendar-workspace > .uni-tabs { flex-shrink:0; }
+#calendar-content.calendar-workspace > .uni-navigation { flex-shrink:0; }
 #calendar-content.calendar-workspace > .uni-content { min-height:0; overflow-y:auto; overflow-x:hidden; scrollbar-gutter:stable; padding:16px 0 40px; }
 #calendar-content.calendar-workspace .calendar-panels { max-width:none; margin-left:0; margin-right:0; }
 #calendar-content.calendar-workspace .calendar-now,
@@ -14,18 +14,21 @@
 #calendar-content .uni-tabs button.uni-tab:focus-visible { outline:2px solid var(--text-primary); outline-offset:-3px; }
 #calendar-content.calendar-workspace .uni-tabs { gap:0; padding:0; overflow-x:auto; overflow-y:hidden; }
 #calendar-content.calendar-workspace .uni-tabs .uni-tab { margin-bottom:0; }
-.calendar-workspace .uni-header { display:grid; grid-template-columns:36px minmax(0,1fr) auto; align-items:center; gap:4px 8px; margin-bottom:0; }
-.calendar-workspace .uni-header-icon--static { margin:0; }
-.calendar-workspace .uni-header-icon--static svg { flex:none; aspect-ratio:1; }
-.calendar-workspace .uni-header-name { grid-column:2; min-width:0; margin:0; overflow-wrap:anywhere; }
+.calendar-workspace .uni-header { display:grid; grid-template-columns:24px minmax(0,1fr); align-items:center; gap:4px 12px; padding:24px 0 16px; margin:0; }
+.calendar-workspace .uni-header-icon--static { display:flex; align-items:center; justify-content:center; width:24px; height:32px; margin:0; }
+.calendar-workspace .uni-header-icon--static svg { flex:none; width:24px; height:24px; aspect-ratio:1; }
+.calendar-workspace .uni-header-name { grid-column:2; min-width:0; margin:0; padding:0; font-size:24px; line-height:32px; font-weight:650; overflow-wrap:anywhere; }
 .calendar-workspace .uni-header-desc { grid-column:2 / -1; grid-row:2; min-width:0; margin:0; overflow-wrap:anywhere; }
-.calendar-workspace .uni-header-actions { position:static; grid-column:3; grid-row:1; }
-.calendar-workspace .uni-header-action { flex:none; gap:8px; min-height:44px; padding:10px 16px; border:1px solid var(--text-primary); border-radius:8px; background:var(--text-primary); color:var(--bg-card); font:inherit; font-size:14px; font-weight:600; white-space:nowrap; }
-.calendar-workspace .uni-header-action:hover { background:var(--text-secondary); border-color:var(--text-secondary); }
+.calendar-workspace .uni-navigation { display:flex; align-items:center; gap:20px; border-bottom:1px solid var(--border-default); }
+#calendar-content.calendar-workspace .uni-navigation .uni-tabs { flex:0 1 auto; min-width:0; margin:0; border:0; }
+.calendar-workspace .uni-header-actions { position:static; display:flex; flex:none; margin:0; padding:0; }
+.calendar-workspace .uni-header-action { display:inline-flex; align-items:center; flex:none; gap:8px; min-height:40px; margin:0 0 4px; padding:8px 14px; border:1px solid var(--border-default); border-radius:8px; background:var(--bg-card); color:var(--text-primary); font:inherit; font-size:14px; font-weight:600; white-space:nowrap; }
+.calendar-workspace .uni-header-action:hover { background:var(--bg-hover); border-color:var(--border-hover); }
 .calendar-workspace .uni-header-action:focus-visible { outline:2px solid var(--text-primary); outline-offset:3px; }
-@media(max-width:480px) {
-  .calendar-workspace .uni-header { grid-template-columns:36px minmax(0,1fr); }
-  .calendar-workspace .uni-header-actions { grid-column:2; grid-row:3; justify-self:start; margin-top:8px; }
+@media(max-width:680px) {
+  .calendar-workspace .uni-navigation { gap:8px; flex-wrap:wrap; }
+  .calendar-workspace .uni-header { padding-top:16px; }
+  .calendar-workspace .uni-header-action { min-height:40px; }
 }
 .calendar-workspace .cm-controls { display:flex; align-items:center; justify-content:flex-start; flex-wrap:wrap; gap:8px 20px; }
 .calendar-workspace .cm-controls .cm-date { flex:0 1 auto; margin:4px 0; }
