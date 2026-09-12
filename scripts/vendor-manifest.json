@@ -1,0 +1,13 @@
+[
+  {"file":"checklist.min.js","package":"@editorjs/checklist","version":"1.6.0","member":"dist/checklist.umd.js","sha256":"c6e7d3cbe53af03fcb9a10c89607164485a253537e428a4afae961566ffbff9d"},
+  {"file":"code.min.js","package":"@editorjs/code","version":"2.9.4","member":"dist/code.umd.js","sha256":"ea43829cdc5b3e8a73bb9dd36892ed25c97589de5995420438f46803bbb0534b"},
+  {"file":"delimiter.min.js","package":"@editorjs/delimiter","version":"1.4.2","member":"dist/delimiter.umd.js","sha256":"89db0b30a837bc06a9fd0b800793c207b9e84cf89a88763225b5989f4da1036e"},
+  {"file":"drag-drop.min.js","package":"editorjs-drag-drop","version":"1.1.16","member":"dist/bundle.js","sha256":"fc24a0daca4255929a25f77f817f28376e315bd4a9462a99d9b0800374b983d0"},
+  {"file":"editorjs.min.js","package":"@editorjs/editorjs","version":"2.31.0-rc.2","member":"dist/editorjs.umd.js","sha256":"823092df899a2e733ed11585334eab59855c288b37cf44956bf89a9d417d2dd6"},
+  {"file":"header.min.js","package":"@editorjs/header","version":"2.8.8","member":"dist/header.umd.js","sha256":"a84f1c358ee3965d3d427198aea808c764b21f7171d9ff19bc151708dd373e71"},
+  {"file":"inline-code.min.js","package":"@editorjs/inline-code","version":"1.5.2","member":"dist/inline-code.umd.js","sha256":"495eeb674d0848fd07810bd2335fa08c569ee05739bb15756d5774e433e32cd0"},
+  {"file":"list.min.js","package":"@editorjs/list","version":"2.0.9","member":"dist/editorjs-list.umd.js","sha256":"debc67131a021fc794652fabe1cab901eec73abfdc8859be51d612a3e709886e"},
+  {"file":"marker.min.js","package":"@editorjs/marker","version":"1.4.0","member":"dist/marker.umd.js","sha256":"2e00d5c67aa28122f24aecb1c5baf68b9f363fbcd8edb606ea00e0ad64459c39"},
+  {"file":"purify.min.js","package":"dompurify","version":"3.4.14","member":"dist/purify.min.js","sha256":"c2f26ea4fc0d88141c9aa430eb515ac86fce59418ceebd85fa475b87a8d6c3e6"},
+  {"file":"quote.min.js","package":"@editorjs/quote","version":"2.7.6","member":"dist/quote.umd.js","sha256":"5148cdbf4318d30da8b1756b004e899773761755e143ab986fffc848328f41ee"}
+]

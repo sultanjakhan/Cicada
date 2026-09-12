@@ -18,6 +18,9 @@ jobs:
           python-version: '3.12'
       - uses: dtolnay/rust-toolchain@stable
       - run: npm.cmd ci
+      - run: npm.cmd run check:vendor
+      - run: npm.cmd audit --audit-level=low
+      - run: .\scripts\audit-rust.ps1
       - run: npm.cmd test
       - run: npm.cmd run check:privacy
       - run: npm.cmd run build
