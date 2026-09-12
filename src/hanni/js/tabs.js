@@ -1,4 +1,6 @@
-import { S, TAB_ICONS, TAB_REGISTRY, TAB_SETTINGS_DEFS, getTabIcon, IS_MOBILE, tabLoaders, loadTabSetting, saveTabSetting } from './state.js';
+import { S, TAB_ICONS, TAB_REGISTRY, getTabIcon, IS_MOBILE, tabLoaders } from './state.js';
+import { openCalendarCreate } from './calendar-workspace.js';
+import { showCalendarSettings } from './calendar-settings.js';
 
 let drawerBackdrop = null;
 
@@ -23,8 +25,7 @@ export function openDrawer() {
 export async function loadSubTabContent(tabId, subTab) {
   if (tabId !== 'calendar') return;
   if (subTab === 'Настройки') {
-    tabLoaders.cleanupCalendar?.();
-    await renderSettingsPage();
+    showCalendarSettings(document.querySelector('[data-calendar-settings]'));
     return;
   }
   await tabLoaders.calendar?.();
@@ -32,6 +33,7 @@ export async function loadSubTabContent(tabId, subTab) {
 
 export function switchTab(tabId) {
   if (tabId !== 'calendar') return;
+  if (S.activeTab === tabId && document.querySelector('#calendar-content .uni-header')) return;
   S.activeTab = 'calendar';
   renderTabBar();
   void loadSubTabContent('calendar', S.activeSubTab.calendar || null);
@@ -46,52 +48,40 @@ export function renderTabBar() {
   const bottom = document.getElementById('tab-bar-bottom');
   if (!tabList || !bottom) return;
   tabList.replaceChildren();
-  const item = document.createElement('div');
+  const item = document.createElement('button');
+  item.type = 'button';
   item.className = 'tab-item active';
   item.dataset.tabId = 'calendar';
   item.title = TAB_REGISTRY.calendar.label;
-  item.setAttribute('role', 'button');
-  item.tabIndex = 0;
+  item.setAttribute('aria-label', TAB_REGISTRY.calendar.label);
+  item.setAttribute('aria-current', 'page');
   item.innerHTML = `<span class="tab-item-icon">${getTabIcon('calendar')}</span>${IS_MOBILE ? `<span class="tab-item-label">${TAB_REGISTRY.calendar.label}</span>` : ''}`;
   const select = () => { closeDrawer(); switchTab('calendar'); };
   item.addEventListener('click', select);
-  item.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select(); } });
   tabList.append(item);
 
+  const createGroup = document.createElement('div');
+  createGroup.className = 'sidebar-create-group';
+  const create = document.createElement('button');
+  create.type = 'button'; create.className = 'sidebar-create'; create.dataset.calendarCreate = '';
+  create.disabled = !document.querySelector('#calendar-content .uni-pane');
+  create.title = 'Создать задачу или событие';
+  create.setAttribute('aria-label', create.title); create.setAttribute('aria-haspopup', 'dialog');
+  create.innerHTML = `${TAB_ICONS.add}<span class="sidebar-create-label">Создать</span>`;
+  create.addEventListener('click', () => { closeDrawer(); openCalendarCreate(create); });
+  createGroup.append(create); tabList.append(createGroup);
+
   bottom.replaceChildren();
-  const gear = document.createElement('div');
-  const inSettings = S.activeSubTab.calendar === 'Настройки';
-  gear.className = 'tab-item' + (inSettings ? ' active' : '');
+  const gear = document.createElement('button');
+  gear.type = 'button'; gear.dataset.calendarSettings = '';
+  gear.className = 'tab-item';
   gear.title = 'Настройки';
-  gear.setAttribute('role', 'button');
   gear.setAttribute('aria-label', gear.title);
-  gear.tabIndex = 0;
+  gear.setAttribute('aria-haspopup', 'dialog');
   gear.innerHTML = `<span class="tab-item-icon">${TAB_ICONS.settings}</span>`;
-  const toggleSettings = () => {
-    S.activeSubTab.calendar = inSettings ? null : 'Настройки';
-    renderTabBar();
-    void loadSubTabContent('calendar', S.activeSubTab.calendar);
-  };
-  gear.addEventListener('click', toggleSettings);
-  gear.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleSettings(); } });
+  gear.addEventListener('click', () => { closeDrawer(); showCalendarSettings(gear); });
   const version = document.createElement('div');
   version.className = 'version-label-bar';
   version.textContent = `v${S.APP_VERSION}`;
   bottom.append(gear, version);
-}
-
-async function renderSettingsPage() {
-  const el = document.getElementById('calendar-content');
-  if (!el || S.activeSubTab.calendar !== 'Настройки') return;
-  const defs = TAB_SETTINGS_DEFS.calendar;
-  const values = await Promise.all(defs.map(async def => [def, (await loadTabSetting('calendar', def.key)) ?? def.default]));
-  if (S.activeSubTab.calendar !== 'Настройки') return;
-  const rows = values.map(([def, value]) => `<div class="settings-row"><span class="settings-label">${def.label}</span><span class="settings-value"><div class="setting-pills" data-tab-id="calendar" data-setting-key="${def.key}">${def.options.map(option => `<button class="setting-pill${value === option.value ? ' active' : ''}" data-value="${option.value}" type="button">${option.label}</button>`).join('')}</div></span></div>`).join('');
-  el.innerHTML = `<div class="settings-page"><div class="settings-page-header"><span class="settings-page-icon">${TAB_ICONS.settings}</span><span class="settings-page-title">Настройки — ${TAB_REGISTRY.calendar.label}</span></div><div class="tab-settings-tabs"><button class="tab-settings-tab active" type="button">Основные</button></div><div class="settings-page-content"><div class="settings-section"><div class="settings-section-title">Основные</div>${rows}</div></div></div>`;
-  el.querySelectorAll('.setting-pills').forEach(group => {
-    group.querySelectorAll('.setting-pill').forEach(pill => pill.addEventListener('click', () => {
-      group.querySelectorAll('.setting-pill').forEach(button => button.classList.toggle('active', button === pill));
-      void saveTabSetting(group.dataset.tabId, group.dataset.settingKey, pill.dataset.value);
-    }));
-  });
 }

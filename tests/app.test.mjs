@@ -14,9 +14,9 @@ const result = await build({
 const bundle = (Array.isArray(result) ? result[0] : result).output.find(file => file.type === 'chunk').code;
 const settle = async () => { for (let i = 0; i < 12; i++) await new Promise(resolve => setImmediate(resolve)); };
 
-async function launch(t, { mobile = false } = {}) {
+async function launch(t, { mobile = false, initialSettings = [] } = {}) {
   const dom = new JSDOM(html, { url: 'http://localhost/', runScripts: 'outside-only', pretendToBeVisual: true });
-  const w = dom.window, calls = [], settings = new Map(), errors = [];
+  const w = dom.window, calls = [], settings = new Map(initialSettings), errors = [], before = new Map();
   if (mobile) w.localStorage.setItem('hanni_force_mobile', '1');
   w.structuredClone = structuredClone;
   w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
@@ -27,6 +27,7 @@ async function launch(t, { mobile = false } = {}) {
   w.addEventListener('error', event => errors.push(event.message));
   w.__TAURI__ = { core: { invoke: async (command, args = {}) => {
     calls.push({ command, args });
+    if (before.has(command)) await before.get(command)(args);
     if (['get_calendar_records','get_calendar_tasks','get_goals','get_calendar_task_goals','get_timeline_blocks','get_task_pins','get_notes','get_all_events'].includes(command)) return [];
     if (command === 'get_active_block') return null;
     if (command === 'get_ui_state' || command === 'get_app_setting') return settings.get(args.key) || null;
@@ -44,7 +45,7 @@ async function launch(t, { mobile = false } = {}) {
     dom.window.close();
   });
   const click = async selector => { const el = w.document.querySelector(selector); assert.ok(el, 'Missing ' + selector); el.click(); await settle(); return el; };
-  return { w, calls, click, errors };
+  return { w, calls, click, errors, before, settings };
 }
 
 test('bundled shell boots the original workspace and all four panes with only Calendar in the sidebar', async t => {
@@ -76,16 +77,16 @@ test('upstream mobile mode enables its CSS and closes the drawer through its bac
   assert.equal(w.document.querySelector('.drawer-backdrop').classList.contains('visible'), false);
 });
 
-test('one persistent header action opens the shared Task/Event editor and restores focus', async t => {
+test('one persistent sidebar action opens the shared Task/Event editor and restores focus', async t => {
   const { w, click } = await launch(t);
   assert.equal(w.document.querySelector('[data-overview-create]'), null);
-  const trigger = w.document.querySelector('.uni-header-action');
-  assert.ok(trigger.closest('.uni-navigation'));
-  assert.ok(trigger.closest('.uni-navigation').querySelector('.uni-tabs'));
+  const trigger = w.document.querySelector('[data-calendar-create]');
+  assert.ok(trigger.closest('#tab-bar'));
+  assert.equal(w.document.querySelector('.uni-header-action'), null);
   assert.equal(w.document.querySelector('.uni-header-desc'), null);
   assert.equal(trigger.closest('.uni-content'), null);
   trigger.focus();
-  await click('.uni-header-action');
+  await click('[data-calendar-create]');
   assert.ok(w.document.querySelector('#evm-form'));
   assert.ok(w.document.querySelector('#evm-title'));
   assert.ok(w.document.querySelector('#evm-goal'));
@@ -97,30 +98,119 @@ test('one persistent header action opens the shared Task/Event editor and restor
   await click('#evm-close');
   assert.equal(w.document.activeElement, trigger);
   await click('[data-pane="table"]');
-  assert.equal(w.document.querySelectorAll('.uni-header-action').length, 1);
+  assert.equal(w.document.querySelectorAll('[data-calendar-create]').length, 1);
   assert.equal(w.document.querySelector('[data-create]'), null);
   await click('[data-period="day"]');
   await click('[data-today]');
   await click('[data-next]');
   const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1);
   const date = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`;
-  await click('.uni-header-action');
+  await click('[data-calendar-create]');
   assert.equal(w.document.querySelector('#evm-date').value, date, 'creation uses the viewed date');
 });
 
-test('Calendar settings retain only upstream general definitions and restore the workspace', async t => {
+test('modal settings save without replacing the current calendar pane and return focus on close', async t => {
   const { w, click, calls } = await launch(t);
   await click('[data-pane="table"]');
   assert.equal(w.document.querySelector('.uni-tab.active').dataset.pane, 'table');
+  const pane = w.document.querySelector('.uni-pane');
+  const scroll = w.document.querySelector('.uni-content'); scroll.scrollTop = 87;
+  const trigger = w.document.querySelector('[data-calendar-settings]'); trigger.focus();
   await click('#tab-bar-bottom [aria-label="\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438"]');
-  assert.equal(w.document.querySelector('.settings-page-title').textContent, '\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438 \u2014 \u041a\u0430\u043b\u0435\u043d\u0434\u0430\u0440\u044c');
+  assert.equal(w.document.querySelector('.calendar-settings-dialog h2').textContent, 'Настройки календаря');
+  assert.equal(w.document.querySelector('.uni-pane'), pane);
   assert.equal(w.document.querySelectorAll('.setting-pills').length, 2);
   assert.equal(w.document.querySelector('[data-theme-setting]'), null);
   assert.equal(w.document.querySelector('#mvp-settings'), null);
   await click('[data-setting-key="first_day"] [data-value="sun"]');
   assert.ok(calls.some(call => call.command === 'set_app_setting' && call.args.key === 'tab_calendar_first_day' && call.args.value === 'sun'));
-  await click('#tab-bar-bottom [aria-label="\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438"]');
+  await click('.calendar-settings-dialog .calendar-editor-close');
   assert.ok(w.document.querySelector('[data-calendar-records]'));
   assert.equal(w.document.querySelector('.uni-tab.active').dataset.pane, 'table');
+  assert.equal(w.document.querySelector('.uni-pane'), pane);
+  assert.equal(scroll.scrollTop, 87);
+  assert.equal(w.document.activeElement, trigger);
+  assert.equal(w.document.querySelector('.calv-weekday').textContent, 'Вс');
   assert.equal(calls.some(call => call.command === 'create_backup'), false);
+});
+
+test('clicking the current sidebar item or pane preserves its DOM and scroll, and the header is static', async t => {
+  const { w, click, calls } = await launch(t);
+  for (const id of ['dash', 'table', 'goals', 'notes']) {
+    await click(`[data-pane="${id}"]`);
+    const pane = w.document.querySelector('.uni-pane');
+    const scroll = w.document.querySelector('.uni-content'); scroll.scrollTop = 61;
+    await click('[data-tab-id="calendar"]');
+    await click(`[data-pane="${id}"]`);
+    assert.equal(w.document.querySelector('.uni-pane'), pane);
+    assert.equal(scroll.scrollTop, 61);
+  }
+  const heading = await click('.uni-header-name');
+  assert.notEqual(heading.contentEditable, 'true');
+  assert.equal(heading.hasAttribute('title'), false);
+  assert.equal(calls.some(call => call.command === 'set_ui_state' && call.args.key === 'tab_meta_calendar'), false);
+});
+
+test('settings save failure keeps the old selection and a retry can persist it', async t => {
+  const { w, click, before, settings } = await launch(t);
+  await click('[data-calendar-settings]');
+  before.set('set_app_setting', () => { throw Error('offline'); });
+  await click('[data-setting-key="first_day"] [data-value="sun"]');
+  assert.equal(w.document.querySelector('[data-value="mon"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(w.document.querySelector('[data-value="sun"]').getAttribute('aria-pressed'), 'false');
+  assert.equal(w.document.querySelector('[data-dialog-error]').hidden, false);
+  assert.equal(settings.has('tab_calendar_first_day'), false);
+  before.delete('set_app_setting');
+  await click('[data-setting-key="first_day"] [data-value="sun"]');
+  assert.equal(settings.get('tab_calendar_first_day'), 'sun');
+  assert.equal(w.document.querySelector('[data-dialog-error]').hidden, true);
+});
+
+test('settings wait for acknowledgement before closing and ignore late loading after Escape', async t => {
+  const { w, click, before } = await launch(t);
+  await click('[data-calendar-settings]');
+  let resolveSave;
+  before.set('set_app_setting', () => new Promise(resolve => { resolveSave = resolve; }));
+  await click('[data-setting-key="first_day"] [data-value="sun"]');
+  const modal = w.document.querySelector('.calendar-settings-dialog');
+  modal.dispatchEvent(new w.Event('cancel', { cancelable:true }));
+  await click('.calendar-settings-dialog .calendar-editor-close');
+  assert.equal(modal.open, true);
+  assert.equal(w.document.querySelector('[data-value="mon"]').getAttribute('aria-pressed'), 'true');
+  resolveSave(); await settle();
+  modal.dispatchEvent(new w.Event('cancel', { cancelable:true })); await settle();
+  assert.equal(modal.isConnected, false);
+  const pendingReads = [];
+  before.set('get_app_setting', () => new Promise(resolve => pendingReads.push(resolve)));
+  await click('[data-calendar-settings]');
+  const loading = w.document.querySelector('.calendar-settings-dialog');
+  loading.dispatchEvent(new w.Event('cancel', { cancelable:true })); await settle();
+  pendingReads.forEach(resolve => resolve()); await settle();
+  assert.equal(w.document.querySelector('.calendar-settings-dialog'), null);
+  assert.equal(w.document.activeElement, w.document.querySelector('[data-calendar-settings]'));
+});
+
+test('saved calendar defaults determine the first Table view after startup', async t => {
+  const { w, click } = await launch(t, { initialSettings:[['tab_calendar_first_day','sun'], ['tab_calendar_default_view','Неделя']] });
+  await click('[data-pane="table"]');
+  assert.equal(w.document.querySelector('[data-period="week"]').getAttribute('aria-pressed'), 'true');
+  assert.match(w.document.querySelector('.calv-day-weekday').textContent, /Вс/i);
+  const range = w.document.querySelector('[data-range]').textContent;
+  await click('[data-calendar-settings]');
+  await click('[data-setting-key="default_view"] [data-value="День"]');
+  await click('.calendar-settings-dialog .calendar-editor-close');
+  assert.equal(w.document.querySelector('[data-period="week"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(w.document.querySelector('[data-range]').textContent, range);
+});
+
+test('mobile creation and settings close the drawer and return focus to its visible opener', async t => {
+  const { w, click } = await launch(t, { mobile:true });
+  await click('#mobile-hamburger'); await click('[data-calendar-create]');
+  assert.equal(w.document.querySelector('#tab-bar').classList.contains('drawer-open'), false);
+  await click('#evm-close');
+  assert.equal(w.document.activeElement.id, 'mobile-hamburger');
+  await click('#mobile-hamburger'); await click('[data-calendar-settings]');
+  assert.equal(w.document.querySelector('#tab-bar').classList.contains('drawer-open'), false);
+  await click('.calendar-settings-dialog .calendar-editor-close');
+  assert.equal(w.document.activeElement.id, 'mobile-hamburger');
 });

@@ -1,5 +1,5 @@
 import { canRefreshHealthView, mayCommitHealthView, retryHealthViewRefresh, startHealthViewRefresh } from './health-view-refresh.js';
-import { S, invoke, tabLoaders, TAB_ICONS } from './state.js';
+import { S, invoke, tabLoaders, TAB_ICONS, IS_MOBILE, loadTabSetting } from './state.js';
 import { ICONS } from './icons.js';
 import { escapeHtml } from './utils.js';
 import { renderUnifiedLayout, savePaneState } from './unified-layout.js';
@@ -16,7 +16,13 @@ let disposeNow = null, disposeTable = null, disposePanel = null, disposeTasks = 
 let workspaceRevision = 0;
 let dialogSequence = 0;
 function cleanupWorkspace() { workspaceRevision++; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; }
-const view = { period: 'day', mode: 'grid', date: views.iso(new Date()) };
+const view = { period: 'day', mode: 'grid', date: views.iso(new Date()), firstDay:'mon' };
+let initialViewLoaded = false;
+window.addEventListener('hanni:calendar-settings-changed', event => {
+  if (!event.detail?.first_day) return;
+  view.firstDay = event.detail.first_day === 'sun' ? 'sun' : 'mon';
+  window.dispatchEvent(new Event('hanni:calendar-refresh'));
+});
 const key = (r) => `${r.source_type}:${r.source_id}`;
 const changed = () => { window.dispatchEvent(new Event('task-state-changed')); window.dispatchEvent(new Event('hanni:calendar-refresh')); };
 
@@ -235,8 +241,9 @@ export async function mountCalendarTable(el) {
     if (quiet && !canRefreshHealthView(el)) return;
     const rev = ++revision;
     const period = view.period, mode = view.mode, day = view.date;
-    const dates = period === 'month' ? Array.from({ length: 42 }, (_, i) => views.add(views.monday(`${day.slice(0,7)}-01`), i)) : views.range(period, day);
-    const visibleRange = views.range(period, day);
+    const firstDay = view.firstDay;
+    const dates = period === 'month' ? Array.from({ length: 42 }, (_, i) => views.add(views.weekStart(`${day.slice(0,7)}-01`, firstDay), i)) : views.range(period, day, firstDay);
+    const visibleRange = views.range(period, day, firstDay);
     if (!quiet) {
     el.querySelector('[data-range]').textContent = period === 'month' ? views.label(day,{month:'long',year:'numeric'}) : period === 'week' ? `${views.label(visibleRange[0])} — ${views.label(visibleRange.at(-1))}` : views.label(day,{weekday:'long',day:'numeric',month:'long'});
     updateDateRoller(period, day);
@@ -267,7 +274,7 @@ export async function mountCalendarTable(el) {
       const focusSource = host.contains(focused) ? focused.closest('[data-context-record]')?.dataset.recordSource : null;
       const focusInPanel = !!focused.closest('[data-tasks-panel]');
       menuRecords = [...new Map([...records, ...taskRecords].map(record => [record.id, record])).values()];
-      views.render(host, { period, mode, date: day, records, taskRecords, taskError, dayStarts, onTaskAction, actionBusy,
+      views.render(host, { period, mode, date: day, firstDay, records, taskRecords, taskError, dayStarts, onTaskAction, actionBusy,
         fitViewport: gridViewport.fit,
         onRetryTasks: () => refresh(),
         onCreateTask: date => openEvent(date, null, 'task', true),
@@ -352,7 +359,7 @@ export async function mountCalendarTable(el) {
       returnFocus: () => {
         if (!isCurrent()) return;
         const slot = time ? host.querySelector(`[data-create-date="${date}"][data-create-time="${time}"]`) : null;
-        (slot || (fromPanel && host.querySelector('[data-task-create]')) || el.closest('.calendar-workspace')?.querySelector('.uni-header-action') || host).focus();
+        (slot || (fromPanel && host.querySelector('[data-task-create]')) || document.querySelector('[data-calendar-create]') || host).focus();
       },
     });
   }
@@ -373,11 +380,31 @@ export async function mountCalendarTable(el) {
   await refresh();
 }
 
+export function openCalendarCreate(button) {
+  const el = document.getElementById('calendar-content');
+  if (!el?.querySelector('.uni-pane') || document.querySelector('dialog[open]')) return;
+  const revision = workspaceRevision;
+  const isCurrent = () => revision === workspaceRevision && button.isConnected && el.isConnected && S.activeTab === 'calendar';
+  showCalendarCreateModal(S._unifiedPane.calendar === 'table' ? view.date : views.iso(new Date()), {
+    isCurrent, returnFocus: () => { if (isCurrent()) (IS_MOBILE ? document.getElementById('mobile-hamburger') : button)?.focus({ preventScroll:true }); },
+  });
+}
+
 export async function loadCalendarWorkspace(el) {
   startHealthViewRefresh();
   cleanupWorkspace(); tabLoaders.cleanupCalendar = cleanupWorkspace;
   const loadRevision = workspaceRevision;
   const { mountCalendarNow } = await import('./calendar-now.js');
+  if (!initialViewLoaded) {
+    try {
+      const [firstDay, defaultView] = await Promise.all([loadTabSetting('calendar', 'first_day'), loadTabSetting('calendar', 'default_view')]);
+      if (loadRevision !== workspaceRevision || S.activeTab !== 'calendar') return;
+      view.firstDay = firstDay === 'sun' ? 'sun' : 'mon';
+      view.period = ({ 'День':'day', 'Неделя':'week', 'Месяц':'month', 'Список':'month' })[defaultView] || 'month';
+      view.mode = defaultView === 'Список' ? 'list' : 'grid';
+      initialViewLoaded = true;
+    } catch { /* Keep the usable current view if preferences cannot be read. */ }
+  }
   if (loadRevision !== workspaceRevision || S.activeTab !== 'calendar') return;
   el.classList.add('calendar-workspace');
   const openPane = async pane => {
@@ -393,15 +420,8 @@ export async function loadCalendarWorkspace(el) {
     if (tab) tab.focus();
     else if (heading) { heading.tabIndex = -1; heading.focus(); }
   };
-  const config = { title:'Календарь', headerIcon:TAB_ICONS.calendar, subtitle:'События и расписание', hideDescription:true, hideMemory:true, accessibleTabs:true, beforeRender:cleanupWorkspace, isCurrent:() => S.activeTab === 'calendar',
+  const config = { title:'Календарь', headerIcon:TAB_ICONS.calendar, editableHeader:false, subtitle:'События и расписание', hideDescription:true, hideMemory:true, accessibleTabs:true, beforeRender:cleanupWorkspace, isCurrent:() => S.activeTab === 'calendar',
     panes: [{id:'dash',label:'Дашборд'}, {id:'table',label:'Таблица'}, {id:'goals',label:'Цели'}, {id:'notes',label:'Заметки'}],
-    toolbarActions: [{ label: 'Создать', title: 'Создать задачу или событие', icon: '<span aria-hidden="true">+</span>', onClick: button => {
-      const revision = workspaceRevision;
-      const isCurrent = () => revision === workspaceRevision && button.isConnected && el.isConnected && S.activeTab === 'calendar';
-      showCalendarCreateModal(S._unifiedPane.calendar === 'table' ? view.date : views.iso(new Date()), {
-        isCurrent, returnFocus: () => { if (isCurrent()) button.focus(); },
-      });
-    } }],
     renderDash: (pane) => {
       pane.innerHTML = '<div data-calendar-now></div><div data-calendar-tasks></div>';
       disposeTasks = mountCalendarDashboardTasks(pane.querySelector('[data-calendar-tasks]'), { invoke, mountMenu: mountRecordMenu, openTask: (row, returnFocus) => showRecord(calendarRecord(row), returnFocus) });
@@ -464,4 +484,6 @@ export async function loadCalendarWorkspace(el) {
     },
   };
   await renderUnifiedLayout(el, 'calendar', config);
+  const create = document.querySelector('[data-calendar-create]');
+  if (create && el.isConnected && el.querySelector('.uni-pane')) create.disabled = false;
 }

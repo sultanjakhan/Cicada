@@ -80,6 +80,9 @@ visual rechecks remain separate from this connection setup.
 
 ## Header creation iteration, 2026-09-12
 
+Superseded placement: the owner selected sidebar variant A in the following
+DEV iteration below. The earlier installed-package evidence remains historical.
+
 The shared Task/Event entry now lives in the non-scrolling Calendar header.
 The old general Create buttons in Dashboard and Table were removed; calendar
 cell creation keeps its date/time context. Closing the shared editor restores
@@ -180,3 +183,32 @@ dark screenshots are retained in ignored
 `.local/background-qa/home-ux-20260912/`. Its desktop remained inactive. No
 installer or backend change is part of this iteration; the earlier packaged
 CSP and Calendar settings limits remain separate.
+
+## Sidebar creation and modal settings, 2026-09-13
+
+The chosen DEV variant places one 44px Create button in the left rail, separated
+from navigation. The mobile drawer gives it a visible label. The Calendar title
+and icon are static, aligned at 28px. Clicking the active Calendar sidebar item
+or active pane no longer reloads its content.
+
+Settings now use the shared native dialog shell and retain the underlying pane,
+selected date and scroll. Close with X, Escape or Done; focus returns to the
+settings trigger (the visible menu opener on mobile). Pending saves block
+closing, failure preserves the prior selection, and loading can be cancelled
+without a late response reopening the dialog. The familiar gear icon replaces
+the adjustment sliders. No additional projects or settings categories were added.
+
+The previously ignored first-day and default-view preferences are now wired to
+Calendar. Sunday/Monday affects both the queried range and week/month grid.
+First day applies after closing settings; the startup view does not replace the
+current view and applies at the next app launch.
+
+Validation: 111 JavaScript tests, 19 Rust tests, privacy guard and frontend build
+passed. Native DEV Playwright MCP verified sidebar creation/date/type/focus,
+idempotent navigation, modal closing and unchanged scroll, Sunday week/month
+alignment, settings persistence across restart, 640px layout and dark appearance
+on an inactive desktop. The running user DEV was inspected read-only and showed
+the new sidebar, static 28px header and modal settings action. No installation
+or publication occurred. Evidence: ignored `.local/dev/sidebar-settings-*.json`
+and `.local/background-qa/home-ux-20260912/artifacts/sidebar-*.png`.
+The only console error observed in this run was the existing DEV favicon 404.

@@ -5,6 +5,15 @@
 .setting-pill.active { background:var(--accent-fill); border-color:var(--accent-fill); color:var(--bg-page); }
 .setting-pill:focus-visible { outline:2px solid var(--accent-fill); outline-offset:2px; }
 
+.calendar-settings-dialog { width:min(560px,calc(100% - 32px)); }
+.calendar-settings-dialog .calendar-setting { min-width:0; border:0; padding:0; margin:0 0 24px; }
+.calendar-settings-dialog .calendar-setting legend { padding:0; margin:0 0 10px; color:var(--text-primary); font-size:14px; font-weight:600; }
+.calendar-settings-dialog .setting-pills { gap:8px; }
+.calendar-settings-dialog .setting-pill { min-height:40px; padding:8px 12px; font-size:13px; }
+.calendar-settings-dialog .setting-pill.active, .calendar-settings-dialog .setting-pill.active:hover { color:var(--accent-contrast); background:var(--accent-fill); border-color:var(--accent-fill); }
+.calendar-settings-status { min-height:20px; margin:0; color:var(--text-secondary); font-size:12px; }
+.calendar-settings-hint { margin:8px 0 0; color:var(--text-secondary); font-size:12px; }
+
 /* ── Integrations page ── */
 
 #integrations-content {

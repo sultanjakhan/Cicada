@@ -4,6 +4,7 @@ import { renderDayStartMarker } from './calendar-day-start.js';
   const iso = (value) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
   const add = (value, days) => { const date = parse(value); date.setDate(date.getDate() + days); return iso(date); };
   const monday = (value) => add(value, -((parse(value).getDay() + 6) % 7));
+  const weekStart = (value, firstDay = 'mon') => firstDay === 'sun' ? add(value, -parse(value).getDay()) : monday(value);
   const label = (value, options = { day: 'numeric', month: 'long' }) => {
     const text = parse(value).toLocaleDateString('ru-RU', options);
     return text.charAt(0).toLocaleUpperCase('ru-RU') + text.slice(1);
@@ -19,9 +20,9 @@ import { renderDayStartMarker } from './calendar-day-start.js';
   const isMissed = record => !record.readonly && !isCompleted(record) && (record.status_extra === 'skipped' || record.status_extra === 'missed');
   function el(tag, cls, text) { const node = document.createElement(tag); if (cls) node.className = cls; if (text !== undefined) node.textContent = text; return node; }
   function button(cls, text, action) { const node = el('button', cls, text); node.type = 'button'; node.addEventListener('click', action); return node; }
-  function range(period, date) {
+  function range(period, date, firstDay = 'mon') {
     if (period === 'day') return [date];
-    if (period === 'week') return Array.from({ length: 7 }, (_, i) => add(monday(date), i));
+    if (period === 'week') return Array.from({ length: 7 }, (_, i) => add(weekStart(date, firstDay), i));
     const start = `${date.slice(0, 7)}-01`;
     return Array.from({ length: new Date(parse(start).getFullYear(), parse(start).getMonth() + 1, 0).getDate() }, (_, i) => add(start, i));
   }
@@ -265,8 +266,8 @@ import { renderDayStartMarker } from './calendar-day-start.js';
     state.viewKey = viewKey;
     root.replaceChildren();
     const shell = el('div', 'calv-layout'), container = el('div', 'calv-main'); shell.append(container); root.append(shell);
-    const dates = range(options.period, options.date);
-    const projectionDates = options.period === 'month' ? Array.from({ length: 42 }, (_, i) => add(monday(`${options.date.slice(0, 7)}-01`), i)) : dates;
+    const dates = range(options.period, options.date, options.firstDay);
+    const projectionDates = options.period === 'month' ? Array.from({ length: 42 }, (_, i) => add(weekStart(`${options.date.slice(0, 7)}-01`, options.firstDay), i)) : dates;
     const today = options.today || iso(new Date());
     const set = new Set(dates);
     const dayStarts = options.dayStarts || [];
@@ -283,9 +284,10 @@ import { renderDayStartMarker } from './calendar-day-start.js';
     } else if (options.period === 'month') {
       const grid = el('div', 'calv-month');
       grid.setAttribute('role', 'group'); grid.setAttribute('aria-label', label(options.date, { month: 'long', year: 'numeric' }));
-      for (const day of ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']) grid.append(el('div', 'calv-weekday', day));
-      const first = monday(`${options.date.slice(0, 7)}-01`);
-      const offset = (parse(`${options.date.slice(0, 7)}-01`).getDay() + 6) % 7;
+      const weekdays = options.firstDay === 'sun' ? ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'] : ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+      for (const day of weekdays) grid.append(el('div', 'calv-weekday', day));
+      const first = weekStart(`${options.date.slice(0, 7)}-01`, options.firstDay);
+      const offset = (parse(`${options.date.slice(0, 7)}-01`).getDay() + (options.firstDay === 'sun' ? 0 : 6)) % 7;
       const cellCount = Math.ceil((offset + dates.length) / 7) * 7;
       for (let i = 0; i < cellCount; i++) {
         const date = add(first, i);
@@ -480,4 +482,4 @@ import { renderDayStartMarker } from './calendar-day-start.js';
     }
     if (outer) outer.scrollTop = outerScroll;
   }
-  export const CalendarViews = Object.freeze({ render, range, add, iso, monday, label, daySegments, timeFoldPlan });
+  export const CalendarViews = Object.freeze({ render, range, add, iso, monday, weekStart, label, daySegments, timeFoldPlan });

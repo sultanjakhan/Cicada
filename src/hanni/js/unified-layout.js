@@ -81,15 +81,16 @@ export async function renderUnifiedLayout(el, tabId, config = {}) {
   el.innerHTML = `
     <div class="uni-header">
       <span class="uni-header-icon${config.headerIcon ? ' uni-header-icon--static' : ''}" ${config.headerIcon ? 'aria-hidden="true"' : 'title="Изменить иконку"'}>${icon}</span>
-      <h1 class="uni-header-name" title="Изменить название">${escapeHtml(name)}</h1>
+      <h1 class="uni-header-name${config.editableHeader === false ? ' uni-header-name--static' : ''}"${config.editableHeader === false ? '' : ' title="Изменить название"'}>${escapeHtml(name)}</h1>
       ${config.hideDescription ? '' : `<div class="uni-header-desc" title="Изменить описание">${desc ? escapeHtml(desc) : '<span style="opacity:0.4">Добавить описание…</span>'}</div>`}
     </div>
     ${config.headerExtra || ''}
     <div class="uni-navigation"><div class="uni-tabs" aria-label="Разделы календаря">${tabsHtml}</div>${actionsHtml ? `<div class="uni-header-actions">${actionsHtml}</div>` : ''}</div>
     <div class="uni-content"><div class="uni-pane" id="uni-pane-${tabId}"></div></div>`;
-  wireHeaderEdit(el, tabId, config, meta, defaults, revision);
+  if (config.editableHeader !== false) wireHeaderEdit(el, tabId, config, meta, defaults, revision);
   (config.toolbarActions || []).forEach((action, index) => el.querySelector(`[data-action-idx="${index}"]`)?.addEventListener('click', event => { event.stopPropagation(); action.onClick?.(event.currentTarget); }));
   el.querySelectorAll('.uni-tab').forEach(tab => tab.addEventListener('click', () => {
+    if (tab.dataset.pane === S._unifiedPane[tabId]) return;
     S._unifiedPane[tabId] = tab.dataset.pane; savePaneState(tabId, tab.dataset.pane);
     void renderUnifiedLayout(el, tabId, config);
   }));
