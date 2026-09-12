@@ -526,6 +526,12 @@ pub fn delete_goal(id: String, state: State<'_, AppState>) -> Result<(), String>
         .execute("DELETE FROM calendar_task_goals WHERE goal_id=?1", [&id])
         .map_err(|e| fail(e.to_string()))?;
     transaction
+        .execute(
+            "UPDATE calendar_goals SET parent_goal_id=NULL,updated_at=?1 WHERE parent_goal_id=?2",
+            params![now(), &id],
+        )
+        .map_err(|e| fail(e.to_string()))?;
+    transaction
         .execute("DELETE FROM calendar_goals WHERE id=?1", [id])
         .map_err(|e| fail(e.to_string()))?;
     transaction.commit().map_err(|e| fail(e.to_string()))?;
@@ -790,8 +796,12 @@ pub fn pause_task_block(block_id: i64, state: State<'_, AppState>) -> Result<(),
 }
 #[tauri::command(rename_all = "camelCase")]
 pub fn finish_task_block(block_id: i64, state: State<'_, AppState>) -> Result<(), String> {
-    let conn = lock(&state)?;
-    stop(&conn, block_id, true)
+    let mut conn = lock(&state)?;
+    let transaction = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| fail(e.to_string()))?;
+    stop(&transaction, block_id, true)?;
+    transaction.commit().map_err(|e| fail(e.to_string()))
 }
 #[tauri::command(rename_all = "camelCase")]
 pub fn get_calendar_task_minutes(

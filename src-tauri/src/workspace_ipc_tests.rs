@@ -117,6 +117,7 @@ fn mutation_snapshot(conn: &Connection) -> Vec<Vec<Vec<rusqlite::types::Value>>>
         "event_categories",
         "calendar_goals",
         "calendar_task_goals",
+        "timeline_blocks",
     ]
     .into_iter()
     .map(|table| {
@@ -130,6 +131,170 @@ fn mutation_snapshot(conn: &Connection) -> Vec<Vec<Vec<rusqlite::types::Value>>>
             .unwrap()
     })
     .collect()
+}
+
+#[test]
+fn finishing_task_rolls_back_timer_on_failure_and_allows_retry() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("calendar.db");
+    let (app, view) = fixture_with_connection(Connection::open(&path).unwrap());
+    let before = {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        mutation_fixture_sql(&conn);
+        let began = (chrono::Utc::now() - chrono::Duration::minutes(3)).to_rfc3339();
+        conn.execute("INSERT INTO timeline_blocks(id,source_type,source_id,date,start_time,is_active,created_at,updated_at) VALUES(100,'note','task-a','2026-09-12','10:00:00',1,?1,?1)", [&began]).unwrap();
+        conn.execute_batch("CREATE TRIGGER reject_task_completion BEFORE UPDATE OF completed ON items WHEN NEW.id='task-a' BEGIN SELECT RAISE(ABORT,'injected completion failure'); END;").unwrap();
+        mutation_snapshot(&conn)
+    };
+    let error = call(&view, "finish_task_block", json!({"blockId":100})).unwrap_err();
+    assert!(error
+        .as_str()
+        .unwrap()
+        .contains("injected completion failure"));
+    let observer = Connection::open(&path).unwrap();
+    assert_eq!(
+        mutation_snapshot(&observer),
+        before,
+        "failed completion must preserve both running timer and unfinished task"
+    );
+    observer
+        .execute_batch("DROP TRIGGER reject_task_completion")
+        .unwrap();
+    assert_eq!(
+        call(&view, "finish_task_block", json!({"blockId":100})).unwrap(),
+        Value::Null
+    );
+    let (active, minutes): (bool, i64) = observer
+        .query_row(
+            "SELECT is_active,duration_minutes FROM timeline_blocks WHERE id=100",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert!(!active);
+    assert!(minutes >= 3);
+    let (completed, status): (bool, String) = observer
+        .query_row(
+            "SELECT completed,status FROM items WHERE id='task-a'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert!(completed);
+    assert_eq!(status, "done");
+    assert_eq!(
+        observer
+            .query_row("SELECT COUNT(*) FROM calendar_task_goals", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    assert!(app.state::<AppState>().0.lock().unwrap().is_autocommit());
+}
+
+fn seed_goal_tree(conn: &Connection) {
+    mutation_fixture_sql(conn);
+    conn.execute_batch("INSERT INTO calendar_goals(id,title,parent_goal_id,created_at,updated_at) VALUES
+        ('child','Example child','goal-a','original','original'),
+        ('grandchild','Example grandchild','child','original','original'),
+        ('other-child','Example other child','goal-b','original','original');
+        INSERT INTO items(id,kind,title,duration_minutes,version,created_at,updated_at) VALUES('child-task','task','Example child task',30,1,'original','original');
+        INSERT INTO calendar_task_goals(source_type,source_id,goal_id,created_at) VALUES('note','child-task','child','original');").unwrap();
+}
+
+#[test]
+fn deleting_parent_goal_promotes_only_direct_children_and_preserves_tasks() {
+    let (app, view) = fixture();
+    let before_items = {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        seed_goal_tree(&conn);
+        mutation_snapshot(&conn)[0].clone()
+    };
+    assert_eq!(
+        call(&view, "delete_goal", json!({"id":"goal-a"})).unwrap(),
+        Value::Null
+    );
+    let state = app.state::<AppState>();
+    let conn = state.0.lock().unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT parent_goal_id FROM calendar_goals WHERE id='child'",
+            [],
+            |r| r.get::<_, Option<String>>(0)
+        )
+        .unwrap(),
+        None
+    );
+    assert_ne!(
+        conn.query_row(
+            "SELECT updated_at FROM calendar_goals WHERE id='child'",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "original"
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT parent_goal_id FROM calendar_goals WHERE id='grandchild'",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "child"
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT parent_goal_id FROM calendar_goals WHERE id='other-child'",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "goal-b"
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT goal_id FROM calendar_task_goals WHERE source_id='child-task'",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "child"
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM calendar_task_goals WHERE goal_id='goal-a'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+    assert_eq!(mutation_snapshot(&conn)[0], before_items);
+    assert_eq!(conn.query_row("SELECT COUNT(*) FROM calendar_goals child LEFT JOIN calendar_goals parent ON parent.id=child.parent_goal_id WHERE child.parent_goal_id IS NOT NULL AND parent.id IS NULL",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+}
+
+#[test]
+fn failed_parent_deletion_restores_children_and_task_links() {
+    let (app, view) = fixture();
+    let before = {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        seed_goal_tree(&conn);
+        conn.execute_batch("CREATE TRIGGER reject_parent_delete BEFORE DELETE ON calendar_goals WHEN OLD.id='goal-a' BEGIN SELECT RAISE(ABORT,'injected parent delete failure'); END;").unwrap();
+        mutation_snapshot(&conn)
+    };
+    let error = call(&view, "delete_goal", json!({"id":"goal-a"})).unwrap_err();
+    assert!(error
+        .as_str()
+        .unwrap()
+        .contains("injected parent delete failure"));
+    assert_eq!(
+        mutation_snapshot(&app.state::<AppState>().0.lock().unwrap()),
+        before
+    );
 }
 
 #[test]
@@ -359,8 +524,8 @@ fn assert_atomic_rollback(
         let conn = state.0.lock().unwrap();
         mutation_fixture_sql(&conn);
         conn.execute_batch(&format!(
-            "CREATE TRIGGER fail_second_step BEFORE {trigger_operation} ON {trigger_table}
-                 BEGIN SELECT RAISE(ABORT, 'injected second-step failure'); END;"
+            "CREATE TRIGGER reject_mutation BEFORE {trigger_operation} ON {trigger_table}
+                 BEGIN SELECT RAISE(ABORT, 'injected mutation failure'); END;"
         ))
         .unwrap();
         mutation_snapshot(&conn)
@@ -370,7 +535,7 @@ fn assert_atomic_rollback(
         error
             .as_str()
             .unwrap()
-            .contains("injected second-step failure"),
+            .contains("injected mutation failure"),
         "{command}: {error}"
     );
     // A fresh SQLite connection must see no partial writes, not just the caller's state.
@@ -381,7 +546,7 @@ fn assert_atomic_rollback(
         "{command} must roll back all changes"
     );
     observer
-        .execute_batch("DROP TRIGGER fail_second_step")
+        .execute_batch("DROP TRIGGER reject_mutation")
         .unwrap();
     assert_eq!(call(&view, command, args).unwrap(), expected);
     assert_ne!(
