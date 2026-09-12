@@ -74,6 +74,13 @@ fn validate_title(value: &str) -> Result<(), String> {
         Ok(())
     }
 }
+fn validate_note_status(value: &str) -> Result<(), String> {
+    if matches!(value, "note" | "task" | "done") {
+        Ok(())
+    } else {
+        Err(fail("status must be note, task or done"))
+    }
+}
 fn duration(value: i64) -> Result<(), String> {
     if (1..=5_256_000).contains(&value) {
         Ok(())
@@ -254,10 +261,11 @@ pub fn create_note(
 ) -> Result<String, String> {
     validate_title(&title)?;
     date(&due_date)?;
+    let record_status = status.unwrap_or_else(|| "note".into());
+    validate_note_status(&record_status)?;
     let conn = lock(&state)?;
     let id = Uuid::new_v4().to_string();
     let n = now();
-    let record_status = status.unwrap_or_else(|| "note".into());
     conn.execute("INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,status) VALUES(?1,'task',?2,?3,?4,NULL,30,?5,1,?6,?6,'task','#9B9B9B',?7,0,?8,?9)",params![id,title.trim(),content,due_date,(record_status=="done") as i64,n,priority.unwrap_or(0),tags,record_status]).map_err(|e|fail(e.to_string()))?;
     Ok(id)
 }
@@ -290,6 +298,7 @@ pub fn update_note_status(
     status: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    validate_note_status(&status)?;
     let conn = lock(&state)?;
     let changed=conn.execute("UPDATE items SET completed=?1,version=version+1,updated_at=?2 WHERE id=?3 AND kind='task'",params![(status=="done") as i64,now(),id]).map_err(|e|fail(e.to_string()))?;
     if changed == 1 {
@@ -661,6 +670,21 @@ pub fn delete_event_category(
         )
         .map_err(|_| fail("category not found"))?;
     let target = reassign_to.unwrap_or_else(|| "general".into());
+    if target == name {
+        return Err(fail(
+            "replacement category must differ from the deleted category",
+        ));
+    }
+    let target_exists: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM event_categories WHERE name=?1)",
+            [&target],
+            |row| row.get(0),
+        )
+        .map_err(|e| fail(e.to_string()))?;
+    if !target_exists {
+        return Err(fail("replacement category not found"));
+    }
     let n = transaction
         .execute(
             "UPDATE items SET category=?1 WHERE kind='event' AND category=?2",

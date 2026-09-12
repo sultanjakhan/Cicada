@@ -32,6 +32,7 @@ fn fixture_with_connection(
             api::complete_calendar_task,
             api::create_note,
             api::update_note,
+            api::update_note_status,
             api::get_note,
             api::get_notes,
             api::toggle_note_archive,
@@ -129,6 +130,185 @@ fn mutation_snapshot(conn: &Connection) -> Vec<Vec<Vec<rusqlite::types::Value>>>
             .unwrap()
     })
     .collect()
+}
+
+#[test]
+fn invalid_note_create_status_leaves_database_unchanged() {
+    let (app, view) = fixture();
+    let before = mutation_snapshot(&app.state::<AppState>().0.lock().unwrap());
+    for status in [
+        "unknown",
+        "",
+        " note ",
+        "Done",
+        "task'; DELETE FROM items; --",
+    ] {
+        let result = call(
+            &view,
+            "create_note",
+            json!({"title":"Example note",
+            "content":"Example content","tags":"","status":status,"dueDate":null,"priority":0}),
+        );
+        assert!(result.is_err(), "unsupported status {status:?} must fail");
+        assert_eq!(
+            mutation_snapshot(&app.state::<AppState>().0.lock().unwrap()),
+            before
+        );
+    }
+}
+
+#[test]
+fn invalid_note_update_status_leaves_database_unchanged() {
+    let (app, view) = fixture();
+    mutation_fixture_sql(&app.state::<AppState>().0.lock().unwrap());
+    let before = mutation_snapshot(&app.state::<AppState>().0.lock().unwrap());
+    for status in ["unknown", "", " task ", "Done"] {
+        assert!(call(
+            &view,
+            "update_note_status",
+            json!({"id":"task-a","status":status})
+        )
+        .is_err());
+        assert_eq!(
+            mutation_snapshot(&app.state::<AppState>().0.lock().unwrap()),
+            before
+        );
+    }
+}
+
+#[test]
+fn invalid_category_reassignment_leaves_database_unchanged() {
+    let (app, view) = fixture();
+    mutation_fixture_sql(&app.state::<AppState>().0.lock().unwrap());
+    let before = mutation_snapshot(&app.state::<AppState>().0.lock().unwrap());
+    for target in ["missing", "", "Example A", "category-b"] {
+        assert!(
+            call(
+                &view,
+                "delete_event_category",
+                json!({"id":"category-a","reassignTo":target})
+            )
+            .is_err(),
+            "invalid target {target:?} must fail (target uses a name, not an id)"
+        );
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        assert_eq!(mutation_snapshot(&conn), before);
+        assert!(conn.is_autocommit());
+    }
+    assert!(call(
+        &view,
+        "delete_event_category",
+        json!({"id":"general","reassignTo":null})
+    )
+    .is_err());
+    assert_eq!(
+        mutation_snapshot(&app.state::<AppState>().0.lock().unwrap()),
+        before
+    );
+    // A rejected request must not leave a transaction open or block a valid retry.
+    assert_eq!(
+        call(
+            &view,
+            "delete_event_category",
+            json!({"id":"category-a","reassignTo":"Example B"})
+        )
+        .unwrap(),
+        json!(1)
+    );
+    let state = app.state::<AppState>();
+    let conn = state.0.lock().unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM items WHERE kind='event' AND category='Example B'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        2
+    );
+}
+
+#[test]
+fn supported_note_statuses_preserve_visibility_and_completion() {
+    let (_app, view) = fixture();
+    for (status, expected_status) in [
+        (Value::Null, "note"),
+        (json!("note"), "note"),
+        (json!("task"), "task"),
+        (json!("done"), "done"),
+    ] {
+        let id = call(
+            &view,
+            "create_note",
+            json!({"title":"Example status","content":"Example body",
+            "tags":"","status":status,"dueDate":null,"priority":0}),
+        )
+        .unwrap();
+        let item = call(&view, "get_note", json!({"id":id})).unwrap();
+        assert_eq!(item["status"], expected_status);
+        assert_eq!(item["completed"], json!(expected_status == "done"));
+        let notes = call(
+            &view,
+            "get_notes",
+            json!({"filter":"tab:calendar","search":null}),
+        )
+        .unwrap();
+        let tasks = call(
+            &view,
+            "get_calendar_tasks",
+            json!({"includeCompleted":true}),
+        )
+        .unwrap();
+        assert_eq!(
+            notes.as_array().unwrap().iter().any(|n| n["id"] == id),
+            expected_status == "note"
+        );
+        assert_eq!(
+            tasks
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|n| n["source_id"] == id),
+            expected_status != "note"
+        );
+    }
+}
+
+#[test]
+fn supported_update_status_keeps_existing_completion_contract() {
+    let (app, view) = fixture();
+    mutation_fixture_sql(&app.state::<AppState>().0.lock().unwrap());
+    for status in ["done", "task", "note"] {
+        assert_eq!(
+            call(
+                &view,
+                "update_note_status",
+                json!({"id":"task-a","status":status})
+            )
+            .unwrap(),
+            Value::Null
+        );
+        let item = call(&view, "get_note", json!({"id":"task-a"})).unwrap();
+        assert_eq!(item["completed"], json!(status == "done"));
+        // This compatibility command toggles completion; it does not move records between panes.
+        assert_eq!(
+            item["status"],
+            if status == "done" { "done" } else { "task" }
+        );
+        assert_eq!(
+            app.state::<AppState>()
+                .0
+                .lock()
+                .unwrap()
+                .query_row("SELECT status FROM items WHERE id='task-a'", [], |r| r
+                    .get::<_, String>(
+                    0
+                ))
+                .unwrap(),
+            "task"
+        );
+    }
 }
 
 #[test]
