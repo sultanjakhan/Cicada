@@ -111,6 +111,276 @@ fn mutation_fixture_sql(conn: &Connection) {
     .unwrap();
 }
 
+fn calendar_list_fixture() -> (tauri::App<MockRuntime>, tauri::WebviewWindow<MockRuntime>) {
+    let (app, view) = fixture();
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        conn.execute_batch("INSERT INTO items(id,kind,title,date,time,duration_minutes,completed,status,archived,version,created_at,updated_at,category,color,priority) VALUES
+            ('t-undated','task','t-undated',NULL,NULL,0,0,'task',0,1,'fixture','fixture','Example','#123456',3),
+            ('t-open','task','t-open','2026-09-12','15:00',45,0,'task',0,1,'fixture','fixture','Example','#123456',3),
+            ('t-done','task','t-done','2026-09-12',NULL,0,1,'done',0,1,'fixture','fixture','Example','#123456',3),
+            ('t-legacy','task','t-legacy','2026-09-13',NULL,20,1,'task',0,1,'fixture','fixture','Example','#123456',3),
+            ('t-out','task','t-out','2026-10-01',NULL,25,0,'task',0,1,'fixture','fixture','Example','#123456',3),
+            ('t-note','task','t-note','2026-09-12',NULL,0,0,'note',0,1,'fixture','fixture','Example','#123456',3),
+            ('t-arch','task','t-arch','2026-09-12',NULL,0,0,'task',1,1,'fixture','fixture','Example','#123456',3),
+            ('e-cross','event','e-cross','2026-08-31','23:30',60,0,'task',0,1,'fixture','fixture','Example','#123456',3),
+            ('e-edge','event','e-edge','2026-08-31','23:30',30,0,'task',0,1,'fixture','fixture','Example','#123456',3),
+            ('e-old','event','e-old','2026-08-31',NULL,0,0,'task',0,1,'fixture','fixture','Example','#123456',3),
+            ('e-all','event','e-all','2026-09-01',NULL,0,0,'task',0,1,'fixture','fixture','Example','#123456',3),
+            ('e-empty','event','e-empty','2026-09-01','',0,0,'task',0,1,'fixture','fixture','Example','#123456',3),
+            ('e-legacy','event','e-legacy','2026-09-12','09:00',30,1,'task',0,1,'fixture','fixture','Example','#123456',3),
+            ('e-end','event','e-end','2026-09-30','23:30',60,0,'task',0,1,'fixture','fixture','Example','#123456',3),
+            ('e-out','event','e-out','2026-10-01','08:00',30,0,'task',0,1,'fixture','fixture','Example','#123456',3),
+            ('e-arch','event','e-arch','2026-09-01',NULL,0,0,'task',1,1,'fixture','fixture','Example','#123456',3);
+            INSERT INTO timeline_blocks(source_type,source_id,date,start_time,duration_minutes,is_active,created_at,updated_at) VALUES
+            ('note','t-open','2026-09-12','10:00',7,0,'fixture','fixture'),
+            ('note','t-open','2026-09-12','11:00',8,0,'fixture','fixture'),
+            ('note','t-open','2026-09-12','12:00',100,1,'fixture','fixture'),
+            ('event','t-open','2026-09-12','12:00',999,0,'fixture','fixture'),
+            ('note','t-done','2026-09-12','12:00',0,0,'fixture','fixture'),
+            ('event','e-cross','2026-08-31','23:30',3,0,'fixture','fixture'),
+            ('event','e-cross','2026-09-01','00:01',100,1,'fixture','fixture'),
+            ('note','e-cross','2026-09-01','00:01',999,0,'fixture','fixture'),
+            ('event','e-legacy','2026-09-12','09:00',11,0,'fixture','fixture'),
+            ('note','historical','2025-01-01','09:00',9999,1,'fixture','fixture');").unwrap();
+    }
+    (app, view)
+}
+
+fn expected_list_record(
+    id: &str,
+    source: &str,
+    date: Option<&str>,
+    time: Option<&str>,
+    duration: Option<i64>,
+) -> Value {
+    json!({"source_type":source,"source_id":id,"title":id,"date":date,"planned_time":time,
+        "duration_minutes":duration,"category":"Example","color":"#123456","completed":false,
+        "status_extra":"task","priority":3,"tracking_mode":if source=="note" {"check"}else{"track"},
+        "is_active":false,"actual_minutes":0,"has_work":false})
+}
+
+#[test]
+fn calendar_lists_preserve_payloads_filters_and_timeline_totals() {
+    let (_app, view) = calendar_list_fixture();
+    let undated = expected_list_record("t-undated", "note", None, None, None);
+    let mut cross = expected_list_record(
+        "e-cross",
+        "event",
+        Some("2026-08-31"),
+        Some("23:30"),
+        Some(60),
+    );
+    cross["is_active"] = json!(true);
+    cross["has_work"] = json!(true);
+    cross["actual_minutes"] = json!(3);
+    let all_day = expected_list_record("e-all", "event", Some("2026-09-01"), None, Some(0));
+    let empty_time =
+        expected_list_record("e-empty", "event", Some("2026-09-01"), Some(""), Some(0));
+    let mut done = expected_list_record("t-done", "note", Some("2026-09-12"), None, None);
+    done["completed"] = json!(true);
+    done["status_extra"] = json!("done");
+    done["has_work"] = json!(true);
+    let mut event_legacy = expected_list_record(
+        "e-legacy",
+        "event",
+        Some("2026-09-12"),
+        Some("09:00"),
+        Some(30),
+    );
+    event_legacy["completed"] = json!(true);
+    event_legacy["status_extra"] = json!("done");
+    event_legacy["actual_minutes"] = json!(11);
+    event_legacy["has_work"] = json!(true);
+    let mut open = expected_list_record(
+        "t-open",
+        "note",
+        Some("2026-09-12"),
+        Some("15:00"),
+        Some(45),
+    );
+    open["is_active"] = json!(true);
+    open["has_work"] = json!(true);
+    open["actual_minutes"] = json!(15);
+    let mut legacy = expected_list_record("t-legacy", "note", Some("2026-09-13"), None, Some(20));
+    legacy["completed"] = json!(true);
+    legacy["status_extra"] = json!("done");
+    let end = expected_list_record(
+        "e-end",
+        "event",
+        Some("2026-09-30"),
+        Some("23:30"),
+        Some(60),
+    );
+    assert_eq!(
+        call(
+            &view,
+            "get_calendar_records",
+            json!({"start":"2026-09-01","end":"2026-09-30"})
+        )
+        .unwrap(),
+        json!([
+            undated,
+            cross,
+            all_day,
+            empty_time,
+            done,
+            event_legacy,
+            open,
+            legacy,
+            end
+        ])
+    );
+
+    // Task list has its own order, no date-range filter, and a deliberately smaller payload.
+    let as_task = |mut value: Value| {
+        let fields = value.as_object_mut().unwrap();
+        fields.remove("category");
+        fields.remove("color");
+        fields.insert("planned_time".into(), Value::Null);
+        value
+    };
+    let outside = expected_list_record("t-out", "note", Some("2026-10-01"), None, Some(25));
+    let remaining = json!([
+        as_task(open.clone()),
+        as_task(outside.clone()),
+        as_task(undated.clone())
+    ]);
+    assert_eq!(
+        call(&view, "get_calendar_tasks", json!({})).unwrap(),
+        remaining
+    );
+    assert_eq!(
+        call(
+            &view,
+            "get_calendar_tasks",
+            json!({"includeCompleted":false})
+        )
+        .unwrap(),
+        remaining
+    );
+    assert_eq!(
+        call(
+            &view,
+            "get_calendar_tasks",
+            json!({"includeCompleted":true})
+        )
+        .unwrap(),
+        json!([
+            as_task(done),
+            as_task(open),
+            as_task(legacy),
+            as_task(outside),
+            as_task(undated)
+        ])
+    );
+    assert!(call(
+        &view,
+        "get_calendar_records",
+        json!({"start":"bad","end":"2026-09-30"})
+    )
+    .is_err());
+}
+
+#[test]
+fn calendar_lists_keep_status_filters_independent_of_kind_and_completion() {
+    let (app, view) = calendar_list_fixture();
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        conn.execute_batch(
+            "UPDATE items SET status='note' WHERE id='e-all';
+            UPDATE items SET completed=0 WHERE id='t-done';",
+        )
+        .unwrap();
+    }
+    let records = call(
+        &view,
+        "get_calendar_records",
+        json!({"start":"2026-09-01","end":"2026-09-30"}),
+    )
+    .unwrap();
+    assert!(!records
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["source_id"] == "e-all"));
+    let remaining = call(
+        &view,
+        "get_calendar_tasks",
+        json!({"includeCompleted":false}),
+    )
+    .unwrap();
+    assert!(!remaining
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["source_id"] == "t-done"));
+    let all = call(
+        &view,
+        "get_calendar_tasks",
+        json!({"includeCompleted":true}),
+    )
+    .unwrap();
+    let done = all
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["source_id"] == "t-done")
+        .unwrap();
+    assert_eq!(done["completed"], false);
+    assert_eq!(done["status_extra"], "done");
+}
+
+#[test]
+#[ignore = "manual synthetic IPC benchmark; no native UI latency claim"]
+fn calendar_list_benchmark() {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    use std::time::Instant;
+    for count in [100, 1000, 5000] {
+        let (app, view) = fixture();
+        {
+            let state = app.state::<AppState>();
+            let mut conn = state.0.lock().unwrap();
+            let tx = conn.transaction().unwrap();
+            for n in 0..count {
+                let kind = if n % 2 == 0 { "event" } else { "task" };
+                let source = if n % 2 == 0 { "event" } else { "note" };
+                let id = format!("fixture-{n:05}");
+                tx.execute("INSERT INTO items(id,kind,title,date,time,duration_minutes,version,created_at,updated_at) VALUES(?1,?2,?1,'2026-09-12',?3,30,1,'fixture','fixture')",rusqlite::params![id,kind,if kind=="event" {Some("09:00")} else {None}]).unwrap();
+                for active in [false, true] {
+                    tx.execute("INSERT INTO timeline_blocks(source_type,source_id,date,start_time,duration_minutes,is_active,created_at,updated_at) VALUES(?1,?2,'2026-09-12','09:00',10,?3,'fixture','fixture')",rusqlite::params![source,id,active]).unwrap();
+                }
+            }
+            for n in 0..count * 4 {
+                tx.execute("INSERT INTO timeline_blocks(source_type,source_id,date,start_time,duration_minutes,is_active,created_at,updated_at) VALUES('note',?1,'2025-01-01','09:00',30,0,'fixture','fixture')",[format!("historical-{n}")]).unwrap();
+            }
+            tx.commit().unwrap();
+        }
+        for (command, args) in [
+            (
+                "get_calendar_records",
+                json!({"start":"2026-09-01","end":"2026-09-30"}),
+            ),
+            ("get_calendar_tasks", json!({"includeCompleted":true})),
+        ] {
+            let expected = call(&view, command, args.clone()).unwrap();
+            let mut samples = Vec::new();
+            for _ in 0..5 {
+                let started = Instant::now();
+                let actual = call(&view, command, args.clone()).unwrap();
+                samples.push(started.elapsed().as_micros());
+                assert_eq!(actual, expected);
+            }
+            samples.sort_unstable();
+            let mut hash = DefaultHasher::new();
+            expected.to_string().hash(&mut hash);
+            println!("CALENDAR_BENCH records={count} command={command} rows={} median_us={} payload_hash={:016x}",expected.as_array().unwrap().len(),samples[2],hash.finish());
+        }
+    }
+}
+
 fn mutation_snapshot(conn: &Connection) -> Vec<Vec<Vec<rusqlite::types::Value>>> {
     [
         "items",
