@@ -1,5 +1,4 @@
 import { S, TAB_ICONS, TAB_REGISTRY, getTabIcon, IS_MOBILE, tabLoaders } from './state.js';
-import { openCalendarCreate } from './calendar-workspace.js';
 import { showCalendarSettings } from './calendar-settings.js';
 
 let drawerBackdrop = null;
@@ -59,17 +58,6 @@ export function renderTabBar() {
   const select = () => { closeDrawer(); switchTab('calendar'); };
   item.addEventListener('click', select);
   tabList.append(item);
-
-  const createGroup = document.createElement('div');
-  createGroup.className = 'sidebar-create-group';
-  const create = document.createElement('button');
-  create.type = 'button'; create.className = 'sidebar-create'; create.dataset.calendarCreate = '';
-  create.disabled = !document.querySelector('#calendar-content .uni-pane');
-  create.title = 'Создать задачу или событие';
-  create.setAttribute('aria-label', create.title); create.setAttribute('aria-haspopup', 'dialog');
-  create.innerHTML = `${TAB_ICONS.add}<span class="sidebar-create-label">Создать</span>`;
-  create.addEventListener('click', () => { closeDrawer(); openCalendarCreate(create); });
-  createGroup.append(create); tabList.append(createGroup);
 
   bottom.replaceChildren();
   const gear = document.createElement('button');

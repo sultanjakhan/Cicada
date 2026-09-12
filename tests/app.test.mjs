@@ -77,12 +77,12 @@ test('upstream mobile mode enables its CSS and closes the drawer through its bac
   assert.equal(w.document.querySelector('.drawer-backdrop').classList.contains('visible'), false);
 });
 
-test('one persistent sidebar action opens the shared Task/Event editor and restores focus', async t => {
+test('one persistent navigation action opens the shared Task/Event editor and restores focus', async t => {
   const { w, click } = await launch(t);
   assert.equal(w.document.querySelector('[data-overview-create]'), null);
   const trigger = w.document.querySelector('[data-calendar-create]');
-  assert.ok(trigger.closest('#tab-bar'));
-  assert.equal(w.document.querySelector('.uni-header-action'), null);
+  assert.ok(trigger.closest('.uni-navigation'));
+  assert.equal(w.document.querySelector('#tab-bar [data-calendar-create]'), null);
   assert.equal(w.document.querySelector('.uni-header-desc'), null);
   assert.equal(trigger.closest('.uni-content'), null);
   trigger.focus();
@@ -203,12 +203,12 @@ test('saved calendar defaults determine the first Table view after startup', asy
   assert.equal(w.document.querySelector('[data-range]').textContent, range);
 });
 
-test('mobile creation and settings close the drawer and return focus to its visible opener', async t => {
+test('mobile creation returns to its visible action and settings return to the closed drawer opener', async t => {
   const { w, click } = await launch(t, { mobile:true });
-  await click('#mobile-hamburger'); await click('[data-calendar-create]');
+  const create = await click('[data-calendar-create]');
   assert.equal(w.document.querySelector('#tab-bar').classList.contains('drawer-open'), false);
   await click('#evm-close');
-  assert.equal(w.document.activeElement.id, 'mobile-hamburger');
+  assert.equal(w.document.activeElement, create);
   await click('#mobile-hamburger'); await click('[data-calendar-settings]');
   assert.equal(w.document.querySelector('#tab-bar').classList.contains('drawer-open'), false);
   await click('.calendar-settings-dialog .calendar-editor-close');

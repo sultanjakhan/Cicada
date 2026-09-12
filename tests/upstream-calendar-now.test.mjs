@@ -926,6 +926,33 @@ test('a paused note completed outside today is reconciled from its authoritative
    assert.equal(data.count('finish_task_block'), 0);
 
   });
+for (const sourceType of ['note', 'event']) test(`running and paused ${sourceType} rereads edited fields without changing timer history`, async t => {
+   const data=backend(), task=data.tasks.find(row=>row.source_type===sourceType);
+   task.date='2026-09-05';
+   const x=await mount(t,data);
+   await x.choose('task', `${sourceType}:${task.source_id}`);
+   await x.click('start');
+   const execution=JSON.parse(data.stored).execution, blocks=clone(data.blocks);
+   task.title='Новое название'; task.duration_minutes=45; task.date='2026-09-06';
+   await x.refresh();
+   assert.equal(x.host.dataset.state,'active');
+   assert.equal(x.ui('title').textContent,'Новое название');
+   assert.match(x.ui('meta').textContent,/из 45 мин/);
+   assert.equal(JSON.parse(data.stored).execution.task.date,'2026-09-06');
+   assert.equal(JSON.parse(data.stored).execution.task.completion_date,execution.task.completion_date);
+   assert.deepEqual(data.blocks,blocks);
+   await x.click('pause');
+   const paused=clone(data.blocks);
+   task.title='Изменено на паузе'; task.duration_minutes=60;
+   await x.refresh();
+   assert.equal(x.host.dataset.state,'paused');
+   assert.equal(x.ui('title').textContent,'Изменено на паузе');
+   assert.match(x.ui('meta').textContent,/из 60 мин/);
+   assert.equal(JSON.parse(data.stored).execution.blockId,execution.blockId);
+   assert.deepEqual(data.blocks,paused);
+   assert.equal(data.count('start_task_block'),1);
+});
+
 test('main goal shows the current task branch without repeating its title or inventing progress', async t => {
    const data = backend();
    data.goals.push({id:'stage-a',title:'Данные',parent_goal_id:'goal-a'}, {id:'stage-b',title:'SQL',parent_goal_id:'stage-a'});
@@ -935,6 +962,10 @@ test('main goal shows the current task branch without repeating its title or inv
    assert.equal(x.ui('goal-stage').hidden,false);
    assert.doesNotMatch(x.host.querySelector('.calendar-now__goal').textContent,/Вопросы к интервью|%/);
    assert.equal(data.count('start_task_block'),0);
+   await x.choose('goal', 'stage-a');
+   assert.equal(x.ui('goal-title').textContent, 'Данные');
+   assert.equal(x.ui('goal-stage').textContent, 'Текущий этап: SQL', 'a nested main goal starts its path at the selected goal');
+   await x.choose('goal', 'goal-a');
    data.links[0].goal_id='goal-a';
    await x.refresh();
    assert.equal(x.ui('goal-stage').hidden,true,'direct root link needs no duplicate root breadcrumb');

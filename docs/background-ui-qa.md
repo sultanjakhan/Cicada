@@ -227,3 +227,39 @@ active. A recommendation and a paused/completed task have no activity dot.
 goal-picker focus, native Start/Pause, 640px layout and dark appearance. The
 user's open DEV was inspected read-only. Screenshots and results are retained
 under the same ignored DEV/background-QA paths with the `goal-hierarchy` prefix.
+
+### Dashboard frame and linked records, 2026-09-13
+
+The DEV frame uses the native Windows title bar without the redundant 28px web
+drag spacer. The workspace scrolls at the window edge, with matching content
+insets. The goal header has a fixed 22px outline flag aligned with Change.
+Today/All sit below Tasks. One labelled Create action stays in the navigation
+row below Calendar and opens the existing Task/Event editor; sidebar creation
+was removed. This placement remains provisional pending the owner's preference.
+
+The linked-record check found and fixed two inconsistencies: parent goal cards
+excluded descendant links, and Now retained stale titles/estimates/due dates on
+running or paused records. Goal summaries now include subgoals and deduplicate
+record identities. Now reads current fields while preserving the timer block,
+work history and execution occurrence. The suspected nested-goal stage issue
+was not reproduced; an added assertion confirms its existing behavior.
+
+Validation: 114 JavaScript tests and 19 Rust tests pass; privacy and frontend
+build checks pass. JavaScript cases include parent/child link counts,
+relinking, nested main-goal paths and edited running/paused task and event fields.
+Native DEV Playwright MCP created a task through the shared form, selected it
+in Now, started/paused it, changed its title/date, relinked its goal, verified
+the new date in Calendar, completed it and checked Today/All counts. A restart
+preserved the selected subgoal and completion without restarting a timer.
+Wide/640px and dark screenshots were inspected. The first native rename check
+reproduced stale Now; its rerun passed after the fix. An earlier picker script
+needed the existing All suitable tasks control to reach the test task.
+
+All mutations used a separate copy of the existing synthetic QA database at
+ignored `.local/background-qa/dashboard-links-20260913/`; the inactive desktop
+monitor recorded no activation. The user's running DEV was inspected read-only
+through CDP and showed the new frame, action, icon and filters. Source/build and
+privacy checks are separate from this native evidence. No release installation
+or publication was performed. The existing DEV favicon 404 remains. Local
+reproduction scripts and results use `.local/dev/dashboard-links-*` and
+`.local/dev/dashboard-frame-*`.

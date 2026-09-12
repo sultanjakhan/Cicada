@@ -61,7 +61,7 @@ export function mountCalendarNow(element, dependencies = {}) {
   element.classList.toggle('calendar-now--compact', dependencies.compact === true);
   element.innerHTML = `
     <section class="calendar-now__goal" aria-labelledby="${prefix}-goal-label ${prefix}-goal-title">
-      <div class="calendar-now__goal-top"><p class="calendar-now__eyebrow" id="${prefix}-goal-label"><span class="calendar-now__goal-symbol" aria-hidden="true">${ICONS.target}</span>Главная цель</p><button type="button" data-action="open-goal" class="calendar-now__quiet" aria-label="Сменить главную цель" aria-haspopup="dialog"><span class="calendar-now__button-icon" data-ui="goal-change-icon" aria-hidden="true" hidden>${ICONS.cycle}</span><span data-action-label>Выбрать цель</span></button></div>
+      <div class="calendar-now__goal-top"><p class="calendar-now__eyebrow" id="${prefix}-goal-label"><span class="calendar-now__goal-symbol" aria-hidden="true">${ICONS.flag}</span>Главная цель</p><button type="button" data-action="open-goal" class="calendar-now__quiet" aria-label="Сменить главную цель" aria-haspopup="dialog"><span class="calendar-now__button-icon" data-ui="goal-change-icon" aria-hidden="true" hidden>${ICONS.cycle}</span><span data-action-label>Выбрать цель</span></button></div>
       <h2 id="${prefix}-goal-title"><button type="button" data-action="goal-details" class="calendar-now__goal-link" aria-haspopup="dialog" hidden><span data-ui="goal-title"></span><span class="calendar-now__button-icon" aria-hidden="true">${ICONS.arrowRight}</span></button><span data-ui="goal-empty"></span></h2>
       <span data-ui="goal-status" class="calendar-now__goal-status" hidden></span>
       <p data-ui="goal-stage" class="calendar-now__goal-stage" hidden></p>
@@ -418,7 +418,17 @@ export function mountCalendarNow(element, dependencies = {}) {
   async function resolveTask(block, planned, state) {
     const execution = state.execution?.blockId === Number(block.id) && keyOf(state.execution.task) === keyOf(block) ? state.execution.task : null;
     const occurrence = validDate(block.completion_date) || execution?.completion_date;
-    const known = execution || planned.find(task => keyOf(task) === keyOf(block) && (!occurrence || task.completion_date === occurrence)) ||
+    const fresh = planned.find(task => keyOf(task) === keyOf(block) && (block.source_type !== 'schedule' || !occurrence || task.completion_date === occurrence));
+    if (fresh) return taskOf({ ...fresh, completion_date: occurrence || fresh.completion_date });
+    // A title, estimate or due date can change while the timer stays on the same
+    // record. Preserve its execution occurrence, but read current record fields.
+    if (block.source_type === 'note' || block.source_type === 'event') {
+      const row = block.source_type === 'note' ? await api('get_note', { id: String(block.source_id) })
+        : (await api('get_all_events', {})).find(item => String(item.id) === String(block.source_id));
+      if (!row) throw new Error('missing-record');
+      return taskOf({ ...row, source_type: block.source_type, source_id: block.source_id, completion_date: occurrence || block.date });
+    }
+    const known = execution ||
       [state.selection, state.completed].find(task => keyOf(task) === keyOf(block) && (!occurrence || task.completion_date === occurrence));
     if (known) return taskOf({ ...known, completion_date: occurrence || known.completion_date });
     if (block.title) return taskOf({ ...block, completion_date: occurrence || block.date });
@@ -454,6 +464,14 @@ export function mountCalendarNow(element, dependencies = {}) {
         const note = await api('get_note', { id: String(state.execution.task.source_id) });
         if (!note) throw new Error('missing-note');
         task = { ...note, status_extra: note.status || note.status_extra };
+      }
+      if (block && !task && state.execution.task.source_type === 'event') {
+        task = (await api('get_all_events', {})).find(item => String(item.id) === state.execution.task.source_id);
+        if (!task) throw new Error('missing-event');
+      }
+      if (block && task) {
+        const previous = state.execution.task;
+        state.execution.task = taskOf({ ...previous, ...task, source_type: previous.source_type, source_id: previous.source_id, completion_date: previous.completion_date });
       }
       if (!block) { state.execution = null; state.selection = null; state.selectionMode = 'auto'; }
       else if (task?.completed || task?.status_extra === 'done') { state.completed = state.execution.task; state.execution = null; }

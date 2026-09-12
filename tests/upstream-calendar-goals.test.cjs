@@ -17,11 +17,11 @@ async function setup(t) {
   const w = dom.window;
   w.HTMLDialogElement.prototype.showModal = function () { this.open = true; this.querySelector('button')?.focus(); };
   w.HTMLDialogElement.prototype.close = function () { this.open = false; this.dispatchEvent(new w.Event('close')); };
-  const goals = [], calls = [], before = new Map(); let selected = 0, created = null;
+  const goals = [], links = [], calls = [], before = new Map(); let selected = 0, created = null;
   const api = async (name, args) => {
     calls.push({ name, args: structuredClone(args) }); if (before.has(name)) await before.get(name)(args);
     if (name === 'get_goals') return structuredClone(goals);
-    if (name === 'get_calendar_task_goals') return [];
+    if (name === 'get_calendar_task_goals') return structuredClone(links);
     if (name === 'get_ui_state') return JSON.stringify({ version: 1, goalId: null });
     if (name === 'get_active_block') return null;
     if (name === 'save_calendar_goal') { const id = goals.length + 1; const values = { id: args.id || id, title: args.title, deadline: args.deadline, goal_kind: args.goalKind, description: args.description, criteria: args.criteria, target_value: args.targetValue, unit: args.unit, parent_goal_id: args.clearParent ? null : args.parentGoalId, current_value: args.currentValue };
@@ -34,7 +34,7 @@ async function setup(t) {
   t.after(() => { dispose(); dom.window.close(); });
   const open = () => { const trigger = root.querySelector('[data-new]'); trigger.focus(); trigger.click(); return w.document.querySelector('dialog[data-goal-create]'); };
   const submit = async modal => { modal.querySelector('form').dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true })); await tick(); };
-  return { w, root, goals, calls, before, dispose, open, submit, selected: () => selected, created: () => created };
+  return { w, root, goals, links, calls, before, dispose, open, submit, selected: () => selected, created: () => created };
 }
 
 test('New goal opens a named shared dialog, not an inline form; cancel restores the trigger without IPC', async t => {
@@ -140,6 +140,22 @@ test('goal forest keeps nested goals ordered once and tolerates missing parents 
     { id: 5, title: 'Цикл B', goal_kind: 'goal', parent_goal_id: 4 },
   ]);
   assert.deepEqual(rows.map(row => [row.goal.id, row.depth]), [[1, 0], [2, 1], [3, 0], [4, 0], [5, 1]]);
+});
+
+test('parent goal counts linked records through all subgoals once and refreshes after relinking', async t => {
+  const x = await setup(t);
+  x.goals.push({id:1,title:'Корень',goal_kind:'goal'}, {id:2,title:'Этап',goal_kind:'goal',parent_goal_id:1}, {id:3,title:'Практика',goal_kind:'goal',parent_goal_id:2}, {id:4,title:'Другая цель',goal_kind:'goal'});
+  x.links.push({goal_id:2,source_type:'note',source_id:'a'}, {goal_id:3,source_type:'note',source_id:'b'}, {goal_id:3,source_type:'note',source_id:'b'}, {goal_id:3,source_type:'event',source_id:'b'}, {goal_id:4,source_type:'note',source_id:'c'});
+  const label = id => x.root.querySelector(`[data-goal-id="${id}"] .cp-goal-links`).textContent;
+  x.w.dispatchEvent(new x.w.Event('task-state-changed')); await tick();
+  assert.equal(label(1), 'Связано, включая подцели: 2 задачи · 1 событие');
+  assert.equal(label(2), label(1));
+  assert.equal(label(3), 'Связано: 1 задача · 1 событие');
+  assert.equal(label(4), 'Связано: 1 задача');
+  x.links[0].goal_id=4;
+  x.w.dispatchEvent(new x.w.Event('task-state-changed')); await tick();
+  assert.equal(label(1), 'Связано, включая подцели: 1 задача · 1 событие');
+  assert.equal(label(4), 'Связано: 2 задачи');
 });
 
 test('goal editor offers only valid parents, clears a parent, and starts a task with the visible goal path', async t => {

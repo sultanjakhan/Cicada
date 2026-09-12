@@ -243,15 +243,6 @@ body {
 ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: var(--radius-xs); }
 ::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
 
-/* ── Drag region (window controls) ── */
-
-#drag-region {
-  height: 28px;
-  min-height: 28px;
-  -webkit-app-region: drag;
-  background: var(--bg-sidebar);
-}
-
 /* ── Tab content base ── */
 
 .tab-content {

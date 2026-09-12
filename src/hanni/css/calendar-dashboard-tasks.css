@@ -1,7 +1,7 @@
 .calendar-task-overview { max-width: 960px; min-width: 0; margin: 24px auto 0; padding:20px 24px; border:1px solid var(--border-default); border-radius:16px; background:var(--bg-card); color: var(--text-primary, #202725); }
 .calendar-task-overview, .calendar-task-overview * { box-sizing: border-box; }
 .calendar-task-overview [hidden] { display: none !important; }
-.calendar-task-overview .cto-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 24px; margin-bottom:10px; }
+.calendar-task-overview .cto-heading { display:flex; flex-direction:column; align-items:flex-start; gap:12px; margin-bottom:10px; }
 .calendar-task-overview .cto-filters { display:flex; align-items:center; gap:4px; }
 .calendar-task-overview .cto-filters button { display:inline-flex; align-items:center; gap:8px; min-height:36px; padding:6px 10px; border-color:transparent; background:transparent; color:var(--text-secondary); font-size:13px; }
 .calendar-task-overview .cto-filters button[aria-pressed="true"] { background:var(--bg-hover); color:var(--text-primary); }

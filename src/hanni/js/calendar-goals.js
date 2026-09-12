@@ -9,9 +9,10 @@ const dateLabel = value => {
   return Number.isFinite(date.getTime()) ? date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }) : value;
 };
 const plural = (n, forms) => forms[n % 100 >= 11 && n % 100 <= 14 ? 2 : n % 10 === 1 ? 0 : n % 10 >= 2 && n % 10 <= 4 ? 1 : 2];
-export function calendarGoalLinks(links, goalId) {
+export function calendarGoalLinks(links, goalId, descendantIds = []) {
+  const goalIds = new Set([String(goalId), ...descendantIds.map(String)]);
   const counts = { note: new Set(), event: new Set(), schedule: new Set() };
-  links.filter(link => String(link.goal_id) === String(goalId)).forEach(link => counts[link.source_type]?.add(String(link.source_id)));
+  links.filter(link => goalIds.has(String(link.goal_id))).forEach(link => counts[link.source_type]?.add(String(link.source_id)));
   return Object.entries(counts).filter(([, ids]) => ids.size).map(([kind, ids]) => {
     const forms = { note: ['задача', 'задачи', 'задач'], event: ['событие', 'события', 'событий'], schedule: ['повторение', 'повторения', 'повторений'] }[kind];
     return `${ids.size} ${plural(ids.size, forms)}`;
@@ -59,7 +60,8 @@ export async function mountCalendarGoals(element, dependencies = {}) {
       rows.forEach(row => {
       const goal = row.goal || row, depth = row.depth || 0;
       if (row.ancestorIds?.some(id => collapsedGoalIds.has(id))) return;
-      const selected = goal.goal_kind !== 'daily_norm' && String(goal.id) === selectedId, summary = calendarGoalLinks(links, goal.id);
+      const descendants = longTerm.filter(item => item.ancestorIds.includes(String(goal.id))).map(item => item.goal.id);
+      const selected = goal.goal_kind !== 'daily_norm' && String(goal.id) === selectedId, summary = calendarGoalLinks(links, goal.id, descendants);
       const target = Number(goal.target_value), current = Number(goal.current_value);
       const numeric = goal.goal_kind === 'daily_norm' || !!goal.unit || (Number.isFinite(target) && target !== 1) || (Number.isFinite(current) && current > 0);
       const numericLine = numeric && Number.isFinite(target) ? (Number.isFinite(current) ? `Прогресс: ${current} из ${target} ${goal.unit || ''}` : `Цель: ${target} ${goal.unit || ''}`) : '';
@@ -71,7 +73,7 @@ export async function mountCalendarGoals(element, dependencies = {}) {
         ${goal.goal_kind === 'daily_norm' ? `<p>Каждый день: ${escapeHtml(String(goal.target_value))} ${escapeHtml(goal.unit || '')}</p>` : ''}
         ${goal.goal_kind === 'goal' && numericLine ? `<p>${escapeHtml(numericLine.trim())}</p>` : ''}
         ${goal.criteria ? `<p class="cp-muted">Критерии</p><ul>${goal.criteria.split('\n').filter(line => line.trim()).map(line => `<li>${escapeHtml(line)}</li>`).join('')}</ul>` : ''}
-        <p class="cp-goal-links">${summary ? `Связано: ${escapeHtml(summary)}` : 'Пока без задач — можно вернуться позже'}</p>
+        <p class="cp-goal-links">${summary ? `Связано${descendants.length ? ', включая подцели' : ''}: ${escapeHtml(summary)}` : 'Пока без задач — можно вернуться позже'}</p>
         ${goal.deadline ? `<p class="cp-muted">Срок: ${escapeHtml(dateLabel(goal.deadline))}</p>` : ''}</div>`;
       const actions = document.createElement('div'); actions.className = 'cp-card-actions';
       if (row.children?.length) {

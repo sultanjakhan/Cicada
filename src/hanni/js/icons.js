@@ -6,6 +6,7 @@ const SVG_ATTRS = 'width="16" height="16" viewBox="0 0 16 16" fill="none" stroke
 export const ICONS = {
   calendar: `<svg ${SVG_ATTRS}><rect x="2" y="3.5" width="12" height="10.5" rx="2"/><path d="M5 2v3M11 2v3M2 7h12"/></svg>`,
   target: `<svg ${SVG_ATTRS}><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="3"/><circle cx="8" cy="8" r=".75" fill="currentColor" stroke="none"/></svg>`,
+  flag: `<svg ${SVG_ATTRS}><path d="M3.5 14V2m0 0h5l1 2h3v6h-4l-1-2h-4"/></svg>`,
   play: `<svg ${SVG_ATTRS}><path d="m5 3 8 5-8 5Z"/></svg>`,
   pause: `<svg ${SVG_ATTRS}><path d="M5.5 3v10M10.5 3v10"/></svg>`,
   check: `<svg ${SVG_ATTRS}><path d="m3 8 3.5 3.5L13 5"/></svg>`,

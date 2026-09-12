@@ -46,16 +46,7 @@
   background:transparent;
 }
 
-.sidebar-create-group { flex:none; width:44px; padding-top:16px; margin-top:14px; border-top:1px solid var(--border-default); }
-.sidebar-create { display:flex; align-items:center; justify-content:center; flex:none; width:44px; height:44px; padding:0; border:1px solid var(--accent-fill); border-radius:10px; color:var(--accent-contrast); background:var(--accent-fill); cursor:pointer; }
-.sidebar-create svg { flex:none; width:20px; height:20px; }
-.sidebar-create:hover { filter:brightness(.86); }
-.sidebar-create:disabled { opacity:.5; cursor:wait; }
-.sidebar-create-label { display:none; }
-.mobile .sidebar-create-group { width:calc(100% - 16px); }
-.mobile .sidebar-create { width:100%; justify-content:flex-start; gap:12px; padding:0 14px; }
-.mobile .sidebar-create-label { display:inline; }
-.sidebar-create:focus-visible, .tab-item:focus-visible { outline:2px solid var(--accent-fill); outline-offset:2px; }
+.tab-item:focus-visible { outline:2px solid var(--accent-fill); outline-offset:2px; }
 
 .tab-item::before { display: none; }
 

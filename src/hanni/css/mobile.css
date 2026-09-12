@@ -95,8 +95,6 @@ body:has(#tab-bar.drawer-open) #chat-overlay { display: none !important; }
 
 /* ── Mobile Layout — ChatGPT/Claude-style drawer sidebar ── */
 
-/* Hide drag region on mobile */
-.mobile #drag-region { display: none; }
 
 /* App body: full width column on mobile */
 .mobile #app-body {
@@ -325,7 +323,6 @@ body:has(#tab-bar.drawer-open) #chat-overlay { display: none !important; }
 
 /* The desktop drag region for traffic-light window controls has no
    purpose on Android — and a stray inset can swallow taps near the top. */
-.mobile #drag-region { display: none; }
 
 /* Right-rail FAB widgets are 40-px circles pinned bottom-right. On a
    narrow 360-px viewport they sit on top of Calendar's Sunday column and

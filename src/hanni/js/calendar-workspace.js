@@ -1,5 +1,5 @@
 import { canRefreshHealthView, mayCommitHealthView, retryHealthViewRefresh, startHealthViewRefresh } from './health-view-refresh.js';
-import { S, invoke, tabLoaders, TAB_ICONS, IS_MOBILE, loadTabSetting } from './state.js';
+import { S, invoke, tabLoaders, TAB_ICONS, loadTabSetting } from './state.js';
 import { ICONS } from './icons.js';
 import { escapeHtml } from './utils.js';
 import { renderUnifiedLayout, savePaneState } from './unified-layout.js';
@@ -386,7 +386,7 @@ export function openCalendarCreate(button) {
   const revision = workspaceRevision;
   const isCurrent = () => revision === workspaceRevision && button.isConnected && el.isConnected && S.activeTab === 'calendar';
   showCalendarCreateModal(S._unifiedPane.calendar === 'table' ? view.date : views.iso(new Date()), {
-    isCurrent, returnFocus: () => { if (isCurrent()) (IS_MOBILE ? document.getElementById('mobile-hamburger') : button)?.focus({ preventScroll:true }); },
+    isCurrent, returnFocus: () => { if (isCurrent()) button.focus({ preventScroll:true }); },
   });
 }
 
@@ -421,6 +421,13 @@ export async function loadCalendarWorkspace(el) {
     else if (heading) { heading.tabIndex = -1; heading.focus(); }
   };
   const config = { title:'Календарь', headerIcon:TAB_ICONS.calendar, editableHeader:false, subtitle:'События и расписание', hideDescription:true, hideMemory:true, accessibleTabs:true, beforeRender:cleanupWorkspace, isCurrent:() => S.activeTab === 'calendar',
+    toolbarActions: [{ label:'Создать', title:'Создать задачу или событие', icon:TAB_ICONS.add, onClick:openCalendarCreate }],
+    renderHeaderExtra: host => {
+      const create = host.querySelector('.uni-header-action');
+      create.dataset.calendarCreate = '';
+      create.setAttribute('aria-label', create.title);
+      create.setAttribute('aria-haspopup', 'dialog');
+    },
     panes: [{id:'dash',label:'Дашборд'}, {id:'table',label:'Таблица'}, {id:'goals',label:'Цели'}, {id:'notes',label:'Заметки'}],
     renderDash: (pane) => {
       pane.innerHTML = '<div data-calendar-now></div><div data-calendar-tasks></div>';
