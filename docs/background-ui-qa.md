@@ -106,3 +106,42 @@ acceptance file, not as a new public release. The predominantly white/graphite
 palette remains a proposal; existing green surfaces have not been replaced.
 Previously observed CSP errors remain unresolved, and system zoom at 150/200
 percent was not part of this header check.
+
+## Palette and detailed goal iteration, 2026-09-12
+
+The owner approved a predominantly white/graphite palette for MVP. Version 0.2.2
+adds one final palette stylesheet for the shell and Calendar components, including
+a corresponding dark theme and neutral primary-button focus/hover states.
+Missing settings-pill styling is restored. The header Create position remains
+provisional. Legacy Hanni and the owner's running MVP were not changed by QA.
+
+Native MCP created a fictional junior system analyst learning case: one root
+goal with detailed acceptance criteria, five subgoals and ten linked tasks.
+Five tasks use the test day, one the following day and four have no date. The
+estimates and dates are demonstration inputs, not a commitment or an assessment
+of the owner's career progress. The clean fixture has no completed tasks or
+invented goal progress. Its SQLite backup and creation evidence remain outside
+Git in `.local/background-qa/junior-palette-20260912/`.
+
+After a real native restart, MCP verified the root description/criteria, the
+six-node goal tree, collapse/expand, ten task links, and exclusion of the goal
+and its descendants from its parent selector. A separate copy at
+`.local/background-qa/junior-acceptance-20260912/` exercised task start, pause,
+resume, pause, completion and next-task selection; only that QA copy contains
+the completed task. All four panes were opened in the dark theme and both
+settings themes were inspected. A final candidate at
+`.local/background-qa/junior-final-20260912/` rechecked dark category-dialog
+primary-button contrast. Native evidence consists of 85 creation calls, 46
+acceptance calls and 12 final palette calls; these are tool calls, not a count
+of independent test cases. Screenshots and pinned executable identities are
+stored with these profiles. All observed QA desktops remained inactive.
+
+Known limits: the existing CSP errors still block editor styles and category
+swatch inline backgrounds (the swatches appear white). This palette change
+does not alter that CSP or semantic color values. Calendar first-day/default-view
+settings behavior is not repaired by styling its controls. System zoom at
+150/200 percent, native window chrome and file pickers are not covered. Detailed
+goal criteria are available in Goals/editing, not all on the homepage. This is
+native candidate evidence, not a claim that the owner's installed application
+has already been updated. Packaging/install results belong in the local hash
+manifest and acceptance record.

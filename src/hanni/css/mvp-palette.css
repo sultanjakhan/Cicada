@@ -1,0 +1,77 @@
+/* MVP chrome uses neutral tones. Event, category and semantic status colors
+   remain in the upstream --color-* / --badge-* tokens and record data. */
+:root,
+[data-theme="light"] {
+  --bg-page: #ffffff;
+  --bg-primary: var(--bg-page);
+  --bg-sidebar: #f5f5f5;
+  --bg-card: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-hover: #f0f0f0;
+  --bg-soft: #f7f7f7;
+  --border-default: #dedede;
+  --border-hover: #b8b8b8;
+  --border-focus: #707070;
+  --border-subtle: #ebebeb;
+  --text-primary: #252525;
+  --text-secondary: #606060;
+  --text-muted: #707070;
+  --text-faint: #a3a3a3;
+  --accent-fill: #252525;
+  --accent-contrast: #ffffff;
+  --accent-blue: var(--accent-fill);
+  --accent-blue-light: #505050;
+  --accent-purple: var(--accent-fill);
+  --scrollbar-thumb: #c9c9c9;
+  --scrollbar-thumb-hover: #9c9c9c;
+  --user-msg-bg: var(--accent-fill);
+  --user-msg-color: var(--accent-contrast);
+  accent-color: var(--accent-fill);
+}
+
+[data-theme="dark"] {
+  --bg-page: #181818;
+  --bg-sidebar: #202020;
+  --bg-card: #242424;
+  --bg-elevated: #282828;
+  --bg-hover: #303030;
+  --bg-soft: #292929;
+  --border-default: #414141;
+  --border-hover: #626262;
+  --border-focus: #b4b4b4;
+  --border-subtle: #343434;
+  --text-primary: #f0f0f0;
+  --text-secondary: #bdbdbd;
+  --text-muted: #a8a8a8;
+  --text-faint: #747474;
+  --accent-fill: #ededed;
+  --accent-contrast: #202020;
+  --accent-blue: var(--accent-fill);
+  --accent-blue-light: #c9c9c9;
+  --accent-purple: var(--accent-fill);
+  --scrollbar-thumb: #545454;
+  --scrollbar-thumb-hover: #767676;
+  --user-msg-bg: var(--accent-fill);
+  --user-msg-color: var(--accent-contrast);
+}
+
+/* Bridge the clipped Calendar components to the same palette in both themes. */
+:root .calendar-mvp { --accent-green: var(--accent-fill); --accent-green-soft: var(--bg-hover); }
+:root .calendar-now { --cn-green: var(--accent-fill); --cn-green-text: var(--text-primary); --cn-goal-surface: var(--bg-soft); }
+:root .calendar-panels { --cp-accent: var(--accent-fill); --cp-accent-soft: var(--bg-soft); }
+:root .calendar-goal-dialog { --cn-green-text: var(--text-primary); }
+:root .calendar-task-overview { --cto-focus: var(--accent-fill); }
+:root .calendar-now .calendar-now__primary,
+:root .calendar-panels button.cp-primary,
+:root .calendar-mvp button.cm-primary,
+:root .calendar-mvp-dialog button.cm-primary {
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+  color: var(--accent-contrast);
+}
+.calendar-mvp button:focus-visible,
+.calendar-mvp-dialog :focus-visible { outline-color: var(--accent-fill); }
+
+/* Generic category/editor dialogs share the same primary foreground. */
+.btn-primary:not(.confirm-yes) { background:var(--accent-fill); color:var(--accent-contrast); }
+.btn-primary:hover { box-shadow:var(--shadow-sm); }

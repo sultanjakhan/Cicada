@@ -1,3 +1,10 @@
+/* Per-tab settings controls, retained from the original Hanni chat stylesheet. */
+.setting-pills { display:flex; flex-wrap:wrap; gap:var(--space-1); }
+.setting-pill { min-height:36px; padding:6px 12px; border-radius:var(--radius-sm); border:1px solid var(--border-default); background:transparent; color:var(--text-secondary); font:inherit; font-size:13px; cursor:pointer; }
+.setting-pill:hover { border-color:var(--border-hover); background:var(--bg-hover); }
+.setting-pill.active { background:var(--accent-fill); border-color:var(--accent-fill); color:var(--bg-page); }
+.setting-pill:focus-visible { outline:2px solid var(--accent-fill); outline-offset:2px; }
+
 /* ── Integrations page ── */
 
 #integrations-content {

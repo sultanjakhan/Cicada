@@ -11,7 +11,7 @@ export const IS_DESKTOP = !IS_MOBILE;
 document.documentElement.classList.add(IS_MOBILE ? 'mobile' : 'desktop');
 if (FORCE_MOBILE) document.documentElement.classList.add('mobile-preview');
 export const S = {
-  APP_VERSION: '0.2.1', activeTab: 'calendar', openTabs: ['calendar'], activeSubTab: {},
+  APP_VERSION: '0.2.2', activeTab: 'calendar', openTabs: ['calendar'], activeSubTab: {},
   tabCustomizations: {}, theme: localStorage.getItem('hanni_theme') || 'light',
   calendarYear: new Date().getFullYear(), calendarMonth: new Date().getMonth(),
   selectedCalendarDate: null, calWeekOffset: 0, calDayDate: null,
