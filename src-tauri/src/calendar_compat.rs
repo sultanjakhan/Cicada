@@ -2,7 +2,7 @@
 //! health, routine, updater, or legacy database path.
 use crate::{fail, get_item, validate_date, validate_time, AppState, Item};
 use chrono::{Local, Utc};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde_json::{json, Value};
 use tauri::State;
 use uuid::Uuid;
@@ -509,11 +509,17 @@ pub fn save_calendar_goal(
 }
 #[tauri::command]
 pub fn delete_goal(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    let conn = lock(&state)?;
-    conn.execute("DELETE FROM calendar_task_goals WHERE goal_id=?1", [&id])
+    let mut conn = lock(&state)?;
+    let transaction = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|e| fail(e.to_string()))?;
-    conn.execute("DELETE FROM calendar_goals WHERE id=?1", [id])
+    transaction
+        .execute("DELETE FROM calendar_task_goals WHERE goal_id=?1", [&id])
         .map_err(|e| fail(e.to_string()))?;
+    transaction
+        .execute("DELETE FROM calendar_goals WHERE id=?1", [id])
+        .map_err(|e| fail(e.to_string()))?;
+    transaction.commit().map_err(|e| fail(e.to_string()))?;
     Ok(())
 }
 #[tauri::command]
@@ -609,8 +615,11 @@ pub fn update_event_category(
     icon: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let conn = lock(&state)?;
-    let old: String = conn
+    let mut conn = lock(&state)?;
+    let transaction = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| fail(e.to_string()))?;
+    let old: String = transaction
         .query_row(
             "SELECT name FROM event_categories WHERE id=?1",
             [&id],
@@ -622,14 +631,16 @@ pub fn update_event_category(
             return Err(fail("category name is required"));
         }
     }
-    conn.execute("UPDATE event_categories SET name=COALESCE(?1,name),color=COALESCE(?2,color),icon=COALESCE(?3,icon) WHERE id=?4",params![name.as_ref().map(|v|v.trim()),color,icon,id]).map_err(|e|fail(e.to_string()))?;
+    transaction.execute("UPDATE event_categories SET name=COALESCE(?1,name),color=COALESCE(?2,color),icon=COALESCE(?3,icon) WHERE id=?4",params![name.as_ref().map(|v|v.trim()),color,icon,id]).map_err(|e|fail(e.to_string()))?;
     if let Some(name) = name {
-        conn.execute(
-            "UPDATE items SET category=?1 WHERE category=?2",
-            params![name.trim(), old],
-        )
-        .map_err(|e| fail(e.to_string()))?;
+        transaction
+            .execute(
+                "UPDATE items SET category=?1 WHERE category=?2",
+                params![name.trim(), old],
+            )
+            .map_err(|e| fail(e.to_string()))?;
     }
+    transaction.commit().map_err(|e| fail(e.to_string()))?;
     Ok(())
 }
 #[tauri::command(rename_all = "camelCase")]
@@ -638,8 +649,11 @@ pub fn delete_event_category(
     reassign_to: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<i64, String> {
-    let conn = lock(&state)?;
-    let name: String = conn
+    let mut conn = lock(&state)?;
+    let transaction = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| fail(e.to_string()))?;
+    let name: String = transaction
         .query_row(
             "SELECT name FROM event_categories WHERE id=?1",
             [&id],
@@ -647,14 +661,16 @@ pub fn delete_event_category(
         )
         .map_err(|_| fail("category not found"))?;
     let target = reassign_to.unwrap_or_else(|| "general".into());
-    let n = conn
+    let n = transaction
         .execute(
             "UPDATE items SET category=?1 WHERE kind='event' AND category=?2",
             params![target, name],
         )
         .map_err(|e| fail(e.to_string()))? as i64;
-    conn.execute("DELETE FROM event_categories WHERE id=?1", [id])
+    transaction
+        .execute("DELETE FROM event_categories WHERE id=?1", [id])
         .map_err(|e| fail(e.to_string()))?;
+    transaction.commit().map_err(|e| fail(e.to_string()))?;
     Ok(n)
 }
 

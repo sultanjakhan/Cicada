@@ -7,9 +7,15 @@ use std::sync::Mutex;
 use tauri::test::{
     get_ipc_response, mock_builder, mock_context, noop_assets, MockRuntime, INVOKE_KEY,
 };
+use tauri::Manager;
 
 fn fixture() -> (tauri::App<MockRuntime>, tauri::WebviewWindow<MockRuntime>) {
-    let conn = Connection::open_in_memory().unwrap();
+    fixture_with_connection(Connection::open_in_memory().unwrap())
+}
+
+fn fixture_with_connection(
+    conn: Connection,
+) -> (tauri::App<MockRuntime>, tauri::WebviewWindow<MockRuntime>) {
     init_schema(&conn).unwrap();
     let app = mock_builder()
         .manage(AppState(Mutex::new(conn)))
@@ -83,6 +89,283 @@ fn goal(webview: &tauri::WebviewWindow<MockRuntime>, title: &str, parent: Value)
         "parentGoalId":parent,"clearParent":false,"currentValue":null}),
     )
     .unwrap()
+}
+
+fn mutation_fixture_sql(conn: &Connection) {
+    conn.execute_batch(
+        "INSERT INTO event_categories(id,name,color,icon,created_at) VALUES
+            ('category-a','Example A','#123456','A','test'),
+            ('category-b','Example B','#654321','B','test');
+        INSERT INTO items(id,kind,title,duration_minutes,version,created_at,updated_at,category) VALUES
+            ('event-a','event','Example event A',30,1,'test','test','Example A'),
+            ('event-b','event','Example event B',30,1,'test','test','Example B'),
+            ('task-a','task','Example task',30,1,'test','test','task');
+        INSERT INTO calendar_goals(id,title,created_at,updated_at) VALUES
+            ('goal-a','Example goal A','test','test'),
+            ('goal-b','Example goal B','test','test');
+        INSERT INTO calendar_task_goals(source_type,source_id,goal_id,created_at) VALUES
+            ('note','task-a','goal-a','test'),
+            ('event','event-b','goal-b','test');",
+    )
+    .unwrap();
+}
+
+fn mutation_snapshot(conn: &Connection) -> Vec<Vec<Vec<rusqlite::types::Value>>> {
+    [
+        "items",
+        "event_categories",
+        "calendar_goals",
+        "calendar_task_goals",
+    ]
+    .into_iter()
+    .map(|table| {
+        let mut stmt = conn
+            .prepare(&format!("SELECT * FROM {table} ORDER BY 1,2"))
+            .unwrap();
+        let columns = stmt.column_count();
+        stmt.query_map([], |row| (0..columns).map(|i| row.get(i)).collect())
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    })
+    .collect()
+}
+
+#[test]
+fn atomic_category_rename_rolls_back_and_allows_retry_over_ipc() {
+    assert_atomic_rollback(
+        "update_event_category",
+        json!({"id":"category-a","name":"Renamed","color":"#112233","icon":"R"}),
+        "items",
+        "UPDATE",
+        Value::Null,
+    );
+}
+
+#[test]
+fn atomic_category_delete_rolls_back_and_allows_retry_over_ipc() {
+    assert_atomic_rollback(
+        "delete_event_category",
+        json!({"id":"category-a","reassignTo":"Example B"}),
+        "event_categories",
+        "DELETE",
+        json!(1),
+    );
+}
+
+#[test]
+fn atomic_goal_delete_rolls_back_and_allows_retry_over_ipc() {
+    assert_atomic_rollback(
+        "delete_goal",
+        json!({"id":"goal-a"}),
+        "calendar_goals",
+        "DELETE",
+        Value::Null,
+    );
+}
+
+fn assert_atomic_rollback(
+    command: &str,
+    args: Value,
+    trigger_table: &str,
+    trigger_operation: &str,
+    expected: Value,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("calendar.db");
+    let (app, view) = fixture_with_connection(Connection::open(&path).unwrap());
+    let before = {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        mutation_fixture_sql(&conn);
+        conn.execute_batch(&format!(
+            "CREATE TRIGGER fail_second_step BEFORE {trigger_operation} ON {trigger_table}
+                 BEGIN SELECT RAISE(ABORT, 'injected second-step failure'); END;"
+        ))
+        .unwrap();
+        mutation_snapshot(&conn)
+    };
+    let error = call(&view, command, args.clone()).unwrap_err();
+    assert!(
+        error
+            .as_str()
+            .unwrap()
+            .contains("injected second-step failure"),
+        "{command}: {error}"
+    );
+    // A fresh SQLite connection must see no partial writes, not just the caller's state.
+    let observer = Connection::open(&path).unwrap();
+    assert_eq!(
+        mutation_snapshot(&observer),
+        before,
+        "{command} must roll back all changes"
+    );
+    observer
+        .execute_batch("DROP TRIGGER fail_second_step")
+        .unwrap();
+    assert_eq!(call(&view, command, args).unwrap(), expected);
+    assert_ne!(
+        mutation_snapshot(&observer),
+        before,
+        "{command} retry must commit"
+    );
+    let state = app.state::<AppState>();
+    assert!(
+        state.0.lock().unwrap().is_autocommit(),
+        "{command} left an open transaction"
+    );
+}
+
+#[test]
+fn atomic_category_success_preserves_cascade_counts_and_unrelated_records() {
+    let (app, view) = fixture();
+    {
+        let state = app.state::<AppState>();
+        mutation_fixture_sql(&state.0.lock().unwrap());
+    }
+    call(
+        &view,
+        "update_event_category",
+        json!({"id":"category-a","name":" Renamed ","color":"#112233","icon":"R"}),
+    )
+    .unwrap();
+    // Metadata-only edits must remain supported and must not rename event categories.
+    call(
+        &view,
+        "update_event_category",
+        json!({"id":"category-a","name":null,"color":"#abcdef","icon":null}),
+    )
+    .unwrap();
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        let category: (String, String, String) = conn
+            .query_row(
+                "SELECT name,color,icon FROM event_categories WHERE id='category-a'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(category, ("Renamed".into(), "#abcdef".into(), "R".into()));
+        assert_eq!(
+            conn.query_row("SELECT category FROM items WHERE id='event-a'", [], |r| {
+                r.get::<_, String>(0)
+            })
+            .unwrap(),
+            "Renamed"
+        );
+    }
+    // The default target is a category name, whereas the deleted category uses its id.
+    assert_eq!(
+        call(
+            &view,
+            "delete_event_category",
+            json!({"id":"category-a","reassignTo":null})
+        )
+        .unwrap(),
+        json!(1)
+    );
+    assert_eq!(
+        call(
+            &view,
+            "delete_event_category",
+            json!({"id":"category-b","reassignTo":"general"})
+        )
+        .unwrap(),
+        json!(1)
+    );
+    let state = app.state::<AppState>();
+    let conn = state.0.lock().unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM items WHERE kind='event' AND category='general'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        2
+    );
+    assert_eq!(
+        conn.query_row("SELECT category FROM items WHERE id='task-a'", [], |r| {
+            r.get::<_, String>(0)
+        })
+        .unwrap(),
+        "task"
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM event_categories WHERE id IN ('category-a','category-b')",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM calendar_task_goals", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+}
+
+#[test]
+fn atomic_goal_delete_preserves_tasks_and_other_goal_links() {
+    let (app, view) = fixture();
+    let before_items = {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        mutation_fixture_sql(&conn);
+        mutation_snapshot(&conn)[0].clone()
+    };
+    assert_eq!(
+        call(&view, "delete_goal", json!({"id":"goal-a"})).unwrap(),
+        Value::Null
+    );
+    // Deleting an already removed goal keeps the existing idempotent contract.
+    assert_eq!(
+        call(&view, "delete_goal", json!({"id":"goal-a"})).unwrap(),
+        Value::Null
+    );
+    let state = app.state::<AppState>();
+    let conn = state.0.lock().unwrap();
+    assert_eq!(mutation_snapshot(&conn)[0], before_items);
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM calendar_goals WHERE id='goal-a'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM calendar_task_goals WHERE goal_id='goal-a'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT goal_id FROM calendar_task_goals WHERE source_id='event-b'",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "goal-b"
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM calendar_goals WHERE id='goal-b'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
 }
 
 #[test]
