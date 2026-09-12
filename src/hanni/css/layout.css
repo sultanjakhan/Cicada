@@ -125,7 +125,7 @@
   align-items: center;
   gap: 2px;
   padding-top: var(--space-2);
-  border-top: 1px solid var(--border-subtle);
+  border-top: 0;
   width: 100%;
 }
 

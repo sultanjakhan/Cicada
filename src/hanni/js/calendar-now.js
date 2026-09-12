@@ -61,7 +61,7 @@ export function mountCalendarNow(element, dependencies = {}) {
   element.classList.toggle('calendar-now--compact', dependencies.compact === true);
   element.innerHTML = `
     <section class="calendar-now__goal" aria-labelledby="${prefix}-goal-label ${prefix}-goal-title">
-      <div class="calendar-now__goal-top"><p class="calendar-now__eyebrow" id="${prefix}-goal-label">Главная цель</p><button type="button" data-action="open-goal" class="calendar-now__quiet" aria-label="Сменить главную цель" aria-haspopup="dialog"><span data-action-label>Выбрать цель</span></button></div>
+      <div class="calendar-now__goal-top"><p class="calendar-now__eyebrow" id="${prefix}-goal-label"><span class="calendar-now__goal-symbol" aria-hidden="true">${ICONS.target}</span>Главная цель</p><button type="button" data-action="open-goal" class="calendar-now__quiet" aria-label="Сменить главную цель" aria-haspopup="dialog"><span class="calendar-now__button-icon" data-ui="goal-change-icon" aria-hidden="true" hidden>${ICONS.cycle}</span><span data-action-label>Выбрать цель</span></button></div>
       <h2 id="${prefix}-goal-title"><button type="button" data-action="goal-details" class="calendar-now__goal-link" aria-haspopup="dialog" hidden><span data-ui="goal-title"></span><span class="calendar-now__button-icon" aria-hidden="true">${ICONS.arrowRight}</span></button><span data-ui="goal-empty"></span></h2>
       <span data-ui="goal-status" class="calendar-now__goal-status" hidden></span>
       <p data-ui="goal-stage" class="calendar-now__goal-stage" hidden></p>
@@ -365,7 +365,7 @@ export function mountCalendarNow(element, dependencies = {}) {
       node = snapshot.goals.find(item => String(item.id) === String(node.parent_goal_id));
     }
     const isGoalBranch = goal && branch.length > 1 && String(branch[0].id) === String(goal.id);
-    ui['goal-stage'].textContent = isGoalBranch ? `Этап: ${branch.slice(1).map(item => item.title).join(' → ')}` : '';
+    ui['goal-stage'].textContent = isGoalBranch ? `Текущий этап: ${branch.slice(1).map(item => item.title).join(' → ')}` : '';
     ui['goal-stage'].hidden = !isGoalBranch;
     ui['goal-meta'].textContent = goalDateLabel(goal?.deadline) ? `Срок: ${goalDateLabel(goal.deadline)}` : '';
     ui['goal-meta'].hidden = !ui['goal-meta'].textContent;
@@ -375,13 +375,14 @@ export function mountCalendarNow(element, dependencies = {}) {
     actions['goal-details'].disabled = busy || reading || !!failure;
     actions['browse-goals'].hidden = !!goal || !snapshot;
     actions['open-goal'].querySelector('[data-action-label]').textContent = goal ? 'Сменить' : 'Выбрать цель';
+    ui['goal-change-icon'].hidden = !goal;
     actions['open-goal'].setAttribute('aria-label', goal ? 'Сменить главную цель' : 'Выбрать главную цель');
     actions['browse-goals'].parentElement.hidden = !!goal || !snapshot;
     actions['open-goal'].classList.toggle('calendar-now__primary', !goal);
     actions['open-goal'].classList.toggle('calendar-now__quiet', !!goal);
     actions['open-goal'].disabled = !!active || busy || reading || !!failure || !snapshot || !!saved.completed;
     actions['open-goal'].title = active ? 'Для смены цели поставь задачу на паузу' : '';
-    const status = { active: 'В работе', paused: 'Приостановлено', completed: 'Завершено' }[currentState];
+    const status = { active: 'В работе', paused: 'На паузе', completed: 'Завершено' }[currentState];
     ui.status.textContent = status || ''; ui.status.hidden = !status;
     ui.title.textContent = task?.title || (!snapshot ? 'Загружаем «Сейчас»…' : !selectedGoal() ? 'Выбери главную цель выше — здесь появится задача.' : 'Для этой цели пока нет подходящей задачи.');
     ui.support.hidden = currentState !== 'empty' || !selectedGoal();

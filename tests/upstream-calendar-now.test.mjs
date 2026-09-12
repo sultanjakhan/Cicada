@@ -218,6 +218,7 @@ test('read-only current-task notifications track recommendation, active, paused 
      key: 'event:event-a', state: 'recommendation'
       });
    assert.equal(x.data.count('start_task_block'), 0);
+   assert.equal(x.ui('status').hidden, true, 'a recommendation is not shown as running');
    await x.choose('task', 'note:task-a');
    assert.deepEqual(x.currentTasks.at(-1),{
      key: 'note:task-a', state: 'recommendation'
@@ -226,10 +227,12 @@ test('read-only current-task notifications track recommendation, active, paused 
    assert.deepEqual(x.currentTasks.at(-1),{
      key: 'note:task-a', state: 'active'
       });
+   assert.equal(x.ui('status').textContent, 'В работе');
    await x.click('pause');
    assert.deepEqual(x.currentTasks.at(-1),{
      key: 'note:task-a', state: 'paused'
       });
+   assert.equal(x.ui('status').textContent, 'На паузе');
    await x.click('finish');
    assert.deepEqual(x.currentTasks.at(-1),{
      key: 'note:task-a', state: 'completed'
@@ -928,7 +931,7 @@ test('main goal shows the current task branch without repeating its title or inv
    data.goals.push({id:'stage-a',title:'Данные',parent_goal_id:'goal-a'}, {id:'stage-b',title:'SQL',parent_goal_id:'stage-a'});
    data.links[0].goal_id='stage-b';
    const x = await mount(t,data);
-   assert.equal(x.ui('goal-stage').textContent,'Этап: Данные → SQL');
+   assert.equal(x.ui('goal-stage').textContent,'Текущий этап: Данные → SQL');
    assert.equal(x.ui('goal-stage').hidden,false);
    assert.doesNotMatch(x.host.querySelector('.calendar-now__goal').textContent,/Вопросы к интервью|%/);
    assert.equal(data.count('start_task_block'),0);

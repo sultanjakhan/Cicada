@@ -212,3 +212,18 @@ the new sidebar, static 28px header and modal settings action. No installation
 or publication occurred. Evidence: ignored `.local/dev/sidebar-settings-*.json`
 and `.local/background-qa/home-ux-20260912/artifacts/sidebar-*.png`.
 The only console error observed in this run was the existing DEV favicon 404.
+
+### Goal hierarchy follow-up, 2026-09-13
+
+The owner preferred the previous sliders icon; it is restored and the separator
+above Settings removed. The selected-goal card now uses the main surface,
+stronger outline, target glyph and larger title than the current-task card.
+Change retains its text and adds two circular arrows. The linked descendant
+path is labelled Current stage. The agreed Today/All task list remains intact.
+
+The existing Now status gets an 8px green dot only while a native timer block is
+active. A recommendation and a paused/completed task have no activity dot.
+111 frontend tests, privacy/build, and native MCP scenarios passed, including
+goal-picker focus, native Start/Pause, 640px layout and dark appearance. The
+user's open DEV was inspected read-only. Screenshots and results are retained
+under the same ignored DEV/background-QA paths with the `goal-hierarchy` prefix.

@@ -10,6 +10,7 @@ export const ICONS = {
   pause: `<svg ${SVG_ATTRS}><path d="M5.5 3v10M10.5 3v10"/></svg>`,
   check: `<svg ${SVG_ATTRS}><path d="m3 8 3.5 3.5L13 5"/></svg>`,
   switch: `<svg ${SVG_ATTRS}><path d="M2.5 5h11m-3-3 3 3-3 3M13.5 11h-11m3-3-3 3 3 3"/></svg>`,
+  cycle: `<svg ${SVG_ATTRS}><path d="M13.5 6A5.6 5.6 0 0 0 4 3.7L2.5 5M2.5 1.5V5H6M2.5 10A5.6 5.6 0 0 0 12 12.3l1.5-1.3M10 11h3.5v3.5"/></svg>`,
   arrowRight: `<svg ${SVG_ATTRS}><path d="M2.5 8h11m-5-5 5 5-5 5"/></svg>`,
   chevronLeft: `<svg ${SVG_ATTRS}><path d="m10 3-5 5 5 5"/></svg>`,
   chevronRight: `<svg ${SVG_ATTRS}><path d="m6 3 5 5-5 5"/></svg>`,

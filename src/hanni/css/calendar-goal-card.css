@@ -1,7 +1,9 @@
-.calendar-now:not(.calendar-now--compact) .calendar-now__goal { display: block; padding: 18px 24px 22px; border: 1px solid var(--cn-line); border-radius: 14px; background: var(--cn-goal-surface, #f3f8f4); margin-bottom: 18px; }
-.calendar-now:not(.calendar-now--compact) .calendar-now__goal h2 { font-size: clamp(22px, 2.5vw, 28px); line-height: 1.3; }
+.calendar-now:not(.calendar-now--compact) .calendar-now__goal { display: block; padding: 22px 24px 24px; border: 1px solid var(--border-hover, var(--cn-line)); border-left: 4px solid var(--cn-text); border-radius: 14px; background: var(--cn-surface); margin-bottom: 18px; }
+.calendar-now:not(.calendar-now--compact) .calendar-now__goal h2 { font-size: clamp(26px, 3vw, 32px); line-height: 1.3; font-weight:700; }
 .calendar-now .calendar-now__goal-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
-.calendar-now .calendar-now__goal-top .calendar-now__eyebrow { margin: 0; color: var(--cn-green-text, var(--cn-green)); }
+.calendar-now .calendar-now__goal-top .calendar-now__eyebrow { display:flex; align-items:center; gap:9px; margin:0; color:var(--cn-text); font-size:14px; }
+.calendar-now .calendar-now__goal-symbol { display:inline-flex; flex:0 0 20px; width:20px; height:20px; }
+.calendar-now .calendar-now__goal-symbol svg { width:20px; height:20px; }
 .calendar-now .calendar-now__goal-top button { min-height:36px; padding:6px 10px; font-size:13px; color:var(--cn-muted); }
 .calendar-now .calendar-now__goal button.calendar-now__goal-link { display:flex; align-items:center; justify-content:space-between; gap:20px; width:100%; min-height:36px; padding:0; border:0; border-radius:4px; background:transparent; color:inherit; font:inherit; text-align:left; }
 .calendar-now .calendar-now__goal-link .calendar-now__button-icon { flex:0 0 20px; width:20px; height:20px; color:var(--cn-muted); }
@@ -9,7 +11,7 @@
 .calendar-now__goal-status { flex-shrink: 0; font-size: 11px; line-height: 1.4; padding: 4px 8px; border: 1px solid var(--cn-line); border-radius: 20px; color: var(--cn-muted); background: var(--cn-surface); }
 .calendar-now .calendar-now__goal-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 18px; }
 .calendar-now .calendar-now__goal-meta, .calendar-now .calendar-now__goal-hint { margin: 12px 0 0; font-size: 13px; line-height: 1.5; color: var(--cn-muted); }
-.calendar-now:not(.calendar-now--compact) .calendar-now__card h2 { font-size: clamp(20px, 2.4vw, 26px); }
+.calendar-now:not(.calendar-now--compact) .calendar-now__card h2 { font-size: clamp(20px, 2.2vw, 24px); }
 .calendar-now:not(.calendar-now--compact) .calendar-now__goal :focus-visible { outline-color: var(--cn-green-text, var(--cn-green)); }
 .calendar-goal-dialog { box-sizing: border-box; width: min(560px, calc(100% - 32px)); max-height: calc(100dvh - clamp(16px, 6vh, 64px) - 16px); inset: 0 0 auto; overflow: hidden; margin: clamp(16px, 6vh, 64px) auto 16px; padding: 0; border: 1px solid var(--border-default); border-radius: 14px; color: var(--text-primary); background: var(--bg-card); }
 .calendar-goal-dialog[open] { display: flex; flex-direction: column; }
