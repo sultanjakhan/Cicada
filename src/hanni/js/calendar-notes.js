@@ -1,6 +1,7 @@
 import { invoke as defaultInvoke } from './state.js';
 import { escapeHtml, initBlockEditor, blocksToPlainText } from './utils.js';
 import { createCalendarDialog } from './calendar-dialog.js';
+import { sanitizeBlockEditorData } from './block-editor-security.js';
 
 let nextInstance = 0;
 // Window-local drafts retain the exact version they were based on, never a fresh replacement version.
@@ -79,7 +80,7 @@ export async function mountCalendarNotes(element, dependencies = {}) {
       const token = ++value.captureRevision, output = await value.editor.save();
       if (value.destroyed || token !== value.captureRevision) return;
       if (!Array.isArray(output?.blocks)) throw new Error('Некорректный ответ редактора.');
-      value.output = output; remember(value);
+      value.output = sanitizeBlockEditorData(output, window.DOMPurify); remember(value);
     }
   }
   function beforeClose(value) {
@@ -102,10 +103,11 @@ export async function mountCalendarNotes(element, dependencies = {}) {
     const key = keyOf(note?.id), draft = drafts.get(key);
     let originalBlocks = null, invalid = false;
     if (note?.content_blocks) { try { originalBlocks = JSON.parse(note.content_blocks); invalid = !Array.isArray(originalBlocks?.blocks); } catch { invalid = true; } }
+    if (!invalid) originalBlocks = sanitizeBlockEditorData(originalBlocks, window.DOMPurify);
     const rich = draft ? (draft.rich ?? !!draft.blocks) : !!originalBlocks && !invalid;
     const value = { key, note, baseUpdatedAt: draft ? draft.baseUpdatedAt : note?.updated_at,
       base: draft?.base || { title: note?.title || '', content: note?.content || '', blocks: invalid ? '' : blockSignature(originalBlocks) },
-      rich, output: draft ? draft.blocks : originalBlocks, invalid, editorFailed: false, ready: !rich || invalid,
+      rich, output: draft ? sanitizeBlockEditorData(draft.blocks, window.DOMPurify) : originalBlocks, invalid, editorFailed: false, ready: !rich || invalid,
       pending: false, closing: false, closed: false, detached: false, destroyed: false, retained: false, committed: false, captureRevision: 0,
       conflict: !!draft && draft.baseUpdatedAt !== note?.updated_at };
     const dialog = createCalendarDialog({ document, title: note?.archived ? 'Заметка в архиве' : note ? 'Заметка' : 'Новая заметка', hint: 'Название необязательно. Черновик остаётся в этом окне до сохранения.', submitLabel: note ? 'Сохранить изменения' : 'Сохранить заметку',
