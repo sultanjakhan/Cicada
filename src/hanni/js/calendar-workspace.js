@@ -185,7 +185,7 @@ export async function mountCalendarTable(el) {
   el.classList.add('calendar-mvp');
   el.innerHTML = `<div class="cm-toolbar"><div class="cm-segment" role="group" aria-label="Период календаря">${[['day','День'],['week','Неделя'],['month','Месяц']].map(([id,title]) => `<button data-period="${id}" aria-pressed="${view.period === id}">${title}</button>`).join('')}</div><div class="cm-segment" role="group" aria-label="Вид календаря"><button data-mode="grid"><span class="cm-icon" aria-hidden="true">${ICONS.calendar}</span>Календарь</button><button data-mode="list"><span class="cm-icon" aria-hidden="true">${ICONS.list}</span>Список</button></div></div>
     <div class="cm-controls"><div class="cm-date"><button data-prev aria-label="Предыдущий период"><span class="cm-icon" aria-hidden="true">${ICONS.chevronLeft}</span></button><div class="cm-date-roller" data-date-roller><span data-date-before aria-hidden="true" hidden></span><h2 data-range></h2><span data-date-after aria-hidden="true" hidden></span></div><button data-next aria-label="Следующий период"><span class="cm-icon" aria-hidden="true">${ICONS.chevronRight}</span></button><button data-today>Сегодня</button></div>
-    <div class="cm-actions"><button type="button" data-create class="cm-primary">Создать</button></div></div><p data-notice role="status"></p><button data-retry hidden>Повторить загрузку</button><div data-calendar-records></div>`;
+    </div><p data-notice role="status"></p><button data-retry hidden>Повторить загрузку</button><div data-calendar-records></div>`;
   const host = el.querySelector('[data-calendar-records]');
   host.tabIndex = -1;
   const actionStatus = document.createElement('p');
@@ -352,11 +352,10 @@ export async function mountCalendarTable(el) {
       returnFocus: () => {
         if (!isCurrent()) return;
         const slot = time ? host.querySelector(`[data-create-date="${date}"][data-create-time="${time}"]`) : null;
-        (slot || (fromPanel && host.querySelector('[data-task-create]')) || el.querySelector('[data-create]')).focus();
+        (slot || (fromPanel && host.querySelector('[data-task-create]')) || el.closest('.calendar-workspace')?.querySelector('.uni-header-action') || host).focus();
       },
     });
   }
-  el.querySelector('[data-create]').onclick = () => openEvent(view.date, null, 'task');
   let refreshQueued = false, quietQueued = true;
   const onChange = event => {
     if (!el.isConnected || disposed) return;
@@ -396,12 +395,16 @@ export async function loadCalendarWorkspace(el) {
   };
   const config = { title:'Календарь', headerIcon:TAB_ICONS.calendar, subtitle:'События и расписание', hideMemory:true, accessibleTabs:true, beforeRender:cleanupWorkspace, isCurrent:() => S.activeTab === 'calendar',
     panes: [{id:'dash',label:'Дашборд'}, {id:'table',label:'Таблица'}, {id:'goals',label:'Цели'}, {id:'notes',label:'Заметки'}],
+    toolbarActions: [{ label: 'Создать', title: 'Создать задачу или событие', icon: '<span aria-hidden="true">+</span>', onClick: button => {
+      const revision = workspaceRevision;
+      const isCurrent = () => revision === workspaceRevision && button.isConnected && el.isConnected && S.activeTab === 'calendar';
+      showCalendarCreateModal(S._unifiedPane.calendar === 'table' ? view.date : views.iso(new Date()), {
+        isCurrent, returnFocus: () => { if (isCurrent()) button.focus(); },
+      });
+    } }],
     renderDash: (pane) => {
       pane.innerHTML = '<div data-calendar-now></div><div data-calendar-tasks></div>';
-      const revision = workspaceRevision;
-      disposeTasks = mountCalendarDashboardTasks(pane.querySelector('[data-calendar-tasks]'), { invoke, mountMenu: mountRecordMenu, openTask: (row, returnFocus) => showRecord(calendarRecord(row), returnFocus),
-        createRecord: returnFocus => showCalendarCreateModal(views.iso(new Date()), { returnFocus, isCurrent: () => revision === workspaceRevision && pane.isConnected && S.activeTab === 'calendar' }),
-      });
+      disposeTasks = mountCalendarDashboardTasks(pane.querySelector('[data-calendar-tasks]'), { invoke, mountMenu: mountRecordMenu, openTask: (row, returnFocus) => showRecord(calendarRecord(row), returnFocus) });
       disposeNow = mountCalendarNow(pane.querySelector('[data-calendar-now]'), {
         openTaskDetails: (row, restore) => showRecord(calendarRecord({ ...row, date: row.date || row.completion_date || null }), restore),
         openGoals: async id => {

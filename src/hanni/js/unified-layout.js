@@ -77,7 +77,7 @@ export async function renderUnifiedLayout(el, tabId, config = {}) {
     const countHtml = count != null ? `<span class="uni-tab-count">(${count})</span>` : '';
     return `<button type="button" class="uni-tab${pane.id === activePane ? ' active' : ''}" data-pane="${pane.id}" aria-pressed="${pane.id === activePane}">${pane.label}${countHtml}</button>`;
   }).join('');
-  const actionsHtml = (config.toolbarActions || []).map((action, index) => `<button class="uni-header-action" data-action-idx="${index}" title="${escapeHtml(action.title || '')}">${action.icon}</button>`).join('');
+  const actionsHtml = (config.toolbarActions || []).map((action, index) => `<button type="button" class="uni-header-action" data-action-idx="${index}" title="${escapeHtml(action.title || '')}">${action.icon || ''}${action.label ? `<span>${escapeHtml(action.label)}</span>` : ''}</button>`).join('');
   el.innerHTML = `
     <div class="uni-header">
       <span class="uni-header-icon${config.headerIcon ? ' uni-header-icon--static' : ''}" ${config.headerIcon ? 'aria-hidden="true"' : 'title="Изменить иконку"'}>${icon}</span>
@@ -89,7 +89,7 @@ export async function renderUnifiedLayout(el, tabId, config = {}) {
     <div class="uni-tabs">${tabsHtml}</div>
     <div class="uni-content"><div class="uni-pane" id="uni-pane-${tabId}"></div></div>`;
   wireHeaderEdit(el, tabId, config, meta, defaults, revision);
-  (config.toolbarActions || []).forEach((action, index) => el.querySelector(`[data-action-idx="${index}"]`)?.addEventListener('click', event => { event.stopPropagation(); action.onClick?.(); }));
+  (config.toolbarActions || []).forEach((action, index) => el.querySelector(`[data-action-idx="${index}"]`)?.addEventListener('click', event => { event.stopPropagation(); action.onClick?.(event.currentTarget); }));
   el.querySelectorAll('.uni-tab').forEach(tab => tab.addEventListener('click', () => {
     S._unifiedPane[tabId] = tab.dataset.pane; savePaneState(tabId, tab.dataset.pane);
     void renderUnifiedLayout(el, tabId, config);

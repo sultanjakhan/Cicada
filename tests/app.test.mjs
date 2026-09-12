@@ -76,9 +76,14 @@ test('upstream mobile mode enables its CSS and closes the drawer through its bac
   assert.equal(w.document.querySelector('.drawer-backdrop').classList.contains('visible'), false);
 });
 
-test('original shared Task/Event editor opens from the dashboard', async t => {
+test('one persistent header action opens the shared Task/Event editor and restores focus', async t => {
   const { w, click } = await launch(t);
-  await click('[data-overview-create]');
+  assert.equal(w.document.querySelector('[data-overview-create]'), null);
+  const trigger = w.document.querySelector('.uni-header-action');
+  assert.ok(trigger.closest('.uni-header'));
+  assert.equal(trigger.closest('.uni-content'), null);
+  trigger.focus();
+  await click('.uni-header-action');
   assert.ok(w.document.querySelector('#evm-form'));
   assert.ok(w.document.querySelector('#evm-title'));
   assert.ok(w.document.querySelector('#evm-goal'));
@@ -87,6 +92,18 @@ test('original shared Task/Event editor opens from the dashboard', async t => {
   toggle.click();
   await settle();
   assert.ok(w.document.querySelector('#evm-date'));
+  await click('#evm-close');
+  assert.equal(w.document.activeElement, trigger);
+  await click('[data-pane="table"]');
+  assert.equal(w.document.querySelectorAll('.uni-header-action').length, 1);
+  assert.equal(w.document.querySelector('[data-create]'), null);
+  await click('[data-period="day"]');
+  await click('[data-today]');
+  await click('[data-next]');
+  const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1);
+  const date = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`;
+  await click('.uni-header-action');
+  assert.equal(w.document.querySelector('#evm-date').value, date, 'creation uses the viewed date');
 });
 
 test('Calendar settings retain only upstream general definitions and restore the workspace', async t => {

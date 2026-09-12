@@ -77,3 +77,32 @@ The QA desktop remained inactive. These checks do not claim full visual parity.
 Live inspection also found missing settings-pill styling, an ignored first-day
 setting, and CSP errors blocking editor-injected styles. Their fixes and native
 visual rechecks remain separate from this connection setup.
+
+## Header creation iteration, 2026-09-12
+
+The shared Task/Event entry now lives in the non-scrolling Calendar header.
+The old general Create buttons in Dashboard and Table were removed; calendar
+cell creation keeps its date/time context. Closing the shared editor restores
+focus to its header button. Header icons retain their square dimensions.
+
+One fictional goal with a long title, description, six criteria and explicit
+2-of-6 progress, plus one linked 90-minute task, were created through the
+installed application's Playwright MCP in an isolated profile. A SQLite backup
+of those records was opened by a locally built native candidate. The persistent
+design profile and screenshots are in the ignored
+`.local/background-qa/header-design-20260912/` directory; these examples are
+retained for the owner's requested design comparison, outside shipped data.
+
+Validation: 102 JavaScript tests, 14 Rust tests, privacy check and both frontend
+and native builds passed. Native MCP confirmed the button remains in place
+when the task area scrolls, the shared Task/Event switch works, focus returns,
+and Table creation retains the viewed date. At a 640-by-500 WebView viewport the
+button did not overlap the title and the header icon measured 24-by-24 CSS pixels.
+The candidate's Windows desktop remained inactive throughout the check.
+
+The candidate was not installed over the owner's running application. Its
+version remains 0.2.1; identify it by the source and executable hash in the local
+acceptance file, not as a new public release. The predominantly white/graphite
+palette remains a proposal; existing green surfaces have not been replaced.
+Previously observed CSP errors remain unresolved, and system zoom at 150/200
+percent was not part of this header check.

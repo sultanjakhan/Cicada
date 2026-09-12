@@ -4,7 +4,7 @@ This is a new, independent repository authorized by the owner on 2026-09-10.
 It has no Git ancestry or writer lock in common with the legacy Hanni repository.
 Do not modify the legacy application, its repositories, data, locks or releases.
 
-- Scope, corrected by the owner on 2026-09-11: the original Hanni Calendar workspace, with one project and its Dashboard, Table, Goals and Notes panes. Exclude Routine. Preserve upstream components, styles and interactions instead of redesigning the calendar.
+- Scope: the original Hanni Calendar workspace, with one project and its Dashboard, Table, Goals and Notes panes. Exclude Routine. Use upstream components as the baseline. On 2026-09-12 the owner authorized refining the homepage layout and navigation, including a persistent shared Create action. The agreed homepage direction is selected goal, current task, other tasks today and optional daily metrics; this is product scope, not a claim that every block is implemented. A predominantly white, graphite palette is being considered; do not treat it as an already applied theme.
 - Keep personal records, backups, contacts, credentials, local paths and generated training data outside Git. Start with an empty database. Use fictional test records only.
 - The integrator owns `main`. Assign writing agents distinct worktrees and file scopes; never change another worker's work. Only the integrator publishes.
 - Use a unique `HANNI_SESSION_ID`. Before Git mutations, inspect branch, HEAD, status and any unfinished Git operation. Keep commits scoped and preserve foreign WIP.

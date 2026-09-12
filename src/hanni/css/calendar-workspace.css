@@ -14,7 +14,19 @@
 #calendar-content .uni-tabs button.uni-tab:focus-visible { outline:2px solid var(--text-primary); outline-offset:-3px; }
 #calendar-content.calendar-workspace .uni-tabs { gap:0; padding:0; overflow-x:auto; overflow-y:hidden; }
 #calendar-content.calendar-workspace .uni-tabs .uni-tab { margin-bottom:0; }
-.calendar-workspace .uni-header { margin-bottom:0; }
+.calendar-workspace .uni-header { display:grid; grid-template-columns:36px minmax(0,1fr) auto; align-items:center; gap:4px 8px; margin-bottom:0; }
+.calendar-workspace .uni-header-icon--static { margin:0; }
+.calendar-workspace .uni-header-icon--static svg { flex:none; aspect-ratio:1; }
+.calendar-workspace .uni-header-name { grid-column:2; min-width:0; margin:0; overflow-wrap:anywhere; }
+.calendar-workspace .uni-header-desc { grid-column:2 / -1; grid-row:2; min-width:0; margin:0; overflow-wrap:anywhere; }
+.calendar-workspace .uni-header-actions { position:static; grid-column:3; grid-row:1; }
+.calendar-workspace .uni-header-action { flex:none; gap:8px; min-height:44px; padding:10px 16px; border:1px solid var(--text-primary); border-radius:8px; background:var(--text-primary); color:var(--bg-card); font:inherit; font-size:14px; font-weight:600; white-space:nowrap; }
+.calendar-workspace .uni-header-action:hover { background:var(--text-secondary); border-color:var(--text-secondary); }
+.calendar-workspace .uni-header-action:focus-visible { outline:2px solid var(--text-primary); outline-offset:3px; }
+@media(max-width:480px) {
+  .calendar-workspace .uni-header { grid-template-columns:36px minmax(0,1fr); }
+  .calendar-workspace .uni-header-actions { grid-column:2; grid-row:3; justify-self:start; margin-top:8px; }
+}
 .calendar-workspace .cm-controls { display:flex; align-items:center; justify-content:flex-start; flex-wrap:wrap; gap:8px 20px; }
 .calendar-workspace .cm-controls .cm-date { flex:0 1 auto; margin:4px 0; }
 .calendar-workspace .cm-controls .cm-actions { margin:4px 0; }

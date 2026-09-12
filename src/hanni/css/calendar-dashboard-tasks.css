@@ -7,7 +7,6 @@
 .calendar-task-overview h4 { font-size: 13px; color: var(--text-secondary, #59645f); margin: 22px 0 8px; }
 .calendar-task-overview .cto-description, .calendar-task-overview .cto-empty, .calendar-task-overview .cto-message { font-size: 13px; color: var(--text-secondary, #59645f); line-height: 1.5; margin: 6px 0 12px; }
 .calendar-task-overview .cto-message:empty { display: none; }
-.calendar-task-overview .cto-create { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 16px; }
 .calendar-task-overview button { font: inherit; cursor: pointer; min-height: 44px; border: 1px solid var(--border-default, #d7dfda); border-radius: 8px; background: var(--bg-card, #fff); color: inherit; padding: 8px 12px; max-width: 100%; }
 .calendar-task-overview button:disabled { cursor: default; opacity: .55; }
 .calendar-task-overview button:not(:disabled):hover { background: var(--bg-hover, #f4f6f4); }

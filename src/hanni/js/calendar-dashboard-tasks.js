@@ -15,9 +15,6 @@ export function mountCalendarDashboardTasks(element, dependencies) {
   element.innerHTML = `<section aria-labelledby="${prefix}-title">
     <div class="cto-heading"><h2 id="${prefix}-title" tabindex="-1" data-overview-title>Другие задачи на сегодня</h2><button type="button" data-overview-toggle aria-expanded="false" aria-controls="${prefix}-all" disabled>Все задачи</button></div>
     <p class="cto-description">Задачи всех целей и без цели. Текущая задача показана выше.</p>
-    <div class="cto-create"${!dependencies.createRecord ? ' hidden' : ''}>
-      ${dependencies.createRecord ? '<button type="button" data-overview-create>Создать</button>' : ''}
-    </div>
     <p class="cto-message" data-overview-message role="status" aria-live="polite"></p>
     <button type="button" data-overview-retry hidden>Повторить загрузку</button>
     <div data-overview-today></div>
@@ -29,8 +26,6 @@ export function mountCalendarDashboardTasks(element, dependencies) {
     </div>
   </section>`;
   const query = name => element.querySelector(`[data-overview-${name}]`);
-  const createButton = query('create');
-  createButton?.addEventListener('click', () => dependencies.createRecord(() => { if (!disposed && createButton.isConnected) createButton.focus(); }));
   const title = query('title'), toggle = query('toggle'), message = query('message'), retry = query('retry');
   const today = query('today'), all = query('all'), groups = query('groups'), pagination = query('pagination');
   const dateLabel = value => {
