@@ -62,7 +62,7 @@ export function mountCalendarNow(element, dependencies = {}) {
   element.innerHTML = `
     <section class="calendar-now__goal" aria-labelledby="${prefix}-goal-label ${prefix}-goal-title">
       <div class="calendar-now__goal-top"><p class="calendar-now__eyebrow" id="${prefix}-goal-label"><span class="calendar-now__goal-symbol" aria-hidden="true">${ICONS.flag}</span>Главная цель</p><button type="button" data-action="open-goal" class="calendar-now__quiet" aria-label="Сменить главную цель" aria-haspopup="dialog"><span class="calendar-now__button-icon" data-ui="goal-change-icon" aria-hidden="true" hidden>${ICONS.cycle}</span><span data-action-label>Выбрать цель</span></button></div>
-      <h2 id="${prefix}-goal-title"><button type="button" data-action="goal-details" class="calendar-now__goal-link" aria-haspopup="dialog" hidden><span data-ui="goal-title"></span><span class="calendar-now__button-icon" aria-hidden="true">${ICONS.arrowRight}</span></button><span data-ui="goal-empty"></span></h2>
+      <h2 id="${prefix}-goal-title"><button type="button" data-action="goal-details" class="calendar-now__goal-link" title="Открыть цель" aria-haspopup="dialog" hidden><span data-ui="goal-title"></span></button><span data-ui="goal-empty"></span></h2>
       <span data-ui="goal-status" class="calendar-now__goal-status" hidden></span>
       <p data-ui="goal-stage" class="calendar-now__goal-stage" hidden></p>
       <p data-ui="goal-meta" class="calendar-now__goal-meta" hidden></p>
@@ -72,9 +72,9 @@ export function mountCalendarNow(element, dependencies = {}) {
       </div>
     </section>
     <section class="calendar-now__card" data-ui="card" tabindex="-1" aria-labelledby="${prefix}-title" aria-busy="true">
-      <p class="calendar-now__eyebrow">Сейчас</p>
+      <p class="calendar-now__eyebrow">Текущая задача</p>
       <p data-ui="status" class="calendar-now__status" hidden></p>
-      <h2 id="${prefix}-title"><button type="button" data-action="task-details" class="calendar-now__task-link" aria-haspopup="dialog" hidden><span data-ui="title"></span><span class="calendar-now__button-icon" aria-hidden="true">${ICONS.arrowRight}</span></button><span data-ui="title-empty"></span></h2>
+      <h2 id="${prefix}-title"><button type="button" data-action="task-details" class="calendar-now__task-link" aria-haspopup="dialog" hidden><span data-ui="title"></span></button><span data-ui="title-empty"></span></h2>
       <p data-ui="meta" class="calendar-now__meta"></p>
       <p data-ui="support" class="calendar-now__support" hidden></p>
       <div class="calendar-now__actions">
@@ -400,7 +400,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     actions['open-goal'].title = active ? 'Для смены цели поставь задачу на паузу' : '';
     const status = { active: 'В работе', paused: 'На паузе', completed: 'Завершено' }[currentState];
     ui.status.textContent = status || ''; ui.status.hidden = !status;
-    ui.title.textContent = task?.title || (!snapshot ? 'Загружаем «Сейчас»…' : !selectedGoal() ? 'Выбери главную цель выше — здесь появится задача.' : 'Для этой цели пока нет подходящей задачи.');
+    ui.title.textContent = task?.title || (!snapshot ? 'Загружаем текущую задачу…' : !selectedGoal() ? 'Выбери главную цель выше — здесь появится задача.' : 'Для этой цели пока нет подходящей задачи.');
     const canOpenTask = !!task && !!dependencies.openTaskDetails;
     actions['task-details'].hidden = !canOpenTask;
     actions['task-details'].disabled = busy || reading || !!failure;
@@ -514,7 +514,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     reading = true; render();
     readFlight = (async () => {
       try { await fetchSnapshot(); if (failure?.operation.kind === 'refresh') failure = null; }
-      catch { if (!failure) failure = { operation: { kind: 'refresh', phase: 'refresh' }, message: 'Не удалось обновить «Сейчас». Последний выбор сохранён.' }; }
+      catch { if (!failure) failure = { operation: { kind: 'refresh', phase: 'refresh' }, message: 'Не удалось обновить текущую задачу. Последний выбор сохранён.' }; }
       finally { reading = false; readFlight = null; render(); if (readAgain && !busy && !disposed) { readAgain = false; void refresh(); } }
     })();
     return readFlight;
@@ -563,7 +563,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     if (error?.message === 'active') return 'Для смены цели поставь текущую задачу на паузу.';
     if (error?.message === 'different-active') return 'Сейчас запущена другая задача. Обнови экран перед продолжением.';
     if (operation.phase === 'save') return 'Действие применено, но не удалось сохранить выбор. Повтор сохранит его без повторного запуска задачи.';
-    if (operation.phase === 'refresh') return 'Не удалось обновить «Сейчас». Последний выбор сохранён.';
+    if (operation.phase === 'refresh') return 'Не удалось обновить текущую задачу. Последний выбор сохранён.';
     return ({ start: 'Не удалось запустить задачу.', pause: 'Не удалось поставить задачу на паузу.', finish: 'Не удалось завершить задачу.', 'switch-task': 'Не удалось сменить задачу. Текущая задача сохранена.' })[operation.kind] || 'Не удалось сохранить выбор.';
   }
   async function run(operation) {

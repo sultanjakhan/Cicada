@@ -421,7 +421,7 @@ export async function loadCalendarWorkspace(el) {
     else if (heading) { heading.tabIndex = -1; heading.focus(); }
   };
   const config = { title:'Календарь', headerIcon:TAB_ICONS.calendar, editableHeader:false, subtitle:'События и расписание', hideDescription:true, hideMemory:true, accessibleTabs:true, beforeRender:cleanupWorkspace, isCurrent:() => S.activeTab === 'calendar',
-    toolbarActions: [{ label:'Создать', title:'Создать задачу или событие', icon:TAB_ICONS.add, onClick:openCalendarCreate }],
+    toolbarActions: [{ label:'Новая задача', title:'Новая задача. В форме также можно выбрать событие.', icon:TAB_ICONS.add, onClick:openCalendarCreate }],
     renderHeaderExtra: host => {
       const create = host.querySelector('.uni-header-action');
       create.dataset.calendarCreate = '';

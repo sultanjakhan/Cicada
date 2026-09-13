@@ -375,3 +375,41 @@ frontend received these edits; its existing native host was not restarted. The
 owned automatic native rebuild watcher was stopped before the merge to prevent
 an unexpected window restart. The merged native host is proven by the separate
 candidate above, not by that still-open DEV process or an installed release.
+
+### Create interaction research and title actions, 2026-09-13
+
+The owner accepted Create's location but questioned its implementation and the
+two right-facing details arrows. This is a narrow interaction iteration on the
+existing Task/Event editor; it introduces no new record types or creation flows.
+
+References are documented patterns, not live competitor testing:
+[Fluent button guidance](https://fluent2.microsoft.design/components/web/react/core/button/usage)
+distinguishes a single action, an equal-choice menu and a dominant-action split
+button. [Carbon menu buttons](https://carbondesignsystem.com/components/menu-buttons/usage/)
+likewise reserves menu/combo patterns for grouped choices. For this MVP, the
+existing editor already opens on Task and contains the Event switch.
+
+| Candidate | Benefit and cost in the current Hanni flow |
+| --- | --- |
+| Neutral New task button, direct editor | Describes the actual default action; one click to start typing. Event creation is discovered inside the form. Chosen as a reversible DEV trial. |
+| Create menu with Task/Event | Makes both types visible before the form, adding a choice that duplicates the editor switch. Consider if people cannot find Event. |
+| New task plus a separate menu segment | Keeps Task direct but adds a second target and keyboard stop. Frequency evidence to justify that complexity is absent. |
+
+The chosen trigger keeps its 44px target and fixed position but uses a soft
+neutral surface, lighter weight and New task wording. Current-task execution
+retains the stronger filled action. Goal/task titles remain native buttons inside
+their headings, without right arrows or an additional Open button. Hover and
+keyboard focus underline the title; focus also has a visible outline. Current
+task replaces Now, including loading/read-error wording. Execution and data are
+unchanged. Remaining UX tradeoff: the title action is less explicit at rest, and
+touch users do not get hover; future feedback should evaluate discoverability.
+
+127 existing JavaScript tests, privacy guard and frontend build passed. Native
+DEV MCP verified direct Task-first creation, Enter/Space details opening,
+Escape/focus return, unchanged execution state and 44px title targets at 640px.
+Wide, narrow, dark and keyboard-focus screenshots were inspected on the inactive
+QA desktop. The only console error was the existing DEV favicon 404. Independent
+source review found no transition/accessibility regression. The owner's open
+DEV was read-only inspected and received the neutral trigger through Vite.
+Evidence: ignored `.local/dev/title-actions-*` and `home-ux-20260912/artifacts/`.
+No Rust changes, native rebuild, owner-window restart, installation or push.
