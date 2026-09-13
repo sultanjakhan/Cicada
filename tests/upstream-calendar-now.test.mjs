@@ -66,7 +66,11 @@ function backend(initial = blank()){
 
           }
      else if (command === 'get_calendar_task_minutes'){
-       result = state.blocks.filter(block => !block.is_active && block.source_type === args.sourceType && String(block.source_id) === args.sourceId && (args.sourceType !== 'schedule' || (block.completion_date || block.date) === args.completionDate)) .reduce((sum, block) => sum + Math.max(0, Number(block.duration_minutes) || 0), 0);
+       result = Math.floor(state.blocks.filter(block => !block.is_active && block.source_type === args.sourceType && String(block.source_id) === args.sourceId && (args.sourceType !== 'schedule' || (block.completion_date || block.date) === args.completionDate)) .reduce((sum, block) => sum + Math.max(0, Number(block.duration_seconds) || (Number(block.duration_minutes) || 0) * 60), 0) / 60);
+
+          }
+     else if (command === 'get_calendar_task_seconds'){
+       result = state.blocks.filter(block => !block.is_active && block.source_type === args.sourceType && String(block.source_id) === args.sourceId && (args.sourceType !== 'schedule' || (block.completion_date || block.date) === args.completionDate)) .reduce((sum, block) => sum + Math.max(0, Number(block.duration_seconds) || (Number(block.duration_minutes) || 0) * 60), 0);
 
           }
      else if (command === 'get_task_pins') result = [];
@@ -85,7 +89,7 @@ function backend(initial = blank()){
        else{
          result = state.nextId++;
          state.blocks.push({
-           id: result, date: `${state.now.getFullYear()}-${String(state.now.getMonth() + 1).padStart(2, '0')}-${String(state.now.getDate()).padStart(2, '0')}`, completion_date: args.completionDate, start_time: `${String(state.now.getHours()).padStart(2, '0')}:${String(state.now.getMinutes()).padStart(2, '0')}`, duration_minutes: 0, source_type: args.sourceType, source_id: args.sourceId, is_active: true
+           id: result, date: `${state.now.getFullYear()}-${String(state.now.getMonth() + 1).padStart(2, '0')}-${String(state.now.getDate()).padStart(2, '0')}`, completion_date: args.completionDate, start_time: `${String(state.now.getHours()).padStart(2, '0')}:${String(state.now.getMinutes()).padStart(2, '0')}`, duration_minutes: 0, duration_seconds: 0, source_type: args.sourceType, source_id: args.sourceId, is_active: true
                   });
 
               }
@@ -95,7 +99,8 @@ function backend(initial = blank()){
        const block = state.blocks.find(value => value.id === args.blockId);
        assert.ok(block);
        if (block.is_active){
-         block.duration_minutes = Math.max(0, Math.floor((state.now - new Date(`${block.date}T${block.start_time}`)) / 60000));
+         block.duration_seconds = Math.max(0, Math.floor((state.now - new Date(`${block.date}T${block.start_time}`)) / 1000));
+         block.duration_minutes = Math.floor(block.duration_seconds / 60);
          block.is_active = false;
 
               }
@@ -399,7 +404,50 @@ test('failed persistence after start retries persistence without replaying the m
    assert.equal(JSON.parse(x.data.stored).execution.blockId, x.data.blocks[0].id);
 
   });
-test('global active task on another date blocks goal switching and a concurrent different task is never stopped', async t =>{
+test('stale Start retry refreshes after an unavailable source without starting again', async t =>{
+   const data = backend();
+   const event = data.tasks.find(task => task.source_type === 'event' && task.source_id === 'event-a');
+   event.completed = true; event.status_extra = 'done';
+   data.tasks.push({ source_type: 'note', source_id: 'task-b', title: 'Следующая задача', duration_minutes: 10, priority: 0, category: 'work', completed: false, tracking_mode: 'check', date: null });
+   data.links.push({ source_type: 'note', source_id: 'task-b', goal_id: 'goal-a' });
+   const x = await mount(t, data);
+   data.before.set('start_task_block', () =>{
+     const stale = data.tasks.find(task => task.source_type === 'note' && task.source_id === 'task-a');
+     stale.completed = true; stale.status_extra = 'done';
+     throw new Error('source record not found');
+
+    });
+   await x.click('start');
+   assert.equal(data.count('start_task_block'), 1);
+   assert.match(x.ui('error-text').textContent, /Задача уже завершена или недоступна\. Обнови экран\./);
+   assert.equal(x.ui('error').hidden, false);
+   await x.click('retry');
+   assert.equal(data.count('start_task_block'), 1, 'retry only refreshes a stale Start');
+   assert.equal(x.host.dataset.taskKey, 'note:task-b');
+   assert.equal(x.host.dataset.state, 'recommendation');
+   assert.equal(x.ui('error').hidden, true);
+   assert.equal(x.action('start').disabled, false);
+
+  });
+
+test('a deleted paused event clears stale execution and retains its closed history', async t =>{
+   const initial = blank();
+   initial.execution = { blockId: 77, date: '2026-09-05', task: { source_type: 'event', source_id: 'event-a', title: 'Удалённое событие', completion_date: '2026-09-05' } };
+   initial.selection = { source_type: 'event', source_id: 'event-a' }; initial.selectionMode = 'manual';
+   const data = backend(initial);
+   data.tasks = data.tasks.filter(task => task.source_type !== 'event');
+   data.links = data.links.filter(link => link.source_type !== 'event');
+   data.blocks.push({ id: 77, date: '2026-09-05', start_time: '09:00', source_type: 'event', source_id: 'event-a', is_active: false, duration_minutes: 12 });
+   const x = await mount(t, data);
+   assert.equal(x.host.dataset.state, 'recommendation');
+   assert.equal(x.host.dataset.taskKey, 'note:task-a');
+   assert.equal(JSON.parse(data.stored).execution, null);
+   assert.equal(JSON.parse(data.stored).selection, null);
+   assert.equal(data.blocks[0].duration_minutes, 12, 'closed history remains available to storage');
+   await x.refresh();
+   assert.equal(JSON.parse(data.stored).execution, null);
+
+  });test('global active task on another date blocks goal switching and a concurrent different task is never stopped', async t =>{
    const data = backend();
    data.blocks.push({
      id: 90, date: '2026-09-04', start_time: '23:58', source_type: 'note', source_id: 'task-a', is_active: true, duration_minutes: 0
@@ -913,7 +961,7 @@ test('a paused note completed outside today is reconciled from its authoritative
    assert.equal(x.host.dataset.state, 'paused');
    assert.equal(x.ui('error').hidden, false);
    assert.equal(JSON.parse(data.stored).execution.task.source_id, 'task-a');
-   data.onceFail('get_calendar_task_minutes');
+   data.onceFail('get_calendar_task_seconds');
    await x.click('retry');
    assert.equal(x.host.dataset.state, 'paused', 'a later failed read cannot partially commit completed execution');
    assert.equal(x.ui('error').hidden, false);
@@ -1290,3 +1338,17 @@ test('daily norms cannot be selected as the main goal through either entry point
    assert.equal(JSON.parse(data.stored).goalId, 'goal-a');
 
   });
+
+
+test('Now floors combined closed and active seconds once, including legacy minute blocks', async t => {
+   const data = backend();
+   data.blocks.push(
+     {id: 1, source_type: 'event', source_id: 'event-a', date: '2026-09-05', start_time: '09:58:30', duration_minutes: 1, duration_seconds: 90, is_active: false},
+     {id: 2, source_type: 'event', source_id: 'event-a', date: '2026-09-05', start_time: '09:59:30', duration_minutes: 0, duration_seconds: 0, is_active: true}
+   );
+   const x = await mount(t, data);
+   assert.equal(x.host.dataset.state, 'active');
+   assert.ok(x.ui('meta').textContent.startsWith('2 '), '90 closed seconds plus 30 active seconds is two minutes after one floor');
+   assert.equal(data.count('get_calendar_task_seconds'), 1);
+   assert.equal(data.count('get_calendar_task_minutes'), 0);
+});

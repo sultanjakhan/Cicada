@@ -213,14 +213,14 @@ export function mountCalendarNow(element, dependencies = {}) {
     const task = chosenTask();
     if (!task || !snapshot) return 0;
     const sameOccurrence = block => task.source_type !== 'schedule' || !validDate(block.completion_date) || block.completion_date === task.completion_date;
-    let minutes = snapshot.workTime?.key === keyOf(task) && snapshot.workTime.occurrence === task.completion_date
-      ? snapshot.workTime.minutes : snapshot.blocks.filter(block => !block.is_active && keyOf(block) === keyOf(task) && sameOccurrence(block))
-      .reduce((sum, block) => sum + Math.max(0, Number(block.duration_minutes) || 0), 0);
+    let seconds = snapshot.workTime?.key === keyOf(task) && snapshot.workTime.occurrence === task.completion_date
+      ? snapshot.workTime.seconds : snapshot.blocks.filter(block => !block.is_active && keyOf(block) === keyOf(task) && sameOccurrence(block))
+      .reduce((sum, block) => sum + Math.max(0, Number(block.duration_seconds) || (Number(block.duration_minutes) || 0) * 60), 0);
     if (snapshot.active && keyOf(snapshot.active) === keyOf(task)) {
       const started = new Date(`${snapshot.active.date}T${snapshot.active.start_time}`);
-      if (Number.isFinite(started.getTime())) minutes += Math.max(0, Math.floor((clock() - started) / 60000));
+      if (Number.isFinite(started.getTime())) seconds += Math.max(0, Math.floor((clock() - started) / 1000));
     }
-    return minutes;
+    return Math.floor(seconds / 60);
   }
   function renderTime() {
     if (disposed) return;
@@ -488,7 +488,10 @@ export function mountCalendarNow(element, dependencies = {}) {
       }
       if (block && !task && state.execution.task.source_type === 'event') {
         task = (await api('get_all_events', {})).find(item => String(item.id) === state.execution.task.source_id);
-        if (!task) throw new Error('missing-event');
+        if (!task) {
+          if (block.is_active) throw new Error('missing-event');
+          state.execution = null; state.selection = null; state.selectionMode = 'auto';
+        }
       }
       if (block && task) {
         const previous = state.execution.task;
@@ -499,7 +502,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     }
     const timedTask = state.execution?.task || state.completed;
     const workTime = timedTask ? { key: keyOf(timedTask), occurrence: timedTask.completion_date,
-      minutes: Math.max(0, Number(await api('get_calendar_task_minutes', { sourceType: timedTask.source_type,
+      seconds: Math.max(0, Number(await api('get_calendar_task_seconds', { sourceType: timedTask.source_type,
         sourceId: String(timedTask.source_id), completionDate: timedTask.completion_date })) || 0) } : null;
     if (disposed || stateVersion !== version) return;
     saved = state; initialized = true; snapshot = { date, goals: goals.filter(goal => goal.goal_kind !== 'daily_norm'), links, planned, active, blocks, pins, weights, workTime };
@@ -559,9 +562,12 @@ export function mountCalendarNow(element, dependencies = {}) {
       }
     }
   }
+  function errorMessage(error) { return typeof error === 'string' ? error : error?.message; }
   function failureMessage(operation, error) {
-    if (error?.message === 'active') return 'Для смены цели поставь текущую задачу на паузу.';
-    if (error?.message === 'different-active') return 'Сейчас запущена другая задача. Обнови экран перед продолжением.';
+    const message = errorMessage(error);
+    if (message === 'active') return 'Для смены цели поставь текущую задачу на паузу.';
+    if (message === 'different-active') return 'Сейчас запущена другая задача. Обнови экран перед продолжением.';
+    if (operation.kind === 'start' && message === 'source record not found') return 'Задача уже завершена или недоступна. Обнови экран.';
     if (operation.phase === 'save') return 'Действие применено, но не удалось сохранить выбор. Повтор сохранит его без повторного запуска задачи.';
     if (operation.phase === 'refresh') return 'Не удалось обновить текущую задачу. Последний выбор сохранён.';
     return ({ start: 'Не удалось запустить задачу.', pause: 'Не удалось поставить задачу на паузу.', finish: 'Не удалось завершить задачу.', 'switch-task': 'Не удалось сменить задачу. Текущая задача сохранена.' })[operation.kind] || 'Не удалось сохранить выбор.';
@@ -578,7 +584,10 @@ export function mountCalendarNow(element, dependencies = {}) {
     } catch (error) {
       failure = { operation, message: failureMessage(operation, error) };
       // A different active task is never closed implicitly by this surface.
-      if (error?.message === 'different-active') { failure.operation = { kind: 'refresh', phase: 'refresh' }; }
+      const message = errorMessage(error);
+      if (message === 'different-active' || (operation.kind === 'start' && message === 'source record not found')) {
+        failure.operation = { kind: 'refresh', phase: 'refresh' };
+      }
     } finally {
       busy = false; render();
       if (disposed && ['start', 'pause', 'finish', 'switch-task'].includes(operation.kind)) {

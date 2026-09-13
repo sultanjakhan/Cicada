@@ -46,6 +46,7 @@ fn fixture_with_connection(
             api::get_active_block,
             api::get_timeline_blocks,
             api::get_calendar_task_minutes,
+            api::get_calendar_task_seconds,
             api::get_ui_state,
             api::set_ui_state,
             api::list_event_categories,
@@ -86,7 +87,7 @@ fn goal(webview: &tauri::WebviewWindow<MockRuntime>, title: &str, parent: Value)
         webview,
         "save_calendar_goal",
         json!({"id":null,"title":title,"targetValue":1.0,
-        "unit":"","deadline":null,"goalKind":"long_term","description":"","criteria":"",
+        "unit":"","deadline":null,"goalKind":"goal","description":"","criteria":"",
         "parentGoalId":parent,"clearParent":false,"currentValue":null}),
     )
     .unwrap()
@@ -109,6 +110,28 @@ fn mutation_fixture_sql(conn: &Connection) {
             ('event','event-b','goal-b','test');",
     )
     .unwrap();
+}
+
+fn category_cascade_fixture_sql(conn: &Connection) {
+    mutation_fixture_sql(conn);
+    conn.execute_batch(
+        "INSERT INTO items(id,kind,title,duration_minutes,version,created_at,updated_at,category,status) VALUES
+            ('task-matching-category','task','Matching task',30,1,'original','original','Example A','task'),
+            ('note-matching-category','task','Matching note',30,1,'original','original','Example A','note');
+         INSERT INTO timeline_blocks(source_type,source_id,date,start_time,duration_minutes,is_active,created_at,updated_at) VALUES
+            ('event','event-a','2026-09-13','10:00',30,0,'fixture','fixture'),
+            ('event','event-b','2026-09-13','11:00',30,0,'fixture','fixture');",
+    )
+    .unwrap();
+}
+
+fn category_revision(conn: &Connection, id: &str) -> (String, i64, String) {
+    conn.query_row(
+        "SELECT category,version,updated_at FROM items WHERE id=?1",
+        [id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )
+    .unwrap()
 }
 
 fn calendar_list_fixture() -> (tauri::App<MockRuntime>, tauri::WebviewWindow<MockRuntime>) {
@@ -284,6 +307,93 @@ fn calendar_lists_preserve_payloads_filters_and_timeline_totals() {
 }
 
 #[test]
+fn timer_seconds_preserve_new_precision_and_legacy_minute_totals() {
+    let (app, view) = fixture();
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        conn.execute_batch("INSERT INTO items(id,kind,title,date,duration_minutes,version,created_at,updated_at) VALUES
+            ('new-task','task','Exact task','2026-09-14',30,1,'fixture','fixture'),
+            ('mixed-task','task','Mixed task','2026-09-14',30,1,'fixture','fixture');
+            INSERT INTO timeline_blocks(source_type,source_id,date,start_time,duration_minutes,duration_seconds,is_active,created_at,updated_at) VALUES
+            ('note','new-task','2026-09-13','23:59:00',1,90,0,'fixture','fixture'),
+            ('note','new-task','2026-09-14','00:01:00',1,90,0,'fixture','fixture'),
+            ('note','mixed-task','2026-09-14','00:02:00',1,0,0,'fixture','fixture'),
+            ('note','mixed-task','2026-09-14','00:03:00',0,30,0,'fixture','fixture');").unwrap();
+    }
+    assert_eq!(
+        call(
+            &view,
+            "get_calendar_task_seconds",
+            json!({"sourceType":"note","sourceId":"new-task","completionDate":"2026-09-13"})
+        )
+        .unwrap(),
+        json!(180)
+    );
+    assert_eq!(
+        call(
+            &view,
+            "get_calendar_task_minutes",
+            json!({"sourceType":"note","sourceId":"new-task","completionDate":"2026-09-13"})
+        )
+        .unwrap(),
+        json!(3)
+    );
+    assert_eq!(
+        call(
+            &view,
+            "get_calendar_task_seconds",
+            json!({"sourceType":"note","sourceId":"mixed-task","completionDate":"2026-09-14"})
+        )
+        .unwrap(),
+        json!(90)
+    );
+    assert_eq!(
+        call(
+            &view,
+            "get_calendar_task_minutes",
+            json!({"sourceType":"note","sourceId":"mixed-task","completionDate":"2026-09-14"})
+        )
+        .unwrap(),
+        json!(1)
+    );
+    let midnight = call(&view, "get_timeline_blocks", json!({"date":"2026-09-14"})).unwrap();
+    assert_eq!(midnight[0]["duration_seconds"], json!(90));
+    assert_eq!(
+        midnight[1]["duration_seconds"],
+        json!(60),
+        "legacy rows keep their stored whole minutes"
+    );
+    assert_eq!(midnight[2]["duration_seconds"], json!(30));
+    for response in [
+        call(
+            &view,
+            "get_calendar_tasks",
+            json!({"includeCompleted":true}),
+        )
+        .unwrap(),
+        call(
+            &view,
+            "get_calendar_records",
+            json!({"start":"2026-09-14","end":"2026-09-14"}),
+        )
+        .unwrap(),
+    ] {
+        let actual = |id: &str| {
+            response
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["source_id"] == id)
+                .unwrap()["actual_minutes"]
+                .clone()
+        };
+        assert_eq!(actual("new-task"), json!(3));
+        assert_eq!(actual("mixed-task"), json!(1));
+    }
+}
+
+#[test]
 fn calendar_lists_keep_status_filters_independent_of_kind_and_completion() {
     let (app, view) = calendar_list_fixture();
     {
@@ -435,15 +545,16 @@ fn finishing_task_rolls_back_timer_on_failure_and_allows_retry() {
         call(&view, "finish_task_block", json!({"blockId":100})).unwrap(),
         Value::Null
     );
-    let (active, minutes): (bool, i64) = observer
+    let (active, minutes, seconds): (bool, i64, i64) = observer
         .query_row(
-            "SELECT is_active,duration_minutes FROM timeline_blocks WHERE id=100",
+            "SELECT is_active,duration_minutes,duration_seconds FROM timeline_blocks WHERE id=100",
             [],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .unwrap();
     assert!(!active);
     assert!(minutes >= 3);
+    assert!(seconds >= minutes * 60);
     let (completed, status): (bool, String) = observer
         .query_row(
             "SELECT completed,status FROM items WHERE id='task-a'",
@@ -471,6 +582,28 @@ fn seed_goal_tree(conn: &Connection) {
         ('other-child','Example other child','goal-b','original','original');
         INSERT INTO items(id,kind,title,duration_minutes,version,created_at,updated_at) VALUES('child-task','task','Example child task',30,1,'original','original');
         INSERT INTO calendar_task_goals(source_type,source_id,goal_id,created_at) VALUES('note','child-task','child','original');").unwrap();
+}
+
+fn save_goal(
+    view: &tauri::WebviewWindow<MockRuntime>,
+    id: Value,
+    title: &str,
+    goal_kind: &str,
+) -> Result<Value, Value> {
+    call(
+        view,
+        "save_calendar_goal",
+        json!({"id":id,"title":title,"targetValue":1.0,
+        "unit":"","deadline":null,"goalKind":goal_kind,"description":"","criteria":"",
+        "parentGoalId":null,"clearParent":false,"currentValue":null}),
+    )
+}
+
+fn convert_goal_to_daily_norm(
+    view: &tauri::WebviewWindow<MockRuntime>,
+    id: &str,
+) -> Result<Value, Value> {
+    save_goal(view, json!(id), "Daily parent", "daily_norm")
 }
 
 #[test]
@@ -565,6 +698,224 @@ fn failed_parent_deletion_restores_children_and_task_links() {
         mutation_snapshot(&app.state::<AppState>().0.lock().unwrap()),
         before
     );
+}
+
+#[test]
+fn converting_parent_goal_to_daily_norm_promotes_only_direct_children() {
+    let (app, view) = fixture();
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        seed_goal_tree(&conn);
+        conn.execute_batch("INSERT INTO calendar_task_goals(source_type,source_id,goal_id,created_at) VALUES('event','event-a','child','original');").unwrap();
+    }
+    convert_goal_to_daily_norm(&view, "goal-a").unwrap();
+    let state = app.state::<AppState>();
+    let conn = state.0.lock().unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT goal_kind FROM calendar_goals WHERE id='goal-a'",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "daily_norm"
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT parent_goal_id FROM calendar_goals WHERE id='child'",
+            [],
+            |r| r.get::<_, Option<String>>(0)
+        )
+        .unwrap(),
+        None
+    );
+    assert_ne!(
+        conn.query_row(
+            "SELECT updated_at FROM calendar_goals WHERE id='child'",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "original"
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT parent_goal_id FROM calendar_goals WHERE id='grandchild'",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "child"
+    );
+    assert_eq!(
+        conn.query_row("SELECT goal_id FROM calendar_task_goals WHERE source_type='note' AND source_id='child-task'", [], |r| r.get::<_, String>(0)).unwrap(),
+        "child"
+    );
+    assert_eq!(
+        conn.query_row("SELECT goal_id FROM calendar_task_goals WHERE source_type='event' AND source_id='event-a'", [], |r| r.get::<_, String>(0)).unwrap(),
+        "child"
+    );
+}
+
+#[test]
+fn stale_child_cannot_restore_a_daily_norm_parent() {
+    let (app, view) = fixture();
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        seed_goal_tree(&conn);
+    }
+    convert_goal_to_daily_norm(&view, "goal-a").unwrap();
+    let stale = call(
+        &view,
+        "save_calendar_goal",
+        json!({"id":"child","title":"stale child","targetValue":1.0,
+        "unit":"","deadline":null,"goalKind":"goal","description":"","criteria":"",
+        "parentGoalId":"goal-a","clearParent":false,"currentValue":null}),
+    )
+    .unwrap_err();
+    assert!(stale.as_str().unwrap().contains("cannot have children"));
+    let daily_child = call(
+        &view,
+        "save_calendar_goal",
+        json!({"id":null,"title":"invalid daily child","targetValue":1.0,
+        "unit":"","deadline":null,"goalKind":"daily_norm","description":"","criteria":"",
+        "parentGoalId":"goal-b","clearParent":false,"currentValue":null}),
+    )
+    .unwrap_err();
+    assert!(daily_child
+        .as_str()
+        .unwrap()
+        .contains("only goal can have a parent"));
+    let unknown_child = call(
+        &view,
+        "save_calendar_goal",
+        json!({"id":null,"title":"invalid unknown child","targetValue":1.0,
+        "unit":"","deadline":null,"goalKind":"unknown","description":"","criteria":"",
+        "parentGoalId":"goal-b","clearParent":false,"currentValue":null}),
+    )
+    .unwrap_err();
+    assert!(unknown_child
+        .as_str()
+        .unwrap()
+        .contains("only goal can have a parent"));
+    {
+        let state = app.state::<AppState>();
+        state
+            .0
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE calendar_goals SET goal_kind='unknown' WHERE id='goal-b'",
+                [],
+            )
+            .unwrap();
+    }
+    let unknown_parent = call(
+        &view,
+        "save_calendar_goal",
+        json!({"id":null,"title":"invalid unknown parent","targetValue":1.0,
+        "unit":"","deadline":null,"goalKind":"goal","description":"","criteria":"",
+        "parentGoalId":"goal-b","clearParent":false,"currentValue":null}),
+    )
+    .unwrap_err();
+    assert!(unknown_parent
+        .as_str()
+        .unwrap()
+        .contains("cannot have children"));
+    {
+        let state = app.state::<AppState>();
+        state
+            .0
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE calendar_goals SET goal_kind='goal' WHERE id='goal-b'",
+                [],
+            )
+            .unwrap();
+    }
+    let cleared = call(
+        &view,
+        "save_calendar_goal",
+        json!({"id":"child","title":"cleared daily","targetValue":1.0,
+        "unit":"","deadline":null,"goalKind":"daily_norm","description":"","criteria":"",
+        "parentGoalId":"goal-a","clearParent":true,"currentValue":null}),
+    )
+    .unwrap();
+    assert_eq!(cleared, json!("child"));
+    assert_eq!(
+        call(
+            &view,
+            "save_calendar_goal",
+            json!({"id":null,"title":"valid child","targetValue":1.0,
+        "unit":"","deadline":null,"goalKind":"goal","description":"","criteria":"",
+        "parentGoalId":"goal-b","clearParent":false,"currentValue":null})
+        )
+        .unwrap()
+        .is_string(),
+        true
+    );
+    let state = app.state::<AppState>();
+    let conn = state.0.lock().unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT parent_goal_id FROM calendar_goals WHERE id='child'",
+            [],
+            |r| r.get::<_, Option<String>>(0)
+        )
+        .unwrap(),
+        None
+    );
+}
+
+#[test]
+fn failed_daily_norm_conversion_rolls_back_parent_and_children_then_allows_retry() {
+    let (app, view) = fixture();
+    let before = {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        seed_goal_tree(&conn);
+        conn.execute_batch("CREATE TRIGGER reject_daily_child_promotion BEFORE UPDATE ON calendar_goals WHEN OLD.id='child' AND NEW.parent_goal_id IS NULL BEGIN SELECT RAISE(ABORT,'injected child promotion failure'); END;").unwrap();
+        mutation_snapshot(&conn)
+    };
+    let error = convert_goal_to_daily_norm(&view, "goal-a").unwrap_err();
+    assert!(error
+        .as_str()
+        .unwrap()
+        .contains("injected child promotion failure"));
+    assert_eq!(
+        mutation_snapshot(&app.state::<AppState>().0.lock().unwrap()),
+        before
+    );
+    {
+        let state = app.state::<AppState>();
+        state
+            .0
+            .lock()
+            .unwrap()
+            .execute_batch("DROP TRIGGER reject_daily_child_promotion;")
+            .unwrap();
+    }
+    convert_goal_to_daily_norm(&view, "goal-a").unwrap();
+    assert!(app.state::<AppState>().0.lock().unwrap().is_autocommit());
+}
+
+#[test]
+fn deleted_goal_rejects_stale_save_while_valid_create_and_edit_succeed() {
+    let (app, view) = fixture();
+    let id = save_goal(&view, Value::Null, "Original", "goal").unwrap();
+    save_goal(&view, id.clone(), "Edited", "goal").unwrap();
+    call(&view, "delete_goal", json!({"id":id.clone()})).unwrap();
+    let after_delete = mutation_snapshot(&app.state::<AppState>().0.lock().unwrap());
+    assert!(save_goal(&view, id, "Stale", "goal").is_err());
+    assert_eq!(
+        mutation_snapshot(&app.state::<AppState>().0.lock().unwrap()),
+        after_delete
+    );
+    let created = save_goal(&view, Value::Null, "Created", "goal").unwrap();
+    assert_ne!(created, Value::Null);
 }
 
 #[test]
@@ -925,6 +1276,148 @@ fn atomic_category_success_preserves_cascade_counts_and_unrelated_records() {
 }
 
 #[test]
+fn renaming_event_category_skips_tasks_and_invalidates_stale_event_save() {
+    let (app, view) = fixture();
+    {
+        let state = app.state::<AppState>();
+        category_cascade_fixture_sql(&state.0.lock().unwrap());
+    }
+    call(
+        &view,
+        "update_event_category",
+        json!({"id":"category-a","name":"Renamed","color":null,"icon":null}),
+    )
+    .unwrap();
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        assert_eq!(category_revision(&conn, "event-a").0, "Renamed");
+        assert_eq!(category_revision(&conn, "event-a").1, 2);
+        assert_ne!(category_revision(&conn, "event-a").2, "test");
+        for id in [
+            "task-matching-category",
+            "note-matching-category",
+            "task-a",
+            "event-b",
+        ] {
+            let expected = if id == "task-a" { "task" } else { "Example A" };
+            let updated_at = if id == "task-a" { "test" } else { "original" };
+            if id == "event-b" {
+                assert_eq!(
+                    category_revision(&conn, id),
+                    ("Example B".into(), 1, "test".into())
+                );
+            } else {
+                assert_eq!(
+                    category_revision(&conn, id),
+                    (expected.into(), 1, updated_at.into())
+                );
+            }
+        }
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM timeline_blocks WHERE source_type='event'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            2
+        );
+    }
+    assert!(call(
+        &view,
+        "update_event",
+        json!({"id":"event-a","title":"Stale","date":"2026-09-13","expectedVersion":1})
+    )
+    .is_err());
+    call(
+        &view,
+        "update_event",
+        json!({"id":"event-a","title":"Fresh","date":"2026-09-13","category":"Renamed","expectedVersion":2}),
+    )
+    .unwrap();
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        assert_eq!(category_revision(&conn, "event-a").0, "Renamed");
+        assert_eq!(category_revision(&conn, "event-a").1, 3);
+    }
+    // Repeating the same name and metadata-only edits must not make an open event stale.
+    call(
+        &view,
+        "update_event_category",
+        json!({"id":"category-a","name":" Renamed ","color":null,"icon":null}),
+    )
+    .unwrap();
+    call(
+        &view,
+        "update_event_category",
+        json!({"id":"category-a","name":null,"color":"#abcdef","icon":null}),
+    )
+    .unwrap();
+    let state = app.state::<AppState>();
+    assert_eq!(category_revision(&state.0.lock().unwrap(), "event-a").1, 3);
+}
+
+#[test]
+fn deleting_event_category_skips_tasks_and_invalidates_stale_event_save() {
+    let (app, view) = fixture();
+    {
+        let state = app.state::<AppState>();
+        category_cascade_fixture_sql(&state.0.lock().unwrap());
+    }
+    assert_eq!(
+        call(
+            &view,
+            "delete_event_category",
+            json!({"id":"category-a","reassignTo":"Example B"})
+        )
+        .unwrap(),
+        json!(1)
+    );
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        assert_eq!(category_revision(&conn, "event-a").0, "Example B");
+        assert_eq!(category_revision(&conn, "event-a").1, 2);
+        assert_ne!(category_revision(&conn, "event-a").2, "test");
+        assert_eq!(
+            category_revision(&conn, "event-b"),
+            ("Example B".into(), 1, "test".into())
+        );
+        for id in ["task-matching-category", "note-matching-category"] {
+            assert_eq!(
+                category_revision(&conn, id),
+                ("Example A".into(), 1, "original".into())
+            );
+        }
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM timeline_blocks WHERE source_type='event'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            2
+        );
+    }
+    assert!(call(
+        &view,
+        "update_event",
+        json!({"id":"event-a","title":"Stale","date":"2026-09-13","expectedVersion":1})
+    )
+    .is_err());
+    call(
+        &view,
+        "update_event",
+        json!({"id":"event-a","title":"Fresh","date":"2026-09-13","category":"Example B","expectedVersion":2}),
+    )
+    .unwrap();
+    let state = app.state::<AppState>();
+    assert_eq!(category_revision(&state.0.lock().unwrap(), "event-a").1, 3);
+}
+
+#[test]
 fn atomic_goal_delete_preserves_tasks_and_other_goal_links() {
     let (app, view) = fixture();
     let before_items = {
@@ -1043,6 +1536,131 @@ fn original_goal_task_and_event_forms_round_trip_over_ipc() {
 }
 
 #[test]
+fn event_delete_removes_only_its_link_and_preserves_closed_history() {
+    let (app, view) = fixture();
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        mutation_fixture_sql(&conn);
+        conn.execute_batch(
+            "INSERT INTO calendar_task_goals(source_type,source_id,goal_id,created_at) VALUES
+                ('event','event-a','goal-a','fixture');
+            INSERT INTO timeline_blocks(source_type,source_id,date,start_time,duration_minutes,is_active,created_at,updated_at) VALUES
+                ('event','event-a','2026-09-12','10:00',12,0,'fixture','fixture'),
+                ('note','task-a','2026-09-12','10:00',7,0,'fixture','fixture');",
+        )
+        .unwrap();
+    }
+    call(&view, "delete_event", json!({"id":"event-a"})).unwrap();
+    let state = app.state::<AppState>();
+    let conn = state.0.lock().unwrap();
+    for sql in [
+        "SELECT COUNT(*) FROM items WHERE id='event-a'",
+        "SELECT COUNT(*) FROM calendar_task_goals WHERE source_type='event' AND source_id='event-a'",
+    ] {
+        assert_eq!(conn.query_row(sql, [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+    }
+    assert_eq!(
+        conn.query_row("SELECT goal_id FROM calendar_task_goals WHERE source_type='event' AND source_id='event-b'", [], |r| r.get::<_, String>(0)).unwrap(),
+        "goal-b"
+    );
+    assert_eq!(
+        conn.query_row("SELECT goal_id FROM calendar_task_goals WHERE source_type='note' AND source_id='task-a'", [], |r| r.get::<_, String>(0)).unwrap(),
+        "goal-a"
+    );
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM timeline_blocks WHERE source_type='event' AND source_id='event-a' AND is_active=0", [], |r| r.get::<_, i64>(0)).unwrap(),
+        1
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM timeline_blocks WHERE source_type='note' AND source_id='task-a'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+}
+
+#[test]
+fn event_delete_rolls_back_links_when_missing_or_source_delete_fails() {
+    let (app, view) = fixture();
+    let before = {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        mutation_fixture_sql(&conn);
+        conn.execute_batch("INSERT INTO calendar_task_goals(source_type,source_id,goal_id,created_at) VALUES('event','event-a','goal-a','fixture')").unwrap();
+        mutation_snapshot(&conn)
+    };
+    assert!(call(&view, "delete_event", json!({"id":"missing-event"})).is_err());
+    assert_eq!(
+        mutation_snapshot(&app.state::<AppState>().0.lock().unwrap()),
+        before
+    );
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        conn.execute_batch("CREATE TRIGGER reject_event_delete BEFORE DELETE ON items WHEN OLD.id='event-a' BEGIN SELECT RAISE(ABORT,'injected event delete failure'); END;").unwrap();
+    }
+    let error = call(&view, "delete_event", json!({"id":"event-a"})).unwrap_err();
+    assert!(error
+        .as_str()
+        .unwrap()
+        .contains("injected event delete failure"));
+    assert_eq!(
+        mutation_snapshot(&app.state::<AppState>().0.lock().unwrap()),
+        before
+    );
+    assert!(app.state::<AppState>().0.lock().unwrap().is_autocommit());
+}
+
+#[test]
+fn active_event_delete_rejects_then_paused_event_deletes_with_history() {
+    let (app, view) = fixture();
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        mutation_fixture_sql(&conn);
+        conn.execute_batch("INSERT INTO calendar_task_goals(source_type,source_id,goal_id,created_at) VALUES('event','event-a','goal-a','fixture')").unwrap();
+    }
+    let block = call(
+        &view,
+        "start_task_block",
+        json!({"sourceType":"event","sourceId":"event-a","failIfActive":true}),
+    )
+    .unwrap();
+    let before_rejection = mutation_snapshot(&app.state::<AppState>().0.lock().unwrap());
+    let error = call(&view, "delete_event", json!({"id":"event-a"})).unwrap_err();
+    assert!(error.as_str().unwrap().contains("active timer"));
+    assert_eq!(
+        mutation_snapshot(&app.state::<AppState>().0.lock().unwrap()),
+        before_rejection
+    );
+    call(&view, "pause_task_block", json!({"blockId":block})).unwrap();
+    call(&view, "delete_event", json!({"id":"event-a"})).unwrap();
+    let state = app.state::<AppState>();
+    let conn = state.0.lock().unwrap();
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM items WHERE id='event-a'", [], |r| r
+            .get::<_, i64>(
+            0
+        ))
+        .unwrap(),
+        0
+    );
+    assert_eq!(conn.query_row("SELECT COUNT(*) FROM calendar_task_goals WHERE source_type='event' AND source_id='event-a'", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM timeline_blocks WHERE id=?1 AND is_active=0",
+            [block.as_i64().unwrap()],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+}
+#[test]
 fn original_note_form_saves_archives_and_restores_without_creating_a_task() {
     let (_app, view) = fixture();
     let id = call(&view, "create_note", json!({"title":"Example note","content":"Original text",
@@ -1100,6 +1718,66 @@ fn original_note_form_saves_archives_and_restores_without_creating_a_task() {
     );
 }
 
+#[test]
+fn task_timer_rejects_closed_plain_and_archived_notes_but_keeps_open_task_and_event() {
+    let (app, view) = fixture();
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        conn.execute_batch(
+            "INSERT INTO items(id,kind,title,duration_minutes,completed,status,archived,version,created_at,updated_at) VALUES
+                ('completed-task','task','Completed',30,1,'task',0,1,'fixture','fixture'),
+                ('done-status-task','task','Done status',30,0,'done',0,1,'fixture','fixture'),
+                ('plain-note','task','Plain note',30,0,'note',0,1,'fixture','fixture'),
+                ('archived-task','task','Archived',30,0,'task',1,1,'fixture','fixture'),
+                ('open-task','task','Open',30,0,'task',0,1,'fixture','fixture'),
+                ('open-event','event','Event',30,0,'event',0,1,'fixture','fixture');",
+        )
+        .unwrap();
+    }
+    for id in [
+        "completed-task",
+        "done-status-task",
+        "plain-note",
+        "archived-task",
+    ] {
+        assert!(
+            call(
+                &view,
+                "start_task_block",
+                json!({"sourceType":"note","sourceId":id,"failIfActive":true}),
+            )
+            .is_err(),
+            "{id} must not be startable"
+        );
+    }
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM timeline_blocks", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0,
+            "rejected notes must not create timeline blocks"
+        );
+    }
+    let task_block = call(
+        &view,
+        "start_task_block",
+        json!({"sourceType":"note","sourceId":"open-task","failIfActive":true}),
+    )
+    .unwrap();
+    assert!(task_block.is_i64());
+    call(&view, "pause_task_block", json!({"blockId":task_block})).unwrap();
+    let event_block = call(
+        &view,
+        "start_task_block",
+        json!({"sourceType":"event","sourceId":"open-event","failIfActive":true}),
+    )
+    .unwrap();
+    assert!(event_block.is_i64());
+}
 #[test]
 fn dashboard_timer_uses_numeric_blocks_and_can_finish_a_paused_task() {
     let (_app, view) = fixture();

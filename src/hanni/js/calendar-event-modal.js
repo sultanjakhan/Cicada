@@ -5,26 +5,6 @@ import { S, invoke } from './state.js';
 import { escapeHtml } from './utils.js';
 import { loadCategories } from './calendar-categories.js';
 import { showCategoryManager, showAddCategory } from './calendar-category-manager.js';
-// These values remain the existing backend section ids; labels are presentation only.
-const PROJECT_TABS = [
-  { id: 'notes', label: 'Заметки' }, { id: 'jobs', label: 'Работа' },
-  { id: 'projects', label: 'Проекты' }, { id: 'development', label: 'Развитие' },
-  { id: 'home', label: 'Дом' }, { id: 'hobbies', label: 'Увлечения' },
-  
-  { id: 'food', label: 'Питание' }, { id: 'money', label: 'Финансы' },
-  { id: 'people', label: 'Люди' },
-];
-
-function renderProjectPicker(current) {
-  const cur = current || '';
-  const items = [...PROJECT_TABS];
-  if (cur && !items.some(t => t.id === cur)) items.push({ id: cur, label: cur });
-  return `<select class="form-select" id="evm-linked-tab">
-    <option value=""${!cur ? ' selected' : ''}>Без привязки</option>
-    ${items.map(t => `<option value="${escapeHtml(t.id)}"${t.id === cur ? ' selected' : ''}>${escapeHtml(t.label)}</option>`).join('')}
-  </select>`;
-}
-
 // Default time is the exact current local minute. Rounding made a modal opened
 // at 08:09 misleadingly show 08:10 even though "Создать и начать" starts now.
 function currentLocalTime() {
@@ -126,7 +106,6 @@ export async function showEventModal(eventId = null, initialDate = null, options
   const initCat = event?.category || 'general';
   const initPri = event?.priority ?? 0;
   const initDur = event?.duration_minutes > 0 ? event.duration_minutes : 60;
-  const initTab = event?.linked_tab || '';
   const initEnd = rangeEnd(initDate, initTime, initDur) || { date: initDate, time: initTime };
   let savedEventId = taskId ?? (isEdit ? String(eventId) : null);
   let savedVersion = task?.version ?? event?.version ?? null;
@@ -188,10 +167,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
           <label class="evm-field" for="evm-desc"><span class="evm-field-label">Описание</span>
             <textarea class="form-textarea" id="evm-desc" placeholder="Место, ссылка или контекст встречи" rows="3">${escapeHtml(initDesc)}</textarea></label>
           
-          <div class="evm-classify">
-            <label class="evm-classify-col" for="evm-cat"><span class="evm-field-label">Категория</span>${renderCategoryPicker(cats, initCat)}</label>
-            <label class="evm-classify-col" for="evm-linked-tab"><span class="evm-field-label">Раздел</span>${renderProjectPicker(initTab)}</label>
-          </div>
+          <label class="evm-field" for="evm-cat"><span class="evm-field-label">Категория</span>${renderCategoryPicker(cats, initCat)}</label>
           <div class="evm-field-label">Важность</div>
           ${renderPriorityPicker(initPri)}
           ${isEdit
@@ -454,7 +430,11 @@ export async function showEventModal(eventId = null, initialDate = null, options
       await invoke('delete_event', { id: String(eventId) });
       overlay.remove();
       window.dispatchEvent(new CustomEvent('hanni:calendar-refresh'));
-    } catch (err) { setPending(false); showError('Не удалось удалить событие: ' + err); }
+    } catch (err) {
+      setPending(false);
+      const message = typeof err === 'string' ? err : err?.message;
+      showError(message === 'event has an active timer' ? 'Сначала поставь событие на паузу, затем удали его.' : 'Не удалось удалить событие: ' + err);
+    }
   });
 
   const submitEvent = async (startNow) => {
@@ -496,7 +476,6 @@ export async function showEventModal(eventId = null, initialDate = null, options
     const cat = overlay.querySelector('#evm-cat')?.value || 'general';
     const pri = parseInt(overlay.querySelector('.evm-priority')?.dataset.evmPriority || '0', 10);
     const desc = overlay.querySelector('#evm-desc')?.value || '';
-    const linkedTab = overlay.querySelector('#evm-linked-tab')?.value || '';
     const catColor = (isEdit && cat === initCat ? event.color : null) || cats.find(c => c.name === cat)?.color || '#9B9B9B';
     setPending(true);
 
@@ -506,14 +485,14 @@ export async function showEventModal(eventId = null, initialDate = null, options
           id: savedEventId,
           title, description: desc, date, time,
           durationMinutes: dur, category: cat, color: catColor,
-          completed: null, priority: pri, linkedTab,
+          completed: null, priority: pri,
           expectedVersion: savedVersion,
         });
         if (savedVersion != null) savedVersion++;
       } else {
         savedEventId = await invoke('create_event', {
           title, description: desc, date, time,
-          durationMinutes: dur, category: cat, color: catColor, priority: pri, linkedTab,
+          durationMinutes: dur, category: cat, color: catColor, priority: pri,
         });
         savedVersion = 1;
       }

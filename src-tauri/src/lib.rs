@@ -16,7 +16,7 @@ mod calendar_compat;
 #[cfg(test)]
 mod workspace_ipc_tests;
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 pub struct AppState(Mutex<Connection>);
 
@@ -159,10 +159,10 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
           CREATE TABLE IF NOT EXISTS calendar_task_goals (source_type TEXT NOT NULL, source_id TEXT NOT NULL, goal_id TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(source_type, source_id));
           CREATE TABLE IF NOT EXISTS ui_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
-          CREATE TABLE IF NOT EXISTS timeline_blocks (id INTEGER PRIMARY KEY AUTOINCREMENT, source_type TEXT NOT NULL, source_id TEXT NOT NULL, date TEXT NOT NULL, start_time TEXT NOT NULL, end_time TEXT, duration_minutes INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 0, completion_date TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);")
+          CREATE TABLE IF NOT EXISTS timeline_blocks (id INTEGER PRIMARY KEY AUTOINCREMENT, source_type TEXT NOT NULL, source_id TEXT NOT NULL, date TEXT NOT NULL, start_time TEXT NOT NULL, end_time TEXT, duration_minutes INTEGER NOT NULL DEFAULT 0, duration_seconds INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 0, completion_date TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);")
           .map_err(|e| fail(format!("create calendar v2 tables: {e}")))?;
         transaction
-            .pragma_update(None, "user_version", SCHEMA_VERSION)
+            .pragma_update(None, "user_version", 2)
             .map_err(|e| fail(format!("write database version: {e}")))?;
         transaction
             .commit()
@@ -186,11 +186,35 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
         transaction.execute_batch("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);")
             .map_err(|e| fail(format!("create app settings: {e}")))?;
         transaction
-            .pragma_update(None, "user_version", SCHEMA_VERSION)
+            .pragma_update(None, "user_version", 3)
             .map_err(|e| fail(format!("write database version: {e}")))?;
         transaction
             .commit()
             .map_err(|e| fail(format!("commit v3 migration: {e}")))?;
+    }
+    // v4 stores exact stopped-block duration without changing legacy minute values.
+    if version < 4 {
+        let transaction = conn
+            .unchecked_transaction()
+            .map_err(|e| fail(format!("begin v4 migration: {e}")))?;
+        let columns: Vec<String> = transaction
+            .prepare("PRAGMA table_info(timeline_blocks)")
+            .map_err(|e| fail(format!("inspect timeline schema: {e}")))?
+            .query_map([], |row| row.get(1))
+            .map_err(|e| fail(format!("inspect timeline schema: {e}")))?
+            .collect::<Result<_, _>>()
+            .map_err(|e| fail(format!("inspect timeline schema: {e}")))?;
+        if !columns.iter().any(|column| column == "duration_seconds") {
+            transaction
+                .execute_batch("ALTER TABLE timeline_blocks ADD COLUMN duration_seconds INTEGER NOT NULL DEFAULT 0;")
+                .map_err(|e| fail(format!("migrate timeline seconds: {e}")))?;
+        }
+        transaction
+            .pragma_update(None, "user_version", SCHEMA_VERSION)
+            .map_err(|e| fail(format!("write database version: {e}")))?;
+        transaction
+            .commit()
+            .map_err(|e| fail(format!("commit v4 migration: {e}")))?;
     }
     conn.execute("INSERT OR IGNORE INTO event_categories(id,name,color,icon,sort_order,created_at) VALUES('general','general','#9B9B9B','',0,?1)", [Utc::now().to_rfc3339()])
         .map_err(|e| fail(format!("seed generic category: {e}")))?;
@@ -513,6 +537,7 @@ pub fn run() {
             calendar_compat::pause_task_block,
             calendar_compat::finish_task_block,
             calendar_compat::get_calendar_task_minutes,
+            calendar_compat::get_calendar_task_seconds,
             calendar_compat::get_schedules,
             calendar_compat::get_task_pins,
             calendar_compat::get_app_setting,
@@ -676,7 +701,35 @@ mod tests {
         assert_eq!(
             conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
                 .unwrap(),
-            3
+            4
+        );
+    }
+
+    #[test]
+    fn v3_timeline_seconds_migration_preserves_rows_and_is_idempotent() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE items (id TEXT PRIMARY KEY NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', date TEXT, time TEXT, duration_minutes INTEGER NOT NULL, completed INTEGER NOT NULL DEFAULT 0, version INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'general', color TEXT NOT NULL DEFAULT '#9B9B9B', priority INTEGER NOT NULL DEFAULT 0, archived INTEGER NOT NULL DEFAULT 0, tags TEXT NOT NULL DEFAULT '', content_blocks TEXT, status TEXT NOT NULL DEFAULT 'task');
+          CREATE TABLE event_categories (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, color TEXT NOT NULL, icon TEXT NOT NULL DEFAULT '', sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
+          CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
+          CREATE TABLE timeline_blocks (id INTEGER PRIMARY KEY AUTOINCREMENT, source_type TEXT NOT NULL, source_id TEXT NOT NULL, date TEXT NOT NULL, start_time TEXT NOT NULL, end_time TEXT, duration_minutes INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 0, completion_date TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+          INSERT INTO timeline_blocks(source_type,source_id,date,start_time,duration_minutes,is_active,created_at,updated_at) VALUES('note','legacy','2026-09-13','23:59:00',2,0,'old','old');
+          PRAGMA user_version=3;").unwrap();
+        init_schema(&conn).unwrap();
+        assert_eq!(conn.query_row("SELECT duration_minutes,duration_seconds FROM timeline_blocks WHERE source_id='legacy'", [], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))).unwrap(), (2, 0));
+        assert_eq!(
+            conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                .unwrap(),
+            4
+        );
+        init_schema(&conn).unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM timeline_blocks WHERE source_id='legacy'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
         );
     }
 }

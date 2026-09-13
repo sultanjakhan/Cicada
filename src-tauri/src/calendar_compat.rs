@@ -194,16 +194,34 @@ pub fn update_event(
 }
 #[tauri::command]
 pub fn delete_event(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    let conn = lock(&state)?;
-    if conn
-        .execute("DELETE FROM items WHERE id=?1 AND kind='event'", [id])
-        .map_err(|e| fail(e.to_string()))?
-        == 1
-    {
-        Ok(())
-    } else {
-        Err(fail("event not found"))
+    let mut conn = lock(&state)?;
+    let transaction = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| fail(e.to_string()))?;
+    let active: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM timeline_blocks WHERE source_type='event' AND source_id=?1 AND is_active=1)",
+            [&id],
+            |r| r.get(0),
+        )
+        .map_err(|e| fail(e.to_string()))?;
+    if active {
+        return Err(fail("event has an active timer"));
     }
+    transaction
+        .execute(
+            "DELETE FROM calendar_task_goals WHERE source_type='event' AND source_id=?1",
+            [&id],
+        )
+        .map_err(|e| fail(e.to_string()))?;
+    let affected = transaction
+        .execute("DELETE FROM items WHERE id=?1 AND kind='event'", [&id])
+        .map_err(|e| fail(e.to_string()))?;
+    if affected != 1 {
+        return Err(fail("event not found"));
+    }
+    transaction.commit().map_err(|e| fail(e.to_string()))?;
+    Ok(())
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -347,14 +365,14 @@ fn calendar_list(
             FROM items WHERE {predicate}
         ), timeline AS (
             SELECT t.source_type,t.source_id,MAX(t.is_active) AS active,
-                SUM(CASE WHEN t.is_active=0 THEN t.duration_minutes ELSE 0 END) AS minutes,
+                SUM(CASE WHEN t.is_active=0 THEN CASE WHEN t.duration_seconds > 0 THEN t.duration_seconds ELSE t.duration_minutes * 60 END ELSE 0 END) AS seconds,
                 COUNT(*) AS has_work
             FROM timeline_blocks t JOIN selected s
                 ON s.source_type=t.source_type AND s.id=t.source_id
             GROUP BY t.source_type,t.source_id
         )
         SELECT s.id,s.kind,s.title,s.date,s.time,s.duration_minutes,s.category,s.color,
-            s.completed,s.status,s.priority,COALESCE(t.active,0),COALESCE(t.minutes,0),COALESCE(t.has_work,0)
+            s.completed,s.status,s.priority,COALESCE(t.active,0),COALESCE(t.seconds,0),COALESCE(t.has_work,0)
         FROM selected s LEFT JOIN timeline t ON t.source_type=s.source_type AND t.source_id=s.id
         ORDER BY {order}"
     );
@@ -378,7 +396,7 @@ fn calendar_list(
                 "priority": row.get::<_, i64>(10)?,
                 "tracking_mode": if is_task {"check"} else {"track"},
                 "is_active": row.get::<_, i64>(11)? != 0,
-                "actual_minutes": row.get::<_, i64>(12)?,
+                "actual_minutes": row.get::<_, i64>(12)? / 60,
                 "has_work": row.get::<_, i64>(13)? > 0,
             });
             if !tasks_only {
@@ -548,29 +566,66 @@ pub fn save_calendar_goal(
     {
         return Err(fail("invalid goal"));
     }
-    let conn = lock(&state)?;
+    let mut conn = lock(&state)?;
+    let existing = id.is_some();
     let id = id.unwrap_or_else(|| Uuid::new_v4().to_string());
-    if let Some(parent) = parent_goal_id.as_deref() {
-        if clear_parent || parent == id {
+    let goal_kind = goal_kind.unwrap_or_else(|| "goal".into());
+    let transaction = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| fail(e.to_string()))?;
+    let previous_kind = if existing {
+        Some(
+            transaction
+                .query_row(
+                    "SELECT goal_kind FROM calendar_goals WHERE id=?1",
+                    [&id],
+                    |r| r.get::<_, String>(0),
+                )
+                .map_err(|_| fail("goal not found"))?,
+        )
+    } else {
+        None
+    };
+    let effective_parent = if clear_parent {
+        None
+    } else {
+        parent_goal_id.as_deref()
+    };
+    if let Some(parent) = effective_parent {
+        if parent == id {
             return Err(fail("goal cannot be its own parent"));
         }
-        let exists: bool = conn
+        if goal_kind != "goal" {
+            return Err(fail("only goal can have a parent"));
+        }
+        let exists: bool = transaction
             .query_row(
-                "SELECT EXISTS(SELECT 1 FROM calendar_goals WHERE id=?1)",
+                "SELECT EXISTS(SELECT 1 FROM calendar_goals WHERE id=?1 AND goal_kind='goal')",
                 [parent],
                 |r| r.get(0),
             )
             .map_err(|e| fail(e.to_string()))?;
         if !exists {
-            return Err(fail("parent goal not found"));
+            return Err(fail("parent goal not found or cannot have children"));
         }
-        let cycle: bool=conn.query_row("WITH RECURSIVE descendants(id) AS (SELECT id FROM calendar_goals WHERE parent_goal_id=?1 UNION ALL SELECT g.id FROM calendar_goals g JOIN descendants d ON g.parent_goal_id=d.id) SELECT EXISTS(SELECT 1 FROM descendants WHERE id=?2)",params![id,parent],|r|r.get(0)).map_err(|e|fail(e.to_string()))?;
+        let cycle: bool=transaction.query_row("WITH RECURSIVE descendants(id) AS (SELECT id FROM calendar_goals WHERE parent_goal_id=?1 UNION ALL SELECT g.id FROM calendar_goals g JOIN descendants d ON g.parent_goal_id=d.id) SELECT EXISTS(SELECT 1 FROM descendants WHERE id=?2)",params![id,parent],|r|r.get(0)).map_err(|e|fail(e.to_string()))?;
         if cycle {
             return Err(fail("goal parent would create a cycle"));
         }
     }
     let n = now();
-    conn.execute("INSERT INTO calendar_goals(id,title,target_value,current_value,unit,deadline,goal_kind,description,criteria,parent_goal_id,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?11) ON CONFLICT(id) DO UPDATE SET title=excluded.title,target_value=excluded.target_value,current_value=excluded.current_value,unit=excluded.unit,deadline=excluded.deadline,goal_kind=excluded.goal_kind,description=excluded.description,criteria=excluded.criteria,parent_goal_id=excluded.parent_goal_id,updated_at=excluded.updated_at",params![id,title.trim(),target_value,current_value,unit,deadline,goal_kind.unwrap_or_else(||"goal".into()),description,criteria,if clear_parent{None}else{parent_goal_id},n]).map_err(|e|fail(e.to_string()))?;
+    if existing {
+        let changed = transaction.execute("UPDATE calendar_goals SET title=?1,target_value=?2,current_value=?3,unit=?4,deadline=?5,goal_kind=?6,description=?7,criteria=?8,parent_goal_id=?9,updated_at=?10 WHERE id=?11",params![title.trim(),target_value,current_value,unit,deadline,goal_kind,description,criteria,effective_parent,n,&id]).map_err(|e|fail(e.to_string()))?;
+        if changed != 1 {
+            return Err(fail("goal not found"));
+        }
+        if previous_kind.as_deref() != Some("daily_norm") && goal_kind == "daily_norm" {
+            transaction.execute("UPDATE calendar_goals SET parent_goal_id=NULL,updated_at=?1 WHERE parent_goal_id=?2",params![now(),&id]).map_err(|e|fail(e.to_string()))?;
+        }
+    } else {
+        transaction.execute("INSERT INTO calendar_goals(id,title,target_value,current_value,unit,deadline,goal_kind,description,criteria,parent_goal_id,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?11)",params![&id,title.trim(),target_value,current_value,unit,deadline,goal_kind,description,criteria,effective_parent,n]).map_err(|e|fail(e.to_string()))?;
+    }
+    transaction.commit().map_err(|e| fail(e.to_string()))?;
     Ok(id)
 }
 #[tauri::command]
@@ -705,12 +760,15 @@ pub fn update_event_category(
     }
     transaction.execute("UPDATE event_categories SET name=COALESCE(?1,name),color=COALESCE(?2,color),icon=COALESCE(?3,icon) WHERE id=?4",params![name.as_ref().map(|v|v.trim()),color,icon,id]).map_err(|e|fail(e.to_string()))?;
     if let Some(name) = name {
-        transaction
-            .execute(
-                "UPDATE items SET category=?1 WHERE category=?2",
-                params![name.trim(), old],
-            )
-            .map_err(|e| fail(e.to_string()))?;
+        let name = name.trim();
+        if name != old {
+            transaction
+                .execute(
+                    "UPDATE items SET category=?1,version=version+1,updated_at=?2 WHERE kind='event' AND category=?3",
+                    params![name, now(), old],
+                )
+                .map_err(|e| fail(e.to_string()))?;
+        }
     }
     transaction.commit().map_err(|e| fail(e.to_string()))?;
     Ok(())
@@ -750,8 +808,8 @@ pub fn delete_event_category(
     }
     let n = transaction
         .execute(
-            "UPDATE items SET category=?1 WHERE kind='event' AND category=?2",
-            params![target, name],
+            "UPDATE items SET category=?1,version=version+1,updated_at=?2 WHERE kind='event' AND category=?3",
+            params![target, now(), name],
         )
         .map_err(|e| fail(e.to_string()))? as i64;
     transaction
@@ -765,8 +823,8 @@ pub fn delete_event_category(
 pub fn get_timeline_blocks(date: String, state: State<'_, AppState>) -> Result<Vec<Value>, String> {
     validate_date(&date)?;
     let conn = lock(&state)?;
-    let mut s=conn.prepare("SELECT id,source_type,source_id,date,start_time,end_time,duration_minutes,is_active,completion_date FROM timeline_blocks WHERE date=?1 ORDER BY id").map_err(|e|fail(e.to_string()))?;
-    let rows=s.query_map([date],|r|Ok(json!({"id":r.get::<_,i64>(0)?,"source_type":r.get::<_,String>(1)?,"source_id":r.get::<_,String>(2)?,"date":r.get::<_,String>(3)?,"start_time":r.get::<_,String>(4)?,"end_time":r.get::<_,Option<String>>(5)?,"duration_minutes":r.get::<_,i64>(6)?,"is_active":r.get::<_,i64>(7)?!=0,"completion_date":r.get::<_,Option<String>>(8)?}))).map_err(|e|fail(e.to_string()))?.collect::<Result<Vec<_>,_>>().map_err(|e|fail(e.to_string()))?;
+    let mut s=conn.prepare("SELECT id,source_type,source_id,date,start_time,end_time,duration_minutes,CASE WHEN duration_seconds > 0 THEN duration_seconds ELSE duration_minutes * 60 END,is_active,completion_date FROM timeline_blocks WHERE date=?1 ORDER BY id").map_err(|e|fail(e.to_string()))?;
+    let rows=s.query_map([date],|r|Ok(json!({"id":r.get::<_,i64>(0)?,"source_type":r.get::<_,String>(1)?,"source_id":r.get::<_,String>(2)?,"date":r.get::<_,String>(3)?,"start_time":r.get::<_,String>(4)?,"end_time":r.get::<_,Option<String>>(5)?,"duration_minutes":r.get::<_,i64>(6)?,"duration_seconds":r.get::<_,i64>(7)?,"is_active":r.get::<_,i64>(8)?!=0,"completion_date":r.get::<_,Option<String>>(9)?}))).map_err(|e|fail(e.to_string()))?.collect::<Result<Vec<_>,_>>().map_err(|e|fail(e.to_string()))?;
     drop(s);
     Ok(rows)
 }
@@ -791,13 +849,20 @@ pub fn start_task_block(
     } else {
         return Err(fail("invalid source type"));
     };
-    let exists: bool = conn
-        .query_row(
+    let exists: bool = if source_type == "note" {
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM items WHERE id=?1 AND kind='task' AND archived=0 AND completed=0 AND status='task')",
+            [&source_id],
+            |r| r.get(0),
+        )
+    } else {
+        conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM items WHERE id=?1 AND kind=?2 AND archived=0)",
             params![&source_id, expected_kind],
             |r| r.get(0),
         )
-        .map_err(|e| fail(e.to_string()))?;
+    }
+    .map_err(|e| fail(e.to_string()))?;
     if !exists {
         return Err(fail("source record not found"));
     }
@@ -832,12 +897,12 @@ fn stop(conn: &Connection, id: i64, complete: bool) -> Result<(), String> {
         let end = Local::now().format("%H:%M:%S").to_string();
         let began = chrono::DateTime::parse_from_rfc3339(&created)
             .map_err(|_| fail("invalid block timestamp"))?;
-        let duration = (Utc::now()
+        let duration_seconds = Utc::now()
             .signed_duration_since(began.with_timezone(&Utc))
             .num_seconds()
-            / 60)
             .max(0);
-        conn.execute("UPDATE timeline_blocks SET end_time=?1,duration_minutes=?2,is_active=0,updated_at=?3 WHERE id=?4",params![end,duration,now(),id]).map_err(|e|fail(e.to_string()))?;
+        let duration_minutes = duration_seconds / 60;
+        conn.execute("UPDATE timeline_blocks SET end_time=?1,duration_minutes=?2,duration_seconds=?3,is_active=0,updated_at=?4 WHERE id=?5",params![end,duration_minutes,duration_seconds,now(),id]).map_err(|e|fail(e.to_string()))?;
     }
     if complete {
         if typ == "note" || typ == "event" {
@@ -860,6 +925,14 @@ pub fn finish_task_block(block_id: i64, state: State<'_, AppState>) -> Result<()
     stop(&transaction, block_id, true)?;
     transaction.commit().map_err(|e| fail(e.to_string()))
 }
+fn calendar_task_seconds(
+    conn: &Connection,
+    source_type: &str,
+    source_id: &str,
+) -> Result<i64, String> {
+    conn.query_row("SELECT COALESCE(SUM(CASE WHEN duration_seconds > 0 THEN duration_seconds ELSE duration_minutes * 60 END),0) FROM timeline_blocks WHERE source_type=?1 AND source_id=?2 AND is_active=0",params![source_type,source_id],|r|r.get(0)).map_err(|e|fail(e.to_string()))
+}
+
 #[tauri::command(rename_all = "camelCase")]
 pub fn get_calendar_task_minutes(
     source_type: String,
@@ -869,7 +942,19 @@ pub fn get_calendar_task_minutes(
 ) -> Result<i64, String> {
     let conn = lock(&state)?;
     let _ = completion_date;
-    conn.query_row("SELECT COALESCE(SUM(duration_minutes),0) FROM timeline_blocks WHERE source_type=?1 AND source_id=?2 AND is_active=0",params![source_type,source_id],|r|r.get(0)).map_err(|e|fail(e.to_string()))
+    Ok(calendar_task_seconds(&conn, &source_type, &source_id)? / 60)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn get_calendar_task_seconds(
+    source_type: String,
+    source_id: String,
+    completion_date: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<i64, String> {
+    let conn = lock(&state)?;
+    let _ = completion_date;
+    calendar_task_seconds(&conn, &source_type, &source_id)
 }
 
 // The current Workspace always loads these auxiliary lists. Routine is out of
