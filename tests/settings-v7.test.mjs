@@ -1,0 +1,3 @@
+﻿import test from 'node:test';import assert from 'node:assert/strict';
+const source=await import('../src/hanni/js/calendar-display-preferences.js');
+test('preferences normalise and store atomically',async()=>{let writes=[];globalThis.window={__TAURI__:{core:{invoke:async(c,a)=>{if(c==='set_ui_state'){writes.push(a);return;}return JSON.stringify({first_day:'sun',density:'compact',showCompleted:true,default_view:'Неделя'});}}}};const saved=await source.saveCalendarPreferences({first_day:'sun',density:'compact',showCompleted:true,default_view:'Неделя'});assert.equal(writes.length,1);assert.equal(writes[0].key,'calendar_preferences_v1');assert.equal(saved.first_day,'sun');});
