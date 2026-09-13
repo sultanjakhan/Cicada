@@ -111,6 +111,28 @@ fn mutation_fixture_sql(conn: &Connection) {
     .unwrap();
 }
 
+fn category_cascade_fixture_sql(conn: &Connection) {
+    mutation_fixture_sql(conn);
+    conn.execute_batch(
+        "INSERT INTO items(id,kind,title,duration_minutes,version,created_at,updated_at,category,status) VALUES
+            ('task-matching-category','task','Matching task',30,1,'original','original','Example A','task'),
+            ('note-matching-category','task','Matching note',30,1,'original','original','Example A','note');
+         INSERT INTO timeline_blocks(source_type,source_id,date,start_time,duration_minutes,is_active,created_at,updated_at) VALUES
+            ('event','event-a','2026-09-13','10:00',30,0,'fixture','fixture'),
+            ('event','event-b','2026-09-13','11:00',30,0,'fixture','fixture');",
+    )
+    .unwrap();
+}
+
+fn category_revision(conn: &Connection, id: &str) -> (String, i64, String) {
+    conn.query_row(
+        "SELECT category,version,updated_at FROM items WHERE id=?1",
+        [id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )
+    .unwrap()
+}
+
 fn calendar_list_fixture() -> (tauri::App<MockRuntime>, tauri::WebviewWindow<MockRuntime>) {
     let (app, view) = fixture();
     {
@@ -922,6 +944,148 @@ fn atomic_category_success_preserves_cascade_counts_and_unrelated_records() {
             .unwrap(),
         2
     );
+}
+
+#[test]
+fn renaming_event_category_skips_tasks_and_invalidates_stale_event_save() {
+    let (app, view) = fixture();
+    {
+        let state = app.state::<AppState>();
+        category_cascade_fixture_sql(&state.0.lock().unwrap());
+    }
+    call(
+        &view,
+        "update_event_category",
+        json!({"id":"category-a","name":"Renamed","color":null,"icon":null}),
+    )
+    .unwrap();
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        assert_eq!(category_revision(&conn, "event-a").0, "Renamed");
+        assert_eq!(category_revision(&conn, "event-a").1, 2);
+        assert_ne!(category_revision(&conn, "event-a").2, "test");
+        for id in [
+            "task-matching-category",
+            "note-matching-category",
+            "task-a",
+            "event-b",
+        ] {
+            let expected = if id == "task-a" { "task" } else { "Example A" };
+            let updated_at = if id == "task-a" { "test" } else { "original" };
+            if id == "event-b" {
+                assert_eq!(
+                    category_revision(&conn, id),
+                    ("Example B".into(), 1, "test".into())
+                );
+            } else {
+                assert_eq!(
+                    category_revision(&conn, id),
+                    (expected.into(), 1, updated_at.into())
+                );
+            }
+        }
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM timeline_blocks WHERE source_type='event'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            2
+        );
+    }
+    assert!(call(
+        &view,
+        "update_event",
+        json!({"id":"event-a","title":"Stale","date":"2026-09-13","expectedVersion":1})
+    )
+    .is_err());
+    call(
+        &view,
+        "update_event",
+        json!({"id":"event-a","title":"Fresh","date":"2026-09-13","category":"Renamed","expectedVersion":2}),
+    )
+    .unwrap();
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        assert_eq!(category_revision(&conn, "event-a").0, "Renamed");
+        assert_eq!(category_revision(&conn, "event-a").1, 3);
+    }
+    // Repeating the same name and metadata-only edits must not make an open event stale.
+    call(
+        &view,
+        "update_event_category",
+        json!({"id":"category-a","name":" Renamed ","color":null,"icon":null}),
+    )
+    .unwrap();
+    call(
+        &view,
+        "update_event_category",
+        json!({"id":"category-a","name":null,"color":"#abcdef","icon":null}),
+    )
+    .unwrap();
+    let state = app.state::<AppState>();
+    assert_eq!(category_revision(&state.0.lock().unwrap(), "event-a").1, 3);
+}
+
+#[test]
+fn deleting_event_category_skips_tasks_and_invalidates_stale_event_save() {
+    let (app, view) = fixture();
+    {
+        let state = app.state::<AppState>();
+        category_cascade_fixture_sql(&state.0.lock().unwrap());
+    }
+    assert_eq!(
+        call(
+            &view,
+            "delete_event_category",
+            json!({"id":"category-a","reassignTo":"Example B"})
+        )
+        .unwrap(),
+        json!(1)
+    );
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        assert_eq!(category_revision(&conn, "event-a").0, "Example B");
+        assert_eq!(category_revision(&conn, "event-a").1, 2);
+        assert_ne!(category_revision(&conn, "event-a").2, "test");
+        assert_eq!(
+            category_revision(&conn, "event-b"),
+            ("Example B".into(), 1, "test".into())
+        );
+        for id in ["task-matching-category", "note-matching-category"] {
+            assert_eq!(
+                category_revision(&conn, id),
+                ("Example A".into(), 1, "original".into())
+            );
+        }
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM timeline_blocks WHERE source_type='event'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            2
+        );
+    }
+    assert!(call(
+        &view,
+        "update_event",
+        json!({"id":"event-a","title":"Stale","date":"2026-09-13","expectedVersion":1})
+    )
+    .is_err());
+    call(
+        &view,
+        "update_event",
+        json!({"id":"event-a","title":"Fresh","date":"2026-09-13","category":"Example B","expectedVersion":2}),
+    )
+    .unwrap();
+    let state = app.state::<AppState>();
+    assert_eq!(category_revision(&state.0.lock().unwrap(), "event-a").1, 3);
 }
 
 #[test]

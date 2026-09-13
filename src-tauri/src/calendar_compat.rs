@@ -723,12 +723,15 @@ pub fn update_event_category(
     }
     transaction.execute("UPDATE event_categories SET name=COALESCE(?1,name),color=COALESCE(?2,color),icon=COALESCE(?3,icon) WHERE id=?4",params![name.as_ref().map(|v|v.trim()),color,icon,id]).map_err(|e|fail(e.to_string()))?;
     if let Some(name) = name {
-        transaction
-            .execute(
-                "UPDATE items SET category=?1 WHERE category=?2",
-                params![name.trim(), old],
-            )
-            .map_err(|e| fail(e.to_string()))?;
+        let name = name.trim();
+        if name != old {
+            transaction
+                .execute(
+                    "UPDATE items SET category=?1,version=version+1,updated_at=?2 WHERE kind='event' AND category=?3",
+                    params![name, now(), old],
+                )
+                .map_err(|e| fail(e.to_string()))?;
+        }
     }
     transaction.commit().map_err(|e| fail(e.to_string()))?;
     Ok(())
@@ -768,8 +771,8 @@ pub fn delete_event_category(
     }
     let n = transaction
         .execute(
-            "UPDATE items SET category=?1 WHERE kind='event' AND category=?2",
-            params![target, name],
+            "UPDATE items SET category=?1,version=version+1,updated_at=?2 WHERE kind='event' AND category=?3",
+            params![target, now(), name],
         )
         .map_err(|e| fail(e.to_string()))? as i64;
     transaction
