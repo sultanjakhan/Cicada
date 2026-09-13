@@ -87,7 +87,7 @@ fn goal(webview: &tauri::WebviewWindow<MockRuntime>, title: &str, parent: Value)
         webview,
         "save_calendar_goal",
         json!({"id":null,"title":title,"targetValue":1.0,
-        "unit":"","deadline":null,"goalKind":"long_term","description":"","criteria":"",
+        "unit":"","deadline":null,"goalKind":"goal","description":"","criteria":"",
         "parentGoalId":parent,"clearParent":false,"currentValue":null}),
     )
     .unwrap()
@@ -312,7 +312,10 @@ fn timer_seconds_preserve_new_precision_and_legacy_minute_totals() {
     {
         let state = app.state::<AppState>();
         let conn = state.0.lock().unwrap();
-        conn.execute_batch("INSERT INTO timeline_blocks(source_type,source_id,date,start_time,duration_minutes,duration_seconds,is_active,created_at,updated_at) VALUES
+        conn.execute_batch("INSERT INTO items(id,kind,title,date,duration_minutes,version,created_at,updated_at) VALUES
+            ('new-task','task','Exact task','2026-09-14',30,1,'fixture','fixture'),
+            ('mixed-task','task','Mixed task','2026-09-14',30,1,'fixture','fixture');
+            INSERT INTO timeline_blocks(source_type,source_id,date,start_time,duration_minutes,duration_seconds,is_active,created_at,updated_at) VALUES
             ('note','new-task','2026-09-13','23:59:00',1,90,0,'fixture','fixture'),
             ('note','new-task','2026-09-14','00:01:00',1,90,0,'fixture','fixture'),
             ('note','mixed-task','2026-09-14','00:02:00',1,0,0,'fixture','fixture'),
@@ -362,6 +365,32 @@ fn timer_seconds_preserve_new_precision_and_legacy_minute_totals() {
         "legacy rows keep their stored whole minutes"
     );
     assert_eq!(midnight[2]["duration_seconds"], json!(30));
+    for response in [
+        call(
+            &view,
+            "get_calendar_tasks",
+            json!({"includeCompleted":true}),
+        )
+        .unwrap(),
+        call(
+            &view,
+            "get_calendar_records",
+            json!({"start":"2026-09-14","end":"2026-09-14"}),
+        )
+        .unwrap(),
+    ] {
+        let actual = |id: &str| {
+            response
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["source_id"] == id)
+                .unwrap()["actual_minutes"]
+                .clone()
+        };
+        assert_eq!(actual("new-task"), json!(3));
+        assert_eq!(actual("mixed-task"), json!(1));
+    }
 }
 
 #[test]
@@ -758,7 +787,64 @@ fn stale_child_cannot_restore_a_daily_norm_parent() {
     assert!(daily_child
         .as_str()
         .unwrap()
-        .contains("cannot have a parent"));
+        .contains("only goal can have a parent"));
+    let unknown_child = call(
+        &view,
+        "save_calendar_goal",
+        json!({"id":null,"title":"invalid unknown child","targetValue":1.0,
+        "unit":"","deadline":null,"goalKind":"unknown","description":"","criteria":"",
+        "parentGoalId":"goal-b","clearParent":false,"currentValue":null}),
+    )
+    .unwrap_err();
+    assert!(unknown_child
+        .as_str()
+        .unwrap()
+        .contains("only goal can have a parent"));
+    {
+        let state = app.state::<AppState>();
+        state
+            .0
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE calendar_goals SET goal_kind='unknown' WHERE id='goal-b'",
+                [],
+            )
+            .unwrap();
+    }
+    let unknown_parent = call(
+        &view,
+        "save_calendar_goal",
+        json!({"id":null,"title":"invalid unknown parent","targetValue":1.0,
+        "unit":"","deadline":null,"goalKind":"goal","description":"","criteria":"",
+        "parentGoalId":"goal-b","clearParent":false,"currentValue":null}),
+    )
+    .unwrap_err();
+    assert!(unknown_parent
+        .as_str()
+        .unwrap()
+        .contains("cannot have children"));
+    {
+        let state = app.state::<AppState>();
+        state
+            .0
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE calendar_goals SET goal_kind='goal' WHERE id='goal-b'",
+                [],
+            )
+            .unwrap();
+    }
+    let cleared = call(
+        &view,
+        "save_calendar_goal",
+        json!({"id":"child","title":"cleared daily","targetValue":1.0,
+        "unit":"","deadline":null,"goalKind":"daily_norm","description":"","criteria":"",
+        "parentGoalId":"goal-a","clearParent":true,"currentValue":null}),
+    )
+    .unwrap();
+    assert_eq!(cleared, json!("child"));
     assert_eq!(
         call(
             &view,

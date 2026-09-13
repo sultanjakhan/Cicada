@@ -365,14 +365,14 @@ fn calendar_list(
             FROM items WHERE {predicate}
         ), timeline AS (
             SELECT t.source_type,t.source_id,MAX(t.is_active) AS active,
-                SUM(CASE WHEN t.is_active=0 THEN t.duration_minutes ELSE 0 END) AS minutes,
+                SUM(CASE WHEN t.is_active=0 THEN CASE WHEN t.duration_seconds > 0 THEN t.duration_seconds ELSE t.duration_minutes * 60 END ELSE 0 END) AS seconds,
                 COUNT(*) AS has_work
             FROM timeline_blocks t JOIN selected s
                 ON s.source_type=t.source_type AND s.id=t.source_id
             GROUP BY t.source_type,t.source_id
         )
         SELECT s.id,s.kind,s.title,s.date,s.time,s.duration_minutes,s.category,s.color,
-            s.completed,s.status,s.priority,COALESCE(t.active,0),COALESCE(t.minutes,0),COALESCE(t.has_work,0)
+            s.completed,s.status,s.priority,COALESCE(t.active,0),COALESCE(t.seconds,0),COALESCE(t.has_work,0)
         FROM selected s LEFT JOIN timeline t ON t.source_type=s.source_type AND t.source_id=s.id
         ORDER BY {order}"
     );
@@ -396,7 +396,7 @@ fn calendar_list(
                 "priority": row.get::<_, i64>(10)?,
                 "tracking_mode": if is_task {"check"} else {"track"},
                 "is_active": row.get::<_, i64>(11)? != 0,
-                "actual_minutes": row.get::<_, i64>(12)?,
+                "actual_minutes": row.get::<_, i64>(12)? / 60,
                 "has_work": row.get::<_, i64>(13)? > 0,
             });
             if !tasks_only {
@@ -586,16 +586,21 @@ pub fn save_calendar_goal(
     } else {
         None
     };
-    if let Some(parent) = parent_goal_id.as_deref() {
-        if clear_parent || parent == id {
+    let effective_parent = if clear_parent {
+        None
+    } else {
+        parent_goal_id.as_deref()
+    };
+    if let Some(parent) = effective_parent {
+        if parent == id {
             return Err(fail("goal cannot be its own parent"));
         }
-        if goal_kind == "daily_norm" {
-            return Err(fail("daily norm cannot have a parent"));
+        if goal_kind != "goal" {
+            return Err(fail("only goal can have a parent"));
         }
         let exists: bool = transaction
             .query_row(
-                "SELECT EXISTS(SELECT 1 FROM calendar_goals WHERE id=?1 AND goal_kind <> 'daily_norm')",
+                "SELECT EXISTS(SELECT 1 FROM calendar_goals WHERE id=?1 AND goal_kind='goal')",
                 [parent],
                 |r| r.get(0),
             )
@@ -610,7 +615,7 @@ pub fn save_calendar_goal(
     }
     let n = now();
     if existing {
-        let changed = transaction.execute("UPDATE calendar_goals SET title=?1,target_value=?2,current_value=?3,unit=?4,deadline=?5,goal_kind=?6,description=?7,criteria=?8,parent_goal_id=?9,updated_at=?10 WHERE id=?11",params![title.trim(),target_value,current_value,unit,deadline,goal_kind,description,criteria,if clear_parent{None}else{parent_goal_id},n,&id]).map_err(|e|fail(e.to_string()))?;
+        let changed = transaction.execute("UPDATE calendar_goals SET title=?1,target_value=?2,current_value=?3,unit=?4,deadline=?5,goal_kind=?6,description=?7,criteria=?8,parent_goal_id=?9,updated_at=?10 WHERE id=?11",params![title.trim(),target_value,current_value,unit,deadline,goal_kind,description,criteria,effective_parent,n,&id]).map_err(|e|fail(e.to_string()))?;
         if changed != 1 {
             return Err(fail("goal not found"));
         }
@@ -618,7 +623,7 @@ pub fn save_calendar_goal(
             transaction.execute("UPDATE calendar_goals SET parent_goal_id=NULL,updated_at=?1 WHERE parent_goal_id=?2",params![now(),&id]).map_err(|e|fail(e.to_string()))?;
         }
     } else {
-        transaction.execute("INSERT INTO calendar_goals(id,title,target_value,current_value,unit,deadline,goal_kind,description,criteria,parent_goal_id,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?11)",params![&id,title.trim(),target_value,current_value,unit,deadline,goal_kind,description,criteria,if clear_parent{None}else{parent_goal_id},n]).map_err(|e|fail(e.to_string()))?;
+        transaction.execute("INSERT INTO calendar_goals(id,title,target_value,current_value,unit,deadline,goal_kind,description,criteria,parent_goal_id,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?11)",params![&id,title.trim(),target_value,current_value,unit,deadline,goal_kind,description,criteria,effective_parent,n]).map_err(|e|fail(e.to_string()))?;
     }
     transaction.commit().map_err(|e| fail(e.to_string()))?;
     Ok(id)
