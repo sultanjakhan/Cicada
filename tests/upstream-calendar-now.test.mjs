@@ -1015,6 +1015,73 @@ test('main goal has its own result and named details without duplicating current
    assert.equal(x.dom.window.document.activeElement, x.action('goal-details'));
 
   });
+test('goal details expose stored result, criteria and direct subgoals as text without mutating records', async t => {
+   const data = backend();
+   Object.assign(data.goals[0], { description: 'Подготовить портфолио\n<script>пример</script>', criteria: 'Проверить API\n\nОбъяснить <img src=x> модель' });
+   data.goals.push({ id: 'stage', parent_goal_id: 'goal-a', title: 'Учебный проект', status: 'active' }, { id: 'nested', parent_goal_id: 'stage', title: 'Вложенный шаг', status: 'active' });
+   const before = clone(data.goals), x = await mount(t, data);
+   const writes = data.count('set_ui_state');
+   await x.click('goal-details');
+   const modal = x.dom.window.document.querySelector('dialog');
+   assert.equal(modal.querySelector('.calendar-goal-dialog__description').textContent, before[0].description);
+   assert.deepEqual([...modal.querySelectorAll('li')].map(node => node.textContent), ['Проверить API', 'Объяснить <img src=x> модель', 'Учебный проект']);
+   assert.equal(modal.querySelector('script, img'), null);
+   assert.deepEqual(data.goals, before);
+   assert.equal(data.count('set_ui_state'), writes);
+});
+
+for (const paused of [false, true]) test(`switching a ${paused ? 'paused' : 'running'} task preserves work and leaves it incomplete across remount`, async t => {
+   const x = await mount(t);
+   await x.click('start');
+   x.data.now = new Date('2026-09-05T10:12:00');
+   if (paused) await x.click('pause');
+   const pauseCount = x.data.count('pause_task_block');
+   await x.click('switch-task');
+   assert.equal(x.data.count('pause_task_block'), pauseCount + (paused ? 0 : 1));
+   assert.equal(x.data.count('finish_task_block'), 0);
+   assert.equal(x.data.blocks[0].duration_minutes, 12);
+   assert.equal(x.data.blocks[0].is_active, false);
+   assert.equal(x.data.tasks[0].completed, false);
+   assert.equal(JSON.parse(x.data.stored).execution, null);
+   assert.equal(x.host.dataset.state, 'recommendation');
+   assert.equal(x.ui('task-form').hidden, false);
+   await x.click('cancel-picker');
+   x.cleanup();
+   const y = await mount(t, x.data);
+   assert.equal(y.host.dataset.state, 'recommendation');
+   assert.equal(y.data.blocks[0].duration_minutes, 12);
+   assert.equal(y.action('switch-task').hidden, true);
+});
+
+test('switch retry saves an already paused task without executing pause again', async t => {
+   const x = await mount(t);
+   await x.click('start');
+   x.data.onceFail('set_ui_state');
+   await x.click('switch-task');
+   assert.equal(x.ui('error').hidden, false);
+   assert.equal(x.data.count('pause_task_block'), 1);
+   await x.click('retry');
+   assert.equal(x.ui('error').hidden, true);
+   assert.equal(x.data.count('pause_task_block'), 1);
+   assert.equal(x.data.count('finish_task_block'), 0);
+   assert.equal(JSON.parse(x.data.stored).execution, null);
+   assert.equal(x.ui('task-form').hidden, false);
+});
+
+test('switching never pauses a different concurrently started task or clears the saved execution', async t => {
+   const x = await mount(t);
+   await x.click('start');
+   const execution = JSON.parse(x.data.stored).execution;
+   x.data.blocks[0].is_active = false;
+   x.data.blocks.push({ ...x.data.blocks[0], id: 999, source_type: 'note', source_id: 'task-a', is_active: true });
+   await x.click('switch-task');
+   assert.equal(x.data.count('pause_task_block'), 0);
+   assert.equal(x.data.count('finish_task_block'), 0);
+   assert.equal(x.data.blocks[1].is_active, true);
+   assert.deepEqual(JSON.parse(x.data.stored).execution, execution);
+   assert.match(x.ui('error-text').textContent, /другая задача/);
+});
+
 test('goal details show an existing explicit measurement without deriving task completion percent', async t =>{
    const data = backend();
    Object.assign(data.goals[0],{

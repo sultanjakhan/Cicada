@@ -81,6 +81,7 @@ export function mountCalendarNow(element, dependencies = {}) {
         <button type="button" data-action="start" class="calendar-now__primary" hidden>${buttonContent('play', 'Начать')}</button>
         <button type="button" data-action="pause" class="calendar-now__primary" hidden>${buttonContent('pause', 'Пауза')}</button>
         <button type="button" data-action="finish" class="calendar-now__secondary" hidden>${buttonContent('check', 'Завершить')}</button>
+        <button type="button" data-action="switch-task" class="calendar-now__quiet" title="Остановить выполнение и выбрать другую задачу. Учтённое время сохранится." hidden>${buttonContent('switch', 'Сменить задачу')}</button>
         <button type="button" data-action="open-task" class="calendar-now__secondary" aria-controls="${prefix}-tasks" aria-expanded="false" hidden>${buttonContent('switch', 'Сменить задачу')}</button>
         <button type="button" data-action="next" class="calendar-now__primary" hidden>${buttonContent('arrowRight', 'Следующая задача')}</button>
         <button type="button" data-action="choose-goal" class="calendar-now__primary" hidden>${buttonContent('target', 'Выбрать цель')}</button>
@@ -133,6 +134,22 @@ export function mountCalendarNow(element, dependencies = {}) {
     header.append(label, topClose);
     const body = document.createElement('div'); body.className = 'calendar-goal-dialog__body'; body.append(heading, status, date);
     modal.append(header, body);
+    const addSection = (title, content) => {
+      const label = document.createElement('h3'); label.textContent = title;
+      body.append(label, content);
+    };
+    if (String(goal.description || '').trim()) {
+      const description = document.createElement('p'); description.className = 'calendar-goal-dialog__description'; description.textContent = goal.description;
+      addSection('Результат', description);
+    }
+    const criteria = String(goal.criteria || '').split('\n').map(line => line.trim()).filter(Boolean);
+    const stages = snapshot.goals.filter(item => String(item.parent_goal_id) === String(goal.id));
+    for (const [label, entries] of [['Готово, когда', criteria], ['Подцели', stages.map(item => item.title)]]) {
+      if (!entries.length) continue;
+      const list = document.createElement('ul'); list.className = 'calendar-goal-dialog__list';
+      for (const text of entries) { const item = document.createElement('li'); item.textContent = text; list.append(item); }
+      addSection(label, list);
+    }
     if (String(goal.unit || '').trim() && Number.isFinite(goal.target_value) && goal.target_value > 0 && Number.isFinite(goal.current_value)) {
       const measure = document.createElement('p'); measure.textContent = `Учтено: ${goal.current_value} из ${goal.target_value} ${goal.unit}`; body.append(measure);
     }
@@ -154,7 +171,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     close.onclick = () => modal.close();
     const footer = document.createElement('footer'); footer.className = 'calendar-goal-dialog__actions'; footer.append(close); modal.append(footer);
     if (dependencies.openGoals) {
-      const manage = document.createElement('button'); manage.type = 'button'; manage.textContent = 'Редактировать или удалить'; manage.dataset.goalManage = '';
+      const manage = document.createElement('button'); manage.type = 'button'; manage.textContent = 'Редактировать цель'; manage.dataset.goalManage = '';
       manage.onclick = () => { restore = false; modal.close(); dependencies.openGoals(goal.id); };
       footer.prepend(manage);
     }
@@ -392,7 +409,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     ui['title-empty'].hidden = canOpenTask;
     ui.support.hidden = currentState !== 'empty' || !selectedGoal();
     ui.support.textContent = selectedGoal() ? 'Свяжи задачу с целью в календаре. Запуск остаётся твоим решением.' : '';
-    const visible = currentState === 'active' ? ['pause', 'finish'] : currentState === 'paused' ? ['start', 'finish'] : currentState === 'completed' ? ['next'] : currentState === 'recommendation' ? ['start', 'open-task'] : currentState === 'empty' && selectedGoal() ? ['calendar'] : [];
+    const visible = currentState === 'active' ? ['pause', 'finish', 'switch-task'] : currentState === 'paused' ? ['start', 'finish', 'switch-task'] : currentState === 'completed' ? ['next'] : currentState === 'recommendation' ? ['start', 'open-task'] : currentState === 'empty' && selectedGoal() ? ['calendar'] : [];
     for (const button of ui.card.querySelectorAll('.calendar-now__actions button')) {
       button.hidden = !visible.includes(button.dataset.action); button.disabled = busy || reading || !!failure;
     }
@@ -526,13 +543,15 @@ export function mountCalendarNow(element, dependencies = {}) {
         saved.execution = { blockId: Number(blockId), date: active?.date || localDate(), task: taskOf(operation.task) }; saved.completed = null;
       } else {
         if (active && Number(active.id) !== operation.execution.blockId) throw new Error('different-active');
-        if (operation.kind === 'pause') {
+        if (operation.kind === 'pause' || operation.kind === 'switch-task') {
           if (active) await api('pause_task_block', { blockId: operation.execution.blockId });
           else {
             const blocks = await api('get_timeline_blocks', { date: operation.execution.date });
             if (!blocks.some(block => Number(block.id) === operation.execution.blockId && !block.is_active)) throw new Error('missing-block');
           }
-          saved.execution = operation.execution;
+          if (operation.kind === 'switch-task') {
+            saved.execution = null; saved.completed = null; saved.selection = null; saved.selectionMode = 'auto';
+          } else saved.execution = operation.execution;
         } else {
           await api('finish_task_block', { blockId: operation.execution.blockId });
           saved.completed = operation.execution.task; saved.execution = null;
@@ -545,7 +564,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     if (error?.message === 'different-active') return 'Сейчас запущена другая задача. Обнови экран перед продолжением.';
     if (operation.phase === 'save') return 'Действие применено, но не удалось сохранить выбор. Повтор сохранит его без повторного запуска задачи.';
     if (operation.phase === 'refresh') return 'Не удалось обновить «Сейчас». Последний выбор сохранён.';
-    return ({ start: 'Не удалось запустить задачу.', pause: 'Не удалось поставить задачу на паузу.', finish: 'Не удалось завершить задачу.' })[operation.kind] || 'Не удалось сохранить выбор.';
+    return ({ start: 'Не удалось запустить задачу.', pause: 'Не удалось поставить задачу на паузу.', finish: 'Не удалось завершить задачу.', 'switch-task': 'Не удалось сменить задачу. Текущая задача сохранена.' })[operation.kind] || 'Не удалось сохранить выбор.';
   }
   async function run(operation) {
     if (disposed || busy || reading) return;
@@ -555,14 +574,14 @@ export function mountCalendarNow(element, dependencies = {}) {
       if (disposed) return;
       if (operation.phase === 'save') { await persist(); operation.phase = 'refresh'; }
       await fetchSnapshot();
-      announce(({ start: 'Задача в работе.', pause: 'Задача приостановлена.', finish: 'Задача завершена.', goal: 'Цель выбрана.', select: 'Задача выбрана. Нажми «Начать», когда будешь готов.' })[operation.kind] || 'Выбор обновлён.');
+      announce(({ start: 'Задача в работе.', pause: 'Задача приостановлена.', finish: 'Задача завершена.', 'switch-task': 'Выполнение остановлено. Учтённое время сохранено. Выбери другую задачу.', goal: 'Цель выбрана.', select: 'Задача выбрана. Нажми «Начать», когда будешь готов.' })[operation.kind] || 'Выбор обновлён.');
     } catch (error) {
       failure = { operation, message: failureMessage(operation, error) };
       // A different active task is never closed implicitly by this surface.
       if (error?.message === 'different-active') { failure.operation = { kind: 'refresh', phase: 'refresh' }; }
     } finally {
       busy = false; render();
-      if (disposed && ['start', 'pause', 'finish'].includes(operation.kind)) {
+      if (disposed && ['start', 'pause', 'finish', 'switch-task'].includes(operation.kind)) {
         // The command may have committed after navigation; the current mount rereads DB.
         window.dispatchEvent(new window.Event('task-state-changed'));
         window.dispatchEvent(new window.CustomEvent('hanni:calendar-refresh'));
@@ -572,7 +591,8 @@ export function mountCalendarNow(element, dependencies = {}) {
           if (failure) actions.retry.focus();
           else (ui.card.querySelector('.calendar-now__actions button:not([hidden])') || ui.card).focus();
         }
-        if (['start', 'pause', 'finish'].includes(operation.kind) && operation.phase === 'refresh') {
+        if (!failure && operation.kind === 'switch-task' && selectedGoal()) openPicker('task', actions['open-task']);
+        if (['start', 'pause', 'finish', 'switch-task'].includes(operation.kind) && operation.phase === 'refresh') {
           window.dispatchEvent(new window.Event('task-state-changed'));
           window.dispatchEvent(new window.CustomEvent('hanni:calendar-refresh'));
         }
@@ -620,7 +640,7 @@ export function mountCalendarNow(element, dependencies = {}) {
       return;
     }
     if (action === 'start') { const task = chosenTask(); if (task) void run({ kind: 'start', task: taskOf(task) }); }
-    else if (action === 'pause' || action === 'finish') { if (saved.execution) void run({ kind: action, execution: structuredClone(saved.execution) }); }
+    else if (action === 'pause' || action === 'finish' || action === 'switch-task') { if (saved.execution) void run({ kind: action, execution: structuredClone(saved.execution) }); }
     else if (action === 'next' || action === 'auto') void run({ kind: action });
   };
   const onSubmit = event => {
