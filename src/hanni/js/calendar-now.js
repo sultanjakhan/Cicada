@@ -56,6 +56,7 @@ export function mountCalendarNow(element, dependencies = {}) {
   let stateVersion = 0, currentState = 'loading';
   let goalDialog = null, goalPicker = null;
   let taskListExpanded = false;
+  let secondsCommandAvailable = true;
 
   element.classList.add('calendar-now');
   element.classList.toggle('calendar-now--compact', dependencies.compact === true);
@@ -502,14 +503,25 @@ export function mountCalendarNow(element, dependencies = {}) {
     }
     const timedTask = state.execution?.task || state.completed;
     const workTime = timedTask ? { key: keyOf(timedTask), occurrence: timedTask.completion_date,
-      seconds: Math.max(0, Number(await api('get_calendar_task_seconds', { sourceType: timedTask.source_type,
-        sourceId: String(timedTask.source_id), completionDate: timedTask.completion_date })) || 0) } : null;
+      seconds: await readWorkSeconds(timedTask) } : null;
     if (disposed || stateVersion !== version) return;
     saved = state; initialized = true; snapshot = { date, goals: goals.filter(goal => goal.goal_kind !== 'daily_norm'), links, planned, active, blocks, pins, weights, workTime };
     if (saved.selectionMode === 'manual' && !saved.execution && !saved.completed && !candidates().some(task => keyOf(task) === keyOf(saved.selection))) {
       saved.selection = null; saved.selectionMode = 'auto';
     }
     if (JSON.stringify(saved) !== before || needsSave) await persist();
+  }
+  async function readWorkSeconds(task) {
+    const args = { sourceType: task.source_type, sourceId: String(task.source_id), completionDate: task.completion_date };
+    if (secondsCommandAvailable) {
+      try {
+        return Math.max(0, Number(await api('get_calendar_task_seconds', args)) || 0);
+      } catch (error) {
+        if (errorMessage(error) !== 'Command get_calendar_task_seconds not found') throw error;
+        secondsCommandAvailable = false;
+      }
+    }
+    return Math.max(0, Number(await api('get_calendar_task_minutes', args)) || 0) * 60;
   }
   async function refresh() {
     if (disposed) return;

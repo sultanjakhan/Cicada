@@ -1352,3 +1352,29 @@ test('Now floors combined closed and active seconds once, including legacy minut
    assert.equal(data.count('get_calendar_task_seconds'), 1);
    assert.equal(data.count('get_calendar_task_minutes'), 0);
 });
+
+test('Now falls back once to legacy task minutes only when the seconds command is absent', async t => {
+   const initial = blank();
+   initial.completed = {source_type: 'event', source_id: 'event-a', title: 'Finished event', duration_minutes: 25, date: null, completion_date: null};
+   const data = backend(initial);
+   data.blocks.push({id: 1, source_type: 'event', source_id: 'event-a', date: '2026-09-05', start_time: '09:58', duration_minutes: 2, duration_seconds: 120, is_active: false});
+   data.before.set('get_calendar_task_seconds', () => { throw new Error('Command get_calendar_task_seconds not found'); });
+   const x = await mount(t, data);
+   assert.match(x.ui('meta').textContent, /2 /, 'legacy minutes continue to render time');
+   assert.equal(data.count('get_calendar_task_seconds'), 1);
+   assert.equal(data.count('get_calendar_task_minutes'), 1);
+   await x.refresh();
+   assert.equal(data.count('get_calendar_task_seconds'), 1, 'known-missing command is not retried on every refresh');
+   assert.equal(data.count('get_calendar_task_minutes'), 2);
+});
+
+test('Now does not hide real seconds-command errors behind the legacy fallback', async t => {
+   const initial = blank();
+   initial.completed = {source_type: 'event', source_id: 'event-a', title: 'Finished event', duration_minutes: 25, date: null, completion_date: null};
+   const data = backend(initial);
+   data.before.set('get_calendar_task_seconds', () => { throw new Error('backend unavailable'); });
+   const x = await mount(t, data);
+   assert.equal(x.ui('error').hidden, false);
+   assert.equal(data.count('get_calendar_task_seconds'), 1);
+   assert.equal(data.count('get_calendar_task_minutes'), 0);
+});
