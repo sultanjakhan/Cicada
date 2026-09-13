@@ -590,15 +590,18 @@ pub fn save_calendar_goal(
         if clear_parent || parent == id {
             return Err(fail("goal cannot be its own parent"));
         }
+        if goal_kind == "daily_norm" {
+            return Err(fail("daily norm cannot have a parent"));
+        }
         let exists: bool = transaction
             .query_row(
-                "SELECT EXISTS(SELECT 1 FROM calendar_goals WHERE id=?1)",
+                "SELECT EXISTS(SELECT 1 FROM calendar_goals WHERE id=?1 AND goal_kind <> 'daily_norm')",
                 [parent],
                 |r| r.get(0),
             )
             .map_err(|e| fail(e.to_string()))?;
         if !exists {
-            return Err(fail("parent goal not found"));
+            return Err(fail("parent goal not found or cannot have children"));
         }
         let cycle: bool=transaction.query_row("WITH RECURSIVE descendants(id) AS (SELECT id FROM calendar_goals WHERE parent_goal_id=?1 UNION ALL SELECT g.id FROM calendar_goals g JOIN descendants d ON g.parent_goal_id=d.id) SELECT EXISTS(SELECT 1 FROM descendants WHERE id=?2)",params![id,parent],|r|r.get(0)).map_err(|e|fail(e.to_string()))?;
         if cycle {

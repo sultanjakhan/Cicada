@@ -730,6 +730,61 @@ fn converting_parent_goal_to_daily_norm_promotes_only_direct_children() {
 }
 
 #[test]
+fn stale_child_cannot_restore_a_daily_norm_parent() {
+    let (app, view) = fixture();
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        seed_goal_tree(&conn);
+    }
+    convert_goal_to_daily_norm(&view, "goal-a").unwrap();
+    let stale = call(
+        &view,
+        "save_calendar_goal",
+        json!({"id":"child","title":"stale child","targetValue":1.0,
+        "unit":"","deadline":null,"goalKind":"goal","description":"","criteria":"",
+        "parentGoalId":"goal-a","clearParent":false,"currentValue":null}),
+    )
+    .unwrap_err();
+    assert!(stale.as_str().unwrap().contains("cannot have children"));
+    let daily_child = call(
+        &view,
+        "save_calendar_goal",
+        json!({"id":null,"title":"invalid daily child","targetValue":1.0,
+        "unit":"","deadline":null,"goalKind":"daily_norm","description":"","criteria":"",
+        "parentGoalId":"goal-b","clearParent":false,"currentValue":null}),
+    )
+    .unwrap_err();
+    assert!(daily_child
+        .as_str()
+        .unwrap()
+        .contains("cannot have a parent"));
+    assert_eq!(
+        call(
+            &view,
+            "save_calendar_goal",
+            json!({"id":null,"title":"valid child","targetValue":1.0,
+        "unit":"","deadline":null,"goalKind":"goal","description":"","criteria":"",
+        "parentGoalId":"goal-b","clearParent":false,"currentValue":null})
+        )
+        .unwrap()
+        .is_string(),
+        true
+    );
+    let state = app.state::<AppState>();
+    let conn = state.0.lock().unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT parent_goal_id FROM calendar_goals WHERE id='child'",
+            [],
+            |r| r.get::<_, Option<String>>(0)
+        )
+        .unwrap(),
+        None
+    );
+}
+
+#[test]
 fn failed_daily_norm_conversion_rolls_back_parent_and_children_then_allows_retry() {
     let (app, view) = fixture();
     let before = {
