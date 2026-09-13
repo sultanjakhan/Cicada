@@ -559,9 +559,12 @@ export function mountCalendarNow(element, dependencies = {}) {
       }
     }
   }
+  function errorMessage(error) { return typeof error === 'string' ? error : error?.message; }
   function failureMessage(operation, error) {
-    if (error?.message === 'active') return 'Для смены цели поставь текущую задачу на паузу.';
-    if (error?.message === 'different-active') return 'Сейчас запущена другая задача. Обнови экран перед продолжением.';
+    const message = errorMessage(error);
+    if (message === 'active') return 'Для смены цели поставь текущую задачу на паузу.';
+    if (message === 'different-active') return 'Сейчас запущена другая задача. Обнови экран перед продолжением.';
+    if (operation.kind === 'start' && message === 'source record not found') return 'Задача уже завершена или недоступна. Обнови экран.';
     if (operation.phase === 'save') return 'Действие применено, но не удалось сохранить выбор. Повтор сохранит его без повторного запуска задачи.';
     if (operation.phase === 'refresh') return 'Не удалось обновить «Сейчас». Последний выбор сохранён.';
     return ({ start: 'Не удалось запустить задачу.', pause: 'Не удалось поставить задачу на паузу.', finish: 'Не удалось завершить задачу.', 'switch-task': 'Не удалось сменить задачу. Текущая задача сохранена.' })[operation.kind] || 'Не удалось сохранить выбор.';
@@ -578,7 +581,10 @@ export function mountCalendarNow(element, dependencies = {}) {
     } catch (error) {
       failure = { operation, message: failureMessage(operation, error) };
       // A different active task is never closed implicitly by this surface.
-      if (error?.message === 'different-active') { failure.operation = { kind: 'refresh', phase: 'refresh' }; }
+      const message = errorMessage(error);
+      if (message === 'different-active' || (operation.kind === 'start' && message === 'source record not found')) {
+        failure.operation = { kind: 'refresh', phase: 'refresh' };
+      }
     } finally {
       busy = false; render();
       if (disposed && ['start', 'pause', 'finish', 'switch-task'].includes(operation.kind)) {

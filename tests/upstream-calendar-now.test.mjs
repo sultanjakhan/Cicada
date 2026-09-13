@@ -399,6 +399,27 @@ test('failed persistence after start retries persistence without replaying the m
    assert.equal(JSON.parse(x.data.stored).execution.blockId, x.data.blocks[0].id);
 
   });
+test('stale Start retry refreshes after an unavailable source without starting again', async t =>{
+   const data = backend(), x = await mount(t, data);
+   data.before.set('start_task_block', () =>{
+     const stale = data.tasks.find(task => task.source_type === 'event' && task.source_id === 'event-a');
+     stale.completed = true; stale.status_extra = 'done';
+     throw new Error('source record not found');
+
+    });
+   await x.click('start');
+   assert.equal(data.count('start_task_block'), 1);
+   assert.match(x.ui('error-text').textContent, /Задача уже завершена или недоступна\. Обнови экран\./);
+   assert.equal(x.ui('error').hidden, false);
+   await x.click('retry');
+   assert.equal(data.count('start_task_block'), 1, 'retry only refreshes a stale Start');
+   assert.equal(x.host.dataset.taskKey, 'note:task-a');
+   assert.equal(x.host.dataset.state, 'recommendation');
+   assert.equal(x.ui('error').hidden, true);
+   assert.equal(x.action('start').disabled, false);
+
+  });
+
 test('global active task on another date blocks goal switching and a concurrent different task is never stopped', async t =>{
    const data = backend();
    data.blocks.push({
