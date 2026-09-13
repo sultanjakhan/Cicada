@@ -791,13 +791,20 @@ pub fn start_task_block(
     } else {
         return Err(fail("invalid source type"));
     };
-    let exists: bool = conn
-        .query_row(
+    let exists: bool = if source_type == "note" {
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM items WHERE id=?1 AND kind='task' AND archived=0 AND completed=0 AND status='task')",
+            [&source_id],
+            |r| r.get(0),
+        )
+    } else {
+        conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM items WHERE id=?1 AND kind=?2 AND archived=0)",
             params![&source_id, expected_kind],
             |r| r.get(0),
         )
-        .map_err(|e| fail(e.to_string()))?;
+    }
+    .map_err(|e| fail(e.to_string()))?;
     if !exists {
         return Err(fail("source record not found"));
     }

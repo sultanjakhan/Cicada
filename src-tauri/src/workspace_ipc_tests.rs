@@ -1101,6 +1101,66 @@ fn original_note_form_saves_archives_and_restores_without_creating_a_task() {
 }
 
 #[test]
+fn task_timer_rejects_closed_plain_and_archived_notes_but_keeps_open_task_and_event() {
+    let (app, view) = fixture();
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        conn.execute_batch(
+            "INSERT INTO items(id,kind,title,duration_minutes,completed,status,archived,version,created_at,updated_at) VALUES
+                ('completed-task','task','Completed',30,1,'task',0,1,'fixture','fixture'),
+                ('done-status-task','task','Done status',30,0,'done',0,1,'fixture','fixture'),
+                ('plain-note','task','Plain note',30,0,'note',0,1,'fixture','fixture'),
+                ('archived-task','task','Archived',30,0,'task',1,1,'fixture','fixture'),
+                ('open-task','task','Open',30,0,'task',0,1,'fixture','fixture'),
+                ('open-event','event','Event',30,0,'event',0,1,'fixture','fixture');",
+        )
+        .unwrap();
+    }
+    for id in [
+        "completed-task",
+        "done-status-task",
+        "plain-note",
+        "archived-task",
+    ] {
+        assert!(
+            call(
+                &view,
+                "start_task_block",
+                json!({"sourceType":"note","sourceId":id,"failIfActive":true}),
+            )
+            .is_err(),
+            "{id} must not be startable"
+        );
+    }
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM timeline_blocks", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0,
+            "rejected notes must not create timeline blocks"
+        );
+    }
+    let task_block = call(
+        &view,
+        "start_task_block",
+        json!({"sourceType":"note","sourceId":"open-task","failIfActive":true}),
+    )
+    .unwrap();
+    assert!(task_block.is_i64());
+    call(&view, "pause_task_block", json!({"blockId":task_block})).unwrap();
+    let event_block = call(
+        &view,
+        "start_task_block",
+        json!({"sourceType":"event","sourceId":"open-event","failIfActive":true}),
+    )
+    .unwrap();
+    assert!(event_block.is_i64());
+}
+#[test]
 fn dashboard_timer_uses_numeric_blocks_and_can_finish_a_paused_task() {
     let (_app, view) = fixture();
     let task = call(
