@@ -46,6 +46,7 @@ fn fixture_with_connection(
             api::get_active_block,
             api::get_timeline_blocks,
             api::get_calendar_task_minutes,
+            api::get_calendar_task_seconds,
             api::get_ui_state,
             api::set_ui_state,
             api::list_event_categories,
@@ -306,6 +307,64 @@ fn calendar_lists_preserve_payloads_filters_and_timeline_totals() {
 }
 
 #[test]
+fn timer_seconds_preserve_new_precision_and_legacy_minute_totals() {
+    let (app, view) = fixture();
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        conn.execute_batch("INSERT INTO timeline_blocks(source_type,source_id,date,start_time,duration_minutes,duration_seconds,is_active,created_at,updated_at) VALUES
+            ('note','new-task','2026-09-13','23:59:00',1,90,0,'fixture','fixture'),
+            ('note','new-task','2026-09-14','00:01:00',1,90,0,'fixture','fixture'),
+            ('note','mixed-task','2026-09-14','00:02:00',1,0,0,'fixture','fixture'),
+            ('note','mixed-task','2026-09-14','00:03:00',0,30,0,'fixture','fixture');").unwrap();
+    }
+    assert_eq!(
+        call(
+            &view,
+            "get_calendar_task_seconds",
+            json!({"sourceType":"note","sourceId":"new-task","completionDate":"2026-09-13"})
+        )
+        .unwrap(),
+        json!(180)
+    );
+    assert_eq!(
+        call(
+            &view,
+            "get_calendar_task_minutes",
+            json!({"sourceType":"note","sourceId":"new-task","completionDate":"2026-09-13"})
+        )
+        .unwrap(),
+        json!(3)
+    );
+    assert_eq!(
+        call(
+            &view,
+            "get_calendar_task_seconds",
+            json!({"sourceType":"note","sourceId":"mixed-task","completionDate":"2026-09-14"})
+        )
+        .unwrap(),
+        json!(90)
+    );
+    assert_eq!(
+        call(
+            &view,
+            "get_calendar_task_minutes",
+            json!({"sourceType":"note","sourceId":"mixed-task","completionDate":"2026-09-14"})
+        )
+        .unwrap(),
+        json!(1)
+    );
+    let midnight = call(&view, "get_timeline_blocks", json!({"date":"2026-09-14"})).unwrap();
+    assert_eq!(midnight[0]["duration_seconds"], json!(90));
+    assert_eq!(
+        midnight[1]["duration_seconds"],
+        json!(60),
+        "legacy rows keep their stored whole minutes"
+    );
+    assert_eq!(midnight[2]["duration_seconds"], json!(30));
+}
+
+#[test]
 fn calendar_lists_keep_status_filters_independent_of_kind_and_completion() {
     let (app, view) = calendar_list_fixture();
     {
@@ -457,15 +516,16 @@ fn finishing_task_rolls_back_timer_on_failure_and_allows_retry() {
         call(&view, "finish_task_block", json!({"blockId":100})).unwrap(),
         Value::Null
     );
-    let (active, minutes): (bool, i64) = observer
+    let (active, minutes, seconds): (bool, i64, i64) = observer
         .query_row(
-            "SELECT is_active,duration_minutes FROM timeline_blocks WHERE id=100",
+            "SELECT is_active,duration_minutes,duration_seconds FROM timeline_blocks WHERE id=100",
             [],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .unwrap();
     assert!(!active);
     assert!(minutes >= 3);
+    assert!(seconds >= minutes * 60);
     let (completed, status): (bool, String) = observer
         .query_row(
             "SELECT completed,status FROM items WHERE id='task-a'",

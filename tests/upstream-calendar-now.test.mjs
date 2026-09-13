@@ -66,7 +66,11 @@ function backend(initial = blank()){
 
           }
      else if (command === 'get_calendar_task_minutes'){
-       result = state.blocks.filter(block => !block.is_active && block.source_type === args.sourceType && String(block.source_id) === args.sourceId && (args.sourceType !== 'schedule' || (block.completion_date || block.date) === args.completionDate)) .reduce((sum, block) => sum + Math.max(0, Number(block.duration_minutes) || 0), 0);
+       result = Math.floor(state.blocks.filter(block => !block.is_active && block.source_type === args.sourceType && String(block.source_id) === args.sourceId && (args.sourceType !== 'schedule' || (block.completion_date || block.date) === args.completionDate)) .reduce((sum, block) => sum + Math.max(0, Number(block.duration_seconds) || (Number(block.duration_minutes) || 0) * 60), 0) / 60);
+
+          }
+     else if (command === 'get_calendar_task_seconds'){
+       result = state.blocks.filter(block => !block.is_active && block.source_type === args.sourceType && String(block.source_id) === args.sourceId && (args.sourceType !== 'schedule' || (block.completion_date || block.date) === args.completionDate)) .reduce((sum, block) => sum + Math.max(0, Number(block.duration_seconds) || (Number(block.duration_minutes) || 0) * 60), 0);
 
           }
      else if (command === 'get_task_pins') result = [];
@@ -85,7 +89,7 @@ function backend(initial = blank()){
        else{
          result = state.nextId++;
          state.blocks.push({
-           id: result, date: `${state.now.getFullYear()}-${String(state.now.getMonth() + 1).padStart(2, '0')}-${String(state.now.getDate()).padStart(2, '0')}`, completion_date: args.completionDate, start_time: `${String(state.now.getHours()).padStart(2, '0')}:${String(state.now.getMinutes()).padStart(2, '0')}`, duration_minutes: 0, source_type: args.sourceType, source_id: args.sourceId, is_active: true
+           id: result, date: `${state.now.getFullYear()}-${String(state.now.getMonth() + 1).padStart(2, '0')}-${String(state.now.getDate()).padStart(2, '0')}`, completion_date: args.completionDate, start_time: `${String(state.now.getHours()).padStart(2, '0')}:${String(state.now.getMinutes()).padStart(2, '0')}`, duration_minutes: 0, duration_seconds: 0, source_type: args.sourceType, source_id: args.sourceId, is_active: true
                   });
 
               }
@@ -95,7 +99,8 @@ function backend(initial = blank()){
        const block = state.blocks.find(value => value.id === args.blockId);
        assert.ok(block);
        if (block.is_active){
-         block.duration_minutes = Math.max(0, Math.floor((state.now - new Date(`${block.date}T${block.start_time}`)) / 60000));
+         block.duration_seconds = Math.max(0, Math.floor((state.now - new Date(`${block.date}T${block.start_time}`)) / 1000));
+         block.duration_minutes = Math.floor(block.duration_seconds / 60);
          block.is_active = false;
 
               }
@@ -956,7 +961,7 @@ test('a paused note completed outside today is reconciled from its authoritative
    assert.equal(x.host.dataset.state, 'paused');
    assert.equal(x.ui('error').hidden, false);
    assert.equal(JSON.parse(data.stored).execution.task.source_id, 'task-a');
-   data.onceFail('get_calendar_task_minutes');
+   data.onceFail('get_calendar_task_seconds');
    await x.click('retry');
    assert.equal(x.host.dataset.state, 'paused', 'a later failed read cannot partially commit completed execution');
    assert.equal(x.ui('error').hidden, false);
@@ -1333,3 +1338,17 @@ test('daily norms cannot be selected as the main goal through either entry point
    assert.equal(JSON.parse(data.stored).goalId, 'goal-a');
 
   });
+
+
+test('Now floors combined closed and active seconds once, including legacy minute blocks', async t => {
+   const data = backend();
+   data.blocks.push(
+     {id: 1, source_type: 'event', source_id: 'event-a', date: '2026-09-05', start_time: '09:58:30', duration_minutes: 1, duration_seconds: 90, is_active: false},
+     {id: 2, source_type: 'event', source_id: 'event-a', date: '2026-09-05', start_time: '09:59:30', duration_minutes: 0, duration_seconds: 0, is_active: true}
+   );
+   const x = await mount(t, data);
+   assert.equal(x.host.dataset.state, 'active');
+   assert.ok(x.ui('meta').textContent.startsWith('2 '), '90 closed seconds plus 30 active seconds is two minutes after one floor');
+   assert.equal(data.count('get_calendar_task_seconds'), 1);
+   assert.equal(data.count('get_calendar_task_minutes'), 0);
+});

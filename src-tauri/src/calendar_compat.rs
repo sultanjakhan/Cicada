@@ -815,8 +815,8 @@ pub fn delete_event_category(
 pub fn get_timeline_blocks(date: String, state: State<'_, AppState>) -> Result<Vec<Value>, String> {
     validate_date(&date)?;
     let conn = lock(&state)?;
-    let mut s=conn.prepare("SELECT id,source_type,source_id,date,start_time,end_time,duration_minutes,is_active,completion_date FROM timeline_blocks WHERE date=?1 ORDER BY id").map_err(|e|fail(e.to_string()))?;
-    let rows=s.query_map([date],|r|Ok(json!({"id":r.get::<_,i64>(0)?,"source_type":r.get::<_,String>(1)?,"source_id":r.get::<_,String>(2)?,"date":r.get::<_,String>(3)?,"start_time":r.get::<_,String>(4)?,"end_time":r.get::<_,Option<String>>(5)?,"duration_minutes":r.get::<_,i64>(6)?,"is_active":r.get::<_,i64>(7)?!=0,"completion_date":r.get::<_,Option<String>>(8)?}))).map_err(|e|fail(e.to_string()))?.collect::<Result<Vec<_>,_>>().map_err(|e|fail(e.to_string()))?;
+    let mut s=conn.prepare("SELECT id,source_type,source_id,date,start_time,end_time,duration_minutes,CASE WHEN duration_seconds > 0 THEN duration_seconds ELSE duration_minutes * 60 END,is_active,completion_date FROM timeline_blocks WHERE date=?1 ORDER BY id").map_err(|e|fail(e.to_string()))?;
+    let rows=s.query_map([date],|r|Ok(json!({"id":r.get::<_,i64>(0)?,"source_type":r.get::<_,String>(1)?,"source_id":r.get::<_,String>(2)?,"date":r.get::<_,String>(3)?,"start_time":r.get::<_,String>(4)?,"end_time":r.get::<_,Option<String>>(5)?,"duration_minutes":r.get::<_,i64>(6)?,"duration_seconds":r.get::<_,i64>(7)?,"is_active":r.get::<_,i64>(8)?!=0,"completion_date":r.get::<_,Option<String>>(9)?}))).map_err(|e|fail(e.to_string()))?.collect::<Result<Vec<_>,_>>().map_err(|e|fail(e.to_string()))?;
     drop(s);
     Ok(rows)
 }
@@ -889,12 +889,12 @@ fn stop(conn: &Connection, id: i64, complete: bool) -> Result<(), String> {
         let end = Local::now().format("%H:%M:%S").to_string();
         let began = chrono::DateTime::parse_from_rfc3339(&created)
             .map_err(|_| fail("invalid block timestamp"))?;
-        let duration = (Utc::now()
+        let duration_seconds = Utc::now()
             .signed_duration_since(began.with_timezone(&Utc))
             .num_seconds()
-            / 60)
             .max(0);
-        conn.execute("UPDATE timeline_blocks SET end_time=?1,duration_minutes=?2,is_active=0,updated_at=?3 WHERE id=?4",params![end,duration,now(),id]).map_err(|e|fail(e.to_string()))?;
+        let duration_minutes = duration_seconds / 60;
+        conn.execute("UPDATE timeline_blocks SET end_time=?1,duration_minutes=?2,duration_seconds=?3,is_active=0,updated_at=?4 WHERE id=?5",params![end,duration_minutes,duration_seconds,now(),id]).map_err(|e|fail(e.to_string()))?;
     }
     if complete {
         if typ == "note" || typ == "event" {
@@ -917,6 +917,14 @@ pub fn finish_task_block(block_id: i64, state: State<'_, AppState>) -> Result<()
     stop(&transaction, block_id, true)?;
     transaction.commit().map_err(|e| fail(e.to_string()))
 }
+fn calendar_task_seconds(
+    conn: &Connection,
+    source_type: &str,
+    source_id: &str,
+) -> Result<i64, String> {
+    conn.query_row("SELECT COALESCE(SUM(CASE WHEN duration_seconds > 0 THEN duration_seconds ELSE duration_minutes * 60 END),0) FROM timeline_blocks WHERE source_type=?1 AND source_id=?2 AND is_active=0",params![source_type,source_id],|r|r.get(0)).map_err(|e|fail(e.to_string()))
+}
+
 #[tauri::command(rename_all = "camelCase")]
 pub fn get_calendar_task_minutes(
     source_type: String,
@@ -926,7 +934,19 @@ pub fn get_calendar_task_minutes(
 ) -> Result<i64, String> {
     let conn = lock(&state)?;
     let _ = completion_date;
-    conn.query_row("SELECT COALESCE(SUM(duration_minutes),0) FROM timeline_blocks WHERE source_type=?1 AND source_id=?2 AND is_active=0",params![source_type,source_id],|r|r.get(0)).map_err(|e|fail(e.to_string()))
+    Ok(calendar_task_seconds(&conn, &source_type, &source_id)? / 60)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn get_calendar_task_seconds(
+    source_type: String,
+    source_id: String,
+    completion_date: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<i64, String> {
+    let conn = lock(&state)?;
+    let _ = completion_date;
+    calendar_task_seconds(&conn, &source_type, &source_id)
 }
 
 // The current Workspace always loads these auxiliary lists. Routine is out of

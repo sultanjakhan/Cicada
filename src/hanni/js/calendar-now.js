@@ -213,14 +213,14 @@ export function mountCalendarNow(element, dependencies = {}) {
     const task = chosenTask();
     if (!task || !snapshot) return 0;
     const sameOccurrence = block => task.source_type !== 'schedule' || !validDate(block.completion_date) || block.completion_date === task.completion_date;
-    let minutes = snapshot.workTime?.key === keyOf(task) && snapshot.workTime.occurrence === task.completion_date
-      ? snapshot.workTime.minutes : snapshot.blocks.filter(block => !block.is_active && keyOf(block) === keyOf(task) && sameOccurrence(block))
-      .reduce((sum, block) => sum + Math.max(0, Number(block.duration_minutes) || 0), 0);
+    let seconds = snapshot.workTime?.key === keyOf(task) && snapshot.workTime.occurrence === task.completion_date
+      ? snapshot.workTime.seconds : snapshot.blocks.filter(block => !block.is_active && keyOf(block) === keyOf(task) && sameOccurrence(block))
+      .reduce((sum, block) => sum + Math.max(0, Number(block.duration_seconds) || (Number(block.duration_minutes) || 0) * 60), 0);
     if (snapshot.active && keyOf(snapshot.active) === keyOf(task)) {
       const started = new Date(`${snapshot.active.date}T${snapshot.active.start_time}`);
-      if (Number.isFinite(started.getTime())) minutes += Math.max(0, Math.floor((clock() - started) / 60000));
+      if (Number.isFinite(started.getTime())) seconds += Math.max(0, Math.floor((clock() - started) / 1000));
     }
-    return minutes;
+    return Math.floor(seconds / 60);
   }
   function renderTime() {
     if (disposed) return;
@@ -502,7 +502,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     }
     const timedTask = state.execution?.task || state.completed;
     const workTime = timedTask ? { key: keyOf(timedTask), occurrence: timedTask.completion_date,
-      minutes: Math.max(0, Number(await api('get_calendar_task_minutes', { sourceType: timedTask.source_type,
+      seconds: Math.max(0, Number(await api('get_calendar_task_seconds', { sourceType: timedTask.source_type,
         sourceId: String(timedTask.source_id), completionDate: timedTask.completion_date })) || 0) } : null;
     if (disposed || stateVersion !== version) return;
     saved = state; initialized = true; snapshot = { date, goals: goals.filter(goal => goal.goal_kind !== 'daily_norm'), links, planned, active, blocks, pins, weights, workTime };
