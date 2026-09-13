@@ -320,3 +320,58 @@ and binary identities belong under `.local/background-qa/`, outside Git.
 This candidate check does not establish acceptance of the user's merged main
 or installed application. Inline CSS remains allowed for these dynamic styles;
 it must not be mistaken for permission to trust arbitrary HTML or scripts.
+
+## Authorized merge and homepage follow-up, 2026-09-13
+
+The owner explicitly authorized merging the other chat's work. Merge `2eb9119`
+integrates worker `fc183c5` with the current homepage; only this evidence document
+conflicted, and both histories were preserved. Ignored Git bundle and consistent
+SQLite backups were created first. No remote publication or installation occurred.
+
+Application commit `490c674` makes the single Create action a 44px graphite button
+in its existing fixed row below Calendar. Goal details now show the stored result,
+newline-separated acceptance criteria and direct subgoal titles, followed by the
+existing descendant-linked record counts. They are rendered as text. The compact
+homepage goal still shows its title and current stage; no progress is invented.
+The dialog footer wraps with spacing and retains visible closing controls.
+
+Running and paused Now tasks have a Switch task action. Running work is paused;
+the local execution selection is released, and the existing task picker opens.
+The task stays unfinished and recorded time remains intact. A save retry does not
+repeat the pause, and another active block is never stopped by this action.
+An app crash between pause and selection persistence can retain a paused choice
+on restart; the recorded time survives and switching again is safe.
+
+Validation on the combined source: 127 JavaScript tests and 29 Rust tests pass
+(one manual performance benchmark remains ignored). Privacy has zero findings;
+all 11 vendor files match pinned packages; Vite and the embedded-assets native
+debug build pass. Independent review found no blocking source interaction or
+switch/retry defect. The first fresh Rust build exhausted local disk space;
+compressing owned generated build caches allowed a successful rerun.
+
+Native Playwright MCP used the exact `490c674` embedded-assets executable on an
+inactive Windows desktop with a separate copy of the existing fictional fixture.
+It verified Create/shared form, long goal details, paused and active switching,
+unchanged work history, settings acknowledgement and the unchanged current week.
+After restart, the selected default Day view applied, no timer restarted, and the
+released selection persisted. Wide/640px and dark screenshots were inspected,
+including long goal scrolling and an accessible fixed dialog footer.
+
+The merged native CSP permits dynamic style rules/attributes while blocking a
+harmless inline-script probe under both effective policies. Hostile fictional
+rich Notes were opened, saved, reopened, and read back through native IPC: unsafe
+elements/URLs were removed; bold, safe HTTPS, checked legacy lists and literal
+code survived. A synthetic SQLite backup/restore compared all application tables
+exactly and passed integrity checking, then the native app reopened the restored
+note successfully. Normal initial/restarted runs logged no console errors; the
+deliberate inline-script probe generated expected CSP errors. The restore helper's
+first sentinel insertion missed required `updated_at`, rolled back, and was fixed
+before repeating the full restore check.
+
+Reproduction batches, binary/source hashes, screenshots and receipts are ignored
+under `.local/dev/merged-*` and `.local/background-qa/merged-ux-20260913/`.
+The owner's original DEV process was preserved and inspected read-only. Its Vite
+frontend received these edits; its existing native host was not restarted. The
+owned automatic native rebuild watcher was stopped before the merge to prevent
+an unexpected window restart. The merged native host is proven by the separate
+candidate above, not by that still-open DEV process or an installed release.
