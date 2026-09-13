@@ -32,6 +32,7 @@ fn fixture_with_connection(
             api::complete_calendar_task,
             api::create_note,
             api::update_note,
+            api::update_note_status,
             api::get_note,
             api::get_notes,
             api::toggle_note_archive,
@@ -110,12 +111,283 @@ fn mutation_fixture_sql(conn: &Connection) {
     .unwrap();
 }
 
+fn calendar_list_fixture() -> (tauri::App<MockRuntime>, tauri::WebviewWindow<MockRuntime>) {
+    let (app, view) = fixture();
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        conn.execute_batch("INSERT INTO items(id,kind,title,date,time,duration_minutes,completed,status,archived,version,created_at,updated_at,category,color,priority) VALUES
+            ('t-undated','task','t-undated',NULL,NULL,0,0,'task',0,1,'fixture','fixture','Example','#123456',3),
+            ('t-open','task','t-open','2026-09-12','15:00',45,0,'task',0,1,'fixture','fixture','Example','#123456',3),
+            ('t-done','task','t-done','2026-09-12',NULL,0,1,'done',0,1,'fixture','fixture','Example','#123456',3),
+            ('t-legacy','task','t-legacy','2026-09-13',NULL,20,1,'task',0,1,'fixture','fixture','Example','#123456',3),
+            ('t-out','task','t-out','2026-10-01',NULL,25,0,'task',0,1,'fixture','fixture','Example','#123456',3),
+            ('t-note','task','t-note','2026-09-12',NULL,0,0,'note',0,1,'fixture','fixture','Example','#123456',3),
+            ('t-arch','task','t-arch','2026-09-12',NULL,0,0,'task',1,1,'fixture','fixture','Example','#123456',3),
+            ('e-cross','event','e-cross','2026-08-31','23:30',60,0,'task',0,1,'fixture','fixture','Example','#123456',3),
+            ('e-edge','event','e-edge','2026-08-31','23:30',30,0,'task',0,1,'fixture','fixture','Example','#123456',3),
+            ('e-old','event','e-old','2026-08-31',NULL,0,0,'task',0,1,'fixture','fixture','Example','#123456',3),
+            ('e-all','event','e-all','2026-09-01',NULL,0,0,'task',0,1,'fixture','fixture','Example','#123456',3),
+            ('e-empty','event','e-empty','2026-09-01','',0,0,'task',0,1,'fixture','fixture','Example','#123456',3),
+            ('e-legacy','event','e-legacy','2026-09-12','09:00',30,1,'task',0,1,'fixture','fixture','Example','#123456',3),
+            ('e-end','event','e-end','2026-09-30','23:30',60,0,'task',0,1,'fixture','fixture','Example','#123456',3),
+            ('e-out','event','e-out','2026-10-01','08:00',30,0,'task',0,1,'fixture','fixture','Example','#123456',3),
+            ('e-arch','event','e-arch','2026-09-01',NULL,0,0,'task',1,1,'fixture','fixture','Example','#123456',3);
+            INSERT INTO timeline_blocks(source_type,source_id,date,start_time,duration_minutes,is_active,created_at,updated_at) VALUES
+            ('note','t-open','2026-09-12','10:00',7,0,'fixture','fixture'),
+            ('note','t-open','2026-09-12','11:00',8,0,'fixture','fixture'),
+            ('note','t-open','2026-09-12','12:00',100,1,'fixture','fixture'),
+            ('event','t-open','2026-09-12','12:00',999,0,'fixture','fixture'),
+            ('note','t-done','2026-09-12','12:00',0,0,'fixture','fixture'),
+            ('event','e-cross','2026-08-31','23:30',3,0,'fixture','fixture'),
+            ('event','e-cross','2026-09-01','00:01',100,1,'fixture','fixture'),
+            ('note','e-cross','2026-09-01','00:01',999,0,'fixture','fixture'),
+            ('event','e-legacy','2026-09-12','09:00',11,0,'fixture','fixture'),
+            ('note','historical','2025-01-01','09:00',9999,1,'fixture','fixture');").unwrap();
+    }
+    (app, view)
+}
+
+fn expected_list_record(
+    id: &str,
+    source: &str,
+    date: Option<&str>,
+    time: Option<&str>,
+    duration: Option<i64>,
+) -> Value {
+    json!({"source_type":source,"source_id":id,"title":id,"date":date,"planned_time":time,
+        "duration_minutes":duration,"category":"Example","color":"#123456","completed":false,
+        "status_extra":"task","priority":3,"tracking_mode":if source=="note" {"check"}else{"track"},
+        "is_active":false,"actual_minutes":0,"has_work":false})
+}
+
+#[test]
+fn calendar_lists_preserve_payloads_filters_and_timeline_totals() {
+    let (_app, view) = calendar_list_fixture();
+    let undated = expected_list_record("t-undated", "note", None, None, None);
+    let mut cross = expected_list_record(
+        "e-cross",
+        "event",
+        Some("2026-08-31"),
+        Some("23:30"),
+        Some(60),
+    );
+    cross["is_active"] = json!(true);
+    cross["has_work"] = json!(true);
+    cross["actual_minutes"] = json!(3);
+    let all_day = expected_list_record("e-all", "event", Some("2026-09-01"), None, Some(0));
+    let empty_time =
+        expected_list_record("e-empty", "event", Some("2026-09-01"), Some(""), Some(0));
+    let mut done = expected_list_record("t-done", "note", Some("2026-09-12"), None, None);
+    done["completed"] = json!(true);
+    done["status_extra"] = json!("done");
+    done["has_work"] = json!(true);
+    let mut event_legacy = expected_list_record(
+        "e-legacy",
+        "event",
+        Some("2026-09-12"),
+        Some("09:00"),
+        Some(30),
+    );
+    event_legacy["completed"] = json!(true);
+    event_legacy["status_extra"] = json!("done");
+    event_legacy["actual_minutes"] = json!(11);
+    event_legacy["has_work"] = json!(true);
+    let mut open = expected_list_record(
+        "t-open",
+        "note",
+        Some("2026-09-12"),
+        Some("15:00"),
+        Some(45),
+    );
+    open["is_active"] = json!(true);
+    open["has_work"] = json!(true);
+    open["actual_minutes"] = json!(15);
+    let mut legacy = expected_list_record("t-legacy", "note", Some("2026-09-13"), None, Some(20));
+    legacy["completed"] = json!(true);
+    legacy["status_extra"] = json!("done");
+    let end = expected_list_record(
+        "e-end",
+        "event",
+        Some("2026-09-30"),
+        Some("23:30"),
+        Some(60),
+    );
+    assert_eq!(
+        call(
+            &view,
+            "get_calendar_records",
+            json!({"start":"2026-09-01","end":"2026-09-30"})
+        )
+        .unwrap(),
+        json!([
+            undated,
+            cross,
+            all_day,
+            empty_time,
+            done,
+            event_legacy,
+            open,
+            legacy,
+            end
+        ])
+    );
+
+    // Task list has its own order, no date-range filter, and a deliberately smaller payload.
+    let as_task = |mut value: Value| {
+        let fields = value.as_object_mut().unwrap();
+        fields.remove("category");
+        fields.remove("color");
+        fields.insert("planned_time".into(), Value::Null);
+        value
+    };
+    let outside = expected_list_record("t-out", "note", Some("2026-10-01"), None, Some(25));
+    let remaining = json!([
+        as_task(open.clone()),
+        as_task(outside.clone()),
+        as_task(undated.clone())
+    ]);
+    assert_eq!(
+        call(&view, "get_calendar_tasks", json!({})).unwrap(),
+        remaining
+    );
+    assert_eq!(
+        call(
+            &view,
+            "get_calendar_tasks",
+            json!({"includeCompleted":false})
+        )
+        .unwrap(),
+        remaining
+    );
+    assert_eq!(
+        call(
+            &view,
+            "get_calendar_tasks",
+            json!({"includeCompleted":true})
+        )
+        .unwrap(),
+        json!([
+            as_task(done),
+            as_task(open),
+            as_task(legacy),
+            as_task(outside),
+            as_task(undated)
+        ])
+    );
+    assert!(call(
+        &view,
+        "get_calendar_records",
+        json!({"start":"bad","end":"2026-09-30"})
+    )
+    .is_err());
+}
+
+#[test]
+fn calendar_lists_keep_status_filters_independent_of_kind_and_completion() {
+    let (app, view) = calendar_list_fixture();
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        conn.execute_batch(
+            "UPDATE items SET status='note' WHERE id='e-all';
+            UPDATE items SET completed=0 WHERE id='t-done';",
+        )
+        .unwrap();
+    }
+    let records = call(
+        &view,
+        "get_calendar_records",
+        json!({"start":"2026-09-01","end":"2026-09-30"}),
+    )
+    .unwrap();
+    assert!(!records
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["source_id"] == "e-all"));
+    let remaining = call(
+        &view,
+        "get_calendar_tasks",
+        json!({"includeCompleted":false}),
+    )
+    .unwrap();
+    assert!(!remaining
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["source_id"] == "t-done"));
+    let all = call(
+        &view,
+        "get_calendar_tasks",
+        json!({"includeCompleted":true}),
+    )
+    .unwrap();
+    let done = all
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["source_id"] == "t-done")
+        .unwrap();
+    assert_eq!(done["completed"], false);
+    assert_eq!(done["status_extra"], "done");
+}
+
+#[test]
+#[ignore = "manual synthetic IPC benchmark; no native UI latency claim"]
+fn calendar_list_benchmark() {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    use std::time::Instant;
+    for count in [100, 1000, 5000] {
+        let (app, view) = fixture();
+        {
+            let state = app.state::<AppState>();
+            let mut conn = state.0.lock().unwrap();
+            let tx = conn.transaction().unwrap();
+            for n in 0..count {
+                let kind = if n % 2 == 0 { "event" } else { "task" };
+                let source = if n % 2 == 0 { "event" } else { "note" };
+                let id = format!("fixture-{n:05}");
+                tx.execute("INSERT INTO items(id,kind,title,date,time,duration_minutes,version,created_at,updated_at) VALUES(?1,?2,?1,'2026-09-12',?3,30,1,'fixture','fixture')",rusqlite::params![id,kind,if kind=="event" {Some("09:00")} else {None}]).unwrap();
+                for active in [false, true] {
+                    tx.execute("INSERT INTO timeline_blocks(source_type,source_id,date,start_time,duration_minutes,is_active,created_at,updated_at) VALUES(?1,?2,'2026-09-12','09:00',10,?3,'fixture','fixture')",rusqlite::params![source,id,active]).unwrap();
+                }
+            }
+            for n in 0..count * 4 {
+                tx.execute("INSERT INTO timeline_blocks(source_type,source_id,date,start_time,duration_minutes,is_active,created_at,updated_at) VALUES('note',?1,'2025-01-01','09:00',30,0,'fixture','fixture')",[format!("historical-{n}")]).unwrap();
+            }
+            tx.commit().unwrap();
+        }
+        for (command, args) in [
+            (
+                "get_calendar_records",
+                json!({"start":"2026-09-01","end":"2026-09-30"}),
+            ),
+            ("get_calendar_tasks", json!({"includeCompleted":true})),
+        ] {
+            let expected = call(&view, command, args.clone()).unwrap();
+            let mut samples = Vec::new();
+            for _ in 0..5 {
+                let started = Instant::now();
+                let actual = call(&view, command, args.clone()).unwrap();
+                samples.push(started.elapsed().as_micros());
+                assert_eq!(actual, expected);
+            }
+            samples.sort_unstable();
+            let mut hash = DefaultHasher::new();
+            expected.to_string().hash(&mut hash);
+            println!("CALENDAR_BENCH records={count} command={command} rows={} median_us={} payload_hash={:016x}",expected.as_array().unwrap().len(),samples[2],hash.finish());
+        }
+    }
+}
+
 fn mutation_snapshot(conn: &Connection) -> Vec<Vec<Vec<rusqlite::types::Value>>> {
     [
         "items",
         "event_categories",
         "calendar_goals",
         "calendar_task_goals",
+        "timeline_blocks",
     ]
     .into_iter()
     .map(|table| {
@@ -129,6 +401,349 @@ fn mutation_snapshot(conn: &Connection) -> Vec<Vec<Vec<rusqlite::types::Value>>>
             .unwrap()
     })
     .collect()
+}
+
+#[test]
+fn finishing_task_rolls_back_timer_on_failure_and_allows_retry() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("calendar.db");
+    let (app, view) = fixture_with_connection(Connection::open(&path).unwrap());
+    let before = {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        mutation_fixture_sql(&conn);
+        let began = (chrono::Utc::now() - chrono::Duration::minutes(3)).to_rfc3339();
+        conn.execute("INSERT INTO timeline_blocks(id,source_type,source_id,date,start_time,is_active,created_at,updated_at) VALUES(100,'note','task-a','2026-09-12','10:00:00',1,?1,?1)", [&began]).unwrap();
+        conn.execute_batch("CREATE TRIGGER reject_task_completion BEFORE UPDATE OF completed ON items WHEN NEW.id='task-a' BEGIN SELECT RAISE(ABORT,'injected completion failure'); END;").unwrap();
+        mutation_snapshot(&conn)
+    };
+    let error = call(&view, "finish_task_block", json!({"blockId":100})).unwrap_err();
+    assert!(error
+        .as_str()
+        .unwrap()
+        .contains("injected completion failure"));
+    let observer = Connection::open(&path).unwrap();
+    assert_eq!(
+        mutation_snapshot(&observer),
+        before,
+        "failed completion must preserve both running timer and unfinished task"
+    );
+    observer
+        .execute_batch("DROP TRIGGER reject_task_completion")
+        .unwrap();
+    assert_eq!(
+        call(&view, "finish_task_block", json!({"blockId":100})).unwrap(),
+        Value::Null
+    );
+    let (active, minutes): (bool, i64) = observer
+        .query_row(
+            "SELECT is_active,duration_minutes FROM timeline_blocks WHERE id=100",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert!(!active);
+    assert!(minutes >= 3);
+    let (completed, status): (bool, String) = observer
+        .query_row(
+            "SELECT completed,status FROM items WHERE id='task-a'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert!(completed);
+    assert_eq!(status, "done");
+    assert_eq!(
+        observer
+            .query_row("SELECT COUNT(*) FROM calendar_task_goals", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    assert!(app.state::<AppState>().0.lock().unwrap().is_autocommit());
+}
+
+fn seed_goal_tree(conn: &Connection) {
+    mutation_fixture_sql(conn);
+    conn.execute_batch("INSERT INTO calendar_goals(id,title,parent_goal_id,created_at,updated_at) VALUES
+        ('child','Example child','goal-a','original','original'),
+        ('grandchild','Example grandchild','child','original','original'),
+        ('other-child','Example other child','goal-b','original','original');
+        INSERT INTO items(id,kind,title,duration_minutes,version,created_at,updated_at) VALUES('child-task','task','Example child task',30,1,'original','original');
+        INSERT INTO calendar_task_goals(source_type,source_id,goal_id,created_at) VALUES('note','child-task','child','original');").unwrap();
+}
+
+#[test]
+fn deleting_parent_goal_promotes_only_direct_children_and_preserves_tasks() {
+    let (app, view) = fixture();
+    let before_items = {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        seed_goal_tree(&conn);
+        mutation_snapshot(&conn)[0].clone()
+    };
+    assert_eq!(
+        call(&view, "delete_goal", json!({"id":"goal-a"})).unwrap(),
+        Value::Null
+    );
+    let state = app.state::<AppState>();
+    let conn = state.0.lock().unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT parent_goal_id FROM calendar_goals WHERE id='child'",
+            [],
+            |r| r.get::<_, Option<String>>(0)
+        )
+        .unwrap(),
+        None
+    );
+    assert_ne!(
+        conn.query_row(
+            "SELECT updated_at FROM calendar_goals WHERE id='child'",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "original"
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT parent_goal_id FROM calendar_goals WHERE id='grandchild'",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "child"
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT parent_goal_id FROM calendar_goals WHERE id='other-child'",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "goal-b"
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT goal_id FROM calendar_task_goals WHERE source_id='child-task'",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "child"
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM calendar_task_goals WHERE goal_id='goal-a'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+    assert_eq!(mutation_snapshot(&conn)[0], before_items);
+    assert_eq!(conn.query_row("SELECT COUNT(*) FROM calendar_goals child LEFT JOIN calendar_goals parent ON parent.id=child.parent_goal_id WHERE child.parent_goal_id IS NOT NULL AND parent.id IS NULL",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+}
+
+#[test]
+fn failed_parent_deletion_restores_children_and_task_links() {
+    let (app, view) = fixture();
+    let before = {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        seed_goal_tree(&conn);
+        conn.execute_batch("CREATE TRIGGER reject_parent_delete BEFORE DELETE ON calendar_goals WHEN OLD.id='goal-a' BEGIN SELECT RAISE(ABORT,'injected parent delete failure'); END;").unwrap();
+        mutation_snapshot(&conn)
+    };
+    let error = call(&view, "delete_goal", json!({"id":"goal-a"})).unwrap_err();
+    assert!(error
+        .as_str()
+        .unwrap()
+        .contains("injected parent delete failure"));
+    assert_eq!(
+        mutation_snapshot(&app.state::<AppState>().0.lock().unwrap()),
+        before
+    );
+}
+
+#[test]
+fn invalid_note_create_status_leaves_database_unchanged() {
+    let (app, view) = fixture();
+    let before = mutation_snapshot(&app.state::<AppState>().0.lock().unwrap());
+    for status in [
+        "unknown",
+        "",
+        " note ",
+        "Done",
+        "task'; DELETE FROM items; --",
+    ] {
+        let result = call(
+            &view,
+            "create_note",
+            json!({"title":"Example note",
+            "content":"Example content","tags":"","status":status,"dueDate":null,"priority":0}),
+        );
+        assert!(result.is_err(), "unsupported status {status:?} must fail");
+        assert_eq!(
+            mutation_snapshot(&app.state::<AppState>().0.lock().unwrap()),
+            before
+        );
+    }
+}
+
+#[test]
+fn invalid_note_update_status_leaves_database_unchanged() {
+    let (app, view) = fixture();
+    mutation_fixture_sql(&app.state::<AppState>().0.lock().unwrap());
+    let before = mutation_snapshot(&app.state::<AppState>().0.lock().unwrap());
+    for status in ["unknown", "", " task ", "Done"] {
+        assert!(call(
+            &view,
+            "update_note_status",
+            json!({"id":"task-a","status":status})
+        )
+        .is_err());
+        assert_eq!(
+            mutation_snapshot(&app.state::<AppState>().0.lock().unwrap()),
+            before
+        );
+    }
+}
+
+#[test]
+fn invalid_category_reassignment_leaves_database_unchanged() {
+    let (app, view) = fixture();
+    mutation_fixture_sql(&app.state::<AppState>().0.lock().unwrap());
+    let before = mutation_snapshot(&app.state::<AppState>().0.lock().unwrap());
+    for target in ["missing", "", "Example A", "category-b"] {
+        assert!(
+            call(
+                &view,
+                "delete_event_category",
+                json!({"id":"category-a","reassignTo":target})
+            )
+            .is_err(),
+            "invalid target {target:?} must fail (target uses a name, not an id)"
+        );
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        assert_eq!(mutation_snapshot(&conn), before);
+        assert!(conn.is_autocommit());
+    }
+    assert!(call(
+        &view,
+        "delete_event_category",
+        json!({"id":"general","reassignTo":null})
+    )
+    .is_err());
+    assert_eq!(
+        mutation_snapshot(&app.state::<AppState>().0.lock().unwrap()),
+        before
+    );
+    // A rejected request must not leave a transaction open or block a valid retry.
+    assert_eq!(
+        call(
+            &view,
+            "delete_event_category",
+            json!({"id":"category-a","reassignTo":"Example B"})
+        )
+        .unwrap(),
+        json!(1)
+    );
+    let state = app.state::<AppState>();
+    let conn = state.0.lock().unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM items WHERE kind='event' AND category='Example B'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        2
+    );
+}
+
+#[test]
+fn supported_note_statuses_preserve_visibility_and_completion() {
+    let (_app, view) = fixture();
+    for (status, expected_status) in [
+        (Value::Null, "note"),
+        (json!("note"), "note"),
+        (json!("task"), "task"),
+        (json!("done"), "done"),
+    ] {
+        let id = call(
+            &view,
+            "create_note",
+            json!({"title":"Example status","content":"Example body",
+            "tags":"","status":status,"dueDate":null,"priority":0}),
+        )
+        .unwrap();
+        let item = call(&view, "get_note", json!({"id":id})).unwrap();
+        assert_eq!(item["status"], expected_status);
+        assert_eq!(item["completed"], json!(expected_status == "done"));
+        let notes = call(
+            &view,
+            "get_notes",
+            json!({"filter":"tab:calendar","search":null}),
+        )
+        .unwrap();
+        let tasks = call(
+            &view,
+            "get_calendar_tasks",
+            json!({"includeCompleted":true}),
+        )
+        .unwrap();
+        assert_eq!(
+            notes.as_array().unwrap().iter().any(|n| n["id"] == id),
+            expected_status == "note"
+        );
+        assert_eq!(
+            tasks
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|n| n["source_id"] == id),
+            expected_status != "note"
+        );
+    }
+}
+
+#[test]
+fn supported_update_status_keeps_existing_completion_contract() {
+    let (app, view) = fixture();
+    mutation_fixture_sql(&app.state::<AppState>().0.lock().unwrap());
+    for status in ["done", "task", "note"] {
+        assert_eq!(
+            call(
+                &view,
+                "update_note_status",
+                json!({"id":"task-a","status":status})
+            )
+            .unwrap(),
+            Value::Null
+        );
+        let item = call(&view, "get_note", json!({"id":"task-a"})).unwrap();
+        assert_eq!(item["completed"], json!(status == "done"));
+        // This compatibility command toggles completion; it does not move records between panes.
+        assert_eq!(
+            item["status"],
+            if status == "done" { "done" } else { "task" }
+        );
+        assert_eq!(
+            app.state::<AppState>()
+                .0
+                .lock()
+                .unwrap()
+                .query_row("SELECT status FROM items WHERE id='task-a'", [], |r| r
+                    .get::<_, String>(
+                    0
+                ))
+                .unwrap(),
+            "task"
+        );
+    }
 }
 
 #[test]
@@ -179,8 +794,8 @@ fn assert_atomic_rollback(
         let conn = state.0.lock().unwrap();
         mutation_fixture_sql(&conn);
         conn.execute_batch(&format!(
-            "CREATE TRIGGER fail_second_step BEFORE {trigger_operation} ON {trigger_table}
-                 BEGIN SELECT RAISE(ABORT, 'injected second-step failure'); END;"
+            "CREATE TRIGGER reject_mutation BEFORE {trigger_operation} ON {trigger_table}
+                 BEGIN SELECT RAISE(ABORT, 'injected mutation failure'); END;"
         ))
         .unwrap();
         mutation_snapshot(&conn)
@@ -190,7 +805,7 @@ fn assert_atomic_rollback(
         error
             .as_str()
             .unwrap()
-            .contains("injected second-step failure"),
+            .contains("injected mutation failure"),
         "{command}: {error}"
     );
     // A fresh SQLite connection must see no partial writes, not just the caller's state.
@@ -201,7 +816,7 @@ fn assert_atomic_rollback(
         "{command} must roll back all changes"
     );
     observer
-        .execute_batch("DROP TRIGGER fail_second_step")
+        .execute_batch("DROP TRIGGER reject_mutation")
         .unwrap();
     assert_eq!(call(&view, command, args).unwrap(), expected);
     assert_ne!(

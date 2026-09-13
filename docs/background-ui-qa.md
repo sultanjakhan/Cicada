@@ -288,3 +288,35 @@ The missing Start day action was inspected, not implemented: this MVP only
 projects `calendar_day_start_v1`; it has no writer or CTA. The historical action
 records confirmed actual rising, separate from sleep end. Whether the requested
 action retains that meaning or opens daily planning was asked separately.
+## Dynamic styles and Notes security, 2026-09-13
+
+The native build added a nonce to `style-src 'self' 'unsafe-inline'`. Browsers
+then ignored `unsafe-inline`, blocking EditorJS-injected styles and category
+swatch backgrounds. The Tauri configuration now sets
+`dangerousDisableAssetCspModification` to `["style-src"]` only. This preserves
+the authored style policy while retaining automatic script hashes and the
+existing restrictions on scripts and other origins. See Tauri's
+[selective configuration](https://v2.tauri.app/reference/config/#dangerousdisableassetcspmodification)
+and [CSP guidance](https://v2.tauri.app/security/csp/).
+
+An embedded-assets native candidate on an inactive Windows desktop reproduced
+the failure before the change and applied both a dynamically inserted style
+rule and a style attribute after it. A harmless inline script remained blocked
+by both the effective response policy and the HTML meta policy. Script hashes
+were still present; no `unsafe-inline` or `unsafe-eval` was added to `script-src`.
+
+The real Notes editor opened a fictional hostile rich-text fixture, removed
+unsafe elements and `javascript:`, `data:` and `file:` links, and preserved bold
+text, a safe HTTPS link, the legacy checked list item and literal code. Saving
+through the UI and reading back through real Rust IPC retained those properties.
+All eight category swatches displayed their declared colors in the native UI.
+The blocked-script probe deliberately produces CSP console errors; distinguish
+those expected errors from application startup or editor-style errors.
+
+Repeat these checks on the merged native binary after changing CSP, Tauri or
+editor bundles. Use an isolated fictional profile, save and reopen the note,
+and inspect both the displayed content and persisted block data. Local evidence
+and binary identities belong under `.local/background-qa/`, outside Git.
+This candidate check does not establish acceptance of the user's merged main
+or installed application. Inline CSS remains allowed for these dynamic styles;
+it must not be mistaken for permission to trust arbitrary HTML or scripts.

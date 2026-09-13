@@ -74,6 +74,13 @@ fn validate_title(value: &str) -> Result<(), String> {
         Ok(())
     }
 }
+fn validate_note_status(value: &str) -> Result<(), String> {
+    if matches!(value, "note" | "task" | "done") {
+        Ok(())
+    } else {
+        Err(fail("status must be note, task or done"))
+    }
+}
 fn duration(value: i64) -> Result<(), String> {
     if (1..=5_256_000).contains(&value) {
         Ok(())
@@ -254,10 +261,11 @@ pub fn create_note(
 ) -> Result<String, String> {
     validate_title(&title)?;
     date(&due_date)?;
+    let record_status = status.unwrap_or_else(|| "note".into());
+    validate_note_status(&record_status)?;
     let conn = lock(&state)?;
     let id = Uuid::new_v4().to_string();
     let n = now();
-    let record_status = status.unwrap_or_else(|| "note".into());
     conn.execute("INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,status) VALUES(?1,'task',?2,?3,?4,NULL,30,?5,1,?6,?6,'task','#9B9B9B',?7,0,?8,?9)",params![id,title.trim(),content,due_date,(record_status=="done") as i64,n,priority.unwrap_or(0),tags,record_status]).map_err(|e|fail(e.to_string()))?;
     Ok(id)
 }
@@ -290,6 +298,7 @@ pub fn update_note_status(
     status: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    validate_note_status(&status)?;
     let conn = lock(&state)?;
     let changed=conn.execute("UPDATE items SET completed=?1,version=version+1,updated_at=?2 WHERE id=?3 AND kind='task'",params![(status=="done") as i64,now(),id]).map_err(|e|fail(e.to_string()))?;
     if changed == 1 {
@@ -314,14 +323,73 @@ pub fn get_calendar_tasks(
     state: State<'_, AppState>,
 ) -> Result<Vec<Value>, String> {
     let conn = lock(&state)?;
-    let mut s=conn.prepare(if include_completed.unwrap_or(false){"SELECT id FROM items WHERE kind='task' AND archived=0 AND status IN ('task','done') ORDER BY date IS NULL,date,id"}else{"SELECT id FROM items WHERE kind='task' AND archived=0 AND status='task' AND completed=0 ORDER BY date IS NULL,date,id"}).map_err(|e|fail(e.to_string()))?;
-    let ids = s
-        .query_map([], |r| r.get::<_, String>(0))
-        .map_err(|e| fail(e.to_string()))?
-        .collect::<Result<Vec<_>, _>>()
+    let predicate = if include_completed.unwrap_or(false) {
+        "kind='task' AND archived=0 AND status IN ('task','done')"
+    } else {
+        "kind='task' AND archived=0 AND status='task' AND completed=0"
+    };
+    calendar_list(&conn, predicate, "s.date IS NULL,s.date,s.id", &[], true)
+}
+
+// Only the two list commands supply these static SQL fragments. External values
+// remain bound parameters. The mapper performs no per-record database reads.
+fn calendar_list(
+    conn: &Connection,
+    predicate: &str,
+    order: &str,
+    args: &[&dyn rusqlite::ToSql],
+    tasks_only: bool,
+) -> Result<Vec<Value>, String> {
+    let sql = format!(
+        "WITH selected AS (
+            SELECT id,kind,title,date,time,duration_minutes,category,color,completed,status,priority,
+                CASE WHEN kind='event' THEN 'event' ELSE 'note' END AS source_type
+            FROM items WHERE {predicate}
+        ), timeline AS (
+            SELECT t.source_type,t.source_id,MAX(t.is_active) AS active,
+                SUM(CASE WHEN t.is_active=0 THEN t.duration_minutes ELSE 0 END) AS minutes,
+                COUNT(*) AS has_work
+            FROM timeline_blocks t JOIN selected s
+                ON s.source_type=t.source_type AND s.id=t.source_id
+            GROUP BY t.source_type,t.source_id
+        )
+        SELECT s.id,s.kind,s.title,s.date,s.time,s.duration_minutes,s.category,s.color,
+            s.completed,s.status,s.priority,COALESCE(t.active,0),COALESCE(t.minutes,0),COALESCE(t.has_work,0)
+        FROM selected s LEFT JOIN timeline t ON t.source_type=s.source_type AND t.source_id=s.id
+        ORDER BY {order}"
+    );
+    let mut statement = conn.prepare(&sql).map_err(|e| fail(e.to_string()))?;
+    let rows = statement
+        .query_map(args, |row| {
+            let kind: String = row.get(1)?;
+            let is_task = kind == "task";
+            let completed: bool = row.get(8)?;
+            let status: String = row.get(9)?;
+            let duration: i64 = row.get(5)?;
+            let mut value = json!({
+                "source_type": if is_task {"note"} else {"event"},
+                "source_id": row.get::<_, String>(0)?,
+                "title": row.get::<_, String>(2)?,
+                "date": row.get::<_, Option<String>>(3)?,
+                "planned_time": if tasks_only {None} else {row.get::<_, Option<String>>(4)?},
+                "duration_minutes": if is_task && duration==0 {None} else {Some(duration)},
+                "completed": completed,
+                "status_extra": if completed && status=="task" {"done"} else {&status},
+                "priority": row.get::<_, i64>(10)?,
+                "tracking_mode": if is_task {"check"} else {"track"},
+                "is_active": row.get::<_, i64>(11)? != 0,
+                "actual_minutes": row.get::<_, i64>(12)?,
+                "has_work": row.get::<_, i64>(13)? > 0,
+            });
+            if !tasks_only {
+                value["category"] = json!(row.get::<_, String>(6)?);
+                value["color"] = json!(row.get::<_, String>(7)?);
+            }
+            Ok(value)
+        })
         .map_err(|e| fail(e.to_string()))?;
-    drop(s);
-    ids.into_iter().map(|id|{let v=load(&conn,&id)?;let (active,minutes,has_work):(bool,i64,bool)=conn.query_row("SELECT COALESCE(MAX(is_active),0)!=0,COALESCE(SUM(CASE WHEN is_active=0 THEN duration_minutes ELSE 0 END),0),COUNT(*)>0 FROM timeline_blocks WHERE source_type='note' AND source_id=?1",[&id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(|e|fail(e.to_string()))?;Ok(json!({"source_type":"note","source_id":id,"title":v["title"],"date":v["due_date"],"planned_time":null,"duration_minutes":v["duration_minutes"],"completed":v["completed"],"status_extra":v["status"],"priority":v["priority"],"tracking_mode":"check","is_active":active,"actual_minutes":minutes,"has_work":has_work}))}).collect()
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| fail(e.to_string()))
 }
 #[tauri::command]
 pub fn get_calendar_task(id: String, state: State<'_, AppState>) -> Result<Value, String> {
@@ -421,15 +489,13 @@ pub fn get_calendar_records(
     validate_date(&start)?;
     validate_date(&end)?;
     let conn = lock(&state)?;
-    let mut s=conn.prepare("SELECT id,kind FROM items WHERE archived=0 AND status!='note' AND ((kind='event' AND date<=?2 AND ((date>=?1 AND NULLIF(time,'') IS NULL) OR (NULLIF(time,'') IS NOT NULL AND datetime(date || ' ' || substr(time,1,5), '+' || duration_minutes || ' minutes')>datetime(?1)))) OR (kind='task' AND (date BETWEEN ?1 AND ?2 OR date IS NULL))) ORDER BY date,time,id").map_err(|e|fail(e.to_string()))?;
-    let rows = s
-        .query_map(params![start, end], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        })
-        .map_err(|e| fail(e.to_string()))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| fail(e.to_string()))?;
-    rows.into_iter().map(|(id,kind)|{let v=load(&conn,&id)?;let source=if kind=="event" {"event"}else{"note"};let (active,minutes,has_work):(bool,i64,bool)=conn.query_row("SELECT COALESCE(MAX(is_active),0)!=0,COALESCE(SUM(CASE WHEN is_active=0 THEN duration_minutes ELSE 0 END),0),COUNT(*)>0 FROM timeline_blocks WHERE source_type=?1 AND source_id=?2",params![source,&id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(|e|fail(e.to_string()))?;Ok(json!({"source_type":source,"source_id":id,"title":v["title"],"date":v["date"],"planned_time":v["time"],"duration_minutes":v["duration_minutes"],"category":v["category"],"color":v["color"],"completed":v["completed"],"status_extra":v["status"],"priority":v["priority"],"tracking_mode":if source=="note" {"check"}else{"track"},"is_active":active,"actual_minutes":minutes,"has_work":has_work}))}).collect()
+    calendar_list(
+        &conn,
+        "archived=0 AND status!='note' AND ((kind='event' AND date<=?2 AND ((date>=?1 AND NULLIF(time,'') IS NULL) OR (NULLIF(time,'') IS NOT NULL AND datetime(date || ' ' || substr(time,1,5), '+' || duration_minutes || ' minutes')>datetime(?1)))) OR (kind='task' AND (date BETWEEN ?1 AND ?2 OR date IS NULL)))",
+        "s.date,s.time,s.id",
+        params![start, end],
+        false,
+    )
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -515,6 +581,12 @@ pub fn delete_goal(id: String, state: State<'_, AppState>) -> Result<(), String>
         .map_err(|e| fail(e.to_string()))?;
     transaction
         .execute("DELETE FROM calendar_task_goals WHERE goal_id=?1", [&id])
+        .map_err(|e| fail(e.to_string()))?;
+    transaction
+        .execute(
+            "UPDATE calendar_goals SET parent_goal_id=NULL,updated_at=?1 WHERE parent_goal_id=?2",
+            params![now(), &id],
+        )
         .map_err(|e| fail(e.to_string()))?;
     transaction
         .execute("DELETE FROM calendar_goals WHERE id=?1", [id])
@@ -661,6 +733,21 @@ pub fn delete_event_category(
         )
         .map_err(|_| fail("category not found"))?;
     let target = reassign_to.unwrap_or_else(|| "general".into());
+    if target == name {
+        return Err(fail(
+            "replacement category must differ from the deleted category",
+        ));
+    }
+    let target_exists: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM event_categories WHERE name=?1)",
+            [&target],
+            |row| row.get(0),
+        )
+        .map_err(|e| fail(e.to_string()))?;
+    if !target_exists {
+        return Err(fail("replacement category not found"));
+    }
     let n = transaction
         .execute(
             "UPDATE items SET category=?1 WHERE kind='event' AND category=?2",
@@ -766,8 +853,12 @@ pub fn pause_task_block(block_id: i64, state: State<'_, AppState>) -> Result<(),
 }
 #[tauri::command(rename_all = "camelCase")]
 pub fn finish_task_block(block_id: i64, state: State<'_, AppState>) -> Result<(), String> {
-    let conn = lock(&state)?;
-    stop(&conn, block_id, true)
+    let mut conn = lock(&state)?;
+    let transaction = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| fail(e.to_string()))?;
+    stop(&transaction, block_id, true)?;
+    transaction.commit().map_err(|e| fail(e.to_string()))
 }
 #[tauri::command(rename_all = "camelCase")]
 pub fn get_calendar_task_minutes(

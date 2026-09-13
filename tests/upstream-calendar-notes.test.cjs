@@ -6,14 +6,29 @@ const read = name => fs.readFileSync(path.resolve(__dirname, '../src/hanni/js', 
 const tick = async () => { for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve)); };
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 let sequence = 0;
-async function setup(t) {
-  const dom = new JSDOM('<main></main><button id="outside">Вне</button>', { url: 'http://localhost/', pretendToBeVisual: true });
+async function setup(t, { realEditor = false } = {}) {
+  const dom = new JSDOM('<main></main><button id="outside">Вне</button>', { url: 'http://localhost/', pretendToBeVisual: true, runScripts: 'outside-only' });
   const w = dom.window, root = w.document.querySelector('main');
+  const vendor = name => fs.readFileSync(path.resolve(__dirname, '../src/public/vendor', name + '.min.js'), 'utf8');
+  w.eval(vendor('purify'));
+  if (realEditor) {
+    Object.defineProperties(w, { crypto: { value: require('node:crypto').webcrypto }, structuredClone: { value: structuredClone } });
+    const observer = class { observe() {} unobserve() {} disconnect() {} };
+    Object.assign(w, { ResizeObserver: observer, IntersectionObserver: observer,
+      matchMedia: () => ({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} }) });
+    w.document.execCommand = () => false; w.document.queryCommandState = () => false;
+    for (const name of ['editorjs', 'header', 'list', 'checklist', 'quote', 'code', 'delimiter', 'marker', 'inline-code']) w.eval(vendor(name));
+    // Execute the actual app factory and its tool configuration, without importing unrelated browser globals.
+    const utils = read('utils'), start = utils.indexOf('export function initBlockEditor('), end = utils.indexOf('// ── Tab block editor', start);
+    assert.ok(start >= 0 && end > start);
+    w.eval(utils.slice(start, end).replace('export function', 'function') + '; window.createActualEditor = initBlockEditor;');
+  }
   w.HTMLDialogElement.prototype.showModal = function () { this.open = true; this.querySelector('button')?.focus(); };
   w.HTMLDialogElement.prototype.close = function () { this.open = false; this.dispatchEvent(new w.Event('close')); };
   const source = read('calendar-notes').replace(/^import .*state\.js';\r?$/m, 'const defaultInvoke = () => { throw new Error("Inject API"); };')
     .replace(/^import .*utils\.js';\r?$/m, 'const initBlockEditor = () => {}; const escapeHtml = value => String(value).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); const blocksToPlainText = value => (value?.blocks || []).map(b => b.data.text || b.data.code || "").join("\\n");')
-    .replace("'./calendar-dialog.js'", JSON.stringify(data(read('calendar-dialog'))));
+    .replace("'./calendar-dialog.js'", JSON.stringify(data(read('calendar-dialog'))))
+    .replace("'./block-editor-security.js'", () => JSON.stringify(data(read('block-editor-security'))));
   const module = await import(data(source) + '#' + sequence++);
   const rows = [
     { id: 1, title: 'Plain', content: 'Исходный текст', tab_name: 'calendar', status: 'note', tags: 'tag,keep', pinned: true, priority: 4, due_date: '2027-01-01', reminder_at: 'later', archived: false, updated_at: '2026-09-06T13:00:00.000000100+05:00' },
@@ -37,6 +52,10 @@ async function setup(t) {
   };
   const createEditor = (id, output, onChange, options) => {
     if (editorFailure) throw new Error('Editor unavailable');
+    if (realEditor) {
+      const editor = w.createActualEditor(id, output, onChange, options);
+      editors.push(editor); return editor;
+    }
     const holder = w.document.getElementById(id);
     holder.innerHTML = '<div contenteditable="true"></div>';
     const instance = { output: structuredClone(output), isReady: Promise.resolve(), destroyed: false, hold: null, fail: false, options,
@@ -55,6 +74,64 @@ async function setup(t) {
   const remount = async () => { dispose(); root.replaceChildren(); dispose = await module.mountCalendarNotes(root, { invoke, initBlockEditor: createEditor }); await tick(); };
   return { w, root, rows, before, calls, editors, open, set, save, close, remount, dispose: () => dispose(), failEditor: () => { editorFailure = true; } };
 }
+
+const hostileInline = '<b>Keep formatting</b><img src="x" onerror="window.__noteXss=1"><a href="javascript:alert(1)">js</a><a href="data:text/html,unsafe">data</a><a href="file:///example">file</a><a href="https://example.com/path">safe</a>';
+const hostileBlocks = () => ({ time: 10, version: 'fixture', blocks: [
+  { id: 'paragraph', type: 'paragraph', data: { text: hostileInline } },
+  { id: 'header', type: 'header', data: { text: hostileInline, level: 2 } },
+  { id: 'checklist', type: 'checklist', data: { items: [{ text: hostileInline, checked: true }] } },
+  { id: 'quote', type: 'quote', data: { text: hostileInline, caption: hostileInline, alignment: 'left' } },
+  { id: 'list', type: 'list', data: { style: 'unordered', items: [{ content: hostileInline, meta: {}, items: [{ content: hostileInline, meta: {}, items: [] }] }] } },
+  { id: 'legacy-checklist', type: 'list', data: { style: 'checklist', items: [{ text: hostileInline, checked: false }] } },
+  { id: 'legacy-list', type: 'list', data: { style: 'unordered', items: [hostileInline] } },
+  { id: 'code', type: 'code', data: { code: '<script>literal example</script>' } },
+] });
+function assertSafeNoteDom(element) {
+  // List/checklist tools use their own SVG controls; those are not user markup.
+  assert.equal(element.querySelectorAll('img,script,iframe,object').length, 0);
+  for (const node of element.querySelectorAll('*')) {
+    assert.ok(![...node.attributes].some(attr => /^on/i.test(attr.name)), 'inline event handlers must be removed');
+    if (node.hasAttribute('href')) assert.ok(!/^(?:javascript|data|file):/i.test(node.getAttribute('href')), 'unsafe URL scheme');
+  }
+}
+test('security: stored rich blocks are safe before actual EditorJS renders them', async t => {
+  const x = await setup(t, { realEditor: true });
+  x.rows[1].content_blocks = JSON.stringify(hostileBlocks());
+  const original = x.rows[1].content_blocks, modal = await x.open(2);
+  await x.editors.at(-1).isReady; await tick();
+  const renderedBlocks = modal.querySelectorAll('.ce-block__content');
+  assert.equal(renderedBlocks.length, hostileBlocks().blocks.length);
+  for (const block of renderedBlocks) assertSafeNoteDom(block);
+  assert.ok(modal.querySelector('.calendar-note-blocks b'));
+  assert.ok(modal.querySelector('.calendar-note-blocks a[href="https://example.com/path"]'));
+  assert.equal(x.rows[1].content_blocks, original, 'opening a note must not write to storage');
+  assert.equal(x.calls.some(call => call.name === 'update_note'), false);
+  await x.save(modal); await tick();
+  assert.ok(x.calls.some(call => call.name === 'update_note'), 'actual EditorJS output must save through the Notes flow');
+  const reopened = await x.open(2); await x.editors.at(-1).isReady; await tick();
+  for (const block of reopened.querySelectorAll('.ce-block__content')) assertSafeNoteDom(block);
+});
+test('security: rich editor output is cleaned again before storage and preserves code and metadata', async t => {
+  const x = await setup(t), modal = await x.open(2), input = hostileBlocks();
+  x.editors.at(-1).output = structuredClone(input);
+  await x.save(modal);
+  const saved = JSON.parse(x.rows[1].content_blocks);
+  const fields = saved.blocks.flatMap(block => block.type === 'code' ? [] : [block.data.text, block.data.caption,
+    ...(block.data.items || []).flatMap(item => [typeof item === 'string' ? item : item.text || item.content, ...(item.items || []).map(child => child.content)])]).filter(Boolean);
+  const holder = x.w.document.createElement('div'); holder.innerHTML = fields.join(''); assertSafeNoteDom(holder);
+  assert.deepEqual(saved.blocks.find(block => block.type === 'code'), input.blocks.find(block => block.type === 'code'));
+  assert.equal(saved.blocks.find(block => block.type === 'checklist').data.items[0].checked, true);
+  assert.equal(saved.blocks.find(block => block.type === 'header').data.level, 2);
+  assert.equal(x.rows[1].tags, 'rich,keep');
+});
+test('security: missing purifier renders rich markup as literal text', async t => {
+  const x = await setup(t, { realEditor: true }); x.w.DOMPurify = null;
+  x.rows[1].content_blocks = JSON.stringify(hostileBlocks());
+  const modal = await x.open(2); await x.editors.at(-1).isReady; await tick();
+  for (const block of modal.querySelectorAll('.ce-block__content')) assertSafeNoteDom(block);
+  assert.ok(modal.querySelector('.ce-paragraph').textContent.includes('<img'));
+  assert.equal(modal.querySelectorAll('.ce-paragraph a').length, 0);
+});
 
 test('catalog mounts without empty editor, excludes other tabs, and new note focuses content with no phantom draft', async t => {
   const x = await setup(t); assert.equal(x.w.document.querySelector('dialog'), null); assert.equal(x.root.querySelector('[data-detail]'), null); assert.equal(x.root.querySelector('[data-note-id="5"]'), null);
