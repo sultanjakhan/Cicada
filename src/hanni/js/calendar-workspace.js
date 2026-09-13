@@ -11,18 +11,56 @@ import { mountCalendarGoals } from './calendar-goals.js';
 import { mountCalendarNotes } from './calendar-notes.js';
 import { mountCalendarDashboardTasks } from './calendar-dashboard-tasks.js';
 import { mountCalendarContextMenu } from './calendar-context-menu.js';
+import { createCalendarDialog } from './calendar-dialog.js';
+import { mountCalendarRecurring } from './calendar-recurring.js';
+import { mountCalendarDayBanner } from './calendar-day-banner.js';
+import { loadCalendarPreferences } from './calendar-display-preferences.js';
+import { mountGoalDevelopment, mountGoalDevelopmentSummary, attachDevelopmentTask } from './calendar-development.js';
 
 let disposeNow = null, disposeTable = null, disposePanel = null, disposeTasks = null;
+let disposeRecurring = null, developmentDialog = null;
+let disposeDayBanner = null;
+let preferences = { density:'comfortable', showCompleted:false };
 let workspaceRevision = 0;
 let dialogSequence = 0;
-function cleanupWorkspace() { workspaceRevision++; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; }
+function cleanupWorkspace() { workspaceRevision++; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeRecurring?.(); disposeDayBanner?.(); developmentDialog?.dispose(); disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; disposeRecurring = null; disposeDayBanner = null; developmentDialog = null; }
 const view = { period: 'day', mode: 'grid', date: views.iso(new Date()), firstDay:'mon' };
 let initialViewLoaded = false;
 window.addEventListener('hanni:calendar-settings-changed', event => {
-  if (!event.detail?.first_day) return;
-  view.firstDay = event.detail.first_day === 'sun' ? 'sun' : 'mon';
+  const changes = event.detail?.changes || event.detail || {};
+  preferences = { ...preferences, ...changes };
+  document.documentElement.dataset.calendarDensity = preferences.density;
+  if (!changes.first_day) return;
+  view.firstDay = changes.first_day === 'sun' ? 'sun' : 'mon';
   window.dispatchEvent(new Event('hanni:calendar-refresh'));
 });
+window.addEventListener('hanni:open-recurring-settings', () => {
+  if (document.querySelector('[data-calendar-recurring]')) return;
+  const host = document.createElement('div'); host.hidden = true; document.body.append(host);
+  const dispose = mountCalendarRecurring(host, { invoke, showCompleted:preferences.showCompleted });
+  // A temporary mount supports this settings entry from Table, Goals and Notes too.
+  void dispose.openManager().finally(() => {});
+  dispose.onManagerClose = () => { dispose(); host.remove(); };
+});
+
+function openGoalDevelopment(goal) {
+  if (developmentDialog || !goal) return;
+  let mounted = null;
+  const dialog = createCalendarDialog({document,title:'Цель',onClose:()=>{mounted?.dispose();developmentDialog=null;}});
+  developmentDialog = dialog; dialog.modal.classList.add('calendar-development-dialog');
+  dialog.modal.querySelector('footer [data-dialog-close]').textContent='Закрыть';
+  const intro = document.createElement('section'); intro.className='calendar-development-intro';
+  if(goal.description){const description=document.createElement('p');description.textContent=goal.description;intro.append(description);}
+  if(goal.criteria){const details=document.createElement('details'),summary=document.createElement('summary'),body=document.createElement('p');summary.textContent='Критерии готовности';body.textContent=goal.criteria;details.append(summary,body);intro.append(details);}
+  if(goal.deadline){const deadline=document.createElement('p');deadline.textContent='Срок цели: '+goal.deadline;intro.append(deadline);}
+  const host=document.createElement('div');dialog.body.append(host,intro);dialog.open();
+  void mountGoalDevelopment(host,{invoke,goal,onCreateTask:skill=>{
+    dialog.close();
+    void showCalendarCreateModal(null,{initialNoDate:true,initialTitle:skill.skillTitle,goalId:goal.id,goalTitle:goal.title,
+      onTaskSaved:task=>String(task.goalId)===String(goal.id)?attachDevelopmentTask(goal.id,skill.skillId,task.id,{invoke}):Promise.resolve(),
+    });
+  }}).then(value=>{if(developmentDialog!==dialog)value.dispose();else mounted=value;}).catch(error=>dialog.showError(error?.message||String(error)));
+}
 const key = (r) => `${r.source_type}:${r.source_id}`;
 const changed = () => { window.dispatchEvent(new Event('task-state-changed')); window.dispatchEvent(new Event('hanni:calendar-refresh')); };
 
@@ -395,6 +433,7 @@ export async function loadCalendarWorkspace(el) {
   cleanupWorkspace(); tabLoaders.cleanupCalendar = cleanupWorkspace;
   const loadRevision = workspaceRevision;
   const { mountCalendarNow } = await import('./calendar-now.js');
+  try { preferences=await loadCalendarPreferences(invoke); document.documentElement.dataset.calendarDensity=preferences.density; } catch { /* Settings expose the read error without overwriting the stored snapshot. */ }
   if (!initialViewLoaded) {
     try {
       const [firstDay, defaultView] = await Promise.all([loadTabSetting('calendar', 'first_day'), loadTabSetting('calendar', 'default_view')]);
@@ -430,9 +469,13 @@ export async function loadCalendarWorkspace(el) {
     },
     panes: [{id:'dash',label:'Дашборд'}, {id:'table',label:'Таблица'}, {id:'goals',label:'Цели'}, {id:'notes',label:'Заметки'}],
     renderDash: (pane) => {
-      pane.innerHTML = '<div data-calendar-now></div><div data-calendar-tasks></div>';
+      pane.innerHTML = '<div data-calendar-day-banner></div><div data-calendar-now></div><div data-calendar-tasks></div><div data-calendar-recurring></div>';
+      disposeDayBanner = mountCalendarDayBanner(pane.querySelector('[data-calendar-day-banner]'),{invoke});
+      disposeRecurring = mountCalendarRecurring(pane.querySelector('[data-calendar-recurring]'), { invoke, showCompleted:preferences.showCompleted });
       disposeTasks = mountCalendarDashboardTasks(pane.querySelector('[data-calendar-tasks]'), { invoke, mountMenu: mountRecordMenu, openTask: (row, returnFocus) => showRecord(calendarRecord(row), returnFocus) });
       disposeNow = mountCalendarNow(pane.querySelector('[data-calendar-now]'), {
+        openGoalDetails:openGoalDevelopment,
+        mountGoalSummary:(host,goal)=>mountGoalDevelopmentSummary(host,{invoke,goalId:goal.id,onOpen:()=>openGoalDevelopment(goal)}),
         openTaskDetails: (row, restore) => showRecord(calendarRecord({ ...row, date: row.date || row.completion_date || null }), restore),
         openGoals: async id => {
           await openPane('goals');
@@ -445,7 +488,7 @@ export async function loadCalendarWorkspace(el) {
     renderTable: mountCalendarTable,
     renderGoals: async (pane) => {
       const revision = workspaceRevision;
-      const dispose = await mountCalendarGoals(pane, { onCreateTask: goal => {
+      const dispose = await mountCalendarGoals(pane, { onOpenGoal:openGoalDevelopment, onCreateTask: goal => {
         if (!goal || revision !== workspaceRevision || !pane.isConnected) return;
         showCalendarCreateModal(null, { initialNoDate: true, goalId: goal.goalId, goalTitle: goal.path || goal.title, returnFocus: () => pane.querySelector(`[data-goal-id="${goal.goalId}"] [data-edit-goal]`)?.focus(), isCurrent: () => revision === workspaceRevision && pane.isConnected && S.activeTab === 'calendar' });
       }, onSelectGoal: async goalId => {

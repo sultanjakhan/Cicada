@@ -101,7 +101,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
 
   const initDate = taskId != null ? task?.date || '' : event?.date || initialDate || S.selectedCalendarDate || localNowParts().date;
   const initTime = event?.time || options.initialTime || currentLocalTime();
-  const initTitle = task?.title || event?.title || '';
+  const initTitle = task?.title || event?.title || options.initialTitle || '';
   const initDesc = event?.description || '';
   const initCat = event?.category || 'general';
   const initPri = event?.priority ?? 0;
@@ -110,6 +110,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
   let savedEventId = taskId ?? (isEdit ? String(eventId) : null);
   let savedVersion = task?.version ?? event?.version ?? null;
   let changed = false;
+  let acknowledgedTask = null;
   let persistedGoalId = task?.goal_id ?? null;
   let goalsReady = false;
   let endDateExpanded = initEnd.date !== initDate;
@@ -459,7 +460,19 @@ export async function showEventModal(eventId = null, initialDate = null, options
       if (desiredGoalId != null && !availableGoalIds.has(String(desiredGoalId))) { showError('Связанная цель недоступна. Выбери другую цель или «Без цели».', goalSelect); return; }
       setPending(true);
       try {
-        savedEventId = await invoke('save_calendar_task', { id: savedEventId, title, dueDate, estimateMinutes, goalId: desiredGoalId, expectedVersion: savedVersion });
+        if (!acknowledgedTask) {
+          savedEventId = await invoke('save_calendar_task', { id: savedEventId, title, dueDate, estimateMinutes, goalId: desiredGoalId, expectedVersion: savedVersion });
+          acknowledgedTask = { id:savedEventId, goalId:desiredGoalId };
+        }
+        if (options.onTaskSaved) {
+          try { await options.onTaskSaved(acknowledgedTask); }
+          catch (error) {
+            changed = true; notifyChange(); setPending(false);
+            overlay.querySelectorAll('input,select,textarea,[data-editor-type]').forEach(field=>{field.disabled=true;});
+            showError('Задача сохранена, но связь с навыком не записана. Повтори сохранение — вторая задача не создастся. '+error);
+            return;
+          }
+        }
         changed = true; overlay.remove(); notifyChange();
       } catch (error) { setPending(false); showError('Не удалось сохранить задачу. Введённые данные сохранены в форме: ' + error); }
       return;

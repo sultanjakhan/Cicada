@@ -1,5 +1,13 @@
 # Hanni MVP
 
+Owner scope update, 2026-09-13: apply the approved goal-development prototype to
+MVP DEV, including generic Hard/Soft/topic skills, evidence, stage subsets and
+deadlines, plus recurring actions and rules. Exclude quantitative daily norms.
+These stay inside Calendar, with no additional Routine project. New profiles are
+empty; the approved matrix belongs in the owner's local data, never a shipped
+seed. Settings use explicit Save/Cancel and native snapshot persistence. Preserve
+existing task identity/timers when changing development focus or stages.
+
 This is a new, independent repository authorized by the owner on 2026-09-10.
 It has no Git ancestry or writer lock in common with the legacy Hanni repository.
 Do not modify the legacy application, its repositories, data, locks or releases.

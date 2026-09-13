@@ -1,5 +1,42 @@
 # Background UI checks on Windows
 
+## Native DEV goal development and recurring actions, 2026-09-13
+
+The approved prototype workflows are now mounted in the Calendar MVP frontend:
+goal-local skills, Hard/Soft and topics, evidence, stages with a skill subset and
+optional deadline, and the current stage/skill summary. Creating a task from a
+skill uses the existing native task editor and then records an idempotent skill
+relation. A relation retry never creates a second task. The selected task and its
+timer remain owned by the existing Calendar Now controller.
+
+Recurring actions and rules use dated observations and course/weekday bounds;
+quantitative daily metrics were explicitly excluded. Settings use an explicit
+Save/Cancel draft and one acknowledged preferences snapshot, with a read fallback
+to legacy first-day/default-view settings. The day banner writes the existing
+day-start ledger, so the Table and dashboard share the same event.
+
+All new domain records persist through native SQLite `ui_state` commands under
+`calendar_development_v1`, `calendar_recurring_v1` and `calendar_preferences_v1`.
+Fresh profiles stay empty. Competency content and personal/demo records are not
+bundled. Existing legacy daily-norm records remain readable/editable; new goals
+do not offer that old kind in their creation flow.
+
+Validation: 151 JS tests passed, 41 Rust tests passed (one existing test ignored),
+Vite build, privacy guard and vendor integrity passed. Background WebView2 checks
+used the native DEV executable, real IPC and an isolated database: goal/skill/
+stage creation, subset and deadline, task relations, recurring course/rule marks
+and undo, settings Save/Cancel and access from Goals, plus native process restart
+with the same database. A 71-skill fixture verified grouping, search and layout.
+The initial isolation monitor recorded 7,995 samples with no desktop activation.
+The task-link failure/retry case is covered by a DOM test with transport failure;
+it is not claimed as native fault-injection proof.
+
+Machine-local evidence: `.local/background-qa/native-apply-20260913/` and
+`.local/native-apply-*.log`. The owner's DEV profile was backed up separately;
+the approved competency content was applied only to its existing goal, and its
+paused task state was verified unchanged. Owner DEV was read without interaction.
+This is DEV acceptance; the installed release executable was not updated.
+
 Use Microsoft's [Playwright MCP](https://github.com/microsoft/playwright-mcp),
 attached to the **real WebView2 inside the installed MVP** using its
 [documented CDP connection](https://playwright.dev/docs/webview2).

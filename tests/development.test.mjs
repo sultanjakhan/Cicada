@@ -22,11 +22,15 @@ test('normalization retains an active stage, its outcome and its scoped focus', 
   const invalid = normalizeDevelopmentState({ version:1, goals:{ g:{ skills:[{id:'a',title:'A',topic:'T'}], stages:[{id:'s',title:'S',skillIds:['missing'],focusId:'missing'}], activeStageId:'s' } } });
   assert.deepEqual(invalid.goals.g.stages[0].skillIds, []);
   assert.equal(invalid.goals.g.stages[0].focusId, null);
+  assert.equal(normalizeDevelopmentState({ version:1, goals:{ g:{ skills:[], stages:[{id:'bad',title:'Bad',deadline:'2026-02-31',skillIds:[]}] } } }).goals.g.stages.length, 0);
+  assert.throws(() => normalizeDevelopmentState({ version:99, goals:{} }), /Неподдерживаемый/);
 });
 
 test('JSON import accepts generic skills and rejects malformed or empty input', () => {
-  const imported = validateDevelopmentImport(JSON.stringify([{ id:'x', title:'Indexes', topic:'SQL', level:2 }]));
+  const imported = validateDevelopmentImport(JSON.stringify([{ id:'x', title:'Indexes', topic:'SQL', group:'soft', level:2, result:'Show index plan', exercise:'Compare query' }]));
   assert.equal(imported.goals.imported.skills[0].title, 'Indexes');
+  assert.deepEqual({ group:imported.goals.imported.skills[0].group, description:imported.goals.imported.skills[0].description, practice:imported.goals.imported.skills[0].practice }, { group:'soft', description:'Show index plan', practice:'Compare query' });
+  assert.equal(validateDevelopmentImport(JSON.stringify({ skills:[{ id:'a', title:'API error', topic:'API' }] })).goals.imported.skills.length, 1);
   assert.throws(() => validateDevelopmentImport('{'), /JSON/);
   assert.throws(() => validateDevelopmentImport(JSON.stringify({ version:1, goals:{} })), /нет корректных/);
 });
@@ -52,6 +56,22 @@ test('mount persists only after acknowledgement and summary refreshes from event
   const dev = await mountGoalDevelopment(root, { invoke, goal:{id:'g',title:'Goal'}, onCreateTask:value => { task = value; } });
   const sum = await mountGoalDevelopmentSummary(summary, { invoke, goalId:'g', onOpen:() => {} });
   assert.match(summary.textContent, /SQL/);
+  root.querySelector('[data-dev-focus]').click(); await settle();
+  assert.equal(document.querySelectorAll('dialog input[name="development-picker"]').length, 0);
+  const pickerSearch = document.querySelector('dialog [data-dev-picker-search]'); pickerSearch.focus(); pickerSearch.value = 's'; pickerSearch.dispatchEvent(new dom.window.Event('input', { bubbles:true })); await settle();
+  assert.equal(document.activeElement, document.querySelector('dialog [data-dev-picker-search]'));
+  document.querySelector('dialog [data-dev-picker-search]').value = 'sq'; document.querySelector('dialog [data-dev-picker-search]').dispatchEvent(new dom.window.Event('input', { bubbles:true })); await settle();
+  assert.equal(document.activeElement, document.querySelector('dialog [data-dev-picker-search]'));
+  document.querySelector('dialog [data-dev-topic="SQL"]').click(); await settle();
+  assert.equal(document.querySelectorAll('dialog input[name="development-picker"]').length, 1);
+  document.querySelector('dialog').close();
+  root.querySelector('[data-dev-stage-add]').click(); await settle();
+  assert.equal(document.querySelectorAll('dialog input[name="development-picker"]').length, 0);
+  document.querySelector('dialog').close();
+  const matrixSearch = root.querySelector('[data-dev-skill-search]'); matrixSearch.focus(); matrixSearch.value = 's'; matrixSearch.dispatchEvent(new dom.window.Event('input', { bubbles:true })); await settle();
+  assert.equal(document.activeElement, root.querySelector('[data-dev-skill-search]'));
+  root.querySelector('[data-dev-skill-search]').value = 'sq'; root.querySelector('[data-dev-skill-search]').dispatchEvent(new dom.window.Event('input', { bubbles:true })); await settle();
+  assert.equal(document.activeElement, root.querySelector('[data-dev-skill-search]'));
   root.querySelector('[data-dev-evidence="sql"]').click(); await settle();
   const textarea = document.querySelector('dialog textarea[name="evidence"]'); textarea.value = 'accepted query'; document.querySelector('dialog form').dispatchEvent(new dom.window.Event('submit', { bubbles:true, cancelable:true })); await settle(); await settle();
   assert.equal(JSON.parse(stored).goals.g.skills[0].evidence, '');
@@ -63,5 +83,9 @@ test('mount persists only after acknowledgement and summary refreshes from event
   assert.equal(JSON.parse(stored).goals.g.skills[0].evidence, 'accepted query');
   assert.match(summary.textContent, /100%/);
   root.querySelector('[data-dev-task="sql"]').click(); assert.deepEqual(task, { goalId:'g', skillId:'sql', skillTitle:'JOIN' });
+  root.querySelector('[data-dev-remove="sql"]').click(); await settle(); document.querySelector('dialog[open] form').dispatchEvent(new dom.window.Event('submit', { bubbles:true, cancelable:true })); await settle();
+  assert.equal(JSON.parse(stored).goals.g.skills.length, 0);
+  assert.deepEqual(JSON.parse(stored).goals.g.stages[0].skillIds, []);
+  assert.equal(JSON.parse(stored).goals.g.stages[0].focusId, null);
   dev2.dispose(); sum2.dispose(); t.after(() => { root.remove(); summary.remove(); });
 });

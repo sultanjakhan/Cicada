@@ -57,6 +57,7 @@ export function mountCalendarNow(element, dependencies = {}) {
   let goalDialog = null, goalPicker = null;
   let taskListExpanded = false;
   let secondsCommandAvailable = true;
+  let summaryGoalId = undefined, summary = null, summaryRevision = 0;
 
   element.classList.add('calendar-now');
   element.classList.toggle('calendar-now--compact', dependencies.compact === true);
@@ -68,6 +69,7 @@ export function mountCalendarNow(element, dependencies = {}) {
       <p data-ui="goal-stage" class="calendar-now__goal-stage" hidden></p>
       <p data-ui="goal-meta" class="calendar-now__goal-meta" hidden></p>
       <p data-ui="goal-hint" class="calendar-now__goal-hint" hidden></p>
+      <div data-goal-development hidden></div>
       <div class="calendar-now__goal-actions">
         <button type="button" data-action="browse-goals" class="calendar-now__quiet" hidden>Все цели</button>
       </div>
@@ -121,6 +123,7 @@ export function mountCalendarNow(element, dependencies = {}) {
   function openGoalDetails() {
     const goal = selectedGoal();
     if (!goal || disposed) return;
+    if (dependencies.openGoalDetails) { dependencies.openGoalDetails(goal); return; }
     if (goalDialog?.isConnected) return;
     closePicker();
     const modal = document.createElement('dialog'); modal.className = 'calendar-goal-dialog';
@@ -368,6 +371,14 @@ export function mountCalendarNow(element, dependencies = {}) {
     element.dataset.state = currentState; element.dataset.taskKey = keyOf(task); element.dataset.selectionMode = saved.selectionMode;
     ui.card.setAttribute('aria-busy', String(busy || reading));
     const goal = selectedGoal();
+    if (dependencies.mountGoalSummary && summaryGoalId !== (goal?.id ?? null)) {
+      summaryGoalId = goal?.id ?? null;
+      const host = element.querySelector('[data-goal-development]'), own = ++summaryRevision;
+      summary?.dispose(); summary = null; host.replaceChildren(); host.hidden = !goal;
+      if (goal) void dependencies.mountGoalSummary(host, goal).then(mounted => {
+        if (disposed || own !== summaryRevision) mounted?.dispose(); else summary = mounted;
+      }).catch(error => { if (!disposed && own === summaryRevision) host.textContent = error?.message || 'Не удалось загрузить развитие цели.'; });
+    }
     ui['goal-title'].textContent = goal?.title || (!snapshot ? 'Загружаем цель…' : saved.goalId ? 'Выбранная цель недоступна' : 'Выбери, к чему хочешь прийти');
     ui['goal-empty'].textContent = goal ? '' : ui['goal-title'].textContent;
     ui['goal-empty'].hidden = !!goal;
@@ -383,7 +394,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     }
     const isGoalBranch = goal && branch.length > 1 && String(branch[0].id) === String(goal.id);
     ui['goal-stage'].textContent = isGoalBranch ? `Текущий этап: ${branch.slice(1).map(item => item.title).join(' → ')}` : '';
-    ui['goal-stage'].hidden = !isGoalBranch;
+    ui['goal-stage'].hidden = !isGoalBranch || !!dependencies.mountGoalSummary;
     ui['goal-meta'].textContent = goalDateLabel(goal?.deadline) ? `Срок: ${goalDateLabel(goal.deadline)}` : '';
     ui['goal-meta'].hidden = !ui['goal-meta'].textContent;
     ui['goal-hint'].textContent = !snapshot || goal ? '' : saved.goalId ? 'Выбери другую цель или сохрани новую.' : 'Цель можно сохранить без срока и без готового плана.';
@@ -679,6 +690,7 @@ export function mountCalendarNow(element, dependencies = {}) {
   const timer = window.setInterval(() => { if (snapshot && localDate() !== snapshot.date && !busy && !reading) void refresh(); renderTime(); }, 1000);
   void refresh();
   const dispose = () => {
+    summaryRevision++; summary?.dispose();
     disposed = true; stateVersion++; goalDialog?.dispose(); goalPicker?.editor.dispose(); window.clearInterval(timer);
     element.removeEventListener('click', onClick); element.removeEventListener('submit', onSubmit); element.removeEventListener('keydown', onKeydown);
     window.removeEventListener('task-state-changed', onExternal); window.removeEventListener('focus', onExternal);

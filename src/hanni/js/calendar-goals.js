@@ -76,6 +76,11 @@ export async function mountCalendarGoals(element, dependencies = {}) {
         <p class="cp-goal-links">${summary ? `Связано${descendants.length ? ', включая подцели' : ''}: ${escapeHtml(summary)}` : 'Пока без задач — можно вернуться позже'}</p>
         ${goal.deadline ? `<p class="cp-muted">Срок: ${escapeHtml(dateLabel(goal.deadline))}</p>` : ''}</div>`;
       const actions = document.createElement('div'); actions.className = 'cp-card-actions';
+      if (goal.goal_kind === 'goal' && dependencies.onOpenGoal) {
+        const heading = card.querySelector('h3'), title = document.createElement('button');
+        title.type = 'button'; title.className = 'cp-goal-title-link'; title.textContent = goal.title || 'Без названия';
+        title.onclick = () => dependencies.onOpenGoal(goal); heading.replaceChildren(title);
+      }
       if (row.children?.length) {
         const collapse = document.createElement('button'); collapse.type = 'button'; collapse.dataset.goalCollapse = String(goal.id); collapse.setAttribute('aria-expanded', String(!collapsedGoalIds.has(String(goal.id))));
         collapse.textContent = collapsedGoalIds.has(String(goal.id)) ? 'Показать подцели' : 'Свернуть подцели';
@@ -141,7 +146,7 @@ export async function mountCalendarGoals(element, dependencies = {}) {
       <label class="calendar-editor-field" for="${prefix}-new-deadline">Срок · необязательно<input id="${prefix}-new-deadline" name="deadline" type="date"></label>`;
     const extra = document.createElement('div');
     extra.className = 'calendar-goal-fields';
-    extra.innerHTML = `<fieldset><legend>Как учитывать</legend><label><input type="radio" name="goal_kind" value="goal"> Долгосрочная цель</label><label><input type="radio" name="goal_kind" value="daily_norm"> Ежедневная норма</label></fieldset>
+    extra.innerHTML = `<fieldset ${goal?.goal_kind === 'daily_norm' ? '' : 'hidden'}><legend>Как учитывать</legend><label><input type="radio" name="goal_kind" value="goal"> Долгосрочная цель</label><label><input type="radio" name="goal_kind" value="daily_norm"> Ежедневная норма</label></fieldset>
       <label class="calendar-editor-field">Желаемый результат<textarea name="description" maxlength="10000" placeholder="Что должно измениться?"></textarea></label>
       <label class="calendar-editor-field">Критерии — по одному на строку<textarea name="criteria" maxlength="10000" placeholder="Например: самостоятельно описываю API-контракт"></textarea></label>
       <label class="calendar-editor-field calendar-goal-numeric-toggle" data-numeric-toggle><input type="checkbox" name="numeric_progress"> Числовой прогресс</label>

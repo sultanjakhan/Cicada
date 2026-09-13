@@ -1,4 +1,5 @@
 // Local-only bridge for the original Hanni Calendar components.
+import { loadCalendarPreferences } from './calendar-display-preferences.js';
 export function invoke(command, args) {
   if (!window.__TAURI__?.core?.invoke) return Promise.reject(new Error('Требуется установленная Hanni MVP.'));
   return window.__TAURI__.core.invoke(command, args);
@@ -44,5 +45,10 @@ export const TAB_SETTINGS_DEFS = { calendar: [
   ], default: 'Месяц' },
 ] };
 export const tabLoaders = {};
-export async function loadTabSetting(tabId, key) { return invoke('get_app_setting', { key: 'tab_' + tabId + '_' + key }); }
+export async function loadTabSetting(tabId, key) {
+  if (tabId === 'calendar' && ['first_day','default_view'].includes(key)) {
+    return (await loadCalendarPreferences(invoke))[key];
+  }
+  return invoke('get_app_setting', { key: 'tab_' + tabId + '_' + key });
+}
 export async function saveTabSetting(tabId, key, value) { return invoke('set_app_setting', { key: 'tab_' + tabId + '_' + key, value: String(value) }); }
