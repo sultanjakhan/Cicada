@@ -454,7 +454,11 @@ export async function showEventModal(eventId = null, initialDate = null, options
       await invoke('delete_event', { id: String(eventId) });
       overlay.remove();
       window.dispatchEvent(new CustomEvent('hanni:calendar-refresh'));
-    } catch (err) { setPending(false); showError('Не удалось удалить событие: ' + err); }
+    } catch (err) {
+      setPending(false);
+      const message = typeof err === 'string' ? err : err?.message;
+      showError(message === 'event has an active timer' ? 'Сначала поставь событие на паузу, затем удали его.' : 'Не удалось удалить событие: ' + err);
+    }
   });
 
   const submitEvent = async (startNow) => {

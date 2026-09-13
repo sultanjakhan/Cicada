@@ -488,7 +488,10 @@ export function mountCalendarNow(element, dependencies = {}) {
       }
       if (block && !task && state.execution.task.source_type === 'event') {
         task = (await api('get_all_events', {})).find(item => String(item.id) === state.execution.task.source_id);
-        if (!task) throw new Error('missing-event');
+        if (!task) {
+          if (block.is_active) throw new Error('missing-event');
+          state.execution = null; state.selection = null; state.selectionMode = 'auto';
+        }
       }
       if (block && task) {
         const previous = state.execution.task;

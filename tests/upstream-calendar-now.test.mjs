@@ -400,9 +400,14 @@ test('failed persistence after start retries persistence without replaying the m
 
   });
 test('stale Start retry refreshes after an unavailable source without starting again', async t =>{
-   const data = backend(), x = await mount(t, data);
+   const data = backend();
+   const event = data.tasks.find(task => task.source_type === 'event' && task.source_id === 'event-a');
+   event.completed = true; event.status_extra = 'done';
+   data.tasks.push({ source_type: 'note', source_id: 'task-b', title: 'Следующая задача', duration_minutes: 10, priority: 0, category: 'work', completed: false, tracking_mode: 'check', date: null });
+   data.links.push({ source_type: 'note', source_id: 'task-b', goal_id: 'goal-a' });
+   const x = await mount(t, data);
    data.before.set('start_task_block', () =>{
-     const stale = data.tasks.find(task => task.source_type === 'event' && task.source_id === 'event-a');
+     const stale = data.tasks.find(task => task.source_type === 'note' && task.source_id === 'task-a');
      stale.completed = true; stale.status_extra = 'done';
      throw new Error('source record not found');
 
@@ -413,14 +418,31 @@ test('stale Start retry refreshes after an unavailable source without starting a
    assert.equal(x.ui('error').hidden, false);
    await x.click('retry');
    assert.equal(data.count('start_task_block'), 1, 'retry only refreshes a stale Start');
-   assert.equal(x.host.dataset.taskKey, 'note:task-a');
+   assert.equal(x.host.dataset.taskKey, 'note:task-b');
    assert.equal(x.host.dataset.state, 'recommendation');
    assert.equal(x.ui('error').hidden, true);
    assert.equal(x.action('start').disabled, false);
 
   });
 
-test('global active task on another date blocks goal switching and a concurrent different task is never stopped', async t =>{
+test('a deleted paused event clears stale execution and retains its closed history', async t =>{
+   const initial = blank();
+   initial.execution = { blockId: 77, date: '2026-09-05', task: { source_type: 'event', source_id: 'event-a', title: 'Удалённое событие', completion_date: '2026-09-05' } };
+   initial.selection = { source_type: 'event', source_id: 'event-a' }; initial.selectionMode = 'manual';
+   const data = backend(initial);
+   data.tasks = data.tasks.filter(task => task.source_type !== 'event');
+   data.links = data.links.filter(link => link.source_type !== 'event');
+   data.blocks.push({ id: 77, date: '2026-09-05', start_time: '09:00', source_type: 'event', source_id: 'event-a', is_active: false, duration_minutes: 12 });
+   const x = await mount(t, data);
+   assert.equal(x.host.dataset.state, 'recommendation');
+   assert.equal(x.host.dataset.taskKey, 'note:task-a');
+   assert.equal(JSON.parse(data.stored).execution, null);
+   assert.equal(JSON.parse(data.stored).selection, null);
+   assert.equal(data.blocks[0].duration_minutes, 12, 'closed history remains available to storage');
+   await x.refresh();
+   assert.equal(JSON.parse(data.stored).execution, null);
+
+  });test('global active task on another date blocks goal switching and a concurrent different task is never stopped', async t =>{
    const data = backend();
    data.blocks.push({
      id: 90, date: '2026-09-04', start_time: '23:58', source_type: 'note', source_id: 'task-a', is_active: true, duration_minutes: 0
