@@ -566,13 +566,31 @@ pub fn save_calendar_goal(
     {
         return Err(fail("invalid goal"));
     }
-    let conn = lock(&state)?;
+    let mut conn = lock(&state)?;
+    let existing = id.is_some();
     let id = id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    let goal_kind = goal_kind.unwrap_or_else(|| "goal".into());
+    let transaction = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| fail(e.to_string()))?;
+    let previous_kind = if existing {
+        Some(
+            transaction
+                .query_row(
+                    "SELECT goal_kind FROM calendar_goals WHERE id=?1",
+                    [&id],
+                    |r| r.get::<_, String>(0),
+                )
+                .map_err(|_| fail("goal not found"))?,
+        )
+    } else {
+        None
+    };
     if let Some(parent) = parent_goal_id.as_deref() {
         if clear_parent || parent == id {
             return Err(fail("goal cannot be its own parent"));
         }
-        let exists: bool = conn
+        let exists: bool = transaction
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM calendar_goals WHERE id=?1)",
                 [parent],
@@ -582,13 +600,24 @@ pub fn save_calendar_goal(
         if !exists {
             return Err(fail("parent goal not found"));
         }
-        let cycle: bool=conn.query_row("WITH RECURSIVE descendants(id) AS (SELECT id FROM calendar_goals WHERE parent_goal_id=?1 UNION ALL SELECT g.id FROM calendar_goals g JOIN descendants d ON g.parent_goal_id=d.id) SELECT EXISTS(SELECT 1 FROM descendants WHERE id=?2)",params![id,parent],|r|r.get(0)).map_err(|e|fail(e.to_string()))?;
+        let cycle: bool=transaction.query_row("WITH RECURSIVE descendants(id) AS (SELECT id FROM calendar_goals WHERE parent_goal_id=?1 UNION ALL SELECT g.id FROM calendar_goals g JOIN descendants d ON g.parent_goal_id=d.id) SELECT EXISTS(SELECT 1 FROM descendants WHERE id=?2)",params![id,parent],|r|r.get(0)).map_err(|e|fail(e.to_string()))?;
         if cycle {
             return Err(fail("goal parent would create a cycle"));
         }
     }
     let n = now();
-    conn.execute("INSERT INTO calendar_goals(id,title,target_value,current_value,unit,deadline,goal_kind,description,criteria,parent_goal_id,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?11) ON CONFLICT(id) DO UPDATE SET title=excluded.title,target_value=excluded.target_value,current_value=excluded.current_value,unit=excluded.unit,deadline=excluded.deadline,goal_kind=excluded.goal_kind,description=excluded.description,criteria=excluded.criteria,parent_goal_id=excluded.parent_goal_id,updated_at=excluded.updated_at",params![id,title.trim(),target_value,current_value,unit,deadline,goal_kind.unwrap_or_else(||"goal".into()),description,criteria,if clear_parent{None}else{parent_goal_id},n]).map_err(|e|fail(e.to_string()))?;
+    if existing {
+        let changed = transaction.execute("UPDATE calendar_goals SET title=?1,target_value=?2,current_value=?3,unit=?4,deadline=?5,goal_kind=?6,description=?7,criteria=?8,parent_goal_id=?9,updated_at=?10 WHERE id=?11",params![title.trim(),target_value,current_value,unit,deadline,goal_kind,description,criteria,if clear_parent{None}else{parent_goal_id},n,&id]).map_err(|e|fail(e.to_string()))?;
+        if changed != 1 {
+            return Err(fail("goal not found"));
+        }
+        if previous_kind.as_deref() != Some("daily_norm") && goal_kind == "daily_norm" {
+            transaction.execute("UPDATE calendar_goals SET parent_goal_id=NULL,updated_at=?1 WHERE parent_goal_id=?2",params![now(),&id]).map_err(|e|fail(e.to_string()))?;
+        }
+    } else {
+        transaction.execute("INSERT INTO calendar_goals(id,title,target_value,current_value,unit,deadline,goal_kind,description,criteria,parent_goal_id,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?11)",params![&id,title.trim(),target_value,current_value,unit,deadline,goal_kind,description,criteria,if clear_parent{None}else{parent_goal_id},n]).map_err(|e|fail(e.to_string()))?;
+    }
+    transaction.commit().map_err(|e| fail(e.to_string()))?;
     Ok(id)
 }
 #[tauri::command]

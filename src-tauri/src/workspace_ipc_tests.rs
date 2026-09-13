@@ -495,6 +495,28 @@ fn seed_goal_tree(conn: &Connection) {
         INSERT INTO calendar_task_goals(source_type,source_id,goal_id,created_at) VALUES('note','child-task','child','original');").unwrap();
 }
 
+fn save_goal(
+    view: &tauri::WebviewWindow<MockRuntime>,
+    id: Value,
+    title: &str,
+    goal_kind: &str,
+) -> Result<Value, Value> {
+    call(
+        view,
+        "save_calendar_goal",
+        json!({"id":id,"title":title,"targetValue":1.0,
+        "unit":"","deadline":null,"goalKind":goal_kind,"description":"","criteria":"",
+        "parentGoalId":null,"clearParent":false,"currentValue":null}),
+    )
+}
+
+fn convert_goal_to_daily_norm(
+    view: &tauri::WebviewWindow<MockRuntime>,
+    id: &str,
+) -> Result<Value, Value> {
+    save_goal(view, json!(id), "Daily parent", "daily_norm")
+}
+
 #[test]
 fn deleting_parent_goal_promotes_only_direct_children_and_preserves_tasks() {
     let (app, view) = fixture();
@@ -587,6 +609,112 @@ fn failed_parent_deletion_restores_children_and_task_links() {
         mutation_snapshot(&app.state::<AppState>().0.lock().unwrap()),
         before
     );
+}
+
+#[test]
+fn converting_parent_goal_to_daily_norm_promotes_only_direct_children() {
+    let (app, view) = fixture();
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        seed_goal_tree(&conn);
+        conn.execute_batch("INSERT INTO calendar_task_goals(source_type,source_id,goal_id,created_at) VALUES('event','event-a','child','original');").unwrap();
+    }
+    convert_goal_to_daily_norm(&view, "goal-a").unwrap();
+    let state = app.state::<AppState>();
+    let conn = state.0.lock().unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT goal_kind FROM calendar_goals WHERE id='goal-a'",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "daily_norm"
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT parent_goal_id FROM calendar_goals WHERE id='child'",
+            [],
+            |r| r.get::<_, Option<String>>(0)
+        )
+        .unwrap(),
+        None
+    );
+    assert_ne!(
+        conn.query_row(
+            "SELECT updated_at FROM calendar_goals WHERE id='child'",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "original"
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT parent_goal_id FROM calendar_goals WHERE id='grandchild'",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "child"
+    );
+    assert_eq!(
+        conn.query_row("SELECT goal_id FROM calendar_task_goals WHERE source_type='note' AND source_id='child-task'", [], |r| r.get::<_, String>(0)).unwrap(),
+        "child"
+    );
+    assert_eq!(
+        conn.query_row("SELECT goal_id FROM calendar_task_goals WHERE source_type='event' AND source_id='event-a'", [], |r| r.get::<_, String>(0)).unwrap(),
+        "child"
+    );
+}
+
+#[test]
+fn failed_daily_norm_conversion_rolls_back_parent_and_children_then_allows_retry() {
+    let (app, view) = fixture();
+    let before = {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        seed_goal_tree(&conn);
+        conn.execute_batch("CREATE TRIGGER reject_daily_child_promotion BEFORE UPDATE ON calendar_goals WHEN OLD.id='child' AND NEW.parent_goal_id IS NULL BEGIN SELECT RAISE(ABORT,'injected child promotion failure'); END;").unwrap();
+        mutation_snapshot(&conn)
+    };
+    let error = convert_goal_to_daily_norm(&view, "goal-a").unwrap_err();
+    assert!(error
+        .as_str()
+        .unwrap()
+        .contains("injected child promotion failure"));
+    assert_eq!(
+        mutation_snapshot(&app.state::<AppState>().0.lock().unwrap()),
+        before
+    );
+    {
+        let state = app.state::<AppState>();
+        state
+            .0
+            .lock()
+            .unwrap()
+            .execute_batch("DROP TRIGGER reject_daily_child_promotion;")
+            .unwrap();
+    }
+    convert_goal_to_daily_norm(&view, "goal-a").unwrap();
+    assert!(app.state::<AppState>().0.lock().unwrap().is_autocommit());
+}
+
+#[test]
+fn deleted_goal_rejects_stale_save_while_valid_create_and_edit_succeed() {
+    let (app, view) = fixture();
+    let id = save_goal(&view, Value::Null, "Original", "goal").unwrap();
+    save_goal(&view, id.clone(), "Edited", "goal").unwrap();
+    call(&view, "delete_goal", json!({"id":id.clone()})).unwrap();
+    let after_delete = mutation_snapshot(&app.state::<AppState>().0.lock().unwrap());
+    assert!(save_goal(&view, id, "Stale", "goal").is_err());
+    assert_eq!(
+        mutation_snapshot(&app.state::<AppState>().0.lock().unwrap()),
+        after_delete
+    );
+    let created = save_goal(&view, Value::Null, "Created", "goal").unwrap();
+    assert_ne!(created, Value::Null);
 }
 
 #[test]
