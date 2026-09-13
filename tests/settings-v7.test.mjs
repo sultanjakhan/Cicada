@@ -1,3 +1,6 @@
 ﻿import test from 'node:test';import assert from 'node:assert/strict';
-const source=await import('../src/hanni/js/calendar-display-preferences.js');
-test('preferences normalise and store atomically',async()=>{let writes=[];globalThis.window={__TAURI__:{core:{invoke:async(c,a)=>{if(c==='set_ui_state'){writes.push(a);return;}return JSON.stringify({first_day:'sun',density:'compact',showCompleted:true,default_view:'Неделя'});}}}};const saved=await source.saveCalendarPreferences({first_day:'sun',density:'compact',showCompleted:true,default_view:'Неделя'});assert.equal(writes.length,1);assert.equal(writes[0].key,'calendar_preferences_v1');assert.equal(saved.first_day,'sun');});
+const m=await import('../src/hanni/js/calendar-display-preferences.js');
+test('legacy fallback',async()=>{const calls=[];const p=await m.loadCalendarPreferences(async(c,a)=>{calls.push(c);return c==='get_ui_state'?null:(a.key.endsWith('first_day')?'sun':'Неделя')});assert.equal(p.first_day,'sun');assert.equal(p.default_view,'Неделя');assert.deepEqual(calls,['get_ui_state','get_app_setting','get_app_setting']);});
+test('invalid snapshot rejects without write',async()=>{await assert.rejects(()=>m.loadCalendarPreferences(async()=>'{bad'));});
+test('save one acknowledged write',async()=>{let n=0;await m.saveCalendarPreferences({version:1,first_day:'mon',default_view:'Месяц',density:'compact',showCompleted:false},async c=>{if(c==='set_ui_state')n++});assert.equal(n,1);});
+test('save failure is not acknowledged',async()=>{await assert.rejects(()=>m.saveCalendarPreferences({},async()=>{throw Error('down')}));});
