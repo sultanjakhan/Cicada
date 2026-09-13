@@ -30,6 +30,7 @@
 .calendar-goal-dialog dd { margin: 0; font-variant-numeric: tabular-nums; }
 .calendar-goal-dialog button { min-height: 44px; padding: 8px 18px; margin-top: 18px; font: inherit; border: 1px solid var(--border-default); border-radius: 8px; color: var(--text-primary); background: var(--bg-card); cursor: pointer; }
 .calendar-goal-dialog :focus-visible { outline: 2px solid var(--cn-green-text, #216e4e); outline-offset: 3px; }
+.calendar-goal-dialog h2:focus { outline:none; }
 [data-theme="dark"] .calendar-now { --cn-goal-surface: #20372b; }
 [data-theme="dark"] .calendar-goal-dialog { --cn-green-text: #8acfa9; }
 @media (max-width: 600px) {

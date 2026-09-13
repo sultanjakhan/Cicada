@@ -263,3 +263,28 @@ privacy checks are separate from this native evidence. No release installation
 or publication was performed. The existing DEV favicon 404 remains. Local
 reproduction scripts and results use `.local/dev/dashboard-links-*` and
 `.local/dev/dashboard-frame-*`.
+
+### Header action placement and task title, 2026-09-13
+
+The owner clarified Create should sit directly below the Calendar icon/title,
+aligned left and above the pane tabs. It remains outside the scrolling content
+and opens the same Task/Event form. Now opens details from its task title with
+an arrow and keyboard focus instead of a separate Open task button. Closing
+details returns focus to that title and does not alter execution. Empty states
+remain plain text, without an unusable title action.
+
+Goal copy now distinguishes dashboard selection from completion: the dialog
+says Shown on dashboard, and the empty badge explicitly says Main goal not
+selected. The focused static dialog heading no longer looks like an edit field.
+
+114 JavaScript tests, privacy and build passed. Native DEV MCP verified the
+fixed left placement, shared creation, keyboard task-title opening, unchanged
+timer state, focus return, goal copy and 640px layout. Wide, narrow and modal
+screenshots were inspected; the user's DEV was checked read-only through CDP.
+The background desktop stayed inactive. Evidence is under the ignored
+`.local/dev/header-actions-*` and existing `home-ux-20260912` QA profile.
+
+The missing Start day action was inspected, not implemented: this MVP only
+projects `calendar_day_start_v1`; it has no writer or CTA. The historical action
+records confirmed actual rising, separate from sleep end. Whether the requested
+action retains that meaning or opens daily planning was asked separately.

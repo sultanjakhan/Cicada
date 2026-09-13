@@ -1052,7 +1052,7 @@ test('closing details after the selected goal becomes unavailable restores the a
   });
 test('no goal and unavailable goal keep selection upstairs and an empty saved goal remains valid', async t =>{
    const none = await mount(t, backend(null));
-   assert.equal(none.ui('goal-status').textContent, 'Не выбрана');
+   assert.equal(none.ui('goal-status').textContent, 'Главная цель не выбрана');
    assert.equal(none.action('goal-details').hidden, true);
    assert.equal(none.action('open-goal').classList.contains('calendar-now__primary'), true);
    assert.equal(none.action('choose-goal').hidden, true);
@@ -1062,7 +1062,7 @@ test('no goal and unavailable goal keep selection upstairs and an empty saved go
    const unavailable = backend({
      ...blank(), goalId: 'missing'
       }), missing = await mount(t, unavailable);
-   assert.equal(missing.ui('goal-status').textContent, 'Недоступна');
+   assert.equal(missing.ui('goal-status').textContent, 'Цель недоступна');
    assert.equal(missing.action('goal-details').hidden, true);
    assert.equal(missing.action('open-goal').disabled, false);
    assert.equal(unavailable.count('start_task_block'), 0);
@@ -1196,6 +1196,8 @@ test('details remain accessible during work and after completion with the real s
    const opened = [], x = await mount(t, backend(),{
      openTaskDetails: row => opened.push(row)
       });
+   assert.ok(x.action('task-details').closest('h2'));
+   assert.equal(x.host.querySelector('.calendar-now__actions [data-action="task-details"]'), null);
    await x.click('start');
    await x.click('task-details');
    assert.equal(opened.at(-1).is_active, true);

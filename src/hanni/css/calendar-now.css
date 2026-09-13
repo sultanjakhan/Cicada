@@ -20,6 +20,11 @@
 .calendar-now .calendar-now__button-icon { display: inline-flex; flex: 0 0 16px; width: 16px; height: 16px; }
 .calendar-now [data-action-label] { min-width: 0; }
 .calendar-now button:disabled { cursor: default; opacity: .55; }
+.calendar-now button.calendar-now__task-link { display:flex; align-items:center; justify-content:space-between; gap:20px; width:100%; min-height:0; padding:0; border:0; border-radius:4px; color:inherit; background:transparent; text-align:left; font:inherit; line-height:inherit; }
+.calendar-now .calendar-now__task-link > [data-ui="title"] { min-width:0; }
+.calendar-now .calendar-now__task-link .calendar-now__button-icon { flex:0 0 20px; width:20px; height:20px; color:var(--cn-muted); }
+.calendar-now .calendar-now__task-link .calendar-now__button-icon svg { width:20px; height:20px; }
+.calendar-now .calendar-now__task-link:not(:disabled):hover > [data-ui="title"] { text-decoration:underline; text-decoration-thickness:1px; text-underline-offset:4px; }
 .calendar-now .calendar-now__primary { background: var(--cn-green); color: #fff; }
 .calendar-now .calendar-now__secondary { border-color: var(--cn-line); color: var(--cn-text); background: var(--cn-surface); }
 .calendar-now .calendar-now__quiet { color: var(--cn-text); background: transparent; flex-shrink: 0; }

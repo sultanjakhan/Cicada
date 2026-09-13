@@ -74,7 +74,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     <section class="calendar-now__card" data-ui="card" tabindex="-1" aria-labelledby="${prefix}-title" aria-busy="true">
       <p class="calendar-now__eyebrow">Сейчас</p>
       <p data-ui="status" class="calendar-now__status" hidden></p>
-      <h2 id="${prefix}-title" data-ui="title"></h2>
+      <h2 id="${prefix}-title"><button type="button" data-action="task-details" class="calendar-now__task-link" aria-haspopup="dialog" hidden><span data-ui="title"></span><span class="calendar-now__button-icon" aria-hidden="true">${ICONS.arrowRight}</span></button><span data-ui="title-empty"></span></h2>
       <p data-ui="meta" class="calendar-now__meta"></p>
       <p data-ui="support" class="calendar-now__support" hidden></p>
       <div class="calendar-now__actions">
@@ -82,7 +82,6 @@ export function mountCalendarNow(element, dependencies = {}) {
         <button type="button" data-action="pause" class="calendar-now__primary" hidden>${buttonContent('pause', 'Пауза')}</button>
         <button type="button" data-action="finish" class="calendar-now__secondary" hidden>${buttonContent('check', 'Завершить')}</button>
         <button type="button" data-action="open-task" class="calendar-now__secondary" aria-controls="${prefix}-tasks" aria-expanded="false" hidden>${buttonContent('switch', 'Сменить задачу')}</button>
-        <button type="button" data-action="task-details" class="calendar-now__secondary" hidden>Открыть задачу</button>
         <button type="button" data-action="next" class="calendar-now__primary" hidden>${buttonContent('arrowRight', 'Следующая задача')}</button>
         <button type="button" data-action="choose-goal" class="calendar-now__primary" hidden>${buttonContent('target', 'Выбрать цель')}</button>
         <button type="button" data-action="calendar" class="calendar-now__secondary" hidden>${buttonContent('calendar', 'Открыть календарь')}</button>
@@ -126,7 +125,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     let restore = true;
     const heading = document.createElement('h2'); heading.id = `${prefix}-goal-detail-title`; heading.textContent = goal.title; heading.tabIndex = -1;
     modal.setAttribute('aria-labelledby', heading.id);
-    const status = document.createElement('p'); status.className = 'calendar-goal-dialog__status'; status.textContent = 'Выбрана главной';
+    const status = document.createElement('p'); status.className = 'calendar-goal-dialog__status'; status.textContent = 'Показана на дашборде';
     const date = document.createElement('p'); date.textContent = goalDateLabel(goal.deadline) ? `Срок: ${goalDateLabel(goal.deadline)}` : 'Срок не задан';
     const header = document.createElement('header'); header.className = 'calendar-goal-dialog__header';
     const label = document.createElement('p'); label.textContent = 'Главная цель';
@@ -354,7 +353,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     ui['goal-title'].textContent = goal?.title || (!snapshot ? 'Загружаем цель…' : saved.goalId ? 'Выбранная цель недоступна' : 'Выбери, к чему хочешь прийти');
     ui['goal-empty'].textContent = goal ? '' : ui['goal-title'].textContent;
     ui['goal-empty'].hidden = !!goal;
-    ui['goal-status'].textContent = !snapshot || goal ? '' : saved.goalId ? 'Недоступна' : 'Не выбрана';
+    ui['goal-status'].textContent = !snapshot || goal ? '' : saved.goalId ? 'Цель недоступна' : 'Главная цель не выбрана';
     ui['goal-status'].hidden = !snapshot || !!goal;
     const linkedGoal = snapshot?.links.find(link => keyOf(link) === keyOf(task));
     const branch = [], visited = new Set();
@@ -385,10 +384,15 @@ export function mountCalendarNow(element, dependencies = {}) {
     const status = { active: 'В работе', paused: 'На паузе', completed: 'Завершено' }[currentState];
     ui.status.textContent = status || ''; ui.status.hidden = !status;
     ui.title.textContent = task?.title || (!snapshot ? 'Загружаем «Сейчас»…' : !selectedGoal() ? 'Выбери главную цель выше — здесь появится задача.' : 'Для этой цели пока нет подходящей задачи.');
+    const canOpenTask = !!task && !!dependencies.openTaskDetails;
+    actions['task-details'].hidden = !canOpenTask;
+    actions['task-details'].disabled = busy || reading || !!failure;
+    actions['task-details'].title = canOpenTask ? 'Открыть задачу' : '';
+    ui['title-empty'].textContent = canOpenTask ? '' : ui.title.textContent;
+    ui['title-empty'].hidden = canOpenTask;
     ui.support.hidden = currentState !== 'empty' || !selectedGoal();
     ui.support.textContent = selectedGoal() ? 'Свяжи задачу с целью в календаре. Запуск остаётся твоим решением.' : '';
     const visible = currentState === 'active' ? ['pause', 'finish'] : currentState === 'paused' ? ['start', 'finish'] : currentState === 'completed' ? ['next'] : currentState === 'recommendation' ? ['start', 'open-task'] : currentState === 'empty' && selectedGoal() ? ['calendar'] : [];
-    if (task && dependencies.openTaskDetails) visible.push('task-details');
     for (const button of ui.card.querySelectorAll('.calendar-now__actions button')) {
       button.hidden = !visible.includes(button.dataset.action); button.disabled = busy || reading || !!failure;
     }
@@ -584,7 +588,9 @@ export function mountCalendarNow(element, dependencies = {}) {
     if (action === 'open-task') { openPicker('task', button); return; }
     if (action === 'task-details') {
       const task = chosenTask();
-      if (task) dependencies.openTaskDetails?.({ ...task, completed: !!saved.completed, is_active: currentState === 'active', status_extra: saved.completed ? 'done' : 'task', actual_minutes: elapsedMinutes() }, () => actions['task-details'].focus());
+      if (task) dependencies.openTaskDetails?.({ ...task, completed: !!saved.completed, is_active: currentState === 'active', status_extra: saved.completed ? 'done' : 'task', actual_minutes: elapsedMinutes() }, () => {
+        if (!disposed && element.isConnected) (actions['task-details'].hidden ? ui.card : actions['task-details']).focus();
+      });
       return;
     }
     if (action === 'goal-details') { openGoalDetails(); return; }

@@ -84,8 +84,9 @@ export async function renderUnifiedLayout(el, tabId, config = {}) {
       <h1 class="uni-header-name${config.editableHeader === false ? ' uni-header-name--static' : ''}"${config.editableHeader === false ? '' : ' title="Изменить название"'}>${escapeHtml(name)}</h1>
       ${config.hideDescription ? '' : `<div class="uni-header-desc" title="Изменить описание">${desc ? escapeHtml(desc) : '<span style="opacity:0.4">Добавить описание…</span>'}</div>`}
     </div>
+    ${actionsHtml ? `<div class="uni-header-actions">${actionsHtml}</div>` : ''}
     ${config.headerExtra || ''}
-    <div class="uni-navigation"><div class="uni-tabs" aria-label="Разделы календаря">${tabsHtml}</div>${actionsHtml ? `<div class="uni-header-actions">${actionsHtml}</div>` : ''}</div>
+    <div class="uni-navigation"><div class="uni-tabs" aria-label="Разделы календаря">${tabsHtml}</div></div>
     <div class="uni-content"><div class="uni-pane" id="uni-pane-${tabId}"></div></div>`;
   if (config.editableHeader !== false) wireHeaderEdit(el, tabId, config, meta, defaults, revision);
   (config.toolbarActions || []).forEach((action, index) => el.querySelector(`[data-action-idx="${index}"]`)?.addEventListener('click', event => { event.stopPropagation(); action.onClick?.(event.currentTarget); }));

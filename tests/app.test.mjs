@@ -77,11 +77,13 @@ test('upstream mobile mode enables its CSS and closes the drawer through its bac
   assert.equal(w.document.querySelector('.drawer-backdrop').classList.contains('visible'), false);
 });
 
-test('one persistent navigation action opens the shared Task/Event editor and restores focus', async t => {
+test('one persistent action below the Calendar heading opens the shared Task/Event editor and restores focus', async t => {
   const { w, click } = await launch(t);
   assert.equal(w.document.querySelector('[data-overview-create]'), null);
   const trigger = w.document.querySelector('[data-calendar-create]');
-  assert.ok(trigger.closest('.uni-navigation'));
+  assert.ok(trigger.closest('.uni-header-actions'));
+  assert.equal(trigger.closest('.uni-header-actions').previousElementSibling.className, 'uni-header');
+  assert.equal(trigger.closest('.uni-header-actions').nextElementSibling.className, 'uni-navigation');
   assert.equal(w.document.querySelector('#tab-bar [data-calendar-create]'), null);
   assert.equal(w.document.querySelector('.uni-header-desc'), null);
   assert.equal(trigger.closest('.uni-content'), null);

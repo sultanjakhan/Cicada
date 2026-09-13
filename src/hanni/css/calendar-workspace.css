@@ -3,6 +3,7 @@
 /* Fixed heading/navigation; the workspace scrollbar stays at the window edge. */
 #calendar-content.calendar-workspace { --workspace-inset:24px; display:flex; flex-direction:column; min-height:0; overflow:hidden; padding:0; }
 #calendar-content.calendar-workspace > .uni-header,
+#calendar-content.calendar-workspace > .uni-header-actions,
 #calendar-content.calendar-workspace > .uni-navigation { flex-shrink:0; }
 #calendar-content.calendar-workspace > .uni-content { min-height:0; overflow-y:auto; overflow-x:hidden; scrollbar-gutter:stable; padding:16px var(--workspace-inset) 40px; }
 #calendar-content.calendar-workspace .calendar-panels { max-width:none; margin-left:0; margin-right:0; }
@@ -22,7 +23,7 @@
 .calendar-workspace .uni-header-desc { grid-column:2 / -1; grid-row:2; min-width:0; margin:0; overflow-wrap:anywhere; }
 .calendar-workspace .uni-navigation { display:flex; align-items:center; gap:20px; margin:0 var(--workspace-inset); border-bottom:1px solid var(--border-default); }
 #calendar-content.calendar-workspace .uni-navigation .uni-tabs { flex:0 1 auto; min-width:0; margin:0; border:0; }
-.calendar-workspace .uni-header-actions { position:static; display:flex; flex:none; margin:0 0 0 auto; padding:0; }
+.calendar-workspace .uni-header-actions { position:static; display:flex; flex:none; margin:0 var(--workspace-inset) 12px; padding:0; }
 .calendar-workspace .uni-header-action { display:inline-flex; align-items:center; flex:none; gap:8px; min-height:40px; margin:0 0 4px; padding:8px 14px; border:1px solid var(--border-default); border-radius:8px; background:var(--bg-card); color:var(--text-primary); font:inherit; font-size:14px; font-weight:600; white-space:nowrap; }
 .calendar-workspace .uni-header-action:hover { background:var(--bg-hover); border-color:var(--border-hover); }
 .calendar-workspace .uni-header-action:focus-visible { outline:2px solid var(--text-primary); outline-offset:3px; }
