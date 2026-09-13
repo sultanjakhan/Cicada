@@ -194,16 +194,34 @@ pub fn update_event(
 }
 #[tauri::command]
 pub fn delete_event(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    let conn = lock(&state)?;
-    if conn
-        .execute("DELETE FROM items WHERE id=?1 AND kind='event'", [id])
-        .map_err(|e| fail(e.to_string()))?
-        == 1
-    {
-        Ok(())
-    } else {
-        Err(fail("event not found"))
+    let mut conn = lock(&state)?;
+    let transaction = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| fail(e.to_string()))?;
+    let active: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM timeline_blocks WHERE source_type='event' AND source_id=?1 AND is_active=1)",
+            [&id],
+            |r| r.get(0),
+        )
+        .map_err(|e| fail(e.to_string()))?;
+    if active {
+        return Err(fail("event has an active timer"));
     }
+    transaction
+        .execute(
+            "DELETE FROM calendar_task_goals WHERE source_type='event' AND source_id=?1",
+            [&id],
+        )
+        .map_err(|e| fail(e.to_string()))?;
+    let affected = transaction
+        .execute("DELETE FROM items WHERE id=?1 AND kind='event'", [&id])
+        .map_err(|e| fail(e.to_string()))?;
+    if affected != 1 {
+        return Err(fail("event not found"));
+    }
+    transaction.commit().map_err(|e| fail(e.to_string()))?;
+    Ok(())
 }
 
 #[tauri::command(rename_all = "camelCase")]

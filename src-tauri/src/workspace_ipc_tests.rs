@@ -1043,6 +1043,131 @@ fn original_goal_task_and_event_forms_round_trip_over_ipc() {
 }
 
 #[test]
+fn event_delete_removes_only_its_link_and_preserves_closed_history() {
+    let (app, view) = fixture();
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        mutation_fixture_sql(&conn);
+        conn.execute_batch(
+            "INSERT INTO calendar_task_goals(source_type,source_id,goal_id,created_at) VALUES
+                ('event','event-a','goal-a','fixture');
+            INSERT INTO timeline_blocks(source_type,source_id,date,start_time,duration_minutes,is_active,created_at,updated_at) VALUES
+                ('event','event-a','2026-09-12','10:00',12,0,'fixture','fixture'),
+                ('note','task-a','2026-09-12','10:00',7,0,'fixture','fixture');",
+        )
+        .unwrap();
+    }
+    call(&view, "delete_event", json!({"id":"event-a"})).unwrap();
+    let state = app.state::<AppState>();
+    let conn = state.0.lock().unwrap();
+    for sql in [
+        "SELECT COUNT(*) FROM items WHERE id='event-a'",
+        "SELECT COUNT(*) FROM calendar_task_goals WHERE source_type='event' AND source_id='event-a'",
+    ] {
+        assert_eq!(conn.query_row(sql, [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+    }
+    assert_eq!(
+        conn.query_row("SELECT goal_id FROM calendar_task_goals WHERE source_type='event' AND source_id='event-b'", [], |r| r.get::<_, String>(0)).unwrap(),
+        "goal-b"
+    );
+    assert_eq!(
+        conn.query_row("SELECT goal_id FROM calendar_task_goals WHERE source_type='note' AND source_id='task-a'", [], |r| r.get::<_, String>(0)).unwrap(),
+        "goal-a"
+    );
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM timeline_blocks WHERE source_type='event' AND source_id='event-a' AND is_active=0", [], |r| r.get::<_, i64>(0)).unwrap(),
+        1
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM timeline_blocks WHERE source_type='note' AND source_id='task-a'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+}
+
+#[test]
+fn event_delete_rolls_back_links_when_missing_or_source_delete_fails() {
+    let (app, view) = fixture();
+    let before = {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        mutation_fixture_sql(&conn);
+        conn.execute_batch("INSERT INTO calendar_task_goals(source_type,source_id,goal_id,created_at) VALUES('event','event-a','goal-a','fixture')").unwrap();
+        mutation_snapshot(&conn)
+    };
+    assert!(call(&view, "delete_event", json!({"id":"missing-event"})).is_err());
+    assert_eq!(
+        mutation_snapshot(&app.state::<AppState>().0.lock().unwrap()),
+        before
+    );
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        conn.execute_batch("CREATE TRIGGER reject_event_delete BEFORE DELETE ON items WHEN OLD.id='event-a' BEGIN SELECT RAISE(ABORT,'injected event delete failure'); END;").unwrap();
+    }
+    let error = call(&view, "delete_event", json!({"id":"event-a"})).unwrap_err();
+    assert!(error
+        .as_str()
+        .unwrap()
+        .contains("injected event delete failure"));
+    assert_eq!(
+        mutation_snapshot(&app.state::<AppState>().0.lock().unwrap()),
+        before
+    );
+    assert!(app.state::<AppState>().0.lock().unwrap().is_autocommit());
+}
+
+#[test]
+fn active_event_delete_rejects_then_paused_event_deletes_with_history() {
+    let (app, view) = fixture();
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        mutation_fixture_sql(&conn);
+        conn.execute_batch("INSERT INTO calendar_task_goals(source_type,source_id,goal_id,created_at) VALUES('event','event-a','goal-a','fixture')").unwrap();
+    }
+    let block = call(
+        &view,
+        "start_task_block",
+        json!({"sourceType":"event","sourceId":"event-a","failIfActive":true}),
+    )
+    .unwrap();
+    let before_rejection = mutation_snapshot(&app.state::<AppState>().0.lock().unwrap());
+    let error = call(&view, "delete_event", json!({"id":"event-a"})).unwrap_err();
+    assert!(error.as_str().unwrap().contains("active timer"));
+    assert_eq!(
+        mutation_snapshot(&app.state::<AppState>().0.lock().unwrap()),
+        before_rejection
+    );
+    call(&view, "pause_task_block", json!({"blockId":block})).unwrap();
+    call(&view, "delete_event", json!({"id":"event-a"})).unwrap();
+    let state = app.state::<AppState>();
+    let conn = state.0.lock().unwrap();
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM items WHERE id='event-a'", [], |r| r
+            .get::<_, i64>(
+            0
+        ))
+        .unwrap(),
+        0
+    );
+    assert_eq!(conn.query_row("SELECT COUNT(*) FROM calendar_task_goals WHERE source_type='event' AND source_id='event-a'", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM timeline_blocks WHERE id=?1 AND is_active=0",
+            [block.as_i64().unwrap()],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+}
+#[test]
 fn original_note_form_saves_archives_and_restores_without_creating_a_task() {
     let (_app, view) = fixture();
     let id = call(&view, "create_note", json!({"title":"Example note","content":"Original text",
