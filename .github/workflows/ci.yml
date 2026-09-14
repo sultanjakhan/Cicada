@@ -5,6 +5,29 @@ on:
 permissions:
   contents: read
 jobs:
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - run: npm test
+      - run: npm run check:privacy
+      - run: npm run build
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+      - run: npm ci
+        working-directory: sync-relay
+      - run: npm test
+        working-directory: sync-relay
+      - run: npm run test:native
+        working-directory: sync-relay
   test:
     runs-on: windows-latest
     steps:

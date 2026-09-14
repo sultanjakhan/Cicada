@@ -11,3 +11,17 @@ test('native failure retains previous snapshot',async()=>{const context=setup();
 test('concurrent controllers serialize updates against latest snapshot',async()=>{const context=setup();await Promise.all([context.store.savePlan(action),context.second().savePlan({...action,title:'Вторая'})]);assert.equal((await context.store.read()).plans.length,2);});
 test('new plan without start cannot appear before creation',async()=>{const {store}=setup();const {state}=await store.savePlan({...action,startsOn:''});assert.equal(recurringItems(state,'2026-09-12').length,0);});
 test('invalid snapshots never silently reset data',()=>{assert.throws(()=>parseRecurring('{'));assert.throws(()=>parseRecurring('{"version":2,"plans":[],"days":{}}'));});
+
+test('concurrent remote apply between read and write rejects stale recurring snapshot',async()=>{
+  let raw=null,changed=false;const remote=JSON.stringify({version:1,plans:[],days:{}});
+  const invoke=async(command,args)=>{if(command==='get_ui_state')return raw;assert.equal(args.expectedValue,'');raw=remote;changed=true;if(args.expectedValue!==raw)throw Error('mvp_sync_stale_ui_state');raw=args.value;};
+  const store=createRecurringStore(invoke,{now:()=>new Date(2026,8,13,12),uuid:()=> 'local-new'});
+  await assert.rejects(store.savePlan(action),/другом устройстве/);assert.equal(changed,true);assert.equal(raw,remote);
+});
+
+test('a plan editor baseline permits independent remote plans to merge',async()=>{
+  let raw=null;const invoke=async(command,args)=>{if(command==='get_ui_state')return raw;assert.equal(args.expectedValue,raw??'');raw=args.value;};
+  const store=createRecurringStore(invoke,{now:()=>new Date(2026,8,13,12),uuid:()=> 'plan-a'});await store.savePlan(action);const expectedPlan=(await store.read()).plans[0];
+  const remote=await store.read();remote.plans.push({...expectedPlan,id:'plan-b',title:'Remote B'});raw=JSON.stringify(remote);
+  await store.savePlan({...action,title:'Local A'},'plan-a',{expectedPlan});assert.deepEqual((await store.read()).plans.map(plan=>plan.title),['Local A','Remote B']);
+});

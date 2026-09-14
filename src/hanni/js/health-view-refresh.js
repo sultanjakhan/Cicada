@@ -1,9 +1,9 @@
-// Upstream refresh lifecycle, restricted to the local Calendar view.
-// Health imports, cloud revision polling and other projects are excluded.
+// Upstream refresh lifecycle, restricted to Calendar and MVP content changes.
 import { S } from './state.js';
 
 let started = false, pending = false, scheduled = false, pointerDown = false;
 let errorRetry = null;
+let pendingRemote = false;
 const rendered = new WeakMap();
 const reads = new WeakMap();
 
@@ -17,7 +17,7 @@ function visibleTarget() {
   if (document.visibilityState !== 'visible') return null;
   const view = document.getElementById(`view-${S.activeTab}`);
   if (!view?.classList.contains('active') || S.activeSubTab[S.activeTab] === 'Настройки') return null;
-  if (S.activeTab === 'calendar') return view.querySelector('[data-calendar-records], #calendar-inner-content');
+  if (S.activeTab === 'calendar') return view.querySelector('#uni-pane-calendar, [data-calendar-records], #calendar-inner-content');
   return null;
 }
 
@@ -25,6 +25,7 @@ export function canRefreshHealthView(el) {
   const target = visibleTarget();
   if (!target || !el?.isConnected || (!target.contains(el) && !el.contains(target))) return false;
   if (pointerDown || document.querySelector('dialog[open], .modal-overlay, .cal-event-pop, .dragging')) return false;
+  if (target.querySelector('[contenteditable="true"], .block-editor, .calendar-now__picker:not([hidden])')) return false;
   return !document.activeElement?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])');
 }
 
@@ -36,8 +37,9 @@ export function mayCommitHealthView(el, fingerprint, quiet = false) {
   return true;
 }
 
-export function requestHealthViewRefresh() {
+export function requestHealthViewRefresh({ remote = false } = {}) {
   pending = true;
+  pendingRemote ||= remote;
   schedule();
 }
 
@@ -54,7 +56,14 @@ function schedule() {
     const target = visibleTarget();
     if (!pending || !target || !canRefreshHealthView(target)) return;
     pending = false;
-    window.dispatchEvent(new CustomEvent('hanni:calendar-refresh', { detail: { quietHealth: true } }));
+    const remoteSync = pendingRemote; pendingRemote = false;
+    const canCommit = () => {
+      if (canRefreshHealthView(target)) return true;
+      requestHealthViewRefresh({ remote: remoteSync }); return false;
+    };
+    const detail = { quietHealth: true, remoteSync, canCommit };
+    window.dispatchEvent(new CustomEvent('hanni:calendar-refresh', { detail }));
+    if (remoteSync) window.dispatchEvent(new CustomEvent('task-state-changed', { detail }));
   }, 0);
 }
 

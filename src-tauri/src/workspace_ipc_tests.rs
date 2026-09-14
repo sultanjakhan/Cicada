@@ -48,6 +48,7 @@ fn fixture_with_connection(
             api::get_calendar_task_minutes,
             api::get_calendar_task_seconds,
             api::get_ui_state,
+            api::start_calendar_day,
             api::set_ui_state,
             api::list_event_categories,
             api::create_event_category,
@@ -73,7 +74,13 @@ fn call(
             cmd: command.into(),
             callback: tauri::ipc::CallbackFn(0),
             error: tauri::ipc::CallbackFn(1),
-            url: "http://tauri.localhost".parse().unwrap(),
+            url: if cfg!(target_os = "windows") {
+                "http://tauri.localhost"
+            } else {
+                "tauri://localhost"
+            }
+            .parse()
+            .unwrap(),
             body: tauri::ipc::InvokeBody::Json(args),
             headers: Default::default(),
             invoke_key: INVOKE_KEY.into(),
@@ -1962,4 +1969,43 @@ fn event_form_accepts_all_day_and_cross_midnight_and_rejects_stale_updates() {
         "time":"10:00","durationMinutes":30,"category":"general","color":"#9B9B9B"})
     )
     .is_err());
+}
+
+#[test]
+fn atomic_day_and_snapshot_cas_use_the_real_ipc_contract() {
+    let (_app, webview) = fixture();
+    let first = call(&webview, "start_calendar_day", json!({})).unwrap();
+    assert_eq!(
+        call(&webview, "start_calendar_day", json!({})).unwrap(),
+        first
+    );
+    let raw = call(
+        &webview,
+        "get_ui_state",
+        json!({"key":"calendar_day_start_v1"}),
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(raw.as_str().unwrap()).unwrap(),
+        first
+    );
+    let key = "calendar_recurring_v1";
+    let initial = "{\"version\":1,\"plans\":[],\"days\":{}}";
+    call(
+        &webview,
+        "set_ui_state",
+        json!({"key":key,"value":initial,"expectedValue":""}),
+    )
+    .unwrap();
+    let error = call(
+        &webview,
+        "set_ui_state",
+        json!({"key":key,"value":"{}","expectedValue":""}),
+    )
+    .unwrap_err();
+    assert_eq!(error, "mvp_sync_stale_ui_state");
+    assert_eq!(
+        call(&webview, "get_ui_state", json!({"key":key})).unwrap(),
+        initial
+    );
 }

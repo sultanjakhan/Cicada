@@ -1,6 +1,8 @@
 import './styles.css';
 import './hanni/css/calendar-dashboard-v7.css';
-import { tabLoaders } from './hanni/js/state.js';
+import { tabLoaders, invoke, listen, requestMvpSync } from './hanni/js/state.js';
+import { startMvpSyncRefresh } from './hanni/js/content-sync-refresh.js';
+import { requestHealthViewRefresh } from './hanni/js/health-view-refresh.js';
 import { renderTabBar, openDrawer } from './hanni/js/tabs.js';
 import { toast } from './hanni/js/utils.js';
 import { loadCalendarWorkspace } from './hanni/js/calendar-workspace.js';
@@ -16,6 +18,7 @@ tabLoaders.calendar = () => loadCalendarWorkspace(document.getElementById('calen
 renderTabBar();
 if (window.__TAURI__?.core?.invoke) {
   tabLoaders.calendar().catch(showError);
+  startMvpSyncRefresh({ window, invoke, listen, requestSync: requestMvpSync, requestRefresh: requestHealthViewRefresh });
 } else {
   showError('Открой установленную Hanni MVP: этот экран работает с локальной базой приложения.');
 }

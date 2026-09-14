@@ -1,5 +1,14 @@
 # Hanni MVP
 
+Owner scope update, 2026-09-14: implement synchronization between MVP devices,
+including the started day, by adapting the existing Hanni encrypted content
+relay before introducing a replacement. Use an independent MVP protocol profile,
+relay namespace and credentials. Preserve existing local records through tested
+migrations. Reusing source does not authorize accessing or changing legacy Hanni
+data, credentials, deployments or writer locks. Validate with isolated replicas;
+unavailable Windows/phone devices are a separate acceptance limit. The earlier
+exclusion of remote sync below is superseded by this authorization.
+
 Owner scope update, 2026-09-13: apply the approved goal-development prototype to
 MVP DEV, including generic Hard/Soft/topic skills, evidence, stage subsets and
 deadlines, plus recurring actions and rules. Exclude quantitative daily norms.

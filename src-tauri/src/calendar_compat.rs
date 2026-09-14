@@ -1,5 +1,5 @@
-//! Calendar Workspace persistence only.  It deliberately owns no sync, import,
-//! health, routine, updater, or legacy database path.
+//! Calendar Workspace persistence. Sync uses the separate MVP record adapter;
+//! this module never opens the legacy application database.
 use crate::{fail, get_item, validate_date, validate_time, AppState, Item};
 use chrono::{Local, Utc};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
@@ -526,10 +526,19 @@ pub fn get_ui_state(key: String, state: State<'_, AppState>) -> Result<Option<St
     .map_err(|e| fail(e.to_string()))
 }
 #[tauri::command(rename_all = "camelCase")]
-pub fn set_ui_state(key: String, value: String, state: State<'_, AppState>) -> Result<(), String> {
+pub fn set_ui_state(
+    key: String,
+    value: String,
+    expected_value: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let conn = lock(&state)?;
-    conn.execute("INSERT INTO ui_state(key,value,updated_at) VALUES(?1,?2,?3) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",params![key,value,now()]).map_err(|e|fail(e.to_string()))?;
-    Ok(())
+    crate::mvp_sync_db::set_ui(&conn, &key, &value, expected_value.as_deref())
+}
+#[tauri::command]
+pub fn start_calendar_day(state: State<'_, AppState>) -> Result<Value, String> {
+    let conn = lock(&state)?;
+    crate::mvp_sync_db::start_day(&conn)
 }
 
 #[tauri::command]
@@ -882,8 +891,9 @@ pub fn start_task_block(
     validate_date(&completion_date)?;
     let date = Local::now().format("%Y-%m-%d").to_string();
     let t = Local::now().format("%H:%M:%S").to_string();
-    conn.execute("INSERT INTO timeline_blocks(source_type,source_id,date,start_time,is_active,completion_date,created_at,updated_at) VALUES(?1,?2,?3,?4,1,?5,?6,?6)",params![source_type,source_id,date,t,completion_date,now()]).map_err(|e|fail(e.to_string()))?;
-    Ok(conn.last_insert_rowid())
+    let id = crate::mvp_sync_db::timeline_id(&conn)?;
+    conn.execute("INSERT INTO timeline_blocks(id,source_type,source_id,date,start_time,is_active,completion_date,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,1,?6,?7,?7)",params![id,source_type,source_id,date,t,completion_date,now()]).map_err(|e|fail(e.to_string()))?;
+    Ok(id)
 }
 fn stop(conn: &Connection, id: i64, complete: bool) -> Result<(), String> {
     let (_start, active, typ, source, created): (String, bool, String, String, String) = conn

@@ -225,11 +225,12 @@ export async function mountCalendarNotes(element, dependencies = {}) {
       }
     } finally { catalogBusy = false; if (value && current(value)) setBusy(value, false); if (!disposed) renderList(); }
   }
-  async function refresh(success = '') {
+  async function refresh(success = '', canCommit = null) {
+    if (canCommit && !canCommit()) return;
     const rev = ++revision; list.setAttribute('aria-busy', 'true'); message.textContent = 'Загружаем заметки…'; element.querySelector('[data-retry]').hidden = true;
     try {
       const [currentNotes, recentNotes] = await Promise.all([api('get_notes', { filter: 'tab:calendar', search: null }), api('get_notes', { filter: null, search: null })]);
-      if (disposed || rev !== revision) return;
+      if (disposed || rev !== revision || (canCommit && !canCommit())) return;
       notes = [...new Map([...recentNotes, ...currentNotes].filter(isCalendarNote).map(note => [String(note.id), note])).values()];
       notes.sort((a, b) => Number(b.pinned) - Number(a.pinned) || String(b.updated_at).localeCompare(String(a.updated_at)));
       renderList(); message.textContent = [success, recentNotes.length >= 200 || currentNotes.length >= 200 ? 'Показаны последние заметки. Старые записи могут быть вне этого списка.' : ''].filter(Boolean).join(' ');
@@ -242,9 +243,12 @@ export async function mountCalendarNotes(element, dependencies = {}) {
   element.querySelector('[data-retry]').onclick = () => refresh();
   element.querySelector('[data-open-retry]').onclick = () => openNote(retryOpen);
   element.querySelector('[data-undo]').onclick = () => changeArchive();
+  const onSync = event => { if (event.detail?.remoteSync) void refresh('', event.detail.canCommit); };
+  window.addEventListener('hanni:calendar-refresh', onSync);
   await refresh();
   return () => {
     disposed = true; revision++; opening++;
+    window.removeEventListener('hanni:calendar-refresh', onSync);
     if (session) { const old = session; old.detached = true; remember(old); old.dialog.dispose(); }
   };
 }

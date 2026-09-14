@@ -135,14 +135,15 @@ export function mountCalendarDashboardTasks(element, dependencies) {
     if (!todayItems.length) return;
     embeddedHost.append(taskList(todayItems, 'today'));
   }
-  async function refresh() {
+  async function refresh(canCommit = null) {
     if (disposed) return;
+    if (canCommit && !canCommit()) return;
     const request = ++revision; if (!embedded || followToday) date = localDate(now()); loading = true; failed = false;
     element.setAttribute('aria-busy', 'true');
     if (!embedded) { message.textContent = rows ? 'Обновляем задачи…' : 'Загружаем задачи…'; retry.hidden = true; }
     try {
       const result = await invoke('get_calendar_tasks', {});
-      if (disposed || request !== revision) return;
+      if (disposed || request !== revision || (canCommit && !canCommit())) return;
       if (!Array.isArray(result)) throw new Error('Invalid task response');
       const eligible = result.filter(row => row.source_type === 'note' && !row.archived && !row.completed && !row.readonly && row.status_extra === 'task');
       rows = [...new Map(eligible.map(row => [taskKey(row), row])).values()];
@@ -150,7 +151,7 @@ export function mountCalendarDashboardTasks(element, dependencies) {
       if (disposed || request !== revision) return;
       failed = true;
     } finally {
-      if (!disposed && request === revision) { loading = false; render(); }
+      if (!disposed && request === revision) { loading = false; if (!canCommit || canCommit()) render(); }
     }
   }
   const onClick = event => {
@@ -164,7 +165,7 @@ export function mountCalendarDashboardTasks(element, dependencies) {
       if (row && openTask) openTask(row, () => { if (!disposed && element.isConnected) (findRowButton(key, scope) || title).focus(); });
     }
   };
-  const onExternal = () => { void refresh(); };
+  const onExternal = event => { void refresh(event.detail?.remoteSync ? event.detail.canCommit : null); };
   const onKey = event => { if (!embedded && event.key === 'Escape' && expanded && all.contains(event.target)) { event.preventDefault(); event.stopPropagation(); expanded = false; page = 0; render(); todayFilter.focus(); } };
   element.addEventListener('click', onClick);
   element.addEventListener('keydown', onKey);

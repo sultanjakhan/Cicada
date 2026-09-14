@@ -1,8 +1,17 @@
-// Local-only bridge for the original Hanni Calendar components.
+// Native bridge for the original Hanni Calendar components.
 import { loadCalendarPreferences } from './calendar-display-preferences.js';
-export function invoke(command, args) {
+import { createSyncTrigger, isSyncWrite } from './sync-trigger.js';
+const syncTrigger = createSyncTrigger({
+  invoke: command => window.__TAURI__.core.invoke(command),
+  setTimeout: (...args) => window.setTimeout(...args), clearTimeout: timer => window.clearTimeout(timer),
+  afterSync: () => window.dispatchEvent(new window.Event('hanni:sync-check-status')),
+});
+export const requestMvpSync = () => { if (window.__TAURI__?.core?.invoke) syncTrigger.request(); };
+export async function invoke(command, args) {
   if (!window.__TAURI__?.core?.invoke) return Promise.reject(new Error('Требуется установленная Hanni MVP.'));
-  return window.__TAURI__.core.invoke(command, args);
+  const result = await window.__TAURI__.core.invoke(command, args);
+  if (isSyncWrite(command)) requestMvpSync();
+  return result;
 }
 export const listen = (...args) => window.__TAURI__.event.listen(...args);
 export const emit = (...args) => window.__TAURI__.event.emit(...args);

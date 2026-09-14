@@ -52,16 +52,19 @@ export function createRecurringStore(invoke,{now=()=>new Date(),uuid=()=>crypto.
   const read = async () => parseRecurring(await invoke('get_ui_state',{key:RECURRING_KEY}));
   function update(change) {
     const job=(queues.get(invoke)||Promise.resolve()).catch(()=>{}).then(async()=>{
-      const state=await read(); const result=change(state);
-      await invoke('set_ui_state',{key:RECURRING_KEY,value:JSON.stringify(state)});
+      const raw=await invoke('get_ui_state',{key:RECURRING_KEY});
+      const state=parseRecurring(raw); const result=change(state);
+      try { await invoke('set_ui_state',{key:RECURRING_KEY,value:JSON.stringify(state),expectedValue:raw??''}); }
+      catch(error) { if((error?.message||error)==='mvp_sync_stale_ui_state')throw Error('Расписание изменено на другом устройстве. Обнови его и повтори действие.');throw error; }
       return {state,result};
     });
     queues.set(invoke,job); return job;
   }
   return { read, today:()=>dateKey(now()),
-    savePlan(fields,id=null) { return update(state=>{
+    savePlan(fields,id=null,{expectedPlan=null}={}) { return update(state=>{
       const old=id?state.plans.find(plan=>plan.id===id):null;
       if (id&&!old) throw Error('Запись больше недоступна.');
+      if (old && expectedPlan && JSON.stringify(planFields(old,old,old.createdOn,id)) !== JSON.stringify(planFields(expectedPlan,expectedPlan,expectedPlan.createdOn,id))) throw Error('Это расписание изменено на другом устройстве. Черновик остаётся в открытой форме. Открой расписание заново перед сохранением.');
       if (!old&&state.plans.length>=1000) throw Error('Достигнут предел записей. Сначала заверши неактуальные расписания.');
       const plan=planFields(fields,old,dateKey(now()),id||uuid());
       if (old) state.plans[state.plans.indexOf(old)]=plan; else state.plans.push(plan);

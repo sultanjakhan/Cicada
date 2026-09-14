@@ -39,7 +39,7 @@ function restoreState(raw) {
   };
 }
 
-/** Mount a Calendar-only execution surface. UI state is device-local SQLite KV.
+/** Mount a Calendar-only execution surface. UI state is persisted in SQLite KV.
  * Dependencies are injectable for isolated tests; production callers need only element.
  * The backend must preserve closed-block duration in finish_task_block.
  */
@@ -51,6 +51,7 @@ export function mountCalendarNow(element, dependencies = {}) {
   const document = element.ownerDocument, window = document.defaultView;
   const prefix = `calendar-now-${++nextInstance}`;
   let saved = freshState(), initialized = false, snapshot = null;
+  let stateRaw = '', remotePending = false, remoteGuard = null, remoteVersion = 0;
   let disposed = false, busy = false, reading = false, readAgain = false;
   let readFlight = null, failure = null, panel = null, panelReturn = null, needsSave = false;
   let stateVersion = 0, currentState = 'loading';
@@ -309,6 +310,9 @@ export function mountCalendarNow(element, dependencies = {}) {
   async function chooseDialogGoal(id, retry = false) {
     const picker = goalPicker;
     if (!picker || picker.working || busy || reading) return;
+    if (retry && remotePending && failure?.operation.kind === 'refresh') {
+      picker.editor.setPending(false); picker.editor.close(); await refresh(); return;
+    }
     picker.working = true; picker.requestedId = id; picker.editor.showError(''); picker.editor.retry.hidden = true; renderGoalPicker();
     try {
       if (retry && failure) {
@@ -440,9 +444,11 @@ export function mountCalendarNow(element, dependencies = {}) {
   async function persist() {
     needsSave = true;
     const value = JSON.stringify(saved);
+    const expectedValue = stateRaw;
     const write = stateWriteQueue.catch(() => {}).then(async () => {
       if (disposed) return false;
-      await api('set_ui_state', { key: STATE_KEY, value });
+      await api('set_ui_state', { key: STATE_KEY, value, expectedValue });
+      stateRaw = value;
       return true;
     });
     stateWriteQueue = write;
@@ -471,9 +477,18 @@ export function mountCalendarNow(element, dependencies = {}) {
     else if (block.source_type === 'schedule') row = (await api('get_schedules', { category: null })).find(item => String(item.id) === String(block.source_id));
     return taskOf({ ...row, source_type: block.source_type, source_id: block.source_id, title: row?.title || 'Текущая задача', completion_date: occurrence || block.date });
   }
+  function canApplyRemote() {
+    const safe = !panel && !goalPicker && !goalDialog && !document.querySelector('dialog[open], .modal-overlay, .cal-event-pop, .dragging') &&
+      !document.activeElement?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])');
+    if (!safe) { remoteGuard?.(); return false; }
+    return remoteGuard ? remoteGuard() : true;
+  }
   async function fetchSnapshot() {
     const date = localDate(), version = stateVersion;
-    const state = initialized ? structuredClone(saved) : restoreState(await api('get_ui_state', { key: STATE_KEY }));
+    const reload = remotePending, remoteReadVersion = remoteVersion;
+    if (reload && !canApplyRemote()) return;
+    const raw = !initialized || reload ? await api('get_ui_state', { key: STATE_KEY }) : stateRaw;
+    const state = initialized && !reload ? structuredClone(saved) : restoreState(raw);
     const [goals, links, planned, active, todayBlocks, pins, weights] = await Promise.all([
       api('get_goals', { tabName: null }), api('get_calendar_task_goals', {}),
       api('get_calendar_records', { start: date, end: date }), api('get_active_block', {}), api('get_timeline_blocks', { date }),
@@ -482,7 +497,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     const extraDates = [...new Set([active?.date, state.execution?.date].filter(value => value && value !== date))];
     const extraBlocks = await Promise.all(extraDates.map(value => api('get_timeline_blocks', { date: value })));
     const blocks = [...new Map([...todayBlocks, ...extraBlocks.flat()].map(block => [block.id, block])).values()];
-    if (disposed || stateVersion !== version) return;
+    if (disposed || stateVersion !== version || (reload && (remoteReadVersion !== remoteVersion || !canApplyRemote()))) return;
     const before = JSON.stringify(state);
     if (active) {
       const task = await resolveTask(active, planned, state);
@@ -515,7 +530,9 @@ export function mountCalendarNow(element, dependencies = {}) {
     const timedTask = state.execution?.task || state.completed;
     const workTime = timedTask ? { key: keyOf(timedTask), occurrence: timedTask.completion_date,
       seconds: await readWorkSeconds(timedTask) } : null;
-    if (disposed || stateVersion !== version) return;
+    if (disposed || stateVersion !== version || (reload && (remoteReadVersion !== remoteVersion || !canApplyRemote()))) return;
+    stateRaw = raw ?? '';
+    if (reload) { remotePending = false; remoteGuard = null; needsSave = false; }
     saved = state; initialized = true; snapshot = { date, goals: goals.filter(goal => goal.goal_kind !== 'daily_norm'), links, planned, active, blocks, pins, weights, workTime };
     if (saved.selectionMode === 'manual' && !saved.execution && !saved.completed && !candidates().some(task => keyOf(task) === keyOf(saved.selection))) {
       saved.selection = null; saved.selectionMode = 'auto';
@@ -537,10 +554,15 @@ export function mountCalendarNow(element, dependencies = {}) {
   async function refresh() {
     if (disposed) return;
     if (busy || readFlight) { readAgain = true; return readFlight; }
+    if (remotePending && !canApplyRemote()) return;
     reading = true; render();
     readFlight = (async () => {
       try { await fetchSnapshot(); if (failure?.operation.kind === 'refresh') failure = null; }
-      catch { if (!failure) failure = { operation: { kind: 'refresh', phase: 'refresh' }, message: 'Не удалось обновить текущую задачу. Последний выбор сохранён.' }; }
+      catch (error) {
+        const stale = errorMessage(error) === 'mvp_sync_stale_ui_state';
+        if (stale) { remotePending = true; needsSave = false; }
+        if (!failure) failure = { operation: { kind: 'refresh', phase: 'refresh' }, message: stale ? 'Выбор изменён на другом устройстве. Повтори загрузку актуального состояния.' : 'Не удалось обновить текущую задачу. Последний выбор сохранён.' };
+      }
       finally { reading = false; readFlight = null; render(); if (readAgain && !busy && !disposed) { readAgain = false; void refresh(); } }
     })();
     return readFlight;
@@ -588,6 +610,7 @@ export function mountCalendarNow(element, dependencies = {}) {
   function errorMessage(error) { return typeof error === 'string' ? error : error?.message; }
   function failureMessage(operation, error) {
     const message = errorMessage(error);
+    if (message === 'mvp_sync_stale_ui_state') return 'Выбор изменён на другом устройстве. Нажми «Повторить», чтобы загрузить актуальное состояние.';
     if (message === 'active') return 'Для смены цели поставь текущую задачу на паузу.';
     if (message === 'different-active') return 'Сейчас запущена другая задача. Обнови экран перед продолжением.';
     if (operation.kind === 'start' && message === 'source record not found') return 'Задача уже завершена или недоступна. Обнови экран.';
@@ -608,7 +631,8 @@ export function mountCalendarNow(element, dependencies = {}) {
       failure = { operation, message: failureMessage(operation, error) };
       // A different active task is never closed implicitly by this surface.
       const message = errorMessage(error);
-      if (message === 'different-active' || (operation.kind === 'start' && message === 'source record not found')) {
+      if (message === 'mvp_sync_stale_ui_state') { remotePending = true; needsSave = false; }
+      if (message === 'mvp_sync_stale_ui_state' || message === 'different-active' || (operation.kind === 'start' && message === 'source record not found')) {
         failure.operation = { kind: 'refresh', phase: 'refresh' };
       }
     } finally {
@@ -683,7 +707,10 @@ export function mountCalendarNow(element, dependencies = {}) {
     if (task) void run({ kind: 'select', task: taskOf(task) });
   };
   const onKeydown = event => { if (event.key === 'Escape' && panel) { event.preventDefault(); closePicker(true); } };
-  const onExternal = () => { void refresh(); };
+  const onExternal = event => {
+    if (event.detail?.remoteSync) { remotePending = true; remoteVersion++; remoteGuard = event.detail.canCommit || null; }
+    void refresh();
+  };
   element.addEventListener('click', onClick); element.addEventListener('submit', onSubmit); element.addEventListener('keydown', onKeydown);
   window.addEventListener('task-state-changed', onExternal);
   window.addEventListener('focus', onExternal);

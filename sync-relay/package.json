@@ -1,0 +1,18 @@
+{
+  "name": "hanni-mvp-relay-v1",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "provision": "node tools/provision.mjs",
+    "test:native": "node tools/test-native.mjs"
+  },
+  "devDependencies": {
+    "miniflare": "5.20260903.0-alpha",
+    "wrangler": "4.129.0"
+  }
+}

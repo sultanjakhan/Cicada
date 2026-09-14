@@ -95,3 +95,12 @@ test('failed reads schedule one delayed retry', async t => {
   await settle();
   assert.equal(x.events, 1);
 });
+
+test('remote changes wait for the editor and provide a commit guard for late responses', async t => {
+  const x = await setup(t); x.ui.startHealthViewRefresh();
+  const events=[];x.w.addEventListener('task-state-changed',event=>events.push(event.detail));
+  const modal=x.doc.createElement('dialog');modal.open=true;modal.innerHTML='<textarea>unsaved</textarea>';x.doc.body.append(modal);modal.querySelector('textarea').focus();
+  x.ui.requestHealthViewRefresh({remote:true});await settle();assert.equal(events.length,0);assert.equal(modal.querySelector('textarea').value,'unsaved');
+  modal.remove();await settle();assert.equal(events.length,1);assert.equal(events[0].remoteSync,true);assert.equal(events[0].canCommit(),true);
+  x.doc.body.append(modal);assert.equal(events[0].canCommit(),false);modal.remove();await settle();assert.equal(events.length,2,'late unsafe commits requeue the remote refresh');
+});

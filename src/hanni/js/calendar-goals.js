@@ -107,19 +107,20 @@ export async function mountCalendarGoals(element, dependencies = {}) {
     if (daily.length) renderGroup('Ежедневные нормы', daily);
     if (unknown.length) renderGroup('Без типа — выбери, как учитывать', unknown);
   }
-  async function refresh(success = '') {
+  async function refresh(success = '', canCommit = null) {
+    if (canCommit && !canCommit()) return;
     const rev = ++revision; message.textContent = 'Загружаем цели…'; list.setAttribute('aria-busy', 'true'); element.querySelector('[data-retry]').hidden = true;
     const focused = document.activeElement?.closest?.('[data-goal-collapse], [data-edit-goal], [data-delete-goal], [data-select]');
     const focusSelector = focused && list.contains(focused) ? Object.entries(focused.dataset).map(([key, value]) => `[data-${key.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`)}="${value}"]`).join('') : '';
     try {
       const [loadedGoals, loadedLinks, raw, block] = await Promise.all([api('get_goals', { tabName: null }), api('get_calendar_task_goals'), api('get_ui_state', { key: 'calendar_now_v1' }), api('get_active_block')]);
-      if (disposed || rev !== revision) return;
+      if (disposed || rev !== revision || (canCommit && !canCommit())) return;
       const saved = raw ? JSON.parse(raw) : null;
       if (saved && saved.version !== 1) throw new Error('Unsupported calendar state');
       goals = loadedGoals; links = loadedLinks; selectedId = saved?.goalId == null ? null : String(saved.goalId); active = block;
       renderCards(); focusSelector && list.querySelector(focusSelector)?.focus(); message.textContent = active ? 'Задача сейчас выполняется. Поставь её на паузу, чтобы сменить главную цель.' : success;
     } catch {
-      if (disposed || rev !== revision) return;
+      if (disposed || rev !== revision || (canCommit && !canCommit())) return;
       message.textContent = 'Не удалось загрузить цели. Сохранённые цели остаются на месте.';
       element.querySelector('[data-retry]').hidden = false;
     } finally { if (!disposed && rev === revision) list.removeAttribute('aria-busy'); }
@@ -224,7 +225,7 @@ export async function mountCalendarGoals(element, dependencies = {}) {
   }
   element.querySelector('[data-new]').onclick = () => openCreation();
   element.querySelector('[data-retry]').onclick = () => refresh();
-  const onChange = () => { if (!busy && !creating && !disposed) void refresh(); };
+  const onChange = event => { if (!busy && !creating && !disposed) void refresh('', event.detail?.remoteSync ? event.detail.canCommit : null); };
   window.addEventListener('task-state-changed', onChange);
   await refresh();
   return () => { disposed = true; revision++; creationDialog?.dispose(); window.removeEventListener('task-state-changed', onChange); };

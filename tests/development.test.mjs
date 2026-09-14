@@ -44,6 +44,35 @@ test('task attachment is idempotent and never creates a task', async () => {
   assert.equal(writes, 1, 'second attach is safe to retry and does not create another relation write');
 });
 
+test('task attachment does not overwrite a remote skill change made after its read', async () => {
+  const before=JSON.stringify({version:1,goals:{g:{skills:[{id:'s',title:'Skill',topic:'Topic'}],stages:[]}}});let stored=before;
+  const remote=JSON.stringify({version:1,goals:{g:{skills:[{id:'s',title:'Remote skill',topic:'Topic'}],stages:[]}}});
+  const invoke=async(command,args)=>{if(command==='get_ui_state')return stored;assert.equal(args.expectedValue,before);stored=remote;throw Error('mvp_sync_stale_ui_state');};
+  await assert.rejects(attachDevelopmentTask('g','s','task-a',{invoke}),/mvp_sync_stale_ui_state/);assert.equal(stored,remote);
+});
+
+for (const kind of ['skill','evidence','stage']) test(`open ${kind} editor preserves its draft and rejects a newer remote version of that record`, async t => {
+  const host=document.createElement('div');document.body.append(host);
+  const original={version:1,goals:{g:{skills:[{id:'a',title:'Skill A',topic:'Topic',evidence:''}],stages:[{id:'s',title:'Stage',skillIds:['a']}],activeStageId:'s'}}};let stored=JSON.stringify(original),writes=0;
+  const invoke=async(command,args)=>{if(command==='get_ui_state')return stored;if(command==='set_ui_state'){writes++;stored=args.value;return;}throw Error(command);};
+  const controller=await mountGoalDevelopment(host,{invoke,goal:{id:'g',title:'Goal'}});t.after(()=>{controller.dispose();host.remove();});
+  host.querySelector(kind==='skill'?'[data-dev-skill="a"]':kind==='evidence'?'[data-dev-evidence="a"]':'[data-dev-stage="s"]').click();await settle();
+  const modal=document.querySelector('dialog[open]'),field=modal.querySelector(kind==='evidence'?'[name=evidence]':'[name=title]');field.value='Unsaved local draft';
+  const remote=structuredClone(original);if(kind==='stage')remote.goals.g.stages[0].title='Remote stage';else remote.goals.g.skills[0].title='Remote skill';stored=JSON.stringify(remote);const remoteRaw=stored;
+  modal.querySelector('form').dispatchEvent(new window.Event('submit',{bubbles:true,cancelable:true}));await settle();
+  assert.equal(modal.open,true);assert.equal(field.value,'Unsaved local draft');assert.match(modal.querySelector('[data-dialog-error]').textContent,/другом устройстве/);assert.equal(stored,remoteRaw);assert.equal(writes,0);
+});
+
+test('editing one skill merges an independent remote skill change in the same goal', async t => {
+  const host=document.createElement('div');document.body.append(host);
+  const original={version:1,goals:{g:{skills:[{id:'a',title:'Skill A',topic:'Topic'},{id:'b',title:'Skill B',topic:'Topic'}],stages:[]}}};let stored=JSON.stringify(original),writes=0;
+  const invoke=async(command,args)=>{if(command==='get_ui_state')return stored;if(command==='set_ui_state'){assert.equal(args.expectedValue,stored);writes++;stored=args.value;return;}throw Error(command);};
+  const controller=await mountGoalDevelopment(host,{invoke,goal:{id:'g',title:'Goal'}});t.after(()=>{controller.dispose();host.remove();});
+  host.querySelector('[data-dev-skill="a"]').click();await settle();const modal=document.querySelector('dialog[open]');modal.querySelector('[name=title]').value='Local A';
+  original.goals.g.skills[1].title='Remote B';stored=JSON.stringify(original);modal.querySelector('form').dispatchEvent(new window.Event('submit',{bubbles:true,cancelable:true}));await settle();
+  assert.equal(modal.open,false);assert.equal(writes,1);assert.deepEqual(JSON.parse(stored).goals.g.skills.map(skill=>skill.title),['Local A','Remote B']);
+});
+
 test('v7 summary opens a direct skill picker, cancels without saving and switches scope', async t => {
   const host=document.createElement('div');document.body.append(host);
   let stored=JSON.stringify({version:1,goals:{g:{skills:[{id:'sql',title:'JOIN',topic:'SQL',evidence:'checked'},{id:'api',title:'Contract',topic:'API'}],stages:[{id:'s',title:'SQL',skillIds:['sql'],focusId:'sql'}],activeStageId:'s',focusId:'api'}}}),writes=0;

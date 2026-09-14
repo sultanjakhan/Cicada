@@ -13,6 +13,18 @@ const plan={id:'rule-1',kind:'rule',title:'Без телефона за стол
 const state={version:1,plans:[plan],days:{}};
 const task={source_type:'note',source_id:'task-1',status_extra:'task',title:'Подготовить SQL-запрос',date:today,duration_minutes:25};
 
+test('open recurring editor keeps its draft when the same plan was changed remotely', async t => {
+  const dom=new JSDOM('<main></main>',{url:'https://fixture.invalid'}),host=dom.window.document.querySelector('main');let raw=JSON.stringify(state),writes=0;
+  dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;this.dispatchEvent(new dom.window.Event('close'));};
+  const invoke=async(command,args)=>{if(command==='get_ui_state')return raw;if(command==='set_ui_state'){writes++;raw=args.value;return;}throw Error(command);};
+  const dispose=mountCalendarRecurring(host,{invoke,now:()=>new Date(`${today}T12:00:00`)});t.after(()=>{dispose();dom.window.close();});
+  await dispose.openManager();dom.window.document.querySelector('[data-recurring-edit="rule-1"]').click();
+  const modal=[...dom.window.document.querySelectorAll('dialog[open]')].at(-1),field=modal.querySelector('[name=title]');field.value='Local draft';
+  raw=JSON.stringify({...state,plans:[{...plan,title:'Remote title'}]});const remote=raw;modal.querySelector('form').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));
+  await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(modal.open,true);assert.equal(field.value,'Local draft');assert.match(modal.querySelector('[data-dialog-error]').textContent,/другом устройстве/);assert.equal(raw,remote);assert.equal(writes,0);
+});
+
 test('Today combines current-date task and pending rule under one Дела heading', async t => {
   const dom=new JSDOM('<main></main>'); const host=dom.window.document.querySelector('main'); let raw=JSON.stringify(state);
   const invoke=async(command,args)=>command==='get_ui_state'?raw:command==='set_ui_state'?(raw=args.value,null):command==='get_calendar_tasks'?[task]:null;

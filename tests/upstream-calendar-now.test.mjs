@@ -25,6 +25,39 @@ const clone = value => structuredClone(value);
 const blank = () => ({
    version: 1, goalId: 'goal-a', selectionMode: 'auto', selection: null, execution: null, completed: null
   });
+
+test('remote refresh rereads saved goal without writing the old cached selection back', async t => {
+  const x=await mount(t);const before=x.data.count('set_ui_state');
+  x.data.stored=JSON.stringify({...blank(),goalId:'goal-b'});
+  x.dom.window.dispatchEvent(new x.dom.window.CustomEvent('task-state-changed',{detail:{remoteSync:true,canCommit:()=>true}}));await x.settle();
+  assert.match(x.ui('goal-title').textContent,/Гардероб/);assert.equal(x.data.count('set_ui_state'),before);assert.equal(JSON.parse(x.data.stored).goalId,'goal-b');
+});
+
+test('remote refresh waits for an open picker and never overwrites its draft', async t => {
+  const x=await mount(t);await x.click('open-goal');const picker=x.dom.window.document.querySelector('.calendar-goal-picker');
+  const search=picker.querySelector('[data-goal-search]');search.value='draft query';search.dispatchEvent(new x.dom.window.Event('input',{bubbles:true}));
+  const reads=x.data.count('get_ui_state');x.data.stored=JSON.stringify({...blank(),goalId:'goal-b'});
+  x.dom.window.dispatchEvent(new x.dom.window.CustomEvent('task-state-changed',{detail:{remoteSync:true,canCommit:()=>!picker.open}}));await x.settle();
+  assert.equal(search.value,'draft query');assert.equal(x.data.count('get_ui_state'),reads);assert.equal(picker.open,true);
+  picker.close();x.dom.window.dispatchEvent(new x.dom.window.CustomEvent('task-state-changed',{detail:{remoteSync:true,canCommit:()=>true}}));await x.settle();assert.match(x.ui('goal-title').textContent,/Гардероб/);
+});
+
+test('CAS rejects a stale local choice and retry reads remote state without overwriting it', async t => {
+  const x=await mount(t);const initial=x.data.stored;const remote=JSON.stringify({...blank(),goalId:'goal-b'});
+  x.data.before.set('set_ui_state',args=>{assert.equal(args.expectedValue,initial);x.data.stored=remote;throw Error('mvp_sync_stale_ui_state');});
+  await x.click('start');assert.equal(x.data.stored,remote);assert.match(x.ui('error-text').textContent,/другом устройстве/);
+  x.data.before.delete('set_ui_state');await x.click('retry');assert.equal(JSON.parse(x.data.stored).goalId,'goal-b');
+  assert.equal(x.data.count('start_task_block'),1,'retry must not restart the already committed timer');
+});
+
+test('a newer remote revision during a read is reread before replacing Now state', async t => {
+  const x=await mount(t);let release;const pause=new Promise(resolve=>{release=resolve;});
+  x.data.after.set('get_ui_state',async()=>{x.data.after.delete('get_ui_state');await pause;});
+  x.data.stored=JSON.stringify({...blank(),goalId:'goal-b'});
+  const sync=()=>x.dom.window.dispatchEvent(new x.dom.window.CustomEvent('task-state-changed',{detail:{remoteSync:true,canCommit:()=>true}}));sync();
+  await new Promise(resolve=>setImmediate(resolve));x.data.stored=JSON.stringify({...blank(),goalId:null});sync();release();await x.settle();
+  assert.equal(JSON.parse(x.data.stored).goalId,null);assert.doesNotMatch(x.ui('goal-title').textContent,/Карьера|Гардероб/);assert.equal(x.data.count('set_ui_state'),0);
+});
 function backend(initial = blank()){
    const state ={
      stored: initial == null ? null : JSON.stringify(initial), now: new Date('2026-09-05T10:00:00'), goals: [{

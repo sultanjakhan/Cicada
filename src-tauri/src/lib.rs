@@ -13,10 +13,13 @@ use tauri::{Manager, State};
 use uuid::Uuid;
 
 mod calendar_compat;
+mod mvp_sync;
+mod mvp_sync_crypto;
+mod mvp_sync_db;
 #[cfg(test)]
 mod workspace_ipc_tests;
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 pub struct AppState(Mutex<Connection>);
 
@@ -210,7 +213,7 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
                 .map_err(|e| fail(format!("migrate timeline seconds: {e}")))?;
         }
         transaction
-            .pragma_update(None, "user_version", SCHEMA_VERSION)
+            .pragma_update(None, "user_version", 4)
             .map_err(|e| fail(format!("write database version: {e}")))?;
         transaction
             .commit()
@@ -218,6 +221,7 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
     }
     conn.execute("INSERT OR IGNORE INTO event_categories(id,name,color,icon,sort_order,created_at) VALUES('general','general','#9B9B9B','',0,?1)", [Utc::now().to_rfc3339()])
         .map_err(|e| fail(format!("seed generic category: {e}")))?;
+    mvp_sync_db::initialize(conn)?;
     Ok(())
 }
 
@@ -488,14 +492,18 @@ fn create_backup(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<St
     backup(&conn, &app_data_dir(&app)?)
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let data_dir = app_data_dir(app.handle())?;
             let connection = Connection::open(data_dir.join("calendar.db"))
                 .map_err(|e| fail(format!("open calendar database: {e}")))?;
+            connection.pragma_update(None, "journal_mode", "WAL")?;
+            connection.busy_timeout(Duration::from_secs(5))?;
             init_schema(&connection)?;
             app.manage(AppState(Mutex::new(connection)));
+            mvp_sync::start(app.handle(), data_dir.join("calendar.db"));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -504,6 +512,11 @@ pub fn run() {
             set_completed,
             delete_item,
             create_backup,
+            mvp_sync::mvp_sync_status,
+            mvp_sync::mvp_sync_configure,
+            mvp_sync::mvp_sync_set_enabled,
+            mvp_sync::mvp_sync_now,
+            calendar_compat::start_calendar_day,
             calendar_compat::get_events,
             calendar_compat::get_all_events,
             calendar_compat::create_event,
@@ -640,12 +653,21 @@ mod tests {
 
     #[test]
     fn debug_isolation_requires_absolute_nonlegacy_path() {
-        let standard = PathBuf::from("C:/safe/default");
+        let directory = tempfile::tempdir().unwrap();
+        let standard = directory.path().join("default");
         assert!(debug_data_dir(Some("relative".into()), standard.clone()).is_err());
-        assert!(debug_data_dir(Some("C:/safe/Hanni".into()), standard.clone()).is_err());
+        assert!(debug_data_dir(
+            Some(directory.path().join("Hanni").into_os_string()),
+            standard.clone()
+        )
+        .is_err());
         assert_eq!(
-            debug_data_dir(Some("C:/safe/test".into()), standard).unwrap(),
-            PathBuf::from("C:/safe/test")
+            debug_data_dir(
+                Some(directory.path().join("test").into_os_string()),
+                standard
+            )
+            .unwrap(),
+            directory.path().join("test")
         );
     }
 
@@ -701,7 +723,7 @@ mod tests {
         assert_eq!(
             conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
                 .unwrap(),
-            4
+            SCHEMA_VERSION
         );
     }
 
@@ -719,7 +741,7 @@ mod tests {
         assert_eq!(
             conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
                 .unwrap(),
-            4
+            SCHEMA_VERSION
         );
         init_schema(&conn).unwrap();
         assert_eq!(

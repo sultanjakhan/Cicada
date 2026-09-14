@@ -64,12 +64,13 @@ export async function attachDevelopmentTask(goalId, skillId, sourceId, { invoke 
   if (!invoke || goalId == null || !text(skillId) || !text(sourceId)) throw new Error('Не хватает связи задачи и навыка.');
   const id = String(goalId), skill = String(skillId), task = String(sourceId);
   const work = developmentWriteQueue.catch(() => {}).then(async () => {
-    const latest = normalizeDevelopmentState(await invoke('get_ui_state', { key: DEVELOPMENT_STATE_KEY }));
+    const raw = await invoke('get_ui_state', { key: DEVELOPMENT_STATE_KEY });
+    const latest = normalizeDevelopmentState(raw);
     const ext = latest.goals[id]; const row = ext?.skills.find(item => item.id === skill);
     if (!row) throw new Error('Навык уже изменён. Обнови цель и повтори привязку задачи.');
     if ((row.taskIds || []).includes(task)) return;
     row.taskIds = [...(row.taskIds || []), task];
-    await invoke('set_ui_state', { key: DEVELOPMENT_STATE_KEY, value: JSON.stringify(latest) });
+    await invoke('set_ui_state', { key: DEVELOPMENT_STATE_KEY, value: JSON.stringify(latest), expectedValue: raw ?? '' });
     dispatchChange(id);
   });
   developmentWriteQueue = work;
@@ -80,6 +81,9 @@ function extension(state, goalId) { return state.goals[String(goalId)] || { skil
 function skillProgress(skill) { return Boolean(skill.evidence); }
 function stageProgress(stage, skills) { const set = new Set(stage.skillIds); const selected = skills.filter(skill => set.has(skill.id)); const done = selected.filter(skillProgress).length; return { done, total: selected.length, percent: pct(done, selected.length) }; }
 function topicList(skills) { return [...new Set(skills.map(skill => skill.topic))]; }
+function assertUnchangedRecord(current, original) {
+  if (original && JSON.stringify(current) !== JSON.stringify(original)) throw Error('Эта запись изменена на другом устройстве. Черновик остаётся в открытой форме. Открой запись заново перед повторным сохранением.');
+}
 
 function mountTopicFirstPicker(host, skills, { multiple = false, values = [] } = {}) {
   const selected = new Set(values); let topic = null, query = '';
@@ -112,14 +116,15 @@ export async function mountGoalDevelopment(element, { invoke, goal, onCreateTask
   };
   const mutate = async change => {
     const work = developmentWriteQueue.catch(() => {}).then(async () => {
-      const fresh = normalizeDevelopmentState(await invoke('get_ui_state', { key: DEVELOPMENT_STATE_KEY }));
+      const raw = await invoke('get_ui_state', { key: DEVELOPMENT_STATE_KEY });
+      const fresh = normalizeDevelopmentState(raw);
       const next = structuredClone(fresh); const draft = extension(next, goalId); next.goals[goalId] = draft; change(draft, next);
       const normalized = normalizeDevelopmentState(next);
-      await invoke('set_ui_state', { key: DEVELOPMENT_STATE_KEY, value: JSON.stringify(normalized) });
+      await invoke('set_ui_state', { key: DEVELOPMENT_STATE_KEY, value: JSON.stringify(normalized), expectedValue: raw ?? '' });
       state = normalized; error = ''; dispatchChange(goalId); render();
     });
     developmentWriteQueue = work;
-    try { await work; } catch (cause) { error = 'Не удалось сохранить изменения. Ничего не применено — повтори действие.'; render(); throw cause; }
+    try { await work; } catch (cause) { error = (cause?.message || cause) === 'mvp_sync_stale_ui_state' ? 'Цель изменена на другом устройстве. Черновик сохранён в открытом редакторе. Закрой его и открой цель заново перед повтором.' : 'Не удалось сохранить изменения. Ничего не применено — повтори действие.'; render(); if ((cause?.message || cause) === 'mvp_sync_stale_ui_state') throw Error(error); throw cause; }
   };
   const run = change => { void mutate(change).catch(() => {}); };
   const openDialog = ({ title, hint, submitLabel, draw, submit }) => {
@@ -135,14 +140,14 @@ export async function mountGoalDevelopment(element, { invoke, goal, onCreateTask
   const skillEditor = skill => openDialog({
     title: skill ? 'Изменить навык' : 'Добавить навык', hint: 'Тема нужна, чтобы группировать развитие. Подтверждение добавляется после практики.', submitLabel: 'Сохранить',
     draw: () => `<label>Название навыка<input name="title" required maxlength="160" value="${escapeHtml(skill?.title || '')}"></label><label>Тема<input name="topic" required maxlength="80" placeholder="SQL, API, требования…" value="${escapeHtml(skill?.topic || '')}"></label><label>Группа<select name="group"><option value="hard" ${(skill?.group || 'hard') === 'hard' ? 'selected' : ''}>Хард</option><option value="soft" ${skill?.group === 'soft' ? 'selected' : ''}>Софт</option></select></label><label>Какой результат подтверждает навык<textarea name="description" maxlength="2000" rows="3">${escapeHtml(skill?.description || '')}</textarea></label><label>Практика<textarea name="practice" maxlength="2000" rows="3">${escapeHtml(skill?.practice || '')}</textarea></label><label>Ориентир<select name="level">${[1,2,3,4].map(level => `<option value="${level}" ${Number(skill?.level || 1) === level ? 'selected' : ''}>Уровень ${level}</option>`).join('')}</select></label>`,
-    submit: async data => { const title = text(data.get('title')), topic = text(data.get('topic')); if (!title || !topic) throw new Error('Заполни название и тему.'); await mutate(draft => { const at = draft.skills.findIndex(item => item.id === skill?.id); const row = { ...(at >= 0 ? draft.skills[at] : {}), id: skill?.id || uid(), title, topic, group:data.get('group') === 'soft' ? 'soft' : 'hard', description:text(data.get('description')), practice:text(data.get('practice')), level: Number(data.get('level')) || 1 }; if (at >= 0) draft.skills[at] = row; else draft.skills.push(row); }); },
+    submit: async data => { const title = text(data.get('title')), topic = text(data.get('topic')); if (!title || !topic) throw new Error('Заполни название и тему.'); await mutate(draft => { const at = draft.skills.findIndex(item => item.id === skill?.id); assertUnchangedRecord(draft.skills[at], skill); const row = { ...(at >= 0 ? draft.skills[at] : {}), id: skill?.id || uid(), title, topic, group:data.get('group') === 'soft' ? 'soft' : 'hard', description:text(data.get('description')), practice:text(data.get('practice')), level: Number(data.get('level')) || 1 }; if (at >= 0) draft.skills[at] = row; else draft.skills.push(row); }); },
   });
-  const evidenceEditor = skill => openDialog({ title: 'Подтверждение навыка', hint: 'Опиши проверяемый результат: работа, ссылка или краткая проверка.', submitLabel: 'Сохранить подтверждение', draw: () => `<label>Результат<textarea name="evidence" maxlength="2000" rows="5">${escapeHtml(skill.evidence || '')}</textarea></label>`, submit: async data => mutate(draft => { const row = draft.skills.find(item => item.id === skill.id); if (!row) throw new Error('Навык уже изменён. Обнови страницу.'); row.evidence = text(data.get('evidence')); }) });
+  const evidenceEditor = skill => openDialog({ title: 'Подтверждение навыка', hint: 'Опиши проверяемый результат: работа, ссылка или краткая проверка.', submitLabel: 'Сохранить подтверждение', draw: () => `<label>Результат<textarea name="evidence" maxlength="2000" rows="5">${escapeHtml(skill.evidence || '')}</textarea></label>`, submit: async data => mutate(draft => { const row = draft.skills.find(item => item.id === skill.id); assertUnchangedRecord(row, skill); row.evidence = text(data.get('evidence')); }) });
   const stageEditor = stage => {
     const ext = extension(state, goalId); let picker;
     const api = openDialog({ title: stage ? 'Изменить этап' : 'Новый этап', hint: 'Выбери часть навыков и необязательный срок. Общая цель не меняется.', submitLabel: 'Сохранить этап',
       draw: () => `<label>Название этапа<input name="title" required maxlength="160" value="${escapeHtml(stage?.title || '')}"></label><label>Результат этапа<textarea name="outcome" maxlength="900" rows="3">${escapeHtml(stage?.outcome || '')}</textarea></label><label>Срок<input name="deadline" type="date" value="${escapeHtml(stage?.deadline || '')}"></label><fieldset><legend>Навыки этапа</legend><div data-stage-topic-picker></div></fieldset>`,
-      submit: async data => { const title = text(data.get('title')), outcome = text(data.get('outcome')), deadline = text(data.get('deadline')), skillIds = picker.values; if (!title) throw new Error('Дай этапу название.'); if (!skillIds.length) throw new Error('Выбери хотя бы один навык.'); if (!date(deadline)) throw new Error('Проверь срок этапа.'); await mutate(draft => { const old = draft.stages.find(item => item.id === stage?.id); const row = { id: stage?.id || uid(), title, outcome, deadline, skillIds, focusId: skillIds.includes(old?.focusId) ? old.focusId : null, status:old?.status || 'active' }; const at = draft.stages.findIndex(item => item.id === row.id); if (at >= 0) draft.stages[at] = row; else { draft.stages.push(row); draft.activeStageId = row.id; } }); },
+      submit: async data => { const title = text(data.get('title')), outcome = text(data.get('outcome')), deadline = text(data.get('deadline')), skillIds = picker.values; if (!title) throw new Error('Дай этапу название.'); if (!skillIds.length) throw new Error('Выбери хотя бы один навык.'); if (!date(deadline)) throw new Error('Проверь срок этапа.'); await mutate(draft => { const old = draft.stages.find(item => item.id === stage?.id); assertUnchangedRecord(old, stage); const row = { id: stage?.id || uid(), title, outcome, deadline, skillIds, focusId: skillIds.includes(old?.focusId) ? old.focusId : null, status:old?.status || 'active' }; const at = draft.stages.findIndex(item => item.id === row.id); if (at >= 0) draft.stages[at] = row; else { draft.stages.push(row); draft.activeStageId = row.id; } }); },
     });
     picker = mountTopicFirstPicker(api.body.querySelector('[data-stage-topic-picker]'), ext.skills, { multiple:true, values:stage?.skillIds || [] }); return api;
   };
@@ -194,10 +199,11 @@ export async function mountGoalDevelopmentSummary(element, { invoke, goalId, onO
       dialog.modal.addEventListener('close',()=>{handle.dispose();if(editor===handle)editor=null;if(!disposed)(element.querySelector(`[data-summary-action="${action}"]`)||trigger)?.focus();},{once:true});
     }catch(cause){handle.dispose();editor=null;throw cause;}
   }
-  const render = async () => {
+  const render = async (canCommit = null) => {
     if (disposed || !element.isConnected) return;
+    if (canCommit && !canCommit()) return;
     const own=++revision,state=normalizeDevelopmentState(await invoke('get_ui_state',{key:DEVELOPMENT_STATE_KEY}));
-    if(disposed||own!==revision||!element.isConnected)return;
+    if(disposed||own!==revision||!element.isConnected||(canCommit&&!canCommit()))return;
     const ext=extension(state,id),stage=ext.stages.find(item=>item.id===ext.activeStageId)||null,focus=ext.skills.find(skill=>skill.id===(stage?stage.focusId:ext.focusId));
     const total=ext.skills.length,done=ext.skills.filter(skillProgress).length,progress=stage?stageProgress(stage,ext.skills):{total,done,percent:pct(done,total)};
     const topics=stage?topicList(ext.skills.filter(skill=>stage.skillIds.includes(skill.id))):[];
@@ -208,7 +214,9 @@ export async function mountGoalDevelopmentSummary(element, { invoke, goalId, onO
     element.querySelectorAll('[data-summary-action]').forEach(button=>button.addEventListener('click',()=>void openEditor(button.dataset.summaryAction,button.dataset.summaryAction==='edit-stage'?stage?.id:null,button).catch(cause=>{const error=document.createElement('p');error.setAttribute('role','alert');error.textContent=cause?.message||String(cause);element.append(error);})));
   };
   const listener = event => { if (String(event.detail?.goalId) === id) void render().catch(()=>{}); };
+  const onSync = event => { if (event.detail?.remoteSync) void render(event.detail.canCommit).catch(()=>{}); };
   window.addEventListener('hanni:development-changed', listener);
-  try{await render();}catch(cause){window.removeEventListener('hanni:development-changed',listener);throw cause;}
-  return { dispose: () => { disposed = true;revision++;editor?.dispose();window.removeEventListener('hanni:development-changed', listener); element.replaceChildren(); }, refresh: render };
+  window.addEventListener('hanni:calendar-refresh', onSync);
+  try{await render();}catch(cause){window.removeEventListener('hanni:development-changed',listener);window.removeEventListener('hanni:calendar-refresh',onSync);throw cause;}
+  return { dispose: () => { disposed = true;revision++;editor?.dispose();window.removeEventListener('hanni:development-changed', listener);window.removeEventListener('hanni:calendar-refresh',onSync); element.replaceChildren(); }, refresh: render };
 }
