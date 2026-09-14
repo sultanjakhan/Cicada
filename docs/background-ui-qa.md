@@ -450,3 +450,48 @@ source review found no transition/accessibility regression. The owner's open
 DEV was read-only inspected and received the neutral trigger through Vite.
 Evidence: ignored `.local/dev/title-actions-*` and `home-ux-20260912/artifacts/`.
 No Rust changes, native rebuild, owner-window restart, installation or push.
+
+### Approved v7 dashboard fidelity correction, 2026-09-14
+
+The previous prototype transfer changed the dashboard presentation without an
+owner decision. This correction restores the v7 stage/focus hierarchy: stage
+summary across the goal card, separate expanded topic and skill, and direct
+focus/stage selection. It removes the nested summary border, redundant Open
+action and Undo day start. The acknowledged day start remains in its ledger.
+One Today card contains native tasks followed by scheduled actions/rules, with
+recorded items collapsed. Quantitative norms remain excluded. The detailed goal
+editor is not claimed to be a complete visual copy of the prototype.
+
+Live QA used the existing debug native host with current Vite assets on an
+inactive Windows desktop, separate fictional data and a separate WebView profile.
+The root integrated the isolated Today worker and its lifecycle follow-up.
+
+Verified in the real DEV WebView:
+- Direct skill picker is the only open dialog; Cancel preserves development and
+  current-task state exactly. Native All tasks opens after its asynchronous load,
+  and Add task opens the existing Task/Event form.
+- Scheduled action and rule marks persist through native IPC and page reload;
+  the day-start acknowledgement persists with no Undo control.
+- Historical daily marks do not display today's native tasks after refresh.
+  Closing Schedule from Table removes its temporary hidden mount.
+- Goal summary screenshots at 1100px and 640px show the larger SQL topic, no
+  nested summary border, and no horizontal overflow. Today rows are in one card.
+- Read-only inspection of the owner's still-open DEV confirms the new summary,
+  21px focus topic, one Today card, no separate task card and no Undo day start.
+  The owner's window was not operated, activated or restarted.
+
+158 JavaScript tests, frontend build and privacy guard passed. The final native
+reload reported no console errors; an earlier DEV navigation had the existing
+favicon 404. A repeated Rust test build could not complete because the disk ran
+out of space. No Rust source changed in this correction. Automatic approval
+review rejected cleanup of that attempt's generated cache with only "blocked by
+policy"; the block was not bypassed. No installation, release or push occurred.
+
+Evidence and reproducible batches are ignored under `.local/dev/v7-*`,
+`.local/dev/owner-dev-v7-readonly-result.json` and
+`.local/background-qa/v7-fidelity-20260914/`. Early QA attempts checked DOM before
+asynchronous load/close callbacks completed; the final history/settings batch
+waits for those states and confirms zero historical task rows and zero leaked
+hidden settings hosts. The screenshot `v7-summary-ready.png` predates the CSS
+import fix and is not acceptance evidence; use `v7-final-home.png`,
+`v7-summary-styled.png`, `v7-narrow.png` and `v7-today-visible.png` instead.

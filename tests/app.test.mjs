@@ -77,6 +77,31 @@ test('upstream mobile mode enables its CSS and closes the drawer through its bac
   assert.equal(w.document.querySelector('.drawer-backdrop').classList.contains('visible'), false);
 });
 
+test('v7 Today embeds native tasks and connects Add, All tasks and Schedule', async t => {
+  const {w,click,errors}=await launch(t);
+  assert.equal(w.document.querySelectorAll('.calendar-recurring__card').length,1);
+  assert.equal(w.document.querySelector('[data-calendar-tasks]'),null);
+  assert.ok(w.document.querySelector('[data-calendar-recurring] [data-overview-embedded]'));
+  assert.equal(w.document.querySelector('[data-undo-day]'),null);
+  await click('[data-recurring-add]');
+  assert.equal(w.document.querySelectorAll('dialog[open]').length,1);
+  assert.equal(w.document.querySelector('[data-add-kind="norm"]'),null);
+  await click('[data-add-kind="task"]');
+  assert.ok(w.document.querySelector('#evm-form'));
+  assert.equal(w.document.querySelector('[data-add-kind]'),null,'choice closes before the shared Task/Event form opens');
+  await click('#evm-close');
+  await click('[data-recurring-all]');
+  assert.equal(w.document.querySelector('dialog [data-overview-all]').hidden,false);
+  await click('dialog footer [data-dialog-close]');
+  await click('[data-pane="table"]');
+  w.dispatchEvent(new w.CustomEvent('hanni:open-recurring-settings'));
+  await settle();
+  assert.equal(w.document.querySelectorAll('body > .calendar-recurring[hidden]').length,1);
+  await click('dialog footer [data-dialog-close]');
+  assert.equal(w.document.querySelectorAll('body > .calendar-recurring[hidden]').length,0);
+  assert.deepEqual(errors,[]);
+});
+
 test('one persistent action below the Calendar heading opens the shared Task/Event editor and restores focus', async t => {
   const { w, click } = await launch(t);
   assert.equal(w.document.querySelector('[data-overview-create]'), null);

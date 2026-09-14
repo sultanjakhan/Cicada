@@ -1,5 +1,6 @@
 import { createCalendarDialog } from './calendar-dialog.js';
 import { escapeHtml } from './utils.js';
+import { ICONS } from './icons.js';
 
 export const DEVELOPMENT_STATE_KEY = 'calendar_development_v1';
 const VERSION = 1;
@@ -167,18 +168,47 @@ export async function mountGoalDevelopment(element, { invoke, goal, onCreateTask
     element.querySelectorAll('[data-dev-skill]').forEach(button => button.addEventListener('click', () => skillEditor(ext.skills.find(skill => skill.id === button.dataset.devSkill)))); element.querySelectorAll('[data-dev-evidence]').forEach(button => button.addEventListener('click', () => evidenceEditor(ext.skills.find(skill => skill.id === button.dataset.devEvidence)))); element.querySelectorAll('[data-dev-stage]').forEach(button => button.addEventListener('click', () => stageEditor(ext.stages.find(stage => stage.id === button.dataset.devStage)))); element.querySelectorAll('[data-dev-stage-active]').forEach(button => button.addEventListener('click', () => run(draft => { draft.activeStageId = button.dataset.devStage; }))); element.querySelectorAll('[data-dev-stage-complete]').forEach(button => button.addEventListener('click', () => confirm('Завершить этап?', 'Этап останется в истории цели.', draft => { const row = draft.stages.find(stage => stage.id === button.dataset.devStageComplete); if (row) row.status = 'completed'; if (draft.activeStageId === button.dataset.devStageComplete) draft.activeStageId = null; }))); element.querySelectorAll('[data-dev-stage-delete]').forEach(button => button.addEventListener('click', () => confirm('Удалить этап?', 'Навыки и их подтверждения останутся в цели.', draft => { draft.stages = draft.stages.filter(stage => stage.id !== button.dataset.devStageDelete); if (draft.activeStageId === button.dataset.devStageDelete) draft.activeStageId = null; }))); element.querySelectorAll('[data-dev-remove]').forEach(button => button.addEventListener('click', () => confirm('Исключить навык из цели?', 'Навык выйдет из этапов и фокуса, но связанные задачи не будут удалены.', draft => { const id = button.dataset.devRemove; draft.skills = draft.skills.filter(skill => skill.id !== id); for (const stage of draft.stages) { stage.skillIds = stage.skillIds.filter(value => value !== id); if (stage.focusId === id) stage.focusId = null; } if (draft.focusId === id) draft.focusId = null; }))); element.querySelectorAll('[data-dev-task]').forEach(button => button.addEventListener('click', () => { const skill = ext.skills.find(item => item.id === button.dataset.devTask); if (skill) onCreateTask?.({ goalId, skillId: skill.id, skillTitle: skill.title }); }));
   }
   await load(); render();
-  return { dispose: () => { disposed = true; for (const api of childDialogs) api.dispose(); childDialogs.clear(); element.replaceChildren(); }, refresh: async () => { await load(); render(); } };
+  const chooseStage = () => {
+    const ext=extension(state,goalId);
+    return openDialog({title:'Какой этап сейчас',hint:'Выбери ближайший этап или развитие всей цели. Текущая задача не изменится.',submitLabel:'Выбрать этап',
+      draw:()=>`<div class="dev-stage-choices"><label><input type="radio" name="stage" value="" ${!ext.activeStageId?'checked':''}>Вся цель</label>${ext.stages.filter(stage=>stage.status!=='completed').map(stage=>`<label><input type="radio" name="stage" value="${escapeHtml(stage.id)}" ${stage.id===ext.activeStageId?'checked':''}><span><strong>${escapeHtml(stage.title)}</strong><small>${stage.skillIds.length} навыков${stage.deadline?' · до '+escapeHtml(stage.deadline):''}</small></span></label>`).join('')}</div>`,
+      submit:async data=>mutate(draft=>{const id=String(data.get('stage')||'');if(id&&!draft.stages.some(stage=>stage.id===id&&stage.status!=='completed'))throw Error('Этот этап уже недоступен.');draft.activeStageId=id||null;}),
+    });
+  };
+  return { dispose: () => { disposed = true; for (const api of childDialogs) api.dispose(); childDialogs.clear(); element.replaceChildren(); }, refresh: async () => { await load(); render(); }, openFocusPicker:focusPicker, openStagePicker:chooseStage, openStageEditor:id=>stageEditor(extension(state,goalId).stages.find(stage=>stage.id===id)||null) };
 }
 
 export async function mountGoalDevelopmentSummary(element, { invoke, goalId, onOpen } = {}) {
   if (!element || !invoke || goalId == null) throw new Error('Не хватает цели или native API.');
-  const id = String(goalId); let disposed = false;
+  const id = String(goalId),document=element.ownerDocument; let disposed = false,revision=0,editor=null;
+  const progressView=(progress,label)=>`<div class="hero-progress"><div class="progress-label"><strong>${progress.total?progress.percent+'%':'—'}</strong><span>${progress.total?`${progress.done} из ${progress.total}`:'Без оценки'}</span></div><div class="progress-track" role="progressbar" aria-label="${label}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress.percent||0}"><span style="width:${progress.percent||0}%"></span></div><small>${label}</small></div>`;
+  async function openEditor(action,stageId,trigger){
+    if(editor||disposed)return;
+    const host=document.createElement('div');host.hidden=true;document.body.append(host);
+    let controller=null;
+    const handle={dispose:()=>{controller?.dispose();host.remove();}};editor=handle;
+    try{
+      controller=await mountGoalDevelopment(host,{invoke,goal:{id,title:''}});
+      if(disposed||editor!==handle){handle.dispose();return;}
+      const dialog=action==='focus'?controller.openFocusPicker():action==='choose-stage'?controller.openStagePicker():controller.openStageEditor(stageId);
+      dialog.modal.addEventListener('close',()=>{handle.dispose();if(editor===handle)editor=null;if(!disposed)(element.querySelector(`[data-summary-action="${action}"]`)||trigger)?.focus();},{once:true});
+    }catch(cause){handle.dispose();editor=null;throw cause;}
+  }
   const render = async () => {
-    if (disposed || !element.isConnected) return; const state = normalizeDevelopmentState(await invoke('get_ui_state', { key: DEVELOPMENT_STATE_KEY })); if (disposed || !element.isConnected) return; const ext = extension(state, id); const stage = ext.stages.find(item => item.id === ext.activeStageId) || null; const focus = ext.skills.find(skill => skill.id === (stage ? stage.focusId : ext.focusId)); const progress = stage ? stageProgress(stage, ext.skills) : null; const done = ext.skills.filter(skillProgress).length, total = ext.skills.length, totalProgress = pct(done, total);
-    element.innerHTML = `<section class="calendar-development-summary">${stage ? `<div><span>Текущий этап</span><strong>${escapeHtml(stage.title)}</strong><small>${stage.deadline ? `До ${escapeHtml(stage.deadline)} · ` : ''}${progress.total ? `${progress.percent}% · ${progress.done}/${progress.total}` : 'Настрой навыки'}</small></div>` : `<div><span>Развитие</span><strong>${total ? `${totalProgress}% подтверждено` : 'Настрой ближайший этап'}</strong><small>${total ? `${done} из ${total} навыков` : 'Выбери навыки и срок'}</small></div>`}<div>${focus ? `<span>${escapeHtml(focus.topic)}</span><strong>${escapeHtml(focus.title)}</strong>` : '<span>Навык не выбран</span>'}<button type="button" data-development-open>Открыть</button></div></section>`;
-    element.querySelector('[data-development-open]')?.addEventListener('click', () => onOpen?.({ goalId: id }));
+    if (disposed || !element.isConnected) return;
+    const own=++revision,state=normalizeDevelopmentState(await invoke('get_ui_state',{key:DEVELOPMENT_STATE_KEY}));
+    if(disposed||own!==revision||!element.isConnected)return;
+    const ext=extension(state,id),stage=ext.stages.find(item=>item.id===ext.activeStageId)||null,focus=ext.skills.find(skill=>skill.id===(stage?stage.focusId:ext.focusId));
+    const total=ext.skills.length,done=ext.skills.filter(skillProgress).length,progress=stage?stageProgress(stage,ext.skills):{total,done,percent:pct(done,total)};
+    const topics=stage?topicList(ext.skills.filter(skill=>stage.skillIds.includes(skill.id))):[];
+    const focusBlock=`<div class="focus-inline focus-expanded"><span class="focus-symbol" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3M12 8v8m-4-4h8"/></svg></span><div class="focus-copy"><small>Сейчас развиваю</small>${focus?`<span class="focus-topic">${escapeHtml(focus.topic)}</span><button type="button" class="focus-skill-title" data-summary-skill>${escapeHtml(focus.title)}</button>`:`<span class="focus-empty">Выбери навык ${stage?'из текущего этапа':'из цели'}</span>`}<button type="button" class="text-button" data-summary-action="focus">${focus?'Выбрать другой навык':'Выбрать навык'}</button></div></div>`;
+    const dateLabel=stage?.deadline?new Intl.DateTimeFormat('ru',{day:'numeric',month:'long',year:'numeric'}).format(new Date(stage.deadline+'T12:00:00')):'';
+    element.innerHTML=`<div class="calendar-development-summary">${stage?`<section class="stage-panel is-compact" aria-label="Текущий этап"><div class="stage-heading"><div><span class="eyebrow">Текущий этап</span><h3>${escapeHtml(stage.title)}</h3><small>${dateLabel?'До '+escapeHtml(dateLabel):'Без срока'}</small></div><div class="stage-tools"><button type="button" class="text-button" data-summary-action="edit-stage">Изменить</button><button type="button" class="text-button" data-summary-action="choose-stage">${ICONS.cycle}Сменить этап</button></div></div><div class="stage-bottom"><div class="stage-topics">${topics.slice(0,4).map(topic=>`<span>${escapeHtml(topic)}</span>`).join('')}${topics.length>4?`<span>+${topics.length-4} тем</span>`:''}${!topics.length?'<span>Выбери навыки для этапа</span>':''}</div>${progressView(progress,'навыков этапа подтверждено')}</div></section><div class="hero-stage-focus">${focusBlock}</div>`:`<div class="hero-bottom">${focusBlock}${progressView(progress,'навыков всей цели подтверждено')}</div><div class="stage-entry"><div><strong>Ближайший этап</strong><span>Выбери часть навыков и срок — общая цель сохранится.</span></div><div class="stage-entry-actions">${ext.stages.length?'<button type="button" data-summary-action="choose-stage">Выбрать этап</button>':''}<button type="button" data-summary-action="new-stage">+ Спланировать этап</button></div></div>`}</div>`;
+    element.querySelector('[data-summary-skill]')?.addEventListener('click',()=>onOpen?.({goalId:id,skillId:focus.id}));
+    element.querySelectorAll('[data-summary-action]').forEach(button=>button.addEventListener('click',()=>void openEditor(button.dataset.summaryAction,button.dataset.summaryAction==='edit-stage'?stage?.id:null,button).catch(cause=>{const error=document.createElement('p');error.setAttribute('role','alert');error.textContent=cause?.message||String(cause);element.append(error);})));
   };
-  const listener = event => { if (String(event.detail?.goalId) === id) void render(); };
-  window.addEventListener('hanni:development-changed', listener); await render();
-  return { dispose: () => { disposed = true; window.removeEventListener('hanni:development-changed', listener); element.replaceChildren(); }, refresh: render };
+  const listener = event => { if (String(event.detail?.goalId) === id) void render().catch(()=>{}); };
+  window.addEventListener('hanni:development-changed', listener);
+  try{await render();}catch(cause){window.removeEventListener('hanni:development-changed',listener);throw cause;}
+  return { dispose: () => { disposed = true;revision++;editor?.dispose();window.removeEventListener('hanni:development-changed', listener); element.replaceChildren(); }, refresh: render };
 }

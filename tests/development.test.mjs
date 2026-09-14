@@ -44,6 +44,24 @@ test('task attachment is idempotent and never creates a task', async () => {
   assert.equal(writes, 1, 'second attach is safe to retry and does not create another relation write');
 });
 
+test('v7 summary opens a direct skill picker, cancels without saving and switches scope', async t => {
+  const host=document.createElement('div');document.body.append(host);
+  let stored=JSON.stringify({version:1,goals:{g:{skills:[{id:'sql',title:'JOIN',topic:'SQL',evidence:'checked'},{id:'api',title:'Contract',topic:'API'}],stages:[{id:'s',title:'SQL',skillIds:['sql'],focusId:'sql'}],activeStageId:'s',focusId:'api'}}}),writes=0;
+  const invoke=async(command,args)=>{if(command==='get_ui_state')return stored;if(command==='set_ui_state'){stored=args.value;writes++;return;}throw Error(command);};
+  const controller=await mountGoalDevelopmentSummary(host,{invoke,goalId:'g'});t.after(()=>{controller.dispose();host.remove();});
+  assert.equal(host.querySelector('[data-development-open]'),null);
+  assert.match(host.querySelector('.focus-topic').textContent,/SQL/);
+  host.querySelector('[data-summary-action=focus]').click();await settle();
+  assert.equal(document.querySelectorAll('dialog[open]').length,1,'no goal-detail dialog behind the picker');
+  document.querySelector('dialog [data-dev-topic=SQL]').click();await settle();
+  document.querySelector('dialog footer [data-dialog-close]').click();await settle();assert.equal(writes,0);
+  host.querySelector('[data-summary-action=choose-stage]').click();await settle();
+  const dialog=document.querySelector('dialog[open]');dialog.querySelector('input[value=""]').checked=true;
+  dialog.querySelector('form').dispatchEvent(new window.Event('submit',{bubbles:true,cancelable:true}));await settle();
+  assert.equal(JSON.parse(stored).goals.g.activeStageId,null);
+  assert.match(host.textContent,/50%/);assert.match(host.querySelector('.focus-topic').textContent,/API/);
+});
+
 test('mount persists only after acknowledgement and summary refreshes from event', async t => {
   const root = document.createElement('div'), summary = document.createElement('div'); document.body.append(root, summary);
   const state = { version:1, goals:{ g:{ skills:[{id:'sql',title:'JOIN',topic:'SQL',level:2,evidence:''}], stages:[{id:'stage',title:'SQL',outcome:'Practice',deadline:'2026-10-10',skillIds:['sql'],focusId:null}], activeStageId:'stage',focusId:null } } };

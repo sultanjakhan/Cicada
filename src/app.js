@@ -1,4 +1,5 @@
 import './styles.css';
+import './hanni/css/calendar-dashboard-v7.css';
 import { tabLoaders } from './hanni/js/state.js';
 import { renderTabBar, openDrawer } from './hanni/js/tabs.js';
 import { toast } from './hanni/js/utils.js';

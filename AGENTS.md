@@ -8,6 +8,15 @@ empty; the approved matrix belongs in the owner's local data, never a shipped
 seed. Settings use explicit Save/Cancel and native snapshot persistence. Preserve
 existing task identity/timers when changing development focus or stages.
 
+Owner correction, 2026-09-14: preserve the approved v7 dashboard presentation
+when transferring prototype logic. The goal summary uses a full-width stage
+section and an expanded topic/skill focus, without a nested summary card or an
+extra Open action. Focus selection opens directly from the homepage. Keep one
+Today card containing native tasks and scheduled actions/rules; do not invent a
+separate Actions and rules dashboard section. Quantitative norms remain excluded.
+The day-start acknowledgement has no Undo start button. These decisions override
+older dashboard descriptions below; preserve existing records and task execution.
+
 This is a new, independent repository authorized by the owner on 2026-09-10.
 It has no Git ancestry or writer lock in common with the legacy Hanni repository.
 Do not modify the legacy application, its repositories, data, locks or releases.

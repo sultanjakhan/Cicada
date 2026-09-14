@@ -18,12 +18,12 @@ import { loadCalendarPreferences } from './calendar-display-preferences.js';
 import { mountGoalDevelopment, mountGoalDevelopmentSummary, attachDevelopmentTask } from './calendar-development.js';
 
 let disposeNow = null, disposeTable = null, disposePanel = null, disposeTasks = null;
-let disposeRecurring = null, developmentDialog = null;
+let disposeRecurring = null, developmentDialog = null, tasksDialog = null;
 let disposeDayBanner = null;
 let preferences = { density:'comfortable', showCompleted:false };
 let workspaceRevision = 0;
 let dialogSequence = 0;
-function cleanupWorkspace() { workspaceRevision++; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeRecurring?.(); disposeDayBanner?.(); developmentDialog?.dispose(); disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; disposeRecurring = null; disposeDayBanner = null; developmentDialog = null; }
+function cleanupWorkspace() { workspaceRevision++; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeRecurring?.(); disposeDayBanner?.(); developmentDialog?.dispose(); tasksDialog?.dispose(); disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; disposeRecurring = null; disposeDayBanner = null; developmentDialog = null; tasksDialog = null; }
 const view = { period: 'day', mode: 'grid', date: views.iso(new Date()), firstDay:'mon' };
 let initialViewLoaded = false;
 window.addEventListener('hanni:calendar-settings-changed', event => {
@@ -43,7 +43,7 @@ window.addEventListener('hanni:open-recurring-settings', () => {
   dispose.onManagerClose = () => { dispose(); host.remove(); };
 });
 
-function openGoalDevelopment(goal) {
+function openGoalDevelopment(goal, selection = {}) {
   if (developmentDialog || !goal) return;
   let mounted = null;
   const dialog = createCalendarDialog({document,title:'Цель',onClose:()=>{mounted?.dispose();developmentDialog=null;}});
@@ -59,7 +59,13 @@ function openGoalDevelopment(goal) {
     void showCalendarCreateModal(null,{initialNoDate:true,initialTitle:skill.skillTitle,goalId:goal.id,goalTitle:goal.title,
       onTaskSaved:task=>String(task.goalId)===String(goal.id)?attachDevelopmentTask(goal.id,skill.skillId,task.id,{invoke}):Promise.resolve(),
     });
-  }}).then(value=>{if(developmentDialog!==dialog)value.dispose();else mounted=value;}).catch(error=>dialog.showError(error?.message||String(error)));
+  }}).then(value=>{
+    if(developmentDialog!==dialog){value.dispose();return;}mounted=value;
+    if(selection.skillId){
+      const skill=[...host.querySelectorAll('[data-dev-skill]')].find(button=>button.dataset.devSkill===selection.skillId);
+      if(skill){let parent=skill.parentElement;while(parent&&parent!==host){if(parent.tagName==='DETAILS')parent.open=true;parent=parent.parentElement;}skill.scrollIntoView({block:'center'});skill.focus();}
+    }
+  }).catch(error=>dialog.showError(error?.message||String(error)));
 }
 const key = (r) => `${r.source_type}:${r.source_id}`;
 const changed = () => { window.dispatchEvent(new Event('task-state-changed')); window.dispatchEvent(new Event('hanni:calendar-refresh')); };
@@ -469,20 +475,35 @@ export async function loadCalendarWorkspace(el) {
     },
     panes: [{id:'dash',label:'Дашборд'}, {id:'table',label:'Таблица'}, {id:'goals',label:'Цели'}, {id:'notes',label:'Заметки'}],
     renderDash: (pane) => {
-      pane.innerHTML = '<div data-calendar-day-banner></div><div data-calendar-now></div><div data-calendar-tasks></div><div data-calendar-recurring></div>';
+      pane.innerHTML = '<div data-calendar-day-banner></div><div data-calendar-now></div><div data-calendar-recurring></div>';
       disposeDayBanner = mountCalendarDayBanner(pane.querySelector('[data-calendar-day-banner]'),{invoke});
-      disposeRecurring = mountCalendarRecurring(pane.querySelector('[data-calendar-recurring]'), { invoke, showCompleted:preferences.showCompleted });
-      disposeTasks = mountCalendarDashboardTasks(pane.querySelector('[data-calendar-tasks]'), { invoke, mountMenu: mountRecordMenu, openTask: (row, returnFocus) => showRecord(calendarRecord(row), returnFocus) });
+      const taskOptions = { invoke, mountMenu:mountRecordMenu, openTask:(row,returnFocus)=>showRecord(calendarRecord(row),returnFocus) };
+      const showAllTasks = () => {
+        if(tasksDialog)return;
+        const dialog=createCalendarDialog({document,title:'Все задачи',onClose:()=>{disposeTasks?.();disposeTasks=null;tasksDialog=null;}});
+        tasksDialog=dialog;
+        dialog.modal.querySelector('footer [data-dialog-close]').textContent='Закрыть';
+        disposeTasks=mountCalendarDashboardTasks(dialog.body,taskOptions);
+        disposeTasks.showAll();dialog.open();
+      };
+      disposeRecurring = mountCalendarRecurring(pane.querySelector('[data-calendar-recurring]'), {
+        invoke, showCompleted:preferences.showCompleted,
+        mountTasks:host=>mountCalendarDashboardTasks(host,{...taskOptions,embedded:true,onShowAll:showAllTasks}),
+        onCreateTask:()=>{
+          const revision=workspaceRevision;
+          showCalendarCreateModal(views.iso(new Date()),{isCurrent:()=>revision===workspaceRevision&&pane.isConnected&&S.activeTab==='calendar',returnFocus:()=>pane.querySelector('[data-recurring-add]')?.focus()});
+        },
+      });
       disposeNow = mountCalendarNow(pane.querySelector('[data-calendar-now]'), {
         openGoalDetails:openGoalDevelopment,
-        mountGoalSummary:(host,goal)=>mountGoalDevelopmentSummary(host,{invoke,goalId:goal.id,onOpen:()=>openGoalDevelopment(goal)}),
+        mountGoalSummary:(host,goal)=>mountGoalDevelopmentSummary(host,{invoke,goalId:goal.id,onOpen:selection=>openGoalDevelopment(goal,selection)}),
         openTaskDetails: (row, restore) => showRecord(calendarRecord({ ...row, date: row.date || row.completion_date || null }), restore),
         openGoals: async id => {
           await openPane('goals');
           if (id != null && S.activeTab === 'calendar' && S._unifiedPane.calendar === 'goals') el.querySelector(`[data-edit-goal="${id}"]`)?.focus();
         },
         openCalendar: () => openPane('table'),
-        onCurrentTaskChange: value => disposeTasks?.setCurrentTask(value),
+        onCurrentTaskChange: value => disposeRecurring?.setCurrentTask(value),
       });
     },
     renderTable: mountCalendarTable,
