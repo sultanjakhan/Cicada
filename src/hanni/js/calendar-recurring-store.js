@@ -8,7 +8,7 @@ const allowed = kind => kind === 'rule' ? ['pending','kept','broken'] : ['pendin
 function planFields(fields, old, today, id) {
   const plan = {id, kind:fields.kind, title:String(fields.title||'').trim(), weekdays:[...new Set(fields.weekdays||[])],
     startsOn:String(fields.startsOn||''), endsOn:String(fields.endsOn||''), time:String(fields.time||''),
-    active:fields.active!==false, createdOn:old?.createdOn||today};
+    active:fields.active!==false, required:fields.required!==false, createdOn:old?.createdOn||today};
   if (!plan.title || plan.title.length > 160) throw Error('Название: от 1 до 160 символов.');
   if (!['action','rule'].includes(plan.kind) || (old && old.kind!==plan.kind)) throw Error('Для другого способа учёта создай отдельную запись.');
   if (!plan.weekdays.length || plan.weekdays.some(day=>!Number.isInteger(day)||day<0||day>6)) throw Error('Выбери хотя бы один день недели.');

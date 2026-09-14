@@ -7,12 +7,14 @@ let instance = 0;
 export function mountCalendarDashboardTasks(element, dependencies) {
   const { invoke, openTask } = dependencies;
   const now = dependencies.now || (() => new Date());
+  const embedded = dependencies.embedded === true;
   const document = element.ownerDocument, window = document.defaultView;
   const prefix = `calendar-task-overview-${++instance}`;
   let rows = null, current = { key: '', state: '' }, date = localDate(now());
   let disposed = false, revision = 0, loading = false, failed = false, expanded = false, page = 0;
   element.classList.add('calendar-task-overview');
-  element.innerHTML = `<section aria-labelledby="${prefix}-title">
+  element.classList.toggle('calendar-task-overview--embedded', embedded);
+  element.innerHTML = embedded ? `<div data-overview-embedded aria-live="polite"></div>` : `<section aria-labelledby="${prefix}-title">
     <div class="cto-heading"><h2 id="${prefix}-title" tabindex="-1" data-overview-title>Задачи</h2><div class="cto-filters" role="group" aria-label="Показать задачи"><button type="button" data-overview-today-filter aria-pressed="true" aria-controls="${prefix}-today" disabled>Сегодня <span data-overview-today-count></span></button><button type="button" data-overview-toggle aria-pressed="false" aria-controls="${prefix}-all" disabled>Все <span data-overview-all-count></span></button></div></div>
     <p class="cto-description" data-overview-description></p>
     <p class="cto-message" data-overview-message role="status" aria-live="polite"></p>
@@ -24,6 +26,7 @@ export function mountCalendarDashboardTasks(element, dependencies) {
     <div class="cto-pagination" data-overview-pagination hidden><button type="button" data-overview-prev>Назад</button><span data-overview-page role="status"></span><button type="button" data-overview-next>Далее</button></div>
   </section>`;
   const query = name => element.querySelector(`[data-overview-${name}]`);
+  const embeddedHost = query('embedded');
   const title = query('title'), toggle = query('toggle'), todayFilter = query('today-filter'), message = query('message'), retry = query('retry');
   const today = query('today'), all = query('all'), groups = query('groups'), pagination = query('pagination');
   const dateLabel = value => {
@@ -73,6 +76,7 @@ export function mountCalendarDashboardTasks(element, dependencies) {
   }
   function render() {
     if (disposed) return;
+    if (embedded) return renderEmbedded();
     element.setAttribute('aria-busy', String(loading));
     message.textContent = failed ? 'Не удалось обновить список задач. Повтори загрузку.' : loading ? (rows ? 'Обновляем задачи…' : 'Загружаем задачи…') : '';
     retry.hidden = !failed; retry.disabled = loading;
@@ -114,11 +118,27 @@ export function mountCalendarDashboardTasks(element, dependencies) {
     query('page').textContent = visibleItems.length ? `${page * PAGE_SIZE + 1}–${Math.min((page + 1) * PAGE_SIZE, visibleItems.length)} из ${visibleItems.length}` : '';
     if (focusedKey && !focused.isConnected) (findRowButton(focusedKey, focusedScope, 'recordMenu' in focused.dataset) || title).focus();
   }
+  function notifyCount(count) {
+    dependencies.onCount?.(count);
+    countListener?.(count);
+  }
+  let countListener = null;
+  function renderEmbedded() {
+    element.setAttribute('aria-busy', String(loading));
+    if (rows === null) { embeddedHost.textContent = loading ? 'Загружаем задачи…' : ''; return; }
+    const items = ordered();
+    const todayItems = date === localDate(now()) ? items.filter(row => row.date === date && taskKey(row) !== current.key) : [];
+    notifyCount(todayItems.length);
+    embeddedHost.replaceChildren();
+    if (failed) { empty(embeddedHost, 'Не удалось обновить список задач.'); return; }
+    if (!todayItems.length) return;
+    embeddedHost.append(taskList(todayItems, 'today'));
+  }
   async function refresh() {
     if (disposed) return;
     const request = ++revision; date = localDate(now()); loading = true; failed = false;
     element.setAttribute('aria-busy', 'true');
-    message.textContent = rows ? 'Обновляем задачи…' : 'Загружаем задачи…'; retry.hidden = true;
+    if (!embedded) { message.textContent = rows ? 'Обновляем задачи…' : 'Загружаем задачи…'; retry.hidden = true; }
     try {
       const result = await invoke('get_calendar_tasks', {});
       if (disposed || request !== revision) return;
@@ -134,9 +154,9 @@ export function mountCalendarDashboardTasks(element, dependencies) {
   }
   const onClick = event => {
     const button = event.target.closest('button'); if (!button || !element.contains(button) || button.disabled) return;
-    if (button === toggle || button === todayFilter) { expanded = button === toggle; page = 0; render(); }
-    else if (button === retry) void refresh();
-    else if (button === query('prev') || button === query('next')) { page += button === query('prev') ? -1 : 1; render(); title.focus(); }
+    if (!embedded && (button === toggle || button === todayFilter)) { expanded = button === toggle; page = 0; render(); }
+    else if (!embedded && button === retry) void refresh();
+    else if (!embedded && (button === query('prev') || button === query('next'))) { page += button === query('prev') ? -1 : 1; render(); title.focus(); }
     else if ('overviewTask' in button.dataset) {
       const key = button.dataset.overviewTask, scope = button.dataset.overviewScope;
       const row = rows?.find(value => taskKey(value) === key);
@@ -144,7 +164,7 @@ export function mountCalendarDashboardTasks(element, dependencies) {
     }
   };
   const onExternal = () => { void refresh(); };
-  const onKey = event => { if (event.key === 'Escape' && expanded && all.contains(event.target)) { event.preventDefault(); event.stopPropagation(); expanded = false; page = 0; render(); todayFilter.focus(); } };
+  const onKey = event => { if (!embedded && event.key === 'Escape' && expanded && all.contains(event.target)) { event.preventDefault(); event.stopPropagation(); expanded = false; page = 0; render(); todayFilter.focus(); } };
   element.addEventListener('click', onClick);
   element.addEventListener('keydown', onKey);
   window.addEventListener('task-state-changed', onExternal); window.addEventListener('focus', onExternal);
@@ -158,5 +178,12 @@ export function mountCalendarDashboardTasks(element, dependencies) {
     if (disposed || (current.key === value.key && current.state === value.state)) return;
     current = { key: value.key, state: value.state }; render();
   };
+  dispose.setDate = value => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value)) || date === value) return;
+    date = value; page = 0; render();
+  };
+  dispose.showAll = () => { if (embedded) dependencies.onShowAll?.(); else if (!expanded) { expanded = true; page = 0; render(); } };
+  dispose.showToday = () => { if (embedded) dependencies.onShowToday?.(); else if (expanded) { expanded = false; page = 0; render(); } };
+  dispose.onCount = listener => { countListener = typeof listener === 'function' ? listener : null; if (countListener && rows) countListener(ordered().filter(row => row.date === date && taskKey(row) !== current.key).length); return () => { if (countListener === listener) countListener = null; }; };
   return dispose;
 }
