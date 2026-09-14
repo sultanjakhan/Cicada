@@ -582,6 +582,22 @@ pub fn run() {
         panic!("run Hanni MVP: {error:?}");
     });
     options.before_run(&mut app);
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    if options.is_one_shot() {
+        // Wry 2.11.4 drops RequestExit's code; retain it through event-loop cleanup.
+        let exit_code = std::rc::Rc::new(std::cell::Cell::new(1));
+        let requested_exit = exit_code.clone();
+        app.run_return(move |app, event| {
+            if let tauri::RunEvent::ExitRequested {
+                code: Some(code), ..
+            } = &event
+            {
+                requested_exit.set(*code);
+            }
+            options.on_event(app, &event);
+        });
+        std::process::exit(exit_code.get());
+    }
     app.run(move |app, event| options.on_event(app, &event));
 }
 
