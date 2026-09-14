@@ -36,4 +36,36 @@ test('Embedded task controller omits tasks when the selected date is not today',
   dispose.setDate('2026-09-12');
   assert.doesNotMatch(host.textContent,/Подготовить SQL-запрос/);
   assert.equal(counts.at(-1),0);
+  dom.window.dispatchEvent(new dom.window.Event('focus'));
+  await new Promise(resolve=>setTimeout(resolve,0));
+  assert.doesNotMatch(host.textContent,/Подготовить SQL-запрос/,'refresh must retain the chosen history date');
+  assert.equal(counts.at(-1),0);
+});
+
+test('Recurring disposes a function task controller and releases a temporary settings mount on close', async t => {
+  const dom=new JSDOM('<main></main>',{url:'http://127.0.0.1/'}); const host=dom.window.document.querySelector('main'); let taskDisposed=0,managerClosed=0;
+  dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};
+  dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;this.dispatchEvent(new dom.window.Event('close'));};
+  const dispose=mountCalendarRecurring(host,{invoke:async command=>command==='get_ui_state'?JSON.stringify({version:1,plans:[],days:{}}):null,now:()=>new Date(`${today}T12:00:00`),mountTasks:()=>Object.assign(()=>{taskDisposed++;},{onCount(){}})});
+  t.after(()=>{dispose();dom.window.close();}); await new Promise(resolve=>setTimeout(resolve,0));
+  dispose.onManagerClose=()=>{managerClosed++;}; await dispose.openManager();
+  dom.window.document.querySelector('dialog').close();
+  assert.equal(managerClosed,1);
+  dispose(); assert.equal(taskDisposed,1);
+});
+
+test('A delayed embedded task count removes the recurring empty message without rerendering the task slot', async t => {
+  const dom=new JSDOM('<main></main>'); const host=dom.window.document.querySelector('main'); let release;
+  const taskGate=new Promise(resolve=>{release=resolve;});
+  const invoke=async command=>{
+    if(command==='get_ui_state') return JSON.stringify({version:1,plans:[],days:{}});
+    if(command==='get_calendar_tasks') { await taskGate; return [task]; }
+    return null;
+  };
+  const dispose=mountCalendarRecurring(host,{invoke,now:()=>new Date(`${today}T12:00:00`),mountTasks:slot=>mountCalendarDashboardTasks(slot,{invoke,now:()=>new Date(`${today}T12:00:00`),embedded:true})});
+  t.after(()=>{dispose();dom.window.close();}); await new Promise(resolve=>setTimeout(resolve,0));
+  assert.match(host.textContent,/На этот день больше нет неотмеченных дел/);
+  release(); await new Promise(resolve=>setTimeout(resolve,0)); await new Promise(resolve=>setTimeout(resolve,0));
+  assert.match(host.textContent,/Подготовить SQL-запрос/);
+  assert.equal(host.querySelector('.calendar-recurring__empty'),null);
 });

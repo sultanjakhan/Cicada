@@ -10,7 +10,7 @@ export function mountCalendarDashboardTasks(element, dependencies) {
   const embedded = dependencies.embedded === true;
   const document = element.ownerDocument, window = document.defaultView;
   const prefix = `calendar-task-overview-${++instance}`;
-  let rows = null, current = { key: '', state: '' }, date = localDate(now());
+  let rows = null, current = { key: '', state: '' }, date = localDate(now()), followToday = true;
   let disposed = false, revision = 0, loading = false, failed = false, expanded = false, page = 0;
   element.classList.add('calendar-task-overview');
   element.classList.toggle('calendar-task-overview--embedded', embedded);
@@ -38,9 +38,10 @@ export function mountCalendarDashboardTasks(element, dependencies) {
   const groupOrder = Object.keys(groupLabels);
   const ordered = () => [...(rows || [])].sort((a, b) => groupOrder.indexOf(groupOf(a)) - groupOrder.indexOf(groupOf(b)) || (Number(b.priority) || 0) - (Number(a.priority) || 0) || (a.date || '9999').localeCompare(b.date || '9999') || a.title.localeCompare(b.title, 'ru') || taskKey(a).localeCompare(taskKey(b)));
   const findRowButton = (key, scope, more = false) => [...element.querySelectorAll(more ? '[data-overview-menu-task]' : '[data-overview-task]')].find(button => (button.dataset.overviewTask || button.dataset.overviewMenuTask) === key && button.dataset.overviewScope === scope);
+  const fallbackFocus = () => { if (title) title.focus(); else { element.tabIndex = -1; element.focus(); } };
   const disposeMenu = dependencies.mountMenu?.(element, {
     getRecord: item => rows?.find(row => taskKey(row) === item.dataset.contextRecord),
-    restoreFocus: (item, trigger) => (findRowButton(item.dataset.contextRecord, item.dataset.overviewScope, 'recordMenu' in trigger.dataset) || title).focus(),
+    restoreFocus: (item, trigger) => (findRowButton(item.dataset.contextRecord, item.dataset.overviewScope, 'recordMenu' in trigger.dataset) || { focus: fallbackFocus }).focus(),
   });
 
   function taskList(items, scope) {
@@ -136,7 +137,7 @@ export function mountCalendarDashboardTasks(element, dependencies) {
   }
   async function refresh() {
     if (disposed) return;
-    const request = ++revision; date = localDate(now()); loading = true; failed = false;
+    const request = ++revision; if (!embedded || followToday) date = localDate(now()); loading = true; failed = false;
     element.setAttribute('aria-busy', 'true');
     if (!embedded) { message.textContent = rows ? 'Обновляем задачи…' : 'Загружаем задачи…'; retry.hidden = true; }
     try {
@@ -168,7 +169,7 @@ export function mountCalendarDashboardTasks(element, dependencies) {
   element.addEventListener('click', onClick);
   element.addEventListener('keydown', onKey);
   window.addEventListener('task-state-changed', onExternal); window.addEventListener('focus', onExternal);
-  const timer = window.setInterval(() => { if (date !== localDate(now())) void refresh(); }, 1000);
+  const timer = window.setInterval(() => { if ((!embedded || followToday) && date !== localDate(now())) void refresh(); }, 1000);
   void refresh();
   const dispose = () => {
     disposed = true; revision++; disposeMenu?.(); window.clearInterval(timer); element.removeEventListener('click', onClick); element.removeEventListener('keydown', onKey);
@@ -180,7 +181,7 @@ export function mountCalendarDashboardTasks(element, dependencies) {
   };
   dispose.setDate = value => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value)) || date === value) return;
-    date = value; page = 0; render();
+    date = value; followToday = value === localDate(now()); page = 0; render();
   };
   dispose.showAll = () => { if (embedded) dependencies.onShowAll?.(); else if (!expanded) { expanded = true; page = 0; render(); } };
   dispose.showToday = () => { if (embedded) dependencies.onShowToday?.(); else if (expanded) { expanded = false; page = 0; render(); } };
