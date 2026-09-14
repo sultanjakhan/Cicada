@@ -17,6 +17,13 @@ separate Actions and rules dashboard section. Quantitative norms remain excluded
 The day-start acknowledgement has no Undo start button. These decisions override
 older dashboard descriptions below; preserve existing records and task execution.
 
+MVP handoff, 2026-09-14: the owner is continuing from Mac. The Windows session
+stops repository writes after pushing this checkpoint. The receiving session
+must inspect its local WIP and remote main, use its own HANNI_SESSION_ID, and
+preserve foreign changes. This handoff concerns this independent MVP only;
+it does not transfer the legacy Hanni canonical or its locks. See README for
+the local-data boundary and the compact goal-card proposal, not yet implemented.
+
 This is a new, independent repository authorized by the owner on 2026-09-10.
 It has no Git ancestry or writer lock in common with the legacy Hanni repository.
 Do not modify the legacy application, its repositories, data, locks or releases.
