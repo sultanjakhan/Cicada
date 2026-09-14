@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 
+#[path = "mvp_sync_conflicts.rs"]
+pub(crate) mod conflicts;
+
 pub(crate) const SYNC_TABLES: &[&str] = &["mvp_records"];
 const TABLES: &[(&str, &[&str])] = &[
     ("items", &["id"]),
@@ -94,6 +97,8 @@ pub(crate) fn initialize(conn: &Connection) -> Result<(), String> {
         CREATE TABLE IF NOT EXISTS sync_row_versions(table_name TEXT NOT NULL,row_id TEXT NOT NULL,updated_at TEXT NOT NULL,device_id TEXT NOT NULL,PRIMARY KEY(table_name,row_id));
         CREATE TABLE IF NOT EXISTS sync_tombstones(table_name TEXT NOT NULL,row_id TEXT NOT NULL,deleted_at TEXT NOT NULL,PRIMARY KEY(table_name,row_id));
         CREATE TABLE IF NOT EXISTS mvp_sync_conflicts(id TEXT NOT NULL,stamp TEXT NOT NULL,writer TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(id,stamp,writer));
+        CREATE TABLE IF NOT EXISTS mvp_sync_conflict_resolutions(id TEXT NOT NULL,stamp TEXT NOT NULL,writer TEXT NOT NULL,payload_hash TEXT NOT NULL,choice TEXT NOT NULL,resolved_at TEXT NOT NULL,PRIMARY KEY(id,stamp,writer,payload_hash));
+        CREATE TABLE IF NOT EXISTS mvp_sync_resolution_archive(id TEXT NOT NULL,stamp TEXT NOT NULL,writer TEXT NOT NULL,payload_hash TEXT NOT NULL,data TEXT NOT NULL,source TEXT NOT NULL,PRIMARY KEY(id,stamp,writer,payload_hash));
         CREATE TABLE IF NOT EXISTS mvp_day_starts(id TEXT PRIMARY KEY,started_at_utc TEXT NOT NULL);
         DROP TRIGGER IF EXISTS mvp_records_insert;
         CREATE TRIGGER mvp_records_insert AFTER INSERT ON mvp_records WHEN (SELECT applying FROM content_sync_control WHERE id=1)=0 BEGIN DELETE FROM content_sync_dirty WHERE table_name='mvp_records' AND row_id=NEW.id; INSERT INTO content_sync_dirty(table_name,row_id) VALUES('mvp_records',NEW.id); END;
@@ -373,6 +378,9 @@ fn keep_conflict(
     writer: &str,
     record: &Record,
 ) -> Result<(), String> {
+    if conflicts::was_resolved(conn, id, stamp, writer, record)? {
+        return Ok(());
+    }
     sql(conn.execute(
         "INSERT OR IGNORE INTO mvp_sync_conflicts VALUES(?1,?2,?3,?4)",
         params![
@@ -384,9 +392,57 @@ fn keep_conflict(
     ))?;
     Ok(())
 }
+pub(crate) fn checkpoint_conflicts(conn: &Connection) -> Result<Vec<Value>, String> {
+    let mut statement = sql(conn
+        .prepare("SELECT id,stamp,writer,data FROM mvp_sync_conflicts UNION SELECT id,stamp,writer,data FROM mvp_sync_resolution_archive ORDER BY id,stamp,writer"))?;
+    let rows = sql(statement.query_map([], |r| Ok(json!({"id":r.get::<_,String>(0)?,"stamp":r.get::<_,String>(1)?,"writer":r.get::<_,String>(2)?,"data":r.get::<_,String>(3)?}))))?;
+    sql(rows.collect())
+}
+pub(crate) fn checkpoint_publishable(conn: &Connection) -> Result<bool, String> {
+    // A local dismissal cannot certify that this primary materialized the shared prefix.
+    // Older receipts without retained payload/provenance also cannot provide that proof.
+    sql(conn.query_row("SELECT NOT EXISTS(SELECT 1 FROM mvp_sync_conflict_resolutions r LEFT JOIN mvp_sync_resolution_archive a ON a.id=r.id AND a.stamp=r.stamp AND a.writer=r.writer AND a.payload_hash=r.payload_hash WHERE a.id IS NULL OR a.source NOT IN ('archive','pending') OR (r.choice='current' AND a.source='pending'))",[],|r|r.get(0)))
+}
+pub(crate) fn checkpoint_merge_conflict(conn: &Connection, value: &Value) -> Result<(), String> {
+    let object = value.as_object().ok_or("content_sync_unknown_schema")?;
+    if object.len() != 4 {
+        return Err("content_sync_unknown_schema".into());
+    }
+    let get = |key: &str| {
+        object
+            .get(key)
+            .and_then(Value::as_str)
+            .ok_or("content_sync_unknown_schema")
+    };
+    let (id, stamp, writer, data) = (get("id")?, get("stamp")?, get("writer")?, get("data")?);
+    let fields =
+        json!({"id":id,"data":data,"updated_at":stamp,"_updated_at":stamp,"_device_id":writer});
+    validate_record(conn, fields.as_object().unwrap())?;
+    let (_, record, stamp, writer) = decoded(fields.as_object().unwrap())?;
+    let prior: Option<String> = sql(conn
+        .query_row(
+            "SELECT data FROM mvp_sync_conflicts WHERE id=?1 AND stamp=?2 AND writer=?3",
+            params![id, stamp, writer],
+            |r| r.get(0),
+        )
+        .optional())?;
+    if let Some(prior) = prior {
+        let prior: Value =
+            serde_json::from_str(&prior).map_err(|_| "mvp_sync_invalid_local_record")?;
+        let incoming: Value =
+            serde_json::from_str(data).map_err(|_| "content_sync_unknown_schema")?;
+        if prior != incoming {
+            return Err("content_sync_version_conflict".into());
+        }
+    }
+    keep_conflict(conn, id, &stamp, &writer, &record)
+}
 pub(crate) fn apply_record(conn: &Connection, fields: &Map<String, Value>) -> Result<bool, String> {
     validate_record(conn, fields)?;
     let (id, record, stamp, writer) = decoded(fields)?;
+    if conflicts::was_resolved(conn, &id, &stamp, &writer, &record)? {
+        return Ok(false);
+    }
     let prior:Option<(String,String,String)>=sql(conn.query_row("SELECT r.data,r.updated_at,v.device_id FROM mvp_records r JOIN sync_row_versions v ON v.table_name='mvp_records' AND v.row_id=r.id WHERE r.id=?1",[&id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional())?;
     if let Some((data, local_stamp, local_writer)) = prior {
         let local: Record =

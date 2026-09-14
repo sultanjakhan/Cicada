@@ -13,17 +13,18 @@
 фиксированное имя объекта `hanni-mvp-relay-v1`. Существующие Hanni Worker, данные,
 токены, ключи и endpoint не используются.
 
-Публичный allowlist содержит только:
+Основные маршруты:
 
 - `POST /content/v1/batches` — сохранить пакет или повторить его ACK.
 - `GET /content/v1/batches?after=N&limit=16` — получить следующие пакеты.
 - `GET /content/v1/device-state` — ACK и client sequence своего устройства.
 - `GET /content/v1/stream` — native WebSocket с заголовком Authorization.
 
-`/v1/*`, другие профили, content checkpoint и maintenance возвращают 404.
-Сохранён проверенный внутренний Relay engine Hanni; его checkpoint API не открыт
-через router MVP. В MVP нет автоматической публикации checkpoint или очистки
-журнала. Протокол: [CONTRACT.md](CONTRACT.md).
+Также доступны checkpoint/maintenance маршруты с отдельной проверкой capability.
+`/v1/*` и другие профили возвращают 404. Публикация снимков и очистка по умолчанию
+выключены binding `HANNI_MVP_CHECKPOINTS_ENABLED="0"`. Их включение требует
+отдельного согласования, обновления подключавшихся клиентов и проверки readiness.
+Подробный протокол и границы: [CHECKPOINT.md](CHECKPOINT.md), [CONTRACT.md](CONTRACT.md).
 
 ## Локальное создание конфигураций
 
@@ -85,11 +86,11 @@ Wrangler `secret bulk`, но публикация Worker и установка b
 размер JSON пользовательской записи. Повторный ACK не добавляет пакет.
 429 возвращает `Retry-After`; 507 `relay_capacity_reached` останавливает новые
 записи, сохраняя принятый журнал. Клиент сохраняет outbox и показывает ошибку.
-После исчерпания storage capacity обычное ожидание не освобождает место:
-**у content v1 нет GC/checkpoint, поэтому журнал не рассчитан на неограниченную
-долгосрочную работу**. До достижения предела потребуется отдельно проверенное
-расширение протокола. Удалять DO, сбрасывать cursor или outbox для обхода лимита
-нельзя: это создаёт риск потери и расхождения данных.
+Очистка старого префикса доступна после ручного включения и проверки клиентов;
+она сохраняет опубликованный encrypted snapshot и новые пакеты после него.
+При выключенной очистке обычное ожидание не освобождает место. Удалять DO,
+сбрасывать cursor или outbox для обхода лимита нельзя. Условия и границы описаны
+в [CHECKPOINT.md](CHECKPOINT.md).
 
 ACK и уведомления отправляются после SQLite transaction и `storage.sync()`.
 Каждое устройство сохраняет собственный `client_seq` и повторяет точный ciphertext
@@ -107,6 +108,7 @@ ACK и уведомления отправляются после SQLite transac
 npm ci --no-audit --no-fund
 npm test
 npm run test:native
+npm run test:native:checkpoint
 ```
 
 `npm test` запускает настоящий локальный workerd/SQLite: изоляцию маршрутов,

@@ -15,6 +15,6 @@ test('write bursts coalesce and a save during sync queues another nonblocking wa
 });
 
 test('every calendar write prefix wakes sync but sync and read commands never recurse', () => {
-  for (const command of ['start_calendar_day', 'set_ui_state', 'start_task_block', 'pause_task_block', 'finish_task_block', 'complete_calendar_task', 'delete_goal']) assert.equal(isSyncWrite(command), true, command);
+  for (const command of ['start_calendar_day', 'set_ui_state', 'start_task_block', 'pause_task_block', 'finish_task_block', 'complete_calendar_task', 'delete_goal', 'mvp_sync_conflict_resolve']) assert.equal(isSyncWrite(command), true, command);
   for (const command of ['get_ui_state', 'mvp_sync_now', 'mvp_sync_configure', 'mvp_sync_set_enabled', 'create_backup']) assert.equal(isSyncWrite(command), false, command);
 });

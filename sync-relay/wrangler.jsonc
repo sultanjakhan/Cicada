@@ -4,6 +4,7 @@
   "main": "src/worker.mjs",
   "compatibility_date": "2026-09-01",
   "workers_dev": true,
+  "vars": { "HANNI_MVP_CHECKPOINTS_ENABLED": "0" },
   "observability": {
     "enabled": false
   },

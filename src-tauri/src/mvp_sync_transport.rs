@@ -12,8 +12,11 @@ use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::{io::Read, sync::OnceLock, time::Duration};
 
+#[path = "mvp_sync_checkpoint.rs"]
+mod checkpoint;
 #[path = "mvp_sync_pending.rs"]
 mod pending;
+pub(super) const CHECKPOINT_SCHEMA: &str = "hanni-mvp-checkpoint-v1";
 
 const DOMAIN: &str = "hanni-mvp-content-v1";
 const PLAIN_LIMIT: usize = 60_000;
@@ -300,6 +303,7 @@ fn initialize(conn: &mut Connection, cfg: &RelayConfig) -> Result<(), String> {
       CREATE TABLE IF NOT EXISTS content_sync_blocked(seq INTEGER PRIMARY KEY,error_code TEXT NOT NULL);"))?;
     sql(tx.execute_batch("CREATE TABLE IF NOT EXISTS content_sync_tomb_births(table_name TEXT,row_id TEXT,created_at TEXT,PRIMARY KEY(table_name,row_id));"))?;
     pending::initialize(&tx)?;
+    checkpoint::initialize(&tx)?;
     let scope = hash(
         &serde_json::to_vec(&json!([cfg.endpoint, cfg.device_id, cfg.key_id, cfg.key]))
             .expect("static scope serializes"),
@@ -539,6 +543,14 @@ fn client() -> Result<&'static reqwest::blocking::Client, String> {
     CLIENT
         .get_or_init(|| {
             reqwest::blocking::Client::builder()
+                .default_headers({
+                    let mut headers = reqwest::header::HeaderMap::new();
+                    headers.insert(
+                        "X-Hanni-MVP-Checkpoint",
+                        reqwest::header::HeaderValue::from_static(CHECKPOINT_SCHEMA),
+                    );
+                    headers
+                })
                 .connect_timeout(Duration::from_secs(10))
                 .timeout(Duration::from_secs(25))
                 .redirect(reqwest::redirect::Policy::none())
@@ -853,24 +865,7 @@ fn apply_page(
     Ok(applied)
 }
 fn pull(conn: &mut Connection, cfg: &RelayConfig) -> Result<(usize, bool), String> {
-    let cursor = scalar(
-        conn,
-        "SELECT receive_seq FROM content_sync_state WHERE id=1",
-    )?;
-    let response = client()?
-        // `/stream` is reserved for WebSocket upgrades.  The durable HTTP
-        // protocol uses the same page shape as the health relay.
-        .get(format!(
-            "{}/v1/batches?after={cursor}&limit=16",
-            cfg.endpoint
-        ))
-        .bearer_auth(&cfg.token)
-        .send()
-        .map_err(|_| "content_sync_network_unavailable")?;
-    let page: Page = serde_json::from_slice(&read_response(conn, response, false)?)
-        .map_err(|_| "content_sync_invalid_page")?;
-    let more = page.has_more;
-    Ok((apply_page(conn, cfg, cursor, page)?, more))
+    checkpoint::pull(conn, cfg, client()?)
 }
 
 /// Headless bounded sync. It never enables the feature and returns only safe
@@ -941,9 +936,15 @@ pub(crate) fn run_headless_once(db_path: &str, health_config_json: &str) -> Resu
             }
         }
     }
+    match checkpoint::maintain(&mut conn, &cfg, client()?, error.is_none() && !more) {
+        Ok(p) => more |= p,
+        Err(e) => {
+            error.get_or_insert(e);
+        }
+    }
     let pending=scalar(&conn,"SELECT (SELECT COUNT(*) FROM content_sync_dirty WHERE NOT EXISTS(SELECT 1 FROM content_sync_blocked WHERE content_sync_blocked.seq=content_sync_dirty.seq))+(SELECT COUNT(*) FROM content_sync_outbox)+(SELECT COUNT(*) FROM content_sync_outbound_fragments)")?;
     let durable_error: Option<String> = sql(conn.query_row(
-        "SELECT COALESCE(upload_error,pull_error) FROM content_sync_state WHERE id=1",
+        "SELECT COALESCE(upload_error,pull_error,(SELECT last_error FROM mvp_sync_checkpoint_state WHERE id=1)) FROM content_sync_state WHERE id=1",
         [],
         |r| r.get(0),
     ))?;
@@ -979,9 +980,8 @@ pub(crate) fn run_headless_once(db_path: &str, health_config_json: &str) -> Resu
         "SELECT MAX(upload_not_before,pull_not_before) FROM content_sync_state WHERE id=1",
     )?;
     let mut result = json!({"enabled":true,"applied_rows":applied,"revision":revision,"pending_keys":pending,"uploaded_batches":uploaded,"more_pending":more||pending>0,"pull_more":more,"retry_after_secs":0,"error_code":error.unwrap_or_else(||"none".into())});
-    if retry > now {
-        result["retry_after_secs"] = json!(retry - now);
-    }
+    let retry = (retry - now).max(checkpoint::retry_after(&conn)?).max(0);
+    result["retry_after_secs"] = json!(retry);
     Ok(result.to_string())
 }
 

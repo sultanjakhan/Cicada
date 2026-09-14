@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
@@ -23,11 +24,11 @@ function batch(cipherBytes = 32, client_seq = 1) {
   } };
 }
 function runtime(bindings = {}, persistence) {
-  return new Miniflare(convertV4MiniflareOptions({
+  return new Miniflare(convertV4MiniflareOptions({cf: false,
     modules: true, script, compatibilityDate: '2026-09-01',
     durableObjects: { RELAY: { className: 'Relay', useSQLite: true } },
     bindings: { HANNI_DEVICE_TOKEN_HASHES: JSON.stringify(hashes), ...bindings },
-    ...(persistence ? { resourcePersistencePath: persistence } : {}),
+    resourcePersistencePath: persistence || mkdtempSync(join(tmpdir(), 'hanni-mvp-relay-runtime-')),
   }));
 }
 async function request(mf, path, { device = 'windows', method = 'GET', body, headers = {} } = {}) {
@@ -45,11 +46,10 @@ async function error(response, status, code) {
   assert.deepEqual(await response.json(), { error: code });
 }
 
-test('MVP exposes only content routes; legacy and checkpoint routes cannot mutate it', async () => {
+test('MVP isolates content routes and requires capability for checkpoints', async () => {
   const mf = runtime();
   try {
     for (const path of ['/v1/batches', '/v1/device-state', '/v1/stream',
-      '/content/v1/checkpoints/lease', '/content/v1/maintenance',
       '/content/v1/budget-status', '/another/v1/batches']) {
       await error(await request(mf, path), 404, 'not_found');
       await error(await request(mf, path, { method: 'POST', body: batch() }), 404, 'not_found');

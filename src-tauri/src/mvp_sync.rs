@@ -107,6 +107,7 @@ struct Runtime {
     configuration: Mutex<()>,
     signal: Arc<tokio::sync::Notify>,
     running: AtomicBool,
+    pull_more: AtomicBool,
     last_error: Mutex<Option<String>>,
 }
 impl Runtime {
@@ -155,7 +156,7 @@ fn status(conn: &Connection, runtime: &Runtime) -> Result<Value, String> {
                 .map(str::to_owned)
         });
     Ok(
-        json!({"configured":configured,"enabled":native["enabled"],"pending":native["pending_keys"].as_i64().unwrap_or(0),"conflicts":native["conflict_count"].as_i64().unwrap_or(0)+conflicts,"last_success":last_success,"last_error":error,"running":runtime.running.load(Ordering::SeqCst),"revision":native["revision"].as_str().unwrap_or("0")}),
+        json!({"configured":configured,"enabled":native["enabled"],"pending":native["pending_keys"].as_i64().unwrap_or(0),"conflicts":native["conflict_count"].as_i64().unwrap_or(0)+conflicts,"last_success":last_success,"last_error":error,"running":runtime.running.load(Ordering::SeqCst),"pull_more":runtime.pull_more.load(Ordering::SeqCst),"revision":native["revision"].as_str().unwrap_or("0")}),
     )
 }
 #[tauri::command]
@@ -220,6 +221,7 @@ pub(crate) async fn mvp_sync_configure(
             .last_error
             .lock()
             .map_err(|_| "mvp_sync_status_failed")? = None;
+        runtime.pull_more.store(true, Ordering::SeqCst);
         runtime.signal.notify_one();
         status(&conn, &runtime)
     })
@@ -244,6 +246,7 @@ pub(crate) async fn mvp_sync_set_enabled(
         let conn = open_existing(runtime.path.to_str().ok_or("mvp_sync_database_path")?)?;
         backup_before_enable(&conn, &runtime, enabled)?;
         self::enabled(&conn, enabled)?;
+        runtime.pull_more.store(true, Ordering::SeqCst);
         runtime.signal.notify_one();
         status(&conn, &runtime)
     })
@@ -252,6 +255,9 @@ pub(crate) async fn mvp_sync_set_enabled(
 }
 #[tauri::command]
 pub(crate) async fn mvp_sync_now(app: tauri::AppHandle) -> Result<Value, String> {
+    app.state::<Arc<Runtime>>()
+        .pull_more
+        .store(true, Ordering::SeqCst);
     app.state::<Arc<Runtime>>().signal.notify_one();
     mvp_sync_status(app).await
 }
@@ -267,6 +273,12 @@ async fn stream(cfg: RelayConfig, signal: Arc<tokio::sync::Notify>) {
             return;
         };
         request.headers_mut().insert("Authorization", auth);
+        request.headers_mut().insert(
+            "X-Hanni-MVP-Checkpoint",
+            transport::CHECKPOINT_SCHEMA
+                .parse()
+                .expect("static capability header"),
+        );
         let mut limits = WebSocketConfig::default();
         limits.max_message_size = Some(4096);
         limits.max_frame_size = Some(4096);
@@ -303,6 +315,7 @@ pub(crate) fn start(app: &tauri::AppHandle, path: PathBuf) {
         configuration: Mutex::new(()),
         signal: Arc::new(tokio::sync::Notify::new()),
         running: AtomicBool::new(false),
+        pull_more: AtomicBool::new(true),
         last_error: Mutex::new(None),
     });
     app.manage(runtime.clone());
@@ -335,12 +348,20 @@ pub(crate) fn start(app: &tauri::AppHandle, path: PathBuf) {
                         worker.path.to_str().ok_or("mvp_sync_database_path")?,
                         &raw,
                     );
+                    let result: Result<Value, String> = result.and_then(|v| {
+                        serde_json::from_str(&v).map_err(|_| "mvp_sync_status_failed".into())
+                    });
+                    // A CLI status observer must see catch-up completion before
+                    // it can see that the worker stopped running.
+                    worker.pull_more.store(
+                        result
+                            .as_ref()
+                            .map(|v| v["pull_more"] != false)
+                            .unwrap_or(true),
+                        Ordering::SeqCst,
+                    );
                     worker.running.store(false, Ordering::SeqCst);
-                    result
-                        .and_then(|v| {
-                            serde_json::from_str(&v).map_err(|_| "mvp_sync_status_failed".into())
-                        })
-                        .map(Some)
+                    result.map(Some)
                 })
                 .await;
             match output {

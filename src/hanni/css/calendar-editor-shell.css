@@ -63,3 +63,18 @@
   .calendar-note-dialog .calendar-editor-actions { display: flex; }
   .calendar-note-dialog .calendar-editor-actions button { flex: 1 1 auto; width: auto; }
 }
+
+/* Dialogs render outside the content area's safe padding in the native top layer. */
+.mobile .calendar-editor-shell,
+.mobile .calendar-mvp-dialog {
+  max-height: calc(100dvh - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  max-width: calc(100vw - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+}
+.mobile .calendar-native-dialog[open],
+.mobile .calendar-mvp-dialog[open] {
+  inset: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  margin: 12px auto;
+}
+.mobile .modal-overlay.evm-overlay {
+  padding: calc(12px + env(safe-area-inset-top, 0px)) calc(12px + env(safe-area-inset-right, 0px)) calc(12px + env(safe-area-inset-bottom, 0px)) calc(12px + env(safe-area-inset-left, 0px));
+}

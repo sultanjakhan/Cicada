@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-export async function startLocalRelay() {
+export async function startLocalRelay({ checkpoints = false, loseFinalizeAck = false } = {}) {
   const { Miniflare, convertV4MiniflareOptions } = process.env.HANNI_MINIFLARE_MODULE
     ? await import(process.env.HANNI_MINIFLARE_MODULE) : await import('miniflare');
   const root = await mkdtemp(join(tmpdir(), 'hanni-mvp-native-relay-'));
@@ -18,12 +18,12 @@ export async function startLocalRelay() {
       token: randomBytes(32).toString('base64url'), key, enabled: true } }));
   const hashes = Object.fromEntries(configs.map(({ config }) => [config.device_id,
     createHash('sha256').update(config.token).digest('hex')]));
-  const mf = new Miniflare(convertV4MiniflareOptions({
-    host: '127.0.0.1', port: 0, modules: true,
+  const mf = new Miniflare(convertV4MiniflareOptions({cf: false,
+    host: '127.0.0.1', port: 0, modules: true, resourcePersistencePath: join(root, 'workerd'),
     script: await readFile(new URL('../src/worker.mjs', import.meta.url), 'utf8'),
     compatibilityDate: '2026-09-01',
     durableObjects: { RELAY: { className: 'Relay', useSQLite: true } },
-    bindings: { HANNI_DEVICE_TOKEN_HASHES: JSON.stringify(hashes) },
+    bindings: { HANNI_DEVICE_TOKEN_HASHES: JSON.stringify(hashes), HANNI_MVP_CHECKPOINTS_ENABLED: checkpoints ? '1' : '0' },
   }));
   // Native test transport uses loopback HTTP; keep the real Worker's HTTPS-only
   // boundary unchanged by forwarding through Miniflare's dispatch bridge.
@@ -41,6 +41,13 @@ export async function startLocalRelay() {
       const response = await mf.dispatchFetch(`https://relay.test${req.url}`, {
         method: req.method, headers, ...(bytes ? { body: Buffer.concat(chunks) } : {}),
       });
+      if (loseFinalizeAck && req.url.endsWith('/finalize') && response.status === 201) {
+        loseFinalizeAck = false;
+        await response.arrayBuffer();
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'http_error' }));
+        return;
+      }
       res.writeHead(response.status, Object.fromEntries(response.headers));
       res.end(Buffer.from(await response.arrayBuffer()));
     } catch { res.writeHead(502).end(); }
@@ -70,7 +77,8 @@ export async function startLocalRelay() {
   } catch (error) { await close(); throw error; }
 }
 
-export async function testNative() {
+export async function testNative({ checkpoints = false } = {}) {
+  const testName = checkpoints ? 'mvp_sync_local_checkpoint_roundtrip' : 'mvp_sync_local_relay_roundtrip';
   let interrupted = false;
   // Terminal Ctrl+C reaches cargo in the same process group. Keep Node alive
   // until that child exits so the finally block can dispose local workerd.
@@ -78,12 +86,12 @@ export async function testNative() {
   process.on('SIGINT', onInterrupt);
   let relay;
   try {
-    relay = await startLocalRelay();
+    relay = await startLocalRelay({ checkpoints, loseFinalizeAck: checkpoints });
     if (interrupted) throw new Error('native_test_interrupted');
     const result = await new Promise((resolveRun, reject) => {
       const child = spawn('cargo', ['test', '--manifest-path',
         fileURLToPath(new URL('../../src-tauri/Cargo.toml', import.meta.url)),
-        '--locked', 'mvp_sync_local_relay_roundtrip', '--', '--ignored'], {
+        '--locked', testName, '--', '--ignored'], {
         shell: false, windowsHide: true, stdio: ['inherit', 'pipe', 'pipe'],
         env: { ...process.env, HANNI_MVP_TEST_RELAY_CONFIG_DIR: relay.configDir,
           HANNI_MVP_DATA_DIR: relay.dataDir },
@@ -92,7 +100,7 @@ export async function testNative() {
       let tail = '';
       child.stdout.on('data', bytes => {
         tail = (tail + bytes.toString('utf8')).slice(-4096);
-        if (/test \S*mvp_sync_local_relay_roundtrip \.\.\. ok/.test(tail)) passed = true;
+        if (tail.includes(`${testName} ... ok`)) passed = true;
       });
       // Assertion output may contain configurations. Never echo or save raw output.
       child.stderr.on('data', () => {});
@@ -100,7 +108,7 @@ export async function testNative() {
       child.once('exit', code => resolveRun({ code, passed }));
     });
     if (interrupted || result.code !== 0 || !result.passed) throw new Error('native_relay_roundtrip_not_passed');
-    process.stdout.write('native_relay_roundtrip_passed\n');
+    process.stdout.write(checkpoints ? 'native_checkpoint_roundtrip_passed\n' : 'native_relay_roundtrip_passed\n');
   } finally {
     try { if (relay) await relay.close(); }
     finally { process.removeListener('SIGINT', onInterrupt); }
@@ -108,6 +116,6 @@ export async function testNative() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  try { await testNative(); }
+  try { await testNative({ checkpoints: process.argv.slice(2).includes('--checkpoint') }); }
   catch { process.stderr.write('native_relay_test_failed_no_sensitive_details\n'); process.exitCode = 1; }
 }

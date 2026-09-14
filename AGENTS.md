@@ -1,5 +1,12 @@
 # Hanni MVP
 
+Owner scope update, 2026-09-14: fix Android system-inset overlap, package a stable
+Mac application, add review/resolution of synchronization conflicts, and adapt
+Hanni's safe checkpoint/journal compaction. Preserve offline-device recovery.
+Keep the working DEV window minimized or on its inactive desktop; permission
+to update/test does not permit moving or focusing it. Stable and DEV profiles
+must use distinct sender identities when both continue synchronizing.
+
 Owner scope update, 2026-09-14: implement synchronization between MVP devices,
 including the started day, by adapting the existing Hanni encrypted content
 relay before introducing a replacement. Use an independent MVP protocol profile,

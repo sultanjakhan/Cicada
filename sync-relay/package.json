@@ -9,7 +9,8 @@
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "provision": "node tools/provision.mjs",
-    "test:native": "node tools/test-native.mjs"
+    "test:native": "node tools/test-native.mjs",
+    "test:native:checkpoint": "node tools/test-native.mjs --checkpoint"
   },
   "devDependencies": {
     "miniflare": "5.20260903.0-alpha",

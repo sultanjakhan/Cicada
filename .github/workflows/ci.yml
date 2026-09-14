@@ -28,6 +28,18 @@ jobs:
         working-directory: sync-relay
       - run: npm run test:native
         working-directory: sync-relay
+      - run: npm run test:native:checkpoint
+        working-directory: sync-relay
+      - run: npm run package:mac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hanni-mvp-macos-${{ github.sha }}
+          path: |
+            .local/mac-package/**/*.zip
+            .local/mac-package/**/manifest.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
   test:
     runs-on: windows-latest
     steps:

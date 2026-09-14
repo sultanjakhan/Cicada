@@ -32,6 +32,8 @@ const BATCH_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$
 const HEX_HASH = /^[a-f0-9]{64}$/;
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
 const encoder = new TextEncoder();
+const CHECKPOINT_SCHEMA = 'hanni-mvp-checkpoint-v1';
+const CAPABILITY_HEADER = 'X-Hanni-MVP-Checkpoint';
 const MINIMUM_APPEND_BYTES = encoder.encode(JSON.stringify({ v:1, alg:'XChaCha20-Poly1305', key_id:'a',
   nonce:'A'.repeat(32), ciphertext:'A'.repeat(22) })).byteLength + 512;
 
@@ -200,7 +202,7 @@ function lowered(env, name, fallback) {
 }
 function route(path) {
   return ['/v1/batches', '/v1/stream', '/v1/device-state', '/v1/budget-status', '/v1/maintenance',
-    '/v1/checkpoints/lease', '/v1/checkpoints/latest'].includes(path)
+    '/v1/checkpoints/lease', '/v1/checkpoints/latest', '/v1/checkpoints/status'].includes(path)
     || /^\/v1\/checkpoints\/[a-f0-9-]{36}(?:\/(?:finalize|read-lease|chunks\/(?:0|[1-9]\d*)))?$/.test(path);
 }
 
@@ -241,6 +243,13 @@ export class Relay extends DurableObject {
       PRIMARY KEY(checkpoint_id,chunk_index)) WITHOUT ROWID`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS read_leases (
       lease_id TEXT PRIMARY KEY,checkpoint_id TEXT NOT NULL,device_id TEXT NOT NULL,expires_at INTEGER NOT NULL)`);
+    this.sql.exec('CREATE TABLE IF NOT EXISTS checkpoint_capabilities(device_id TEXT PRIMARY KEY,token_hash TEXT NOT NULL)');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS checkpoint_seen(device_id TEXT PRIMARY KEY)');
+    this.sql.exec('INSERT OR IGNORE INTO checkpoint_seen SELECT device_id FROM device_cursors');
+    for (const socket of ctx.getWebSockets()) {
+      const device=socket.deserializeAttachment()?.device;
+      if (typeof device==='string' && ID.test(device)) this.sql.exec('INSERT OR IGNORE INTO checkpoint_seen VALUES(?)',device);
+    }
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping','pong'));
   }
   state() { return this.sql.exec('SELECT * FROM meta WHERE id=1').one(); }
@@ -290,8 +299,24 @@ export class Relay extends DurableObject {
       if (!route(url.pathname)) throw new HttpError(404,'not_found');
       const allowed=url.pathname==='/v1/batches' && request.method==='GET' ? ['after','limit'] : [];
       if ([...url.searchParams.keys()].some(key=>!allowed.includes(key))) throw new HttpError(400,'invalid_query');
+      const capable=request.headers.get(CAPABILITY_HEADER)===CHECKPOINT_SCHEMA;
+      // Once explicitly activated, an older binary must retain its local queue
+      // until upgraded; it cannot append an unacknowledgeable post-trim prefix.
+      if ((this.checkpointsEnabled() || this.state().compacted_through>0) && !capable) throw new HttpError(426,'checkpoint_client_upgrade_required');
+      if (url.pathname==='/v1/checkpoints/status' && request.method==='GET') {
+        this.quota();await this.noteSeen(user);
+        if (!capable) throw new HttpError(426,'checkpoint_client_upgrade_required');
+        const old=this.sql.exec('SELECT token_hash FROM checkpoint_capabilities WHERE device_id=?',user.device).toArray()[0];
+        if (old?.token_hash!==user.hash) {
+          this.charge(4);
+          this.sql.exec('INSERT INTO checkpoint_capabilities VALUES(?,?) ON CONFLICT(device_id) DO UPDATE SET token_hash=excluded.token_hash',user.device,user.hash);
+          await this.ctx.storage.sync();
+        }
+        return json({schema:CHECKPOINT_SCHEMA,enabled:this.checkpointsEnabled(),ready:this.checkpointsReady(),...this.checkpointClientCounts(),checkpoint:this.summary(this.active())});
+      }
+      if (url.pathname.startsWith('/v1/checkpoints/') && !capable) throw new HttpError(426,'checkpoint_client_upgrade_required');
       if (url.pathname==='/v1/budget-status' && request.method==='GET') return this.budgetStatus();
-      this.quota();
+      this.quota();await this.noteSeen(user);
       if (url.pathname==='/v1/batches' && request.method==='POST') return await this.append(request,user);
       if (url.pathname==='/v1/batches' && request.method==='GET') return this.pull(url.searchParams);
       if (url.pathname==='/v1/stream' && request.method==='GET') return this.stream(request,user);
@@ -390,7 +415,24 @@ export class Relay extends DurableObject {
     }
     return json({batches,next_cursor:next,latest_seq:state.latest_seq,has_more:next<state.latest_seq});
   }
+  async noteSeen(user) {
+    if (!this.sql.exec('SELECT 1 AS ok FROM checkpoint_seen WHERE device_id=?',user.device).toArray().length) {
+      this.charge(4);this.sql.exec('INSERT INTO checkpoint_seen VALUES(?)',user.device);
+      await this.ctx.storage.sync();
+    }
+  }
+  checkpointsEnabled() { return this.env.HANNI_MVP_CHECKPOINTS_ENABLED==='1'; }
+  checkpointClientCounts() {
+    const seen=tokenHashes(this.env).filter(([id])=>this.sql.exec('SELECT 1 AS ok FROM checkpoint_seen WHERE device_id=?',id).toArray().length===1);
+    return {seen_clients:seen.length,blocked_clients:seen.filter(([id,hash])=>!this.sql.exec('SELECT 1 AS ok FROM checkpoint_capabilities WHERE device_id=? AND token_hash=?',id,hash).toArray().length).length};
+  }
+  checkpointsReady() { return this.checkpointClientCounts().blocked_clients===0; }
+  requireCheckpointPublish() {
+    if (!this.checkpointsEnabled()) throw new HttpError(403,'checkpoint_disabled');
+    if (!this.checkpointsReady()) throw new HttpError(409,'checkpoint_clients_not_ready',60);
+  }
   async acquire(request,user) {
+    this.requireCheckpointPublish();
     const body=await boundedJson(request);
     if (!exactKeys(body,['checkpoint_id','expected_generation','base_seq','chunk_count','total_bytes'])
       || !BATCH_ID.test(body.checkpoint_id || '') || !Number.isSafeInteger(body.expected_generation) || body.expected_generation<0
@@ -429,6 +471,7 @@ export class Relay extends DurableObject {
     if (cp.expected_generation!==this.state().generation) throw new HttpError(409,'checkpoint_generation_changed');
   }
   async putChunk(request,user,id,index) {
+    this.requireCheckpointPublish();
     const body=await boundedJson(request);
     if (!exactKeys(body,['lease_epoch','envelope']) || !positive(body.lease_epoch) || !Number.isSafeInteger(index) || index<0) throw new HttpError(400,'invalid_chunk');
     const envelope=canonicalEnvelope(body.envelope);const digest=await sha256(envelope);const bytes=encoder.encode(envelope).byteLength;
@@ -463,6 +506,7 @@ export class Relay extends DurableObject {
       if (before.envelope_sha256!==digest || before.chunk_root!==body.chunk_root_sha256) throw new HttpError(409,'checkpoint_payload_mismatch');
       return json({...this.summary(before),envelope_sha256:digest,duplicate:true});
     }
+    this.requireCheckpointPublish();
     this.requireUploader(before,user,body.lease_epoch);
     const chunks=this.sql.exec('SELECT chunk_index,envelope_sha256 FROM checkpoint_chunks WHERE checkpoint_id=? ORDER BY chunk_index',id).toArray();
     if (chunks.length!==before.chunk_count || chunks.some((chunk,index)=>chunk.chunk_index!==index)
@@ -477,6 +521,7 @@ export class Relay extends DurableObject {
         if (cp.uploader!==user.device || cp.envelope_sha256!==digest || cp.chunk_root!==root) throw new HttpError(409,'checkpoint_payload_mismatch');
         return {...this.summary(cp),envelope_sha256:digest,duplicate:true};
       }
+      this.requireCheckpointPublish();
       this.requireUploader(cp,user,body.lease_epoch);const state=this.state();
       if (cp.key_id!==body.envelope.key_id) throw new HttpError(400,'checkpoint_key_mismatch');
       if (cp.base_seq<=state.compacted_through || cp.base_seq>state.latest_seq) throw new HttpError(409,'checkpoint_generation_changed');
@@ -523,6 +568,7 @@ export class Relay extends DurableObject {
     return json({checkpoint_id:id,index,envelope_sha256:row.envelope_sha256,envelope:JSON.parse(row.envelope)});
   }
   gc() {
+    if (!this.checkpointsEnabled()) return 0;
     const now=Date.now();let removed=0;
     this.ctx.storage.transactionSync(() => {
       const state=this.state();
@@ -559,6 +605,7 @@ export class Relay extends DurableObject {
     return removed;
   }
   nextMaintenanceAt() {
+    if (!this.checkpointsEnabled()) return null;
     const state=this.state(),now=Date.now();const deadlines=[];
     if (this.sql.exec('SELECT 1 AS present FROM batches WHERE seq<=? LIMIT 1',state.compacted_through).toArray().length) deadlines.push(now);
     const leases=this.sql.exec('SELECT checkpoint_id,expires_at FROM read_leases').toArray();
@@ -590,13 +637,13 @@ export class Relay extends DurableObject {
     });
     if (peers.length>=LIMITS.socketsPerDevice) throw new HttpError(429,'connection_limit',30);
     const [client,server]=Object.values(new WebSocketPair());this.ctx.acceptWebSocket(server,[user.device]);
-    server.serializeAttachment({device:user.device,hash:user.hash});
+    server.serializeAttachment({device:user.device,hash:user.hash,checkpoint:request.headers.get(CAPABILITY_HEADER)});
     server.send(JSON.stringify({type:'ready',latest_seq:this.state().latest_seq}));
     return new Response(null,{status:101,webSocket:client});
   }
   authorizedSocket(socket) {
     const attachment=socket.deserializeAttachment();
-    return attachment && tokenHashes(this.env).some(([id,hash])=>id===attachment.device && constantTimeEqual(hash,attachment.hash));
+    return attachment && (!(this.checkpointsEnabled() || this.state().compacted_through>0) || attachment.checkpoint===CHECKPOINT_SCHEMA) && tokenHashes(this.env).some(([id,hash])=>id===attachment.device && constantTimeEqual(hash,attachment.hash));
   }
   notify(seq) {
     for (const socket of this.ctx.getWebSockets()) {
@@ -621,8 +668,7 @@ export default {
       const url=new URL(request.url);
       if (url.protocol!=='https:') throw new HttpError(400,'https_required');
       // A separate Worker namespace and fixed object name isolate MVP content.
-      // Checkpoints remain unavailable until the MVP can authenticate their schema.
-      if (!['/content/v1/batches','/content/v1/stream','/content/v1/device-state'].includes(url.pathname)) {
+      if (!url.pathname.startsWith('/content/') || !route(url.pathname.slice('/content'.length)) || url.pathname==='/content/v1/budget-status') {
         throw new HttpError(404,'not_found');
       }
       await authenticate(request,env);

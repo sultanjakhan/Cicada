@@ -13,6 +13,7 @@ use tauri::{Manager, State};
 use uuid::Uuid;
 
 mod calendar_compat;
+mod desktop_launch;
 mod mvp_sync;
 mod mvp_sync_crypto;
 mod mvp_sync_db;
@@ -494,16 +495,31 @@ fn create_backup(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<St
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .setup(|app| {
-            let data_dir = app_data_dir(app.handle())?;
-            let connection = Connection::open(data_dir.join("calendar.db"))
-                .map_err(|e| fail(format!("open calendar database: {e}")))?;
-            connection.pragma_update(None, "journal_mode", "WAL")?;
-            connection.busy_timeout(Duration::from_secs(5))?;
-            init_schema(&connection)?;
-            app.manage(AppState(Mutex::new(connection)));
-            mvp_sync::start(app.handle(), data_dir.join("calendar.db"));
+    let options =
+        desktop_launch::Options::from_env().unwrap_or_else(|_| desktop_launch::fail_and_exit());
+    let mut context = tauri::generate_context!();
+    options.apply_context(&mut context);
+    let startup_options = options.clone();
+    let built = tauri::Builder::default()
+        .setup(move |app| {
+            let initialized = (|| -> Result<(), Box<dyn std::error::Error>> {
+                let data_dir = app_data_dir(app.handle())?;
+                let connection = Connection::open(data_dir.join("calendar.db"))
+                    .map_err(|e| fail(format!("open calendar database: {e}")))?;
+                connection.pragma_update(None, "journal_mode", "WAL")?;
+                connection.busy_timeout(Duration::from_secs(5))?;
+                init_schema(&connection)?;
+                app.manage(AppState(Mutex::new(connection)));
+                mvp_sync::start(app.handle(), data_dir.join("calendar.db"));
+                Ok(())
+            })();
+            if let Err(error) = initialized {
+                if startup_options != desktop_launch::Options::Interactive {
+                    desktop_launch::fail_and_exit();
+                }
+                return Err(error);
+            }
+            startup_options.after_setup(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -516,6 +532,8 @@ pub fn run() {
             mvp_sync::mvp_sync_configure,
             mvp_sync::mvp_sync_set_enabled,
             mvp_sync::mvp_sync_now,
+            mvp_sync_db::conflicts::mvp_sync_conflicts_list,
+            mvp_sync_db::conflicts::mvp_sync_conflict_resolve,
             calendar_compat::start_calendar_day,
             calendar_compat::get_events,
             calendar_compat::get_all_events,
@@ -556,8 +574,15 @@ pub fn run() {
             calendar_compat::get_app_setting,
             calendar_compat::set_app_setting
         ])
-        .run(tauri::generate_context!())
-        .expect("run Hanni MVP");
+        .build(context);
+    let mut app = built.unwrap_or_else(|error| {
+        if options != desktop_launch::Options::Interactive {
+            desktop_launch::fail_and_exit();
+        }
+        panic!("run Hanni MVP: {error:?}");
+    });
+    options.before_run(&mut app);
+    app.run(move |app, event| options.on_event(app, &event));
 }
 
 #[cfg(test)]

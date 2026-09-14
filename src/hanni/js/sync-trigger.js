@@ -22,4 +22,5 @@ export function createSyncTrigger({ invoke, setTimeout, clearTimeout, now = Date
   return { request, dispose() { disposed = true; if (timer !== null) clearTimeout(timer); } };
 }
 
-export const isSyncWrite = command => /^(add|create|delete|update|save|set|toggle|archive|start|stop|pause|finish|complete|restore|link|unlink)_/.test(command) && command !== 'create_backup';
+export const isSyncWrite = command => command === 'mvp_sync_conflict_resolve'
+  || /^(add|create|delete|update|save|set|toggle|archive|start|stop|pause|finish|complete|restore|link|unlink)_/.test(command) && command !== 'create_backup';

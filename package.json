@@ -1,6 +1,6 @@
 {
   "name": "hanni-mvp",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,7 +11,8 @@
     "check:vendor": "node scripts/check-vendor.mjs",
     "check:privacy": "python -B scripts/check-private-data.py",
     "package:windows": "powershell -NoProfile -File scripts/package-windows.ps1",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "package:mac": "python3 scripts/package-macos.py"
   },
   "dependencies": {
     "@editorjs/checklist": "1.6.0",
