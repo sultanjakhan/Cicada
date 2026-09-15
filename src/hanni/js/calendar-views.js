@@ -177,71 +177,59 @@ import { renderDayStartMarker } from './calendar-day-start.js';
     return { folds, map, height: map(1440) };
   }
   function tasksPanel(root, shell, options, state) {
-    const items = (options.taskRecords || []).filter(record => record.source_type === 'note' && !record.readonly && !record.archived);
-    const today = options.today || iso(new Date());
-    const group = record => isCompleted(record) ? 5 : record.is_active ? 0 : !record.date ? 4 : record.date < today ? 1 : record.date === today ? 2 : 3;
-    const groups = ['В работе', 'Просроченные', 'Сегодня', 'Позже', 'Без даты', 'Завершённые'];
+    const items = (options.taskRecords || []).filter(record => record.source_type === 'note' && !record.readonly && !record.archived && !record.date && !isClosed(record));
     const tools = el('div', 'calv-view-tools');
     const aside = el('aside', 'calv-tasks-panel'); aside.id = `${state.id}-tasks`; aside.dataset.tasksPanel = '';
-    const heading = el('h3', '', 'Задачи'); heading.id = `${state.id}-tasks-title`; heading.tabIndex = -1;
+    const heading = el('h3', '', 'Запланировать'); heading.id = `${state.id}-tasks-title`; heading.tabIndex = -1;
     heading.dataset.calendarControl = 'tasks-heading';
     aside.setAttribute('aria-labelledby', heading.id);
-    const toggle = button('calv-panel-toggle', 'Задачи', () => {
+    const toggle = button('calv-panel-toggle', options.taskError ? 'Запланировать' : `Запланировать · ${items.length}`, () => {
       state.tasksOpen = !state.tasksOpen; sync(); if (state.tasksOpen) heading.focus();
     });
     toggle.dataset.tasksToggle = ''; toggle.setAttribute('aria-controls', aside.id);
     toggle.dataset.calendarControl = 'tasks-toggle';
     const close = button('calv-panel-close', '×', () => { state.tasksOpen = false; sync(); toggle.focus(); });
-    close.setAttribute('aria-label', 'Закрыть список задач');
+    close.setAttribute('aria-label', 'Закрыть планирование');
     close.dataset.calendarControl = 'tasks-close';
     const header = el('div', 'calv-tasks-heading'); header.append(heading, close);
     aside.append(header);
-    if (options.onCreateTask) {
-      const create = button('calv-task-create', '+ Задача', () => options.onCreateTask(state.taskFilter === 'undated' ? null : options.date));
-      create.dataset.taskCreate = ''; create.dataset.calendarControl = 'task-create'; aside.append(create);
-    }
+    aside.append(el('p', 'calv-panel-hint', 'Задачи без даты. Назначь выбранный день или перетащи задачу на дату календаря.'));
     if (options.taskError) {
       const error = el('p', 'calv-panel-hint', 'Не удалось загрузить задачи. Повтори загрузку, чтобы увидеть список.'); error.setAttribute('role', 'status');
       const retry = button('calv-panel-toggle', 'Повторить загрузку задач', () => options.onRetryTasks?.());
       retry.dataset.taskRetry = ''; retry.dataset.calendarControl = 'task-retry'; aside.append(error, retry);
     } else {
-      const filters = el('div', 'calv-task-filters'); filters.setAttribute('role', 'group'); filters.setAttribute('aria-label', 'Какие задачи показать');
       const search = el('input', 'calv-task-search'); search.type = 'search'; search.placeholder = 'Найти задачу'; search.setAttribute('aria-label', 'Найти задачу');
       search.value = state.taskSearch; search.dataset.taskSearch = ''; search.dataset.calendarControl = 'task-search';
-      const dateHint = el('p', 'calv-panel-hint');
+      const dateHint = el('p', 'calv-panel-hint', `Выбран день: ${label(options.date, { day: 'numeric', month: 'long' })}`);
       const list = el('div', 'calv-task-list'); list.dataset.taskList = '';
       list.addEventListener('scroll', () => { state.taskScroll = list.scrollTop; });
-      const matchFilter = (record, filter) => filter === 'completed' ? isCompleted(record) : !isClosed(record) && (filter === 'day' ? record.date === options.date : filter === 'undated' ? !record.date : true);
-      for (const [id, title] of [['all', 'Активные'], ['day', 'На день'], ['undated', 'Без даты'], ['completed', 'Завершённые']]) {
-        const filter = button('calv-task-filter', title, () => {
-          state.taskFilter = id; state.taskScroll = 0; renderItems();
-        });
-        filter.dataset.taskFilter = id; filter.dataset.calendarControl = `task-filter-${id}`; filters.append(filter);
-      }
       function renderItems() {
         const query = state.taskSearch.trim().toLocaleLowerCase('ru-RU');
-        const visible = items.filter(record => matchFilter(record, state.taskFilter) && record.title.toLocaleLowerCase('ru-RU').includes(query))
-          .sort((a, b) => group(a) - group(b) || (Number(b.priority) || 0) - (Number(a.priority) || 0) || (a.date || '9999').localeCompare(b.date || '9999') || a.title.localeCompare(b.title, 'ru'));
-        filters.querySelectorAll('[data-task-filter]').forEach(filter => filter.setAttribute('aria-pressed', String(filter.dataset.taskFilter === state.taskFilter)));
-        dateHint.textContent = state.taskFilter === 'day' ? label(options.date, { weekday: 'long', day: 'numeric', month: 'long' }) : '';
-        dateHint.hidden = state.taskFilter !== 'day';
-        let lastGroup = null;
-        list.replaceChildren(...visible.flatMap(record => {
-          const card = recordButton(record, options, 'calv-task-record');
+        const visible = items.filter(record => record.title.toLocaleLowerCase('ru-RU').includes(query))
+          .sort((a, b) => (Number(b.priority) || 0) - (Number(a.priority) || 0) || a.title.localeCompare(b.title, 'ru'));
+        list.replaceChildren(...visible.map(record => {
+          const card = recordButton(record, { ...options, onTaskAction:null }, 'calv-task-record');
           const meta = card.querySelector('.calv-record-meta');
-          meta.textContent = [record.date && label(record.date), record.status !== groups[group(record)] && record.status !== 'Запланировано' && record.status].filter(Boolean).join(' · ');
+          meta.textContent = [record.durationMinutes > 0 && `${record.durationMinutes} мин`, record.is_active && 'В работе'].filter(Boolean).join(' · ');
           meta.hidden = !meta.textContent;
-          const currentGroup = group(record);
-          if (currentGroup === lastGroup) return [card];
-          lastGroup = currentGroup;
-          return [el('h4', 'calv-task-group', groups[currentGroup]), card];
+          if (options.onScheduleTask) {
+            const plan = button('calv-plan-task', 'На этот день', () => options.onScheduleTask(record, options.date));
+            plan.dataset.planTask = String(record.source_id); plan.dataset.calendarControl = `plan-${record.source_id}`;
+            plan.disabled = !!options.actionBusy; plan.setAttribute('aria-label', `Запланировать «${record.title}» на ${label(options.date)}`);
+            card.append(plan); card.draggable = !options.actionBusy;
+            card.addEventListener('dragstart', event => { if (options.actionBusy) { event.preventDefault(); return; } state.draggedTask = String(record.source_id); event.dataTransfer.setData('application/x-hanni-task', state.draggedTask); event.dataTransfer.effectAllowed = 'move'; });
+            card.addEventListener('dragend', () => { state.draggedTask = null; root.querySelectorAll('.calv-drop-target').forEach(target=>target.classList.remove('calv-drop-target')); });
+          }
+          return card;
         }));
-        if (!visible.length) list.append(el('p', 'calv-empty', query ? 'По запросу задач нет.' : state.taskFilter === 'day' ? 'На этот день задач нет.' : state.taskFilter === 'undated' ? 'Задач без даты нет.' : state.taskFilter === 'completed' ? 'Завершённых задач нет.' : 'Незавершённых задач нет.'));
+        if (!visible.length) list.append(el('p', 'calv-empty', query ? 'По запросу задач нет.' : 'Все задачи распределены по дням.'));
         list.scrollTop = state.taskScroll;
       }
       search.addEventListener('input', () => { state.taskSearch = search.value; state.taskScroll = 0; renderItems(); });
-      aside.append(filters, search, dateHint, list); renderItems();
+      aside.append(search, dateHint, list); renderItems();
     }
+    if (options.onOpenTasks) aside.append(button('calv-all-tasks', 'Все задачи', options.onOpenTasks));
     tools.append(toggle); root.prepend(tools); shell.append(aside);
     function sync() {
       aside.hidden = !state.tasksOpen; toggle.setAttribute('aria-expanded', String(state.tasksOpen));
@@ -253,7 +241,7 @@ import { renderDayStartMarker } from './calendar-day-start.js';
   function render(root, options) {
     let savedPanelOpen = false;
     try { savedPanelOpen = root.ownerDocument.defaultView.localStorage.getItem('calendar.tasks-panel-open') === 'true'; } catch {}
-    if (!viewStates.has(root)) viewStates.set(root, { id: `calv-${++viewSequence}`, tasksOpen: savedPanelOpen, taskFilter: 'all', taskSearch: '', taskScroll: 0, historyOpen: {}, untimedExpanded: {}, timeFoldsExpanded: {}, slotFocus: {} });
+    if (!viewStates.has(root)) viewStates.set(root, { id: `calv-${++viewSequence}`, tasksOpen: savedPanelOpen, taskSearch: '', taskScroll: 0, historyOpen: {}, untimedExpanded: {}, timeFoldsExpanded: {}, slotFocus: {} });
     const state = viewStates.get(root);
     const focused = root.ownerDocument.activeElement;
     const controlFocus = root.contains(focused) ? focused.dataset.calendarControl : null;
@@ -474,6 +462,19 @@ import { renderDayStartMarker } from './calendar-day-start.js';
         scroll.scrollLeft = dayIndex * (board.getBoundingClientRect().width - 54) / 7;
       }
       if (scrollPosition) { scroll.scrollTop = scrollPosition.top; scroll.scrollLeft = scrollPosition.left; }
+    }
+    if (options.onScheduleTask) {
+      for (const target of container.querySelectorAll('[data-calendar-date], [data-untimed-date]')) {
+        const accepts = () => !options.actionBusy && state.draggedTask && (options.taskRecords || []).some(record => String(record.source_id) === state.draggedTask && !record.date && !isClosed(record));
+        target.addEventListener('dragover', event => { if (!accepts()) return; event.preventDefault(); event.dataTransfer.dropEffect = 'move'; target.classList.add('calv-drop-target'); });
+        target.addEventListener('dragleave', () => target.classList.remove('calv-drop-target'));
+        target.addEventListener('drop', event => {
+          target.classList.remove('calv-drop-target'); if (!accepts()) return;
+          event.preventDefault(); event.stopPropagation();
+          const record = options.taskRecords.find(record => String(record.source_id) === state.draggedTask);
+          state.draggedTask = null; options.onScheduleTask(record, target.dataset.calendarDate || target.dataset.untimedDate);
+        });
+      }
     }
     history(container, projected.filter(record => isClosed(record) && (!record.date || set.has(record.date))), options, state);
     if (controlFocus && !focused.isConnected) {

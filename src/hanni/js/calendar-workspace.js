@@ -10,6 +10,8 @@ import { showEventModal, showCalendarCreateModal, showCalendarTaskModal } from '
 import { mountCalendarGoals } from './calendar-goals.js';
 import { mountCalendarNotes } from './calendar-notes.js';
 import { mountCalendarDashboardTasks } from './calendar-dashboard-tasks.js';
+import { mountCalendarTasks } from './calendar-tasks.js';
+import { planCalendarTaskForDay } from './calendar-task-planning.js';
 import { mountCalendarContextMenu } from './calendar-context-menu.js';
 import { createCalendarDialog } from './calendar-dialog.js';
 import { mountCalendarRecurring } from './calendar-recurring.js';
@@ -23,6 +25,7 @@ let disposeDayBanner = null;
 let preferences = { density:'comfortable', showCompleted:false };
 let workspaceRevision = 0;
 let dialogSequence = 0;
+const tasksPaneState = { filter:'active', search:'', goal:'', page:0 };
 function cleanupWorkspace() { workspaceRevision++; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeRecurring?.(); disposeDayBanner?.(); developmentDialog?.dispose(); tasksDialog?.dispose(); disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; disposeRecurring = null; disposeDayBanner = null; developmentDialog = null; tasksDialog = null; }
 const view = { period: 'day', mode: 'grid', date: views.iso(new Date()), firstDay:'mon' };
 let initialViewLoaded = false;
@@ -229,7 +232,7 @@ function mountRecordMenu(element, options) {
   } });
 }
 
-export async function mountCalendarTable(el) {
+export async function mountCalendarTable(el, { openTasks } = {}) {
   disposeTable?.();
   let revision = 0, disposed = false, menuRecords = [], actionBusy = false;
   el.classList.add('calendar-mvp');
@@ -242,6 +245,32 @@ export async function mountCalendarTable(el) {
   actionStatus.className = 'calv-action-status'; actionStatus.setAttribute('role', 'status'); actionStatus.tabIndex = -1;
   host.before(actionStatus);
   const gridViewport = mountCalendarGridViewport(host);
+  const closePlanningOnEscape = event => {
+    if (event.key !== 'Escape' || event.defaultPrevented || disposed || !el.isConnected || document.querySelector('dialog[open], [aria-modal="true"]')) return;
+    const panel = host.querySelector('[data-tasks-panel]:not([hidden])');
+    if (panel) { event.preventDefault(); panel.querySelector('.calv-panel-close')?.click(); }
+  };
+  document.addEventListener('keydown', closePlanningOnEscape);
+  async function scheduleTask(record, date) {
+    if (actionBusy || disposed) return;
+    actionBusy = true; actionStatus.textContent = 'Сохраняем дату…'; actionStatus.classList.remove('is-error');
+    host.querySelectorAll('[data-plan-task]').forEach(button => { button.disabled = true; });
+    try {
+      const saved = await planCalendarTaskForDay(invoke, record.source_id, date, () => !disposed && el.isConnected);
+      if (!saved) return;
+      changed();
+      if (!disposed) {
+        await refresh();
+        actionStatus.textContent = `Задача запланирована на ${views.label(date)} · без времени.`;
+        (host.querySelector('[data-plan-task]') || host.querySelector('[data-tasks-toggle]') || host).focus({preventScroll:true});
+      }
+    } catch (error) {
+      if (!disposed) {
+        await refresh(); actionStatus.textContent = error?.message || 'Не удалось назначить день. Обнови список и повтори.';
+        actionStatus.classList.add('is-error'); actionStatus.focus();
+      }
+    } finally { actionBusy = false; if (!disposed) host.querySelectorAll('[data-plan-task]').forEach(button => { button.disabled = false; }); }
+  }
   async function onTaskAction(record, action, trigger) {
     if (actionBusy || disposed) return;
     const fromPanel = !!trigger?.closest('[data-tasks-panel]');
@@ -319,6 +348,7 @@ export async function mountCalendarTable(el) {
       const focusInPanel = !!focused.closest('[data-tasks-panel]');
       menuRecords = [...new Map([...records, ...taskRecords].map(record => [record.id, record])).values()];
       views.render(host, { period, mode, date: day, firstDay, records, taskRecords, taskError, dayStarts, onTaskAction, actionBusy,
+        onScheduleTask: scheduleTask, onOpenTasks: openTasks,
         fitViewport: gridViewport.fit,
         onRetryTasks: () => refresh(),
         onCreateTask: date => openEvent(date, null, 'task', true),
@@ -420,7 +450,7 @@ export async function mountCalendarTable(el) {
   };
   window.addEventListener('hanni:calendar-refresh', onChange);
   window.addEventListener('task-state-changed', onChange);
-  disposeTable = () => { disposed = true; revision++; gridViewport.dispose(); menu(); roller.removeEventListener('wheel', wheelDate); roller.removeEventListener('keydown', keyDate); window.removeEventListener('hanni:calendar-refresh', onChange); window.removeEventListener('task-state-changed', onChange); };
+  disposeTable = () => { disposed = true; revision++; gridViewport.dispose(); menu(); document.removeEventListener('keydown', closePlanningOnEscape); roller.removeEventListener('wheel', wheelDate); roller.removeEventListener('keydown', keyDate); window.removeEventListener('hanni:calendar-refresh', onChange); window.removeEventListener('task-state-changed', onChange); };
   await refresh();
 }
 
@@ -429,7 +459,9 @@ export function openCalendarCreate(button) {
   if (!el?.querySelector('.uni-pane') || document.querySelector('dialog[open]')) return;
   const revision = workspaceRevision;
   const isCurrent = () => revision === workspaceRevision && button.isConnected && el.isConnected && S.activeTab === 'calendar';
-  showCalendarCreateModal(S._unifiedPane.calendar === 'table' ? view.date : views.iso(new Date()), {
+  const tasksPane = S._unifiedPane.calendar === 'tasks';
+  showCalendarCreateModal(tasksPane ? null : S._unifiedPane.calendar === 'table' ? view.date : views.iso(new Date()), {
+    initialNoDate: tasksPane,
     isCurrent, returnFocus: () => { if (isCurrent()) button.focus({ preventScroll:true }); },
   });
 }
@@ -473,7 +505,7 @@ export async function loadCalendarWorkspace(el) {
       create.setAttribute('aria-label', create.title);
       create.setAttribute('aria-haspopup', 'dialog');
     },
-    panes: [{id:'dash',label:'Дашборд'}, {id:'table',label:'Таблица'}, {id:'goals',label:'Цели'}, {id:'notes',label:'Заметки'}],
+    panes: [{id:'dash',label:'Дашборд'}, {id:'table',label:'Календарь'}, {id:'tasks',label:'Задачи'}, {id:'notes',label:'Заметки'}, {id:'goals',label:'Цели'}],
     renderDash: (pane) => {
       pane.innerHTML = '<div data-calendar-day-banner></div><div data-calendar-now></div><div data-calendar-recurring></div>';
       disposeDayBanner = mountCalendarDayBanner(pane.querySelector('[data-calendar-day-banner]'),{invoke});
@@ -506,7 +538,16 @@ export async function loadCalendarWorkspace(el) {
         onCurrentTaskChange: value => disposeRecurring?.setCurrentTask(value),
       });
     },
-    renderTable: mountCalendarTable,
+    renderTable: pane => mountCalendarTable(pane, { openTasks: () => openPane('tasks') }),
+    renderTasks: pane => {
+      const revision = workspaceRevision;
+      disposePanel = mountCalendarTasks(pane, {
+        invoke, state:tasksPaneState, mountMenu:mountRecordMenu, notifyChange:changed,
+        openTask:(row,restore) => showRecord(calendarRecord(row),restore),
+        editDate:(row,restore) => taskEditor(calendarRecord(row),restore,'date',()=>revision===workspaceRevision && pane.isConnected),
+        executeAction:(row,action) => executeCalendarTaskAction(calendarRecord(row),action),
+      });
+    },
     renderGoals: async (pane) => {
       const revision = workspaceRevision;
       const dispose = await mountCalendarGoals(pane, { onOpenGoal:openGoalDevelopment, onCreateTask: goal => {

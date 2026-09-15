@@ -627,6 +627,9 @@ fn checkpoint_abandoned_upload_without_successor_retires_only_transfer_cache() {
                         Err(_) => panic!("synthetic listener failed"),
                     }
                 };
+                // Accepted sockets can inherit the listener's nonblocking mode
+                // on Windows; this bounded HTTP reader expects blocking reads.
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(5)))
                     .unwrap();

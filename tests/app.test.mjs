@@ -50,14 +50,14 @@ async function launch(t, { mobile = false, initialSettings = [], width, userAgen
   return { w, calls, click, errors, before, settings };
 }
 
-test('bundled shell boots the original workspace and all four panes with only Calendar in the sidebar', async t => {
+test('bundled shell boots the five workspace panes with only Calendar in the sidebar', async t => {
   const { w, click, calls, errors } = await launch(t);
   assert.equal(w.document.title, 'Hanni MVP');
   assert.ok(w.document.documentElement.classList.contains('desktop'));
   assert.deepEqual([...w.document.querySelectorAll('#tab-list [data-tab-id]')].map(el => el.dataset.tabId), ['calendar']);
-  assert.deepEqual([...w.document.querySelectorAll('.uni-tab')].map(el => el.textContent), ['Дашборд','Таблица','Цели','Заметки']);
+  assert.deepEqual([...w.document.querySelectorAll('.uni-tab')].map(el => el.textContent), ['Дашборд','Календарь','Задачи','Заметки','Цели']);
   assert.ok(w.document.querySelector('[data-calendar-now]'));
-  for (const [pane, selector] of [['table','.calendar-workspace-table'],['goals','.calendar-goals'],['notes','.calendar-notes']]) {
+  for (const [pane, selector] of [['table','.calendar-workspace-table'],['tasks','.calendar-tasks'],['goals','.calendar-goals'],['notes','.calendar-notes']]) {
     await click('[data-pane="' + pane + '"]');
     assert.equal(w.document.querySelector('.uni-tab.active').dataset.pane, pane);
     if (pane !== 'table') assert.ok(w.document.querySelector(selector), selector);
@@ -65,6 +65,20 @@ test('bundled shell boots the original workspace and all four panes with only Ca
   assert.ok(calls.some(call => call.command === 'get_calendar_records'));
   assert.ok(calls.some(call => call.command === 'get_notes'));
   assert.deepEqual(errors, []);
+});
+
+test('planning closes with Escape outside the panel and Tasks creation starts without a date', async t => {
+  const { w, click } = await launch(t);
+  await click('[data-pane="table"]');
+  await click('[data-tasks-toggle]');
+  assert.equal(w.document.querySelector('[data-tasks-panel]').hidden, false);
+  w.document.querySelector('[data-period="month"]').focus();
+  w.document.activeElement.dispatchEvent(new w.KeyboardEvent('keydown', { key:'Escape', bubbles:true, cancelable:true }));
+  assert.equal(w.document.querySelector('[data-tasks-panel]').hidden, true);
+  await click('[data-pane="tasks"]');
+  await click('[data-calendar-create]');
+  const noDate = w.document.querySelector('#evm-no-date');
+  assert.ok(noDate?.checked, 'Task capture must allow an unscheduled date');
 });
 
 for (const width of [0, 500]) test(`desktop layout survives startup at ${width}px and restoring the window`, async t => {

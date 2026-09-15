@@ -51,11 +51,11 @@ function wireHeaderEdit(el, tabId, config, meta, defaults, revision) {
   });
 }
 async function renderActivePane(pane, activePane, config) {
-  const renderer = { dash: config.renderDash, table: config.renderTable, goals: config.renderGoals, notes: config.renderNotes }[activePane];
+  const renderer = { dash: config.renderDash, table: config.renderTable, tasks: config.renderTasks, goals: config.renderGoals, notes: config.renderNotes }[activePane];
   if (renderer) await renderer(pane);
 }
 
-/** Calendar-only clipped upstream unified layout: original shell markup and four permitted panes. */
+/** Calendar workspace shell; the caller supplies the available panes. */
 export async function renderUnifiedLayout(el, tabId, config = {}) {
   config.beforeRender?.();
   const revision = (renderRevisions.get(el) || 0) + 1;

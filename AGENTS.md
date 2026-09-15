@@ -1,5 +1,12 @@
 # Hanni MVP
 
+Owner iteration, 2026-09-16: add the Tasks pane and use the order Dashboard,
+Calendar, Tasks, Notes, Goals. Do not show a Routine placeholder. Keep the
+Calendar List mode until the owner tests on the phone. The collapsible planning
+panel shows undated tasks and assigns a day to the same task (no event copies
+or timer changes). Task scheduling currently has a date only; do not pretend
+that dropping on an hour assigns a planned time. Keep the homepage presentation.
+
 Owner correction, 2026-09-15: simplify the homepage goal card to the current
 development topic/skill and explicitly labelled whole-goal skill progress.
 Remove the separate current-stage summary, duplicate topic and decorative focus
