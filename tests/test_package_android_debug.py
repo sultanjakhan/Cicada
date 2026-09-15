@@ -40,6 +40,18 @@ class AndroidPackageHelpersTest(unittest.TestCase):
         self.assertEqual((package.group(1), package.group(2), package.group(3), native_code),
                          ('app.hanni.mvp', '3003', '0.3.3', "'arm64-v8a'"))
 
+    def test_compressed_native_packaging_preserves_settings_and_is_idempotent(self):
+        source = 'android { compileSdk = 36 }\n'
+        configured = MODULE.with_compressed_native_libraries(source)
+        self.assertTrue(configured.startswith(source))
+        self.assertIn('jniLibs.useLegacyPackaging = true', configured)
+        self.assertEqual(MODULE.with_compressed_native_libraries(configured), configured)
+
+    def test_compressed_native_packaging_refuses_conflicting_policy(self):
+        with self.assertRaises(SystemExit):
+            MODULE.with_compressed_native_libraries(
+                'android { packaging { jniLibs.useLegacyPackaging = false } }')
+
 
 if __name__ == '__main__':
     unittest.main()

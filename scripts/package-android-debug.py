@@ -57,7 +57,20 @@ def disable_debug_symbol_preservation():
     """Keep the debug candidate small and verify the generated Gradle structure."""
     gradle = ROOT / 'src-tauri/gen/android/app/build.gradle.kts'
     source = gradle.read_text(encoding='utf-8')
-    gradle.write_text(without_debug_symbol_preservation(source), encoding='utf-8')
+    gradle.write_text(with_compressed_native_libraries(
+        without_debug_symbol_preservation(source)), encoding='utf-8')
+
+
+def with_compressed_native_libraries(source):
+    """Use AGP's supported compression/extraction mode for sideload delivery."""
+    block = '\nandroid {\n    packaging {\n        jniLibs.useLegacyPackaging = true\n    }\n}\n'
+    if 'useLegacyPackaging' in source:
+        require(block in source and source.count('useLegacyPackaging') == 1,
+                'Existing native library packaging differs; review it first.')
+        return source
+    require(re.search(r'\bandroid\s*\{', source) is not None,
+            'Generated Android Gradle configuration is missing.')
+    return source + block
 
 
 def without_debug_symbol_preservation(source):
@@ -97,6 +110,8 @@ def verify_no_debug_sections(apk, ndk_home):
                            if name.startswith('lib/arm64-v8a/') and name.endswith('.so'))
         require(libraries, 'Expected an arm64 native library in the APK.')
         for name in libraries:
+            require(archive.getinfo(name).compress_type == zipfile.ZIP_DEFLATED,
+                    f'Native library is not compressed for update delivery: {name}.')
             library = Path(directory) / Path(name).name
             library.write_bytes(archive.read(name))
             sections = output(str(readelf), '-S', str(library))
