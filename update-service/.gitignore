@@ -1,0 +1,4 @@
+node_modules/
+.local/
+.wrangler/
+test/.dev.vars
