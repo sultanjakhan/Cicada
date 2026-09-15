@@ -169,6 +169,7 @@ def main():
                         '--ks-key-alias', 'androiddebugkey',
                         '--ks-pass', 'env:HANNI_ANDROID_KEYSTORE_PASSWORD',
                         '--key-pass', 'env:HANNI_ANDROID_KEYSTORE_PASSWORD',
+                        '--v4-signing-enabled', 'false',
                         '--out', str(signed), str(apk)],
                        cwd=ROOT, env=signing_environment, check=True)
         apk = signed
