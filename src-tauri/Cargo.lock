@@ -1393,7 +1393,7 @@ dependencies = [
 
 [[package]]
 name = "hanni-mvp"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "base64 0.22.1",
  "chacha20poly1305",
