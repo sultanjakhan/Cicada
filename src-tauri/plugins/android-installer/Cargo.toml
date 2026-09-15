@@ -1,0 +1,18 @@
+[package]
+name = "hanni-mvp-android-installer"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.98"
+publish = false
+links = "hanni-mvp-android-installer"
+
+[lib]
+name = "hanni_mvp_android_installer"
+path = "src/lib.rs"
+
+[build-dependencies]
+tauri-plugin = { version = "=2.6.3", features = ["build"] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+tauri = { version = "=2.11.1", features = [] }
