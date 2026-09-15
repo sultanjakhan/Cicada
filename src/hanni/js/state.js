@@ -17,7 +17,9 @@ export async function invoke(command, args) {
 export const listen = (...args) => window.__TAURI__.event.listen(...args);
 export const emit = (...args) => window.__TAURI__.event.emit(...args);
 const FORCE_MOBILE = (() => { try { return localStorage.getItem('hanni_force_mobile') === '1'; } catch { return false; } })();
-export const IS_MOBILE = /android/i.test(navigator.userAgent) || window.innerWidth < 640 || FORCE_MOBILE;
+// A minimized desktop WebView can start with a zero-width viewport. Its
+// temporary size must not lock the shell into phone navigation for the session.
+export const IS_MOBILE = /android/i.test(navigator.userAgent) || FORCE_MOBILE;
 export const IS_DESKTOP = !IS_MOBILE;
 document.documentElement.classList.add(IS_MOBILE ? 'mobile' : 'desktop');
 if (FORCE_MOBILE) document.documentElement.classList.add('mobile-preview');

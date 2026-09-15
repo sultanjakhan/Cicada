@@ -14,9 +14,11 @@ const result = await build({
 const bundle = (Array.isArray(result) ? result[0] : result).output.find(file => file.type === 'chunk').code;
 const settle = async () => { for (let i = 0; i < 12; i++) await new Promise(resolve => setImmediate(resolve)); };
 
-async function launch(t, { mobile = false, initialSettings = [] } = {}) {
+async function launch(t, { mobile = false, initialSettings = [], width, userAgent } = {}) {
   const dom = new JSDOM(html, { url: 'http://localhost/', runScripts: 'outside-only', pretendToBeVisual: true });
   const w = dom.window, calls = [], settings = new Map(initialSettings), errors = [], before = new Map();
+  if (width != null) Object.defineProperty(w, 'innerWidth', { value: width, configurable: true });
+  if (userAgent) Object.defineProperty(w.navigator, 'userAgent', { value: userAgent, configurable: true });
   if (mobile) w.localStorage.setItem('hanni_force_mobile', '1');
   w.structuredClone = structuredClone;
   w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
@@ -63,6 +65,25 @@ test('bundled shell boots the original workspace and all four panes with only Ca
   assert.ok(calls.some(call => call.command === 'get_calendar_records'));
   assert.ok(calls.some(call => call.command === 'get_notes'));
   assert.deepEqual(errors, []);
+});
+
+for (const width of [0, 500]) test(`desktop layout survives startup at ${width}px and restoring the window`, async t => {
+  const { w, click } = await launch(t, { width });
+  assert.ok(w.document.documentElement.classList.contains('desktop'));
+  assert.ok(!w.document.documentElement.classList.contains('mobile'));
+  Object.defineProperty(w, 'innerWidth', { value: 1100, configurable: true });
+  w.dispatchEvent(new w.Event('resize'));
+  await click('[data-calendar-settings]');
+  w.document.querySelector('dialog').close(); await settle();
+  assert.ok(w.document.activeElement.matches('[data-calendar-settings]'), 'settings return to the desktop sidebar');
+  assert.ok(!w.document.documentElement.classList.contains('mobile'));
+});
+
+test('Android layout keeps its mobile navigation in a wide viewport', async t => {
+  const { w, click } = await launch(t, { width: 1100, userAgent: 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36' });
+  assert.ok(w.document.documentElement.classList.contains('mobile'));
+  await click('#mobile-hamburger');
+  assert.ok(w.document.querySelector('#tab-bar').classList.contains('drawer-open'));
 });
 
 test('upstream mobile mode enables its CSS and closes the drawer through its backdrop', async t => {
