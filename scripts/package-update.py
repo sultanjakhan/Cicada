@@ -69,7 +69,7 @@ def updater_environment() -> dict[str, str]:
 
 
 def sign(payload: Path, environment: dict[str, str]) -> Path:
-    subprocess.run(['npm', 'run', 'tauri', '--', 'signer', 'sign', str(payload)],
+    subprocess.run(['node', 'node_modules/@tauri-apps/cli/tauri.js', 'signer', 'sign', str(payload)],
                    cwd=ROOT, env=environment, check=True)
     signature = payload.with_name(payload.name + '.sig')
     require(signature.is_file() and signature.stat().st_size > 0,

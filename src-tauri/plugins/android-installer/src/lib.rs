@@ -35,6 +35,7 @@ pub enum InstallStatus {
 /// envelope explicit prevents Rust from accidentally trying to deserialize the
 /// whole object as the `InstallStatus` string itself.
 #[derive(Debug, Deserialize)]
+#[cfg(any(target_os = "android", test))]
 struct InstallResponse {
     status: InstallStatus,
 }
@@ -50,6 +51,10 @@ impl<R: Runtime> AndroidInstaller<R> {
         &self,
         request: InstallVerifiedRequest,
     ) -> Result<InstallStatus, String> {
+        #[cfg(not(target_os = "android"))]
+        { let _ = request; Ok(InstallStatus::Unsupported) }
+        #[cfg(target_os = "android")]
+        {
         let Some(handle) = &self.0 else {
             return Ok(InstallStatus::Unsupported);
         };
@@ -57,12 +62,17 @@ impl<R: Runtime> AndroidInstaller<R> {
             .run_mobile_plugin("installVerified", request)
             .map_err(|error| error.to_string())?;
         Ok(response.status)
+        }
     }
 
     /// Returns `permission_required` until the user grants Android's install
     /// unknown apps permission. It only opens the settings page when this method
     /// is called explicitly by the product UI.
     pub fn open_install_permission(&self) -> Result<InstallStatus, String> {
+        #[cfg(not(target_os = "android"))]
+        { Ok(InstallStatus::Unsupported) }
+        #[cfg(target_os = "android")]
+        {
         let Some(handle) = &self.0 else {
             return Ok(InstallStatus::Unsupported);
         };
@@ -70,6 +80,7 @@ impl<R: Runtime> AndroidInstaller<R> {
             .run_mobile_plugin("openInstallPermission", ())
             .map_err(|error| error.to_string())?;
         Ok(response.status)
+        }
     }
 }
 

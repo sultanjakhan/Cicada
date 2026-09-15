@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-install-verified"
+description = "Enables the install_verified command without any pre-configured scope."
+commands.allow = ["install_verified"]
+
+[[permission]]
+identifier = "deny-install-verified"
+description = "Denies the install_verified command without any pre-configured scope."
+commands.deny = ["install_verified"]

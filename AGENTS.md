@@ -1,5 +1,11 @@
 # Hanni MVP
 
+Owner authorization, 2026-09-16: add signed application updates for Windows and
+Android through an authenticated channel. Keep the stable Android signing key,
+preserve application identity and data, and back up before installation. Android
+uses the system confirmation screen. Check automatically, but restart/install
+only after the owner's update action. This supersedes the updater exclusion below.
+
 Owner iteration, 2026-09-16: add the Tasks pane and use the order Dashboard,
 Calendar, Tasks, Notes, Goals. Do not show a Routine placeholder. Keep the
 Calendar List mode until the owner tests on the phone. The collapsible planning

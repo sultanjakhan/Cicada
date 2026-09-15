@@ -15,8 +15,8 @@ jobs:
     env:
       MVP_UPDATER_PRIVATE_KEY: ${{ secrets.MVP_UPDATER_PRIVATE_KEY }}
       MVP_UPDATER_PRIVATE_KEY_PASSWORD: ${{ secrets.MVP_UPDATER_PRIVATE_KEY_PASSWORD }}
-      MVP_UPDATES_URL: ${{ secrets.MVP_UPDATES_URL }}
-      MVP_UPDATES_TOKEN: ${{ secrets.MVP_UPDATES_TOKEN }}
+      HANNI_MVP_UPDATES_URL: ${{ secrets.MVP_UPDATES_URL }}
+      HANNI_MVP_UPDATES_TOKEN: ${{ secrets.MVP_UPDATES_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -74,8 +74,8 @@ jobs:
       MVP_UPDATER_PRIVATE_KEY: ${{ secrets.MVP_UPDATER_PRIVATE_KEY }}
       MVP_UPDATER_PRIVATE_KEY_PASSWORD: ${{ secrets.MVP_UPDATER_PRIVATE_KEY_PASSWORD }}
       MVP_ANDROID_KEYSTORE_BASE64: ${{ secrets.MVP_ANDROID_KEYSTORE_BASE64 }}
-      MVP_UPDATES_URL: ${{ secrets.MVP_UPDATES_URL }}
-      MVP_UPDATES_TOKEN: ${{ secrets.MVP_UPDATES_TOKEN }}
+      HANNI_MVP_UPDATES_URL: ${{ secrets.MVP_UPDATES_URL }}
+      HANNI_MVP_UPDATES_TOKEN: ${{ secrets.MVP_UPDATES_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

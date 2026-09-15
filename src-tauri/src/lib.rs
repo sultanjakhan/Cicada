@@ -12,6 +12,7 @@ use std::{
 use tauri::{Manager, State};
 use uuid::Uuid;
 
+mod app_updates;
 mod calendar_compat;
 mod desktop_launch;
 mod mvp_sync;
@@ -500,7 +501,12 @@ pub fn run() {
     let mut context = tauri::generate_context!();
     options.apply_context(&mut context);
     let startup_options = options.clone();
-    let built = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    let built = builder
+        .plugin(hanni_mvp_android_installer::init())
+        .manage(app_updates::UpdateState::default())
         .setup(move |app| {
             let initialized = (|| -> Result<(), Box<dyn std::error::Error>> {
                 let data_dir = app_data_dir(app.handle())?;
@@ -528,6 +534,10 @@ pub fn run() {
             set_completed,
             delete_item,
             create_backup,
+            app_updates::mvp_update_status,
+            app_updates::mvp_update_check,
+            app_updates::mvp_update_install,
+            app_updates::mvp_update_open_permission,
             mvp_sync::mvp_sync_status,
             mvp_sync::mvp_sync_configure,
             mvp_sync::mvp_sync_set_enabled,
