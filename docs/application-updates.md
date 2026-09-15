@@ -29,6 +29,10 @@ credentials. The independent data-sync service is unchanged.
    secrets. Keep both signing keys stable. Android uses the same persistent
    certificate as the installed application; the CI runner must never replace it
    with an automatically generated key.
+   The runner passes `MVP_ANDROID_KEYSTORE_PATH` to explicitly sign the finished
+   APK with `apksigner`; restoring a default Gradle key alone is insufficient.
+   AGP compresses native libraries (`useLegacyPackaging = true`) to fit the
+   25 MiB delivery limit. Android extracts them during installation.
 3. Download the two successful candidates. If GitHub artifact storage is full,
    the workflow stores them in private draft releases named
    `windows-update-candidate-<run>` and `android-update-candidate-<run>`.
@@ -47,3 +51,22 @@ Do not call a build or draft release an installed update. The bootstrap version
 must be installed once before an older application can use this channel. An
 Android sideload update does not remove application data or require reinstalling
 from scratch when the package and signing certificate remain the same.
+
+## Verified installation, 2026-09-16
+
+The installed Windows client detected and installed 0.3.10 from 0.3.5, then
+restarted itself. A physical Android client detected 0.3.10 from 0.3.9 and installed
+it through Android's permission, confirmation and Play Protect flow. Both checks
+started automatically; the install buttons were exercised in the real apps.
+Native version labels and a subsequent Android restart reported 0.3.10. The
+installed APK hash matched the signed delivery candidate.
+
+All application records and Android sync credentials were retained. Comparing all
+32 SQLite tables on each device found only the expected `mvp_sync_meta.last_success`
+timestamp change. The three unrelated Windows QA processes remained running; one
+ordinary Windows window remained minimized without taking focus. Windows pixel
+capture while minimized was unavailable; the Android settings screenshot and both
+native interaction paths were checked. Mac update installation was not tested.
+
+Private backup and acceptance receipts are retained locally under
+`.local/auto-update-20260916-c4e8/`; they are never release assets or Git content.
