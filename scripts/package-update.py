@@ -90,7 +90,7 @@ def ensure_asset_limit(*assets: Path) -> None:
 
 def build_windows(commit: str, version: str) -> Path:
     require(sys.platform == 'win32', 'Windows update candidates must be built on Windows.')
-    subprocess.run(['powershell', '-NoProfile', '-File', 'scripts/package-windows.ps1'],
+    subprocess.run([shutil.which('pwsh') or 'powershell', '-NoProfile', '-File', 'scripts/package-windows.ps1'],
                    cwd=ROOT, check=True)
     source = ROOT / '.local/windows-package' / commit[:12] / f'Hanni-MVP-{version}-windows-x64-setup.exe'
     require(source.is_file(), 'The Windows packager did not produce its expected NSIS installer.')
