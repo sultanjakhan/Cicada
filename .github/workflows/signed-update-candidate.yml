@@ -1,0 +1,151 @@
+name: Signed update candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      MVP_UPDATER_PRIVATE_KEY: ${{ secrets.MVP_UPDATER_PRIVATE_KEY }}
+      MVP_UPDATER_PRIVATE_KEY_PASSWORD: ${{ secrets.MVP_UPDATER_PRIVATE_KEY_PASSWORD }}
+      MVP_UPDATES_URL: ${{ secrets.MVP_UPDATES_URL }}
+      MVP_UPDATES_TOKEN: ${{ secrets.MVP_UPDATES_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - run: npm.cmd ci
+      - run: npm.cmd test
+      - run: npm.cmd run check:privacy
+      - run: npm.cmd run build
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+      - name: Build and sign Windows candidate
+        run: python scripts/package-update.py windows
+      - id: artifact
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: hanni-mvp-update-windows-${{ github.sha }}
+          path: .local/update-candidate/windows/*
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+      - id: draft_release
+        if: steps.artifact.outcome == 'failure'
+        continue-on-error: true
+        name: Private draft-release fallback
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(gh repo view "$GITHUB_REPOSITORY" --json isPrivate --jq '.isPrivate')" = true
+          shopt -s nullglob
+          assets=(.local/update-candidate/windows/*)
+          test "${#assets[@]}" -eq 3
+          tag="windows-update-candidate-${GITHUB_RUN_ID}"
+          gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --latest=false --title "Hanni MVP Windows update candidate ${GITHUB_RUN_ID}" --notes "Private CI delivery fallback; not published."
+      - name: Require candidate delivery
+        if: always()
+        shell: bash
+        run: |
+          test "${{ steps.artifact.outcome }}" = success || test "${{ steps.draft_release.outcome }}" = success
+
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    permissions:
+      contents: write
+    env:
+      BUILD_TOOLS_VERSION: 35.0.0
+      NDK_VERSION: 28.2.13676358
+      MVP_UPDATER_PRIVATE_KEY: ${{ secrets.MVP_UPDATER_PRIVATE_KEY }}
+      MVP_UPDATER_PRIVATE_KEY_PASSWORD: ${{ secrets.MVP_UPDATER_PRIVATE_KEY_PASSWORD }}
+      MVP_ANDROID_KEYSTORE_BASE64: ${{ secrets.MVP_ANDROID_KEYSTORE_BASE64 }}
+      MVP_UPDATES_URL: ${{ secrets.MVP_UPDATES_URL }}
+      MVP_UPDATES_TOKEN: ${{ secrets.MVP_UPDATES_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          targets: aarch64-linux-android
+      - name: Install pinned Android SDK components
+        shell: bash
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          set +o pipefail
+          yes | "$sdkmanager" --licenses >/dev/null
+          test "${PIPESTATUS[1]}" -eq 0
+          set -o pipefail
+          "$sdkmanager" "platforms;android-36" "build-tools;$BUILD_TOOLS_VERSION" "ndk;$NDK_VERSION"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      - name: Restore persistent Hanni MVP Android signer
+        shell: bash
+        run: |
+          test -n "$MVP_ANDROID_KEYSTORE_BASE64"
+          mkdir -p "$HOME/.android"
+          printf '%s' "$MVP_ANDROID_KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/debug.keystore"
+          test "$(keytool -list -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey -v | awk -F': ' '/SHA256:/{gsub(":", "", $2); print tolower($2); exit}')" = e18482039bc199a158847aaae9298b9aeb9e8e0e9f0ec2f1e4dcd4ae14e0bd9d
+      - run: npm ci
+      - run: npm test
+      - run: npm run check:privacy
+      - run: npm run build
+      - name: Build and sign Android candidate
+        run: python3 scripts/package-update.py android
+      - name: Run Android installer plugin unit tests
+        shell: bash
+        run: |
+          module="$(cd src-tauri/gen/android && ./gradlew projects --console=plain | sed -n 's/.*\(:hanni-mvp-android-installer\).*/\1/p' | head -n 1)"
+          test -n "$module"
+          (cd src-tauri/gen/android && ./gradlew "$module:testDebugUnitTest" --console=plain)
+      - id: artifact
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: hanni-mvp-update-android-${{ github.sha }}
+          path: .local/update-candidate/android/*
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+      - id: draft_release
+        if: steps.artifact.outcome == 'failure'
+        continue-on-error: true
+        name: Private draft-release fallback
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(gh repo view "$GITHUB_REPOSITORY" --json isPrivate --jq '.isPrivate')" = true
+          shopt -s nullglob
+          assets=(.local/update-candidate/android/*)
+          test "${#assets[@]}" -eq 3
+          tag="android-update-candidate-${GITHUB_RUN_ID}"
+          gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --latest=false --title "Hanni MVP Android update candidate ${GITHUB_RUN_ID}" --notes "Private CI delivery fallback; not published."
+      - name: Require candidate delivery
+        if: always()
+        shell: bash
+        run: |
+          test "${{ steps.artifact.outcome }}" = success || test "${{ steps.draft_release.outcome }}" = success
