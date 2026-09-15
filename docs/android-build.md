@@ -42,3 +42,12 @@ The current artifact is debug signed, contains only `arm64-v8a`, uses Android 7+
 signature is a build check; compatibility with an existing installation requires
 the same application ID and signing certificate. Release signing is a separate
 step described in the [Tauri Android signing guide](https://v2.tauri.app/distribute/sign/android/).
+
+## CI debug candidate
+
+`Android debug candidate` is started manually in GitHub Actions. It pins Node 22,
+Rust 1.98, JDK 17, SDK 36, Build Tools 35.0.0 and NDK 28.2.13676358, then uploads
+one ARM64 APK and `manifest.json`. The manifest records the source commit, SHA-256,
+version code and CI debug certificate. It is a review candidate only: its fresh CI
+debug certificate is not authorised to update an installed Hanni MVP. Compare the
+certificate before any installation; never solve a mismatch by uninstalling the app.

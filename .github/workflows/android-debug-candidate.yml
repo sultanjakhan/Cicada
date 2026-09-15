@@ -1,0 +1,56 @@
+name: Android debug candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      BUILD_TOOLS_VERSION: 35.0.0
+      NDK_VERSION: 28.2.13676358
+      RUSTUP_TOOLCHAIN: 1.98.0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          targets: aarch64-linux-android
+      - name: Install pinned Android SDK components
+        shell: bash
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$sdkmanager"
+          set +o pipefail
+          yes | "$sdkmanager" --licenses >/dev/null
+          sdkmanager_exit=${PIPESTATUS[1]}
+          set -o pipefail
+          test "$sdkmanager_exit" -eq 0
+          "$sdkmanager" "platforms;android-36" "build-tools;$BUILD_TOOLS_VERSION" "ndk;$NDK_VERSION"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      - run: npm ci
+      - name: Check package helper parsing
+        run: python3 -m unittest tests/test_package_android_debug.py
+      - name: Build debug candidate
+        run: python3 scripts/package-android-debug.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hanni-mvp-android-debug-candidate-${{ github.sha }}
+          path: .local/android-package/**
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
