@@ -128,6 +128,7 @@ jobs:
           mkdir -p "$HOME/.android"
           printf '%s' "$MVP_ANDROID_KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/debug.keystore"
           test "$(keytool -list -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey -v | awk -F': ' '/SHA256:/{gsub(":", "", $2); print tolower($2); exit}')" = e18482039bc199a158847aaae9298b9aeb9e8e0e9f0ec2f1e4dcd4ae14e0bd9d
+          echo "MVP_ANDROID_KEYSTORE_PATH=$HOME/.android/debug.keystore" >> "$GITHUB_ENV"
       - run: npm ci
       - run: npm test
       - run: npm run check:privacy

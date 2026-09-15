@@ -156,6 +156,22 @@ def main():
                   if 'androidTest' not in path.parts)
     require(len(apks) == 1, f'Expected one non-test debug APK, found {len(apks)}.')
     apk = apks[0]
+    # Gradle may resolve its default debug keystore through Android-specific
+    # home settings. Release candidates must use the operator's explicit key.
+    keystore = environment.get('MVP_ANDROID_KEYSTORE_PATH')
+    if keystore:
+        require(Path(keystore).is_file(), 'Persistent Android keystore is missing.')
+        signed = ROOT / '.local/android-signed' / f'{commit[:12]}.apk'
+        require(not signed.exists(), 'This commit already has an explicitly signed APK.')
+        signed.parent.mkdir(parents=True, exist_ok=True)
+        signing_environment = dict(environment, HANNI_ANDROID_KEYSTORE_PASSWORD='android')
+        subprocess.run([str(apksigner), 'sign', '--ks', keystore,
+                        '--ks-key-alias', 'androiddebugkey',
+                        '--ks-pass', 'env:HANNI_ANDROID_KEYSTORE_PASSWORD',
+                        '--key-pass', 'env:HANNI_ANDROID_KEYSTORE_PASSWORD',
+                        '--out', str(signed), str(apk)],
+                       cwd=ROOT, env=signing_environment, check=True)
+        apk = signed
     badging = output(str(aapt2), 'dump', 'badging', str(apk))
     package, native_code = parse_apk_badging(badging)
     require(package.group(1) == config['identifier'], 'APK identifier differs from source.')
@@ -186,7 +202,7 @@ def main():
         'apk': destination.name,
         'apk_sha256': hashlib.sha256(destination.read_bytes()).hexdigest(),
         'signing': {
-            'kind': 'CI default debug certificate',
+            'kind': 'persistent Hanni MVP certificate' if keystore else 'CI default debug certificate',
             'certificate_sha256': signing_digest,
             'update_authorized': False,
             'note': 'Do not install over an existing Hanni MVP until its certificate is compared explicitly.',

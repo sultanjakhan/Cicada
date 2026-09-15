@@ -99,6 +99,9 @@ def build_windows(commit: str, version: str) -> Path:
 
 def build_android(commit: str, version: str) -> tuple[Path, int]:
     require(sys.platform.startswith('linux'), 'Android update candidates must be built on Linux CI.')
+    keystore = os.environ.get('MVP_ANDROID_KEYSTORE_PATH', '')
+    require(bool(keystore) and Path(keystore).is_file(),
+            'MVP_ANDROID_KEYSTORE_PATH must name the persistent signing key.')
     environment = dict(os.environ)
     environment.update({
         'CARGO_INCREMENTAL': '0',
