@@ -3,6 +3,8 @@ dist/
 target/
 src-tauri/target/
 src-tauri/gen/
+src-tauri/plugins/*/android/build/
+src-tauri/plugins/*/android/.gradle/
 .env
 .env.*
 !.env.example
