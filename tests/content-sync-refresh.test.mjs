@@ -20,7 +20,7 @@ test('native invoke schedules sync only for acknowledged writes', async t => {
   let fail=true;dom.window.__TAURI__={core:{invoke:async command=>{calls.push(command);if(command==='set_ui_state'&&fail)throw Error('write rejected');return null;}}};
   dom.window.setTimeout=callback=>{timers.push(callback);return timers.length;};dom.window.clearTimeout=()=>{};
   t.after(()=>dom.window.close());
-  const source=(await readFile(new URL('../src/hanni/js/state.js',import.meta.url),'utf8')).replace("'./calendar-display-preferences.js'",JSON.stringify(new URL('../src/hanni/js/calendar-display-preferences.js',import.meta.url).href)).replace("'./sync-trigger.js'",JSON.stringify(new URL('../src/hanni/js/sync-trigger.js',import.meta.url).href));
+  const source=(await readFile(new URL('../src/hanni/js/state.js',import.meta.url),'utf8')).replace("'./calendar-display-preferences.js'",JSON.stringify(new URL('../src/hanni/js/calendar-display-preferences.js',import.meta.url).href)).replace("'./sync-trigger.js'",JSON.stringify(new URL('../src/hanni/js/sync-trigger.js',import.meta.url).href)).replace("'../../../package.json'",JSON.stringify(new URL('../package.json',import.meta.url).href));
   const bridge=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
   await assert.rejects(bridge.invoke('set_ui_state',{key:'calendar_now_v1',value:'{}'}));assert.equal(timers.length,0);
   fail=false;await bridge.invoke('set_ui_state',{key:'calendar_now_v1',value:'{}'});assert.equal(timers.length,1);timers.shift()();await tick();assert.equal(calls.filter(command=>command==='mvp_sync_now').length,1);

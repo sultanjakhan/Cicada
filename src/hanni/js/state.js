@@ -1,4 +1,5 @@
 // Native bridge for the original Hanni Calendar components.
+import packageInfo from '../../../package.json' with { type: 'json' };
 import { loadCalendarPreferences } from './calendar-display-preferences.js';
 import { createSyncTrigger, isSyncWrite } from './sync-trigger.js';
 const syncTrigger = createSyncTrigger({
@@ -21,7 +22,7 @@ export const IS_DESKTOP = !IS_MOBILE;
 document.documentElement.classList.add(IS_MOBILE ? 'mobile' : 'desktop');
 if (FORCE_MOBILE) document.documentElement.classList.add('mobile-preview');
 export const S = {
-  APP_VERSION: '0.3.0', activeTab: 'calendar', openTabs: ['calendar'], activeSubTab: {},
+  APP_VERSION: packageInfo.version, activeTab: 'calendar', openTabs: ['calendar'], activeSubTab: {},
   tabCustomizations: {}, theme: localStorage.getItem('hanni_theme') || 'light',
   calendarYear: new Date().getFullYear(), calendarMonth: new Date().getMonth(),
   selectedCalendarDate: null, calWeekOffset: 0, calDayDate: null,
