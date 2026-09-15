@@ -1,6 +1,5 @@
 import { createCalendarDialog } from './calendar-dialog.js';
 import { escapeHtml } from './utils.js';
-import { ICONS } from './icons.js';
 
 export const DEVELOPMENT_STATE_KEY = 'calendar_development_v1';
 const VERSION = 1;
@@ -187,7 +186,7 @@ export async function mountGoalDevelopmentSummary(element, { invoke, goalId, onO
   if (!element || !invoke || goalId == null) throw new Error('Не хватает цели или native API.');
   const id = String(goalId),document=element.ownerDocument; let disposed = false,revision=0,editor=null;
   const progressView=(progress,label)=>`<div class="hero-progress"><div class="progress-label"><strong>${progress.total?progress.percent+'%':'—'}</strong><span>${progress.total?`${progress.done} из ${progress.total}`:'Без оценки'}</span></div><div class="progress-track" role="progressbar" aria-label="${label}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress.percent||0}"><span style="width:${progress.percent||0}%"></span></div><small>${label}</small></div>`;
-  async function openEditor(action,stageId,trigger){
+  async function openFocusEditor(trigger){
     if(editor||disposed)return;
     const host=document.createElement('div');host.hidden=true;document.body.append(host);
     let controller=null;
@@ -195,8 +194,8 @@ export async function mountGoalDevelopmentSummary(element, { invoke, goalId, onO
     try{
       controller=await mountGoalDevelopment(host,{invoke,goal:{id,title:''}});
       if(disposed||editor!==handle){handle.dispose();return;}
-      const dialog=action==='focus'?controller.openFocusPicker():action==='choose-stage'?controller.openStagePicker():controller.openStageEditor(stageId);
-      dialog.modal.addEventListener('close',()=>{handle.dispose();if(editor===handle)editor=null;if(!disposed)(element.querySelector(`[data-summary-action="${action}"]`)||trigger)?.focus();},{once:true});
+      const dialog=controller.openFocusPicker();
+      dialog.modal.addEventListener('close',()=>{handle.dispose();if(editor===handle)editor=null;if(!disposed)(element.querySelector('[data-summary-action="focus"]')||trigger)?.focus();},{once:true});
     }catch(cause){handle.dispose();editor=null;throw cause;}
   }
   const render = async (canCommit = null) => {
@@ -205,13 +204,12 @@ export async function mountGoalDevelopmentSummary(element, { invoke, goalId, onO
     const own=++revision,state=normalizeDevelopmentState(await invoke('get_ui_state',{key:DEVELOPMENT_STATE_KEY}));
     if(disposed||own!==revision||!element.isConnected||(canCommit&&!canCommit()))return;
     const ext=extension(state,id),stage=ext.stages.find(item=>item.id===ext.activeStageId)||null,focus=ext.skills.find(skill=>skill.id===(stage?stage.focusId:ext.focusId));
-    const total=ext.skills.length,done=ext.skills.filter(skillProgress).length,progress=stage?stageProgress(stage,ext.skills):{total,done,percent:pct(done,total)};
-    const topics=stage?topicList(ext.skills.filter(skill=>stage.skillIds.includes(skill.id))):[];
-    const focusBlock=`<div class="focus-inline focus-expanded"><span class="focus-symbol" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3M12 8v8m-4-4h8"/></svg></span><div class="focus-copy"><small>Сейчас развиваю</small>${focus?`<span class="focus-topic">${escapeHtml(focus.topic)}</span><button type="button" class="focus-skill-title" data-summary-skill>${escapeHtml(focus.title)}</button>`:`<span class="focus-empty">Выбери навык ${stage?'из текущего этапа':'из цели'}</span>`}<button type="button" class="text-button" data-summary-action="focus">${focus?'Выбрать другой навык':'Выбрать навык'}</button></div></div>`;
-    const dateLabel=stage?.deadline?new Intl.DateTimeFormat('ru',{day:'numeric',month:'long',year:'numeric'}).format(new Date(stage.deadline+'T12:00:00')):'';
-    element.innerHTML=`<div class="calendar-development-summary">${stage?`<section class="stage-panel is-compact" aria-label="Текущий этап"><div class="stage-heading"><div><span class="eyebrow">Текущий этап</span><h3>${escapeHtml(stage.title)}</h3><small>${dateLabel?'До '+escapeHtml(dateLabel):'Без срока'}</small></div><div class="stage-tools"><button type="button" class="text-button" data-summary-action="edit-stage">Изменить</button><button type="button" class="text-button" data-summary-action="choose-stage">${ICONS.cycle}Сменить этап</button></div></div><div class="stage-bottom"><div class="stage-topics">${topics.slice(0,4).map(topic=>`<span>${escapeHtml(topic)}</span>`).join('')}${topics.length>4?`<span>+${topics.length-4} тем</span>`:''}${!topics.length?'<span>Выбери навыки для этапа</span>':''}</div>${progressView(progress,'навыков этапа подтверждено')}</div></section><div class="hero-stage-focus">${focusBlock}</div>`:`<div class="hero-bottom">${focusBlock}${progressView(progress,'навыков всей цели подтверждено')}</div><div class="stage-entry"><div><strong>Ближайший этап</strong><span>Выбери часть навыков и срок — общая цель сохранится.</span></div><div class="stage-entry-actions">${ext.stages.length?'<button type="button" data-summary-action="choose-stage">Выбрать этап</button>':''}<button type="button" data-summary-action="new-stage">+ Спланировать этап</button></div></div>`}</div>`;
+    const total=ext.skills.length,done=ext.skills.filter(skillProgress).length,progress={total,done,percent:pct(done,total)};
+    const focusBlock=`<div class="focus-copy"><small>Сейчас развиваю</small>${focus?`<span class="focus-topic">${escapeHtml(focus.topic)}</span><button type="button" class="focus-skill-title" data-summary-skill>${escapeHtml(focus.title)}</button>`:`<span class="focus-empty">Выбери навык ${stage?'из текущего этапа':'из цели'}</span>`}<button type="button" class="text-button" data-summary-action="focus">${focus?'Выбрать другой навык':'Выбрать навык'}</button></div>`;
+    element.innerHTML=`<div class="calendar-development-summary"><div class="hero-bottom">${focusBlock}${progressView(progress,'навыков всей цели подтверждено')}</div></div>`;
     element.querySelector('[data-summary-skill]')?.addEventListener('click',()=>onOpen?.({goalId:id,skillId:focus.id}));
-    element.querySelectorAll('[data-summary-action]').forEach(button=>button.addEventListener('click',()=>void openEditor(button.dataset.summaryAction,button.dataset.summaryAction==='edit-stage'?stage?.id:null,button).catch(cause=>{const error=document.createElement('p');error.setAttribute('role','alert');error.textContent=cause?.message||String(cause);element.append(error);})));
+    const focusButton=element.querySelector('[data-summary-action="focus"]');
+    focusButton.addEventListener('click',()=>void openFocusEditor(focusButton).catch(cause=>{const error=document.createElement('p');error.setAttribute('role','alert');error.textContent=cause?.message||String(cause);element.append(error);}));
   };
   const listener = event => { if (String(event.detail?.goalId) === id) void render().catch(()=>{}); };
   const onSync = event => { if (event.detail?.remoteSync) void render(event.detail.canCommit).catch(()=>{}); };

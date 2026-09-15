@@ -1,5 +1,13 @@
 # Hanni MVP
 
+Owner correction, 2026-09-15: simplify the homepage goal card to the current
+development topic/skill and explicitly labelled whole-goal skill progress.
+Remove the separate current-stage summary, duplicate topic and decorative focus
+icon there. Keep stage selection, skill subsets and deadlines in goal details.
+The homepage skill picker still respects the active stage; changing focus must
+not start or replace the current task. This supersedes the full-width stage
+section requirement below.
+
 Owner scope update, 2026-09-14: fix Android system-inset overlap, package a stable
 Mac application, add review/resolution of synchronization conflicts, and adapt
 Hanni's safe checkpoint/journal compaction. Preserve offline-device recovery.
