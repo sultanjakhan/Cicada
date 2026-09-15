@@ -62,6 +62,10 @@ def updater_environment() -> dict[str, str]:
     require(key, 'MVP_UPDATER_PRIVATE_KEY is required to sign an update candidate.')
     require(password, 'MVP_UPDATER_PRIVATE_KEY_PASSWORD is required to sign an update candidate.')
     environment = dict(os.environ)
+    require(environment.get('HANNI_MVP_UPDATES_URL', '').startswith('https://'),
+            'HANNI_MVP_UPDATES_URL must configure the installed update client.')
+    require(len(environment.get('HANNI_MVP_UPDATES_TOKEN', '')) >= 32,
+            'HANNI_MVP_UPDATES_TOKEN must configure the installed update client.')
     # Tauri reads these variables internally; key material never appears on argv.
     environment['TAURI_SIGNING_PRIVATE_KEY'] = key
     environment['TAURI_SIGNING_PRIVATE_KEY_PASSWORD'] = password

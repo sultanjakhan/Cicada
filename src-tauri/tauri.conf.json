@@ -49,7 +49,8 @@
         "languages": [
           "Russian",
           "English"
-        ]
+        ],
+        "installerHooks": "windows/update-hooks.nsh"
       }
     }
   },

@@ -15,6 +15,9 @@
 
 !macroundef CheckIfAppIsRunning
 !macro CheckIfAppIsRunning executableName productName
+  ; Uninstall must not stage another update or collide with a retained backup.
+  ; Its normal file removal remains in the stock template, without process kills.
+  !ifndef __UNINSTALL__
   !define HANNI_UPDATE_HOOK_ID ${__LINE__}
 
   ; Do not use FindProcess* or KillProcess*. The file is scoped to the exact
@@ -43,4 +46,5 @@
 
   hanni_update_done_${HANNI_UPDATE_HOOK_ID}:
   !undef HANNI_UPDATE_HOOK_ID
+  !endif
 !macroend

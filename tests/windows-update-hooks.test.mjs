@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const hook = readFileSync(new URL('../src-tauri/windows/update-hooks.nsh', import.meta.url), 'utf8');
 
@@ -20,7 +21,7 @@ test('NSIS hook replaces the basename killer with a target-path rename', () => {
 test('NSIS hook compiles after a stock CheckIfAppIsRunning definition when makensis is available', t => {
   const candidates = [
     process.env.NSIS_MAKENSIS,
-    'C:\\Users\\user\\AppData\\Local\\tauri\\NSIS\\makensis.exe',
+    process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, 'tauri', 'NSIS', 'makensis.exe'),
   ].filter(Boolean);
   const makensis = candidates.find(existsSync);
   if (!makensis) return t.skip('makensis is unavailable on this host');
@@ -28,8 +29,7 @@ test('NSIS hook compiles after a stock CheckIfAppIsRunning definition when maken
   const dir = mkdtempSync(join(tmpdir(), 'hanni-nsis-hook-'));
   try {
     const script = join(dir, 'fixture.nsi');
-    const escapedHook = new URL('../src-tauri/windows/update-hooks.nsh', import.meta.url)
-      .pathname.replace(/^\//, '').replaceAll('/', '\\\\');
+    const escapedHook = fileURLToPath(new URL('../src-tauri/windows/update-hooks.nsh', import.meta.url));
     writeFileSync(script, [
       'Unicode true',
       '!define VERSION "0.3.5"',
@@ -47,7 +47,7 @@ test('NSIS hook compiles after a stock CheckIfAppIsRunning definition when maken
       '  !insertmacro CheckIfAppIsRunning "hanni-mvp.exe" "Hanni MVP"',
       'SectionEnd',
     ].join('\r\n'), 'utf8');
-    const run = spawnSync(makensis, ['/V2', script], { encoding: 'utf8' });
+    const run = spawnSync(makensis, ['/V2', script], { encoding: 'utf8', cwd:dir });
     assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
   } finally {
     rmSync(dir, { recursive:true, force:true });
