@@ -1,0 +1,49 @@
+# Application updates
+
+Windows and Android check the signed release feed after startup, then every six
+hours while open and when returning to the foreground. Failed checks can retry
+after one minute. Settings provide an explicit retry and install action. No
+background Android service, forced restart, or change to Calendar records is used.
+
+Windows uses the official Tauri updater and NSIS. `windows/update-hooks.nsh`
+replaces only NSIS's basename-wide process termination: the old executable is
+retained beside the installed file before replacement. Android downloads into
+private cache and opens the system package installer after checking the package,
+version and existing signer again. Android may first require allowing Hanni to
+install packages, and always owns the final installation confirmation.
+
+The client checks HTTPS origin, bounded size, SHA-256 and a pinned Minisign key.
+Before handing off to the installer it creates a consistent SQLite backup.
+The download bearer is a limited read capability embedded in the app; it is not
+a confidentiality boundary for someone who possesses the binary. The release
+channel contains application packages only, never personal databases or relay
+credentials. The independent data-sync service is unchanged.
+
+## Preparing the next version
+
+1. Increment `package.json`, its root lock entries, Cargo package/lock and Tauri
+   config together. Commit the intended source on private `main`.
+2. Run the **Signed update candidate** workflow for that commit. It requires
+   `MVP_UPDATER_PRIVATE_KEY`, `MVP_UPDATER_PRIVATE_KEY_PASSWORD`,
+   `MVP_ANDROID_KEYSTORE_BASE64`, `MVP_UPDATES_URL`, and `MVP_UPDATES_TOKEN` repository
+   secrets. Keep both signing keys stable. Android uses the same persistent
+   certificate as the installed application; the CI runner must never replace it
+   with an automatically generated key.
+3. Download the two successful candidates. If GitHub artifact storage is full,
+   the workflow stores them in private draft releases named
+   `windows-update-candidate-<run>` and `android-update-candidate-<run>`.
+   Verify the run's commit and each manifest's `source` before staging.
+4. Run `node scripts/stage-updates.mjs --windows <directory> --android <directory>`.
+   This verifies both signatures, hashes, versions and source equality, retaining
+   previous packages. It writes `.local/update-assets/latest.json` last.
+5. Deploy with `node sync-relay/node_modules/wrangler/bin/wrangler.js deploy
+   --config update-service/wrangler.jsonc` from an authenticated operator session.
+   `UPDATES_TOKEN` is a Worker secret. Keep `run_worker_first: true` so requests
+   cannot bypass authentication by requesting an asset directly.
+6. Verify unauthorized GET is 401, authorized feed/package hashes match, and an
+   installed older client detects and applies the release without losing records.
+
+Do not call a build or draft release an installed update. The bootstrap version
+must be installed once before an older application can use this channel. An
+Android sideload update does not remove application data or require reinstalling
+from scratch when the package and signing certificate remain the same.

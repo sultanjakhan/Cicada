@@ -6,7 +6,7 @@
  * be reviewed before a separate deployment step copies `.local/update-assets`.
  */
 import { createHash, createPublicKey, verify } from 'node:crypto';
-import { copyFile, mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -156,7 +156,8 @@ export async function stageUpdates({ windows, android, notes = '', publishedAt, 
   requireValue(Number.isFinite(Date.parse(timestamp)), 'publishedAt must be an ISO timestamp.');
 
   const output = path.join(root, '.local', 'update-assets');
-  const release = path.join(output, 'releases', first.manifest.version);
+  // Version is already part of each filename; match the server's flat allowlist.
+  const release = path.join(output, 'releases');
   const platforms = {};
   for (const candidate of candidates) {
     const assetPath = path.join(release, candidate.manifest.asset);
@@ -164,7 +165,7 @@ export async function stageUpdates({ windows, android, notes = '', publishedAt, 
     await preserveAsset(assetPath, candidate.asset);
     await preserveAsset(signaturePath, Buffer.from(candidate.signature, 'utf8'));
     platforms[candidate.config.platform] = {
-      url: `${UPDATE_BASE}/releases/${encodeURIComponent(first.manifest.version)}/${encodeURIComponent(candidate.manifest.asset)}`,
+      url: `${UPDATE_BASE}/releases/${encodeURIComponent(candidate.manifest.asset)}`,
       signature: candidate.signature.trim(),
       sha256: candidate.manifest.sha256,
       size: candidate.manifest.size,

@@ -66,6 +66,9 @@ test('stages matching candidates and rejects traversal, source mismatch and tamp
       notes: 'Plain text', publishedAt: '2026-09-16T00:00:00.000Z' });
     assert.equal(staged.latest.platforms['android-aarch64'].version_code, 3004);
     assert.equal(JSON.parse(await readFile(path.join(temporary, '.local/update-assets/latest.json'))).version, '0.3.4');
+    for (const entry of Object.values(JSON.parse(await readFile(path.join(temporary, '.local/update-assets/latest.json'))).platforms)) {
+      assert.match(new URL(entry.url).pathname, /^\/releases\/[A-Za-z0-9][A-Za-z0-9._-]*$/);
+    }
 
     const manifest = JSON.parse(await readFile(path.join(windows, 'manifest.json')));
     manifest.asset = '../escape.exe';
