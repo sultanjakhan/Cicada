@@ -30,6 +30,10 @@ class AndroidPackageHelpersTest(unittest.TestCase):
         }'''
         self.assertNotIn('keepDebugSymbols', MODULE.without_debug_symbol_preservation(gradle))
 
+    def test_accepts_generated_gradle_without_debug_symbol_block(self):
+        self.assertEqual(MODULE.without_debug_symbol_preservation('getByName("debug") {}'),
+                         'getByName("debug") {}')
+
     def test_parses_arm64_badging(self):
         badging = "package: name='app.hanni.mvp' versionCode='3003' versionName='0.3.3'\nnative-code: 'arm64-v8a'\n"
         package, native_code = MODULE.parse_apk_badging(badging)

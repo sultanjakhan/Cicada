@@ -68,7 +68,7 @@ def without_debug_symbol_preservation(source):
         r'\}'
     )
     updated, count = pattern.subn('\n', source)
-    require(count == 1, 'Expected one generated debug-symbol preservation block.')
+    require(count in (0, 1), 'Unexpected generated debug-symbol preservation blocks.')
     return updated
 
 
