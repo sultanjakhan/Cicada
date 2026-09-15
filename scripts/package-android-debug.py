@@ -142,8 +142,13 @@ def main():
     disable_debug_symbol_preservation()
     subprocess.run(['npm', 'run', 'tauri', '--', 'android', 'build', '--debug', '--target', 'aarch64',
                     '--apk', '--ci'], cwd=ROOT, env=environment, check=True)
-    require(not output('git', 'status', '--porcelain'),
-            'Build changed tracked source; inspect it before packaging again.')
+    changed = output('git', 'status', '--porcelain')
+    if changed:
+        # Keep the source gate strict, but make CI failures actionable. Only
+        # tracked source is diffed; private build inputs never belong in Git.
+        sys.stderr.write(changed + '\n')
+        sys.stderr.write(output('git', 'diff', '--no-ext-diff') + '\n')
+        require(False, 'Build changed tracked source; inspect it before packaging again.')
     require(output('git', 'rev-parse', 'HEAD') == commit, 'Source commit changed during the build.')
 
     apk_directory = ROOT / 'src-tauri/gen/android/app/build/outputs/apk'
