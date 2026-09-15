@@ -181,6 +181,11 @@ Privacy guard проверяет текущие текстовые файлы н
 
 ## Структура
 
+Логотип «зерно в объятиях» хранится в `src/app-icon.svg`: этот же SVG используется
+в оболочке и favicon. Иконки приложения в `src-tauri/icons/` получаются командой
+`npm run tauri -- icon src/app-icon.svg --output .local/generated-icons`;
+после генерации нужно перенести `icon.png`, `icon.ico` и `icon.icns` в каталог иконок.
+
 - `src/hanni/js`, `src/hanni/css` — перенесённые компоненты Calendar.
 - `src/app.js`, `src/index.html` — оболочка отдельного MVP.
 - `src-tauri/src/lib.rs` — запуск, база, миграции и резервные копии.

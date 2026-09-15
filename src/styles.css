@@ -21,3 +21,10 @@
 @import url('./hanni/css/calendar-settings-v7.css');
 @import url('./hanni/css/calendar-development.css');
 @import url('./hanni/css/calendar-recurring.css');
+
+/* Approved Hanni mark: keep branding separate from Calendar navigation. */
+.hanni-brand { display:flex; align-items:center; justify-content:center; flex-shrink:0; padding:2px 0 10px; }
+.hanni-brand img { display:block; width:40px; height:40px; }
+#mobile-title { display:flex; align-items:center; gap:8px; }
+.hanni-mobile-mark { display:block; flex-shrink:0; width:28px; height:28px; }
+.mobile .hanni-brand { align-self:flex-start; padding:0 20px 12px; }
