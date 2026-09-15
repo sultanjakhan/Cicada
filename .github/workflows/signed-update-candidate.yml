@@ -2,12 +2,19 @@ name: Signed update candidate
 
 on:
   workflow_dispatch:
+    inputs:
+      platform:
+        description: Platforms to package
+        type: choice
+        default: both
+        options: [both, windows, android]
 
 permissions:
   contents: read
 
 jobs:
   windows:
+    if: inputs.platform != 'android'
     runs-on: windows-latest
     timeout-minutes: 45
     permissions:
@@ -64,6 +71,7 @@ jobs:
           test "${{ steps.artifact.outcome }}" = success || test "${{ steps.draft_release.outcome }}" = success
 
   android:
+    if: inputs.platform != 'windows'
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     permissions:

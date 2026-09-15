@@ -4,7 +4,7 @@
 
   <application>
     <provider
-      android:name="androidx.core.content.FileProvider"
+      android:name="app.hanni.mvp.android.installer.HanniUpdateFileProvider"
       android:authorities="${applicationId}.android-installer"
       android:exported="false"
       android:grantUriPermissions="true">

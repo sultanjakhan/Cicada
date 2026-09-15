@@ -20,6 +20,10 @@ import java.security.MessageDigest
 private const val STATUS_LAUNCHED = "launched"
 private const val STATUS_PERMISSION_REQUIRED = "permission_required"
 
+// A distinct provider class prevents manifest-merger collisions with Tauri's
+// own FileProvider and preserves this provider's private updates-only paths.
+class HanniUpdateFileProvider : FileProvider()
+
 internal object InstallPolicy {
     const val expectedPackageId = "app.hanni.mvp"
     const val maxApkBytes = 160L * 1024L * 1024L
