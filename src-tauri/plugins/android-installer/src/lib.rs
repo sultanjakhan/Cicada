@@ -31,6 +31,14 @@ pub enum InstallStatus {
     Unsupported,
 }
 
+/// Kotlin resolves mobile commands as `{ "status": "..." }`; keeping that
+/// envelope explicit prevents Rust from accidentally trying to deserialize the
+/// whole object as the `InstallStatus` string itself.
+#[derive(Debug, Deserialize)]
+struct InstallResponse {
+    status: InstallStatus,
+}
+
 /// Access to the bounded Android package-installer bridge.
 pub struct AndroidInstaller<R: Runtime>(Option<PluginHandle<R>>);
 
@@ -45,9 +53,10 @@ impl<R: Runtime> AndroidInstaller<R> {
         let Some(handle) = &self.0 else {
             return Ok(InstallStatus::Unsupported);
         };
-        handle
-            .run_mobile_plugin("install_verified", request)
-            .map_err(|error| error.to_string())
+        let response: InstallResponse = handle
+            .run_mobile_plugin("installVerified", request)
+            .map_err(|error| error.to_string())?;
+        Ok(response.status)
     }
 
     /// Returns `permission_required` until the user grants Android's install
@@ -57,9 +66,10 @@ impl<R: Runtime> AndroidInstaller<R> {
         let Some(handle) = &self.0 else {
             return Ok(InstallStatus::Unsupported);
         };
-        handle
-            .run_mobile_plugin("open_install_permission", ())
-            .map_err(|error| error.to_string())
+        let response: InstallResponse = handle
+            .run_mobile_plugin("openInstallPermission", ())
+            .map_err(|error| error.to_string())?;
+        Ok(response.status)
     }
 }
 
@@ -82,14 +92,39 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             {
                 let handle =
                     api.register_android_plugin(PLUGIN_IDENTIFIER, "AndroidInstallerPlugin")?;
-                app.manage(AndroidInstaller(Some(handle)));
+                app.manage(AndroidInstaller::<R>(Some(handle)));
             }
             #[cfg(not(target_os = "android"))]
             {
                 let _ = api;
-                app.manage(AndroidInstaller(None));
+                app.manage(AndroidInstaller::<R>(None));
             }
             Ok(())
         })
         .build()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{InstallResponse, InstallStatus, InstallVerifiedRequest};
+
+    #[test]
+    fn response_envelope_maps_kotlin_permission_status() {
+        let response: InstallResponse =
+            serde_json::from_str(r#"{"status":"permission_required"}"#).unwrap();
+        assert_eq!(response.status, InstallStatus::PermissionRequired);
+    }
+
+    #[test]
+    fn request_uses_kotlin_camel_case_field_names() {
+        let request = InstallVerifiedRequest {
+            path: "/private/cache/updates/hanni.apk".into(),
+            expected_version_code: 3004,
+            expected_sha256: "a".repeat(64),
+        };
+        let json = serde_json::to_value(request).unwrap();
+        assert_eq!(json["expectedVersionCode"], 3004);
+        assert_eq!(json["expectedSha256"], "a".repeat(64));
+        assert!(json.get("expected_version_code").is_none());
+    }
 }
