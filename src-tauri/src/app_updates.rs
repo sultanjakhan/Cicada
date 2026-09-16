@@ -322,7 +322,17 @@ pub fn start(app: AppHandle) {
             let state = app.state::<UpdateState>();
             if matches!(mvp_update_check(app.clone(), state).await, Ok(UpdateStatus { phase, .. }) if phase == "available") {
                 let state = app.state::<UpdateState>();
-                let _ = mvp_update_prepare(app.clone(), state).await;
+                if mvp_update_prepare(app.clone(), state).await.is_ok() {
+                    // A busy user gets another chance shortly without another
+                    // feed request.  A successful Windows install exits here.
+                    loop {
+                        let version = app.state::<UpdateState>().candidate.lock().ok().and_then(|v| v.as_ref().map(|v| v.version.clone()));
+                        let Some(version) = version else { break; };
+                        if mvp_update_auto_install(app.clone(), app.state::<UpdateState>(), version).await.is_ok() { break; }
+                        app.state::<UpdateState>().change(&app, |s| s.phase = "deferred".into());
+                        tokio::time::sleep(Duration::from_secs(60)).await;
+                    }
+                }
             }
             tokio::time::sleep(Duration::from_secs(6 * 60 * 60)).await;
         }
