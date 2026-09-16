@@ -341,12 +341,15 @@ pub fn start(app: AppHandle) {
 
 /// Enrol only the installed current-user binary.  Debug/QA profiles and a
 /// redirected WebView/data directory never create persistent OS tasks.
-pub fn enroll_windows_task(_app: AppHandle) {
+pub fn enroll_windows_task(app: AppHandle) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        if std::env::var_os("HANNI_MVP_DATA_DIR").is_some()
-            || std::env::var_os("WEBVIEW2_USER_DATA_FOLDER").is_some() { return; }
+        // A production launcher may explicitly pass the standard data path;
+        // compare the resolved target instead of treating that as a QA marker.
+        let Ok(standard_data) = app.path().app_data_dir() else { return; };
+        #[cfg(debug_assertions)]
+        if std::env::var_os("HANNI_MVP_DATA_DIR").is_some_and(|value| std::path::PathBuf::from(value) != standard_data) { return; }
         let Ok(local) = std::env::var("LOCALAPPDATA") else { return; };
         let expected = std::path::PathBuf::from(local).join("Programs").join("Hanni MVP").join("hanni-mvp.exe");
         let Ok(exe) = std::env::current_exe() else { return; };
