@@ -102,7 +102,7 @@ impl Options {
         if self.is_update_background() {
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
-                let code = crate::update_background::run(app).await.unwrap_or(1);
+                let code = crate::update_background::run(app.clone()).await.unwrap_or(1);
                 app.exit(code);
             });
             return;

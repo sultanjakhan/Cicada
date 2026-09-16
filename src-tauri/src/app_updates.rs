@@ -411,6 +411,18 @@ pub fn mvp_update_activity(state: State<'_, UpdateState>, activity: UpdateActivi
 }
 
 fn auto_install_allowed(app: &AppHandle, state: &UpdateState) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        let visible = window.is_visible().map_err(|_| "Не удалось проверить окно приложения.")?;
+        let minimized = window.is_minimized().map_err(|_| "Не удалось проверить окно приложения.")?;
+        let focused = window.is_focused().map_err(|_| "Не удалось проверить окно приложения.")?;
+        if focused || (visible && !minimized) {
+            return Err("Автообновление отложено: окно приложения активно.".into());
+        }
+    } else {
+        // The scheduled runner has no renderer and has already acquired the
+        // same-profile instance lock during setup.
+        return Ok(());
+    }
     let lease = state
         .ui_safe
         .lock()
@@ -506,7 +518,7 @@ pub async fn mvp_update_check(
 }
 
 #[tauri::command(rename_all = "camelCase")]
-async fn install_update(
+pub(crate) async fn install_update(
     app: AppHandle,
     state: State<'_, UpdateState>,
     expected_version: String,
@@ -607,6 +619,10 @@ async fn install_update(
                 .await
                 .map_err(|_| "Не удалось подтвердить выпуск.")?
                 .ok_or("Выпуск изменился. Повтори проверку.")?;
+            let update = update.restart_after_install(!automatic);
+            if automatic {
+                auto_install_allowed(&app, state.inner())?;
+            }
             if update.version != candidate.version
                 || update.signature != candidate.package.signature
                 || update.download_url.as_str() != candidate.package.url
