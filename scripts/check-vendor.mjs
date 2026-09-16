@@ -13,7 +13,13 @@ export function checkVendor(root) {
   const locked = json(path.join(root, 'package-lock.json')).packages;
   const vendor = path.join(root, 'src/public/vendor');
   const entries = readdirSync(vendor, { withFileTypes: true });
-  assert.ok(entries.every(entry => entry.isFile()), 'Vendor directory must contain files, without subdirectories');
+  assert.ok(entries.every(entry => entry.isFile() || (entry.name === 'licenses' && entry.isDirectory())),
+    'Vendor directory may only contain files and its licenses directory');
+  if (entries.some(entry => entry.name === 'licenses')) {
+    const notices = readdirSync(path.join(vendor, 'licenses'), { withFileTypes: true });
+    assert.ok(notices.every(entry => entry.isFile() && /\.(?:md|txt)$/.test(entry.name)),
+      'Vendor licenses must be flat text files, without executable bundles or subdirectories');
+  }
   const files = entries.filter(entry => entry.name.endsWith('.js')).map(entry => entry.name).sort();
   assert.ok(Array.isArray(manifest) && manifest.length > 0, 'Missing vendor inventory');
   assert.deepEqual(manifest.map(entry => entry.file).sort(), files, 'Vendor inventory must cover every JavaScript file exactly once');

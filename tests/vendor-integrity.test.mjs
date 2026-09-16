@@ -32,6 +32,14 @@ test('vendor guard accepts bytes tied to the audited package version', t => {
   assert.equal(checkVendor(root), 1);
 });
 
+test('vendor guard allows text notices but still rejects executable files inside them', t => {
+  const { root, write } = fixture(t);
+  write('src/public/vendor/licenses/NOTICE.md', 'Fictional license notice');
+  assert.equal(checkVendor(root), 1);
+  write('src/public/vendor/licenses/hidden.js', '/* untracked executable */');
+  assert.throws(() => checkVendor(root), /flat text files/);
+});
+
 test('vendor guard rejects a changed shipped bundle even when npm package is clean', t => {
   const { root, write } = fixture(t);
   write('src/public/vendor/example.js', '/* substituted bundle */');
