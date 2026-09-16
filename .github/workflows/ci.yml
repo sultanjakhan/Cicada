@@ -5,10 +5,25 @@ on:
 permissions:
   contents: read
 jobs:
+  privacy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -B scripts/check-private-data.py
+      - run: python -B scripts/check-public-history.py
+      - run: python -B -m unittest discover -s tests -p 'test*privacy*.py'
+      - run: python -B -m unittest discover -s tests -p test_public_history.py
   mac:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -32,6 +47,8 @@ jobs:
         working-directory: sync-relay
       - run: npm run package:mac
       - uses: actions/upload-artifact@v4
+        # Optional CI bundle; signed release delivery is enforced separately.
+        continue-on-error: true
         with:
           name: hanni-mvp-macos-${{ github.sha }}
           path: |
@@ -44,6 +61,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -63,6 +82,8 @@ jobs:
         working-directory: src-tauri
       - run: .\scripts\package-windows.ps1
       - uses: actions/upload-artifact@v4
+        # Optional CI bundle; signed release delivery is enforced separately.
+        continue-on-error: true
         with:
           name: hanni-mvp-windows-${{ github.sha }}
           path: .local/windows-package/**

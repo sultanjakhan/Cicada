@@ -60,17 +60,19 @@ jobs:
       - id: draft_release
         if: steps.artifact.outcome == 'failure'
         continue-on-error: true
-        name: Private draft-release fallback
+        name: Draft-release fallback
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          test "$(gh repo view "$GITHUB_REPOSITORY" --json isPrivate --jq '.isPrivate')" = true
           shopt -s nullglob
           assets=(.local/update-candidate/windows/*)
           test "${#assets[@]}" -eq 3
           tag="windows-update-candidate-${GITHUB_RUN_ID}"
-          gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --latest=false --title "Hanni MVP Windows update candidate ${GITHUB_RUN_ID}" --notes "Private CI delivery fallback; not published."
+          gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --latest=false --title "Hanni MVP Windows update candidate ${GITHUB_RUN_ID}" --notes "CI delivery fallback; not published."
+          test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = true
+          test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq '.targetCommitish')" = "$GITHUB_SHA"
+          test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')" -eq 3
       - name: Require candidate delivery
         if: always()
         shell: bash
@@ -153,17 +155,19 @@ jobs:
       - id: draft_release
         if: steps.artifact.outcome == 'failure'
         continue-on-error: true
-        name: Private draft-release fallback
+        name: Draft-release fallback
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          test "$(gh repo view "$GITHUB_REPOSITORY" --json isPrivate --jq '.isPrivate')" = true
           shopt -s nullglob
           assets=(.local/update-candidate/android/*)
           test "${#assets[@]}" -eq 3
           tag="android-update-candidate-${GITHUB_RUN_ID}"
-          gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --latest=false --title "Hanni MVP Android update candidate ${GITHUB_RUN_ID}" --notes "Private CI delivery fallback; not published."
+          gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --latest=false --title "Hanni MVP Android update candidate ${GITHUB_RUN_ID}" --notes "CI delivery fallback; not published."
+          test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = true
+          test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq '.targetCommitish')" = "$GITHUB_SHA"
+          test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')" -eq 3
       - name: Require candidate delivery
         if: always()
         shell: bash

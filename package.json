@@ -1,6 +1,6 @@
 {
   "name": "hanni-mvp",
-  "version": "0.3.15",
+  "version": "0.3.16",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,7 +12,8 @@
     "check:privacy": "python -B scripts/check-private-data.py",
     "package:windows": "powershell -NoProfile -File scripts/package-windows.ps1",
     "tauri": "tauri",
-    "package:mac": "python3 scripts/package-macos.py"
+    "package:mac": "python3 scripts/package-macos.py",
+    "check:history": "python -B scripts/check-public-history.py"
   },
   "dependencies": {
     "@editorjs/checklist": "1.6.0",
@@ -31,5 +32,6 @@
     "@tauri-apps/cli": "2.11.4",
     "jsdom": "29.1.1",
     "vite": "8.3.0"
-  }
+  },
+  "license": "MIT"
 }

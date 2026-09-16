@@ -61,12 +61,11 @@ jobs:
       - id: draft_release
         if: steps.artifact.outcome == 'failure'
         continue-on-error: true
-        name: Save private draft-release fallback
+        name: Save draft-release fallback
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          test "$(gh repo view "$GITHUB_REPOSITORY" --json isPrivate --jq '.isPrivate')" = true
           shopt -s nullglob
           assets=(.local/android-package/*/*.apk .local/android-package/*/manifest.json)
           test "${#assets[@]}" -eq 2
@@ -77,7 +76,7 @@ jobs:
             --draft \
             --latest=false \
             --title "Hanni MVP Android debug candidate ${GITHUB_RUN_ID}" \
-            --notes "Private CI delivery fallback. Debug-signed candidate only; it is not an authorised update."
+            --notes "CI delivery fallback. Debug-signed candidate only; it is not an authorised update."
           test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = true
           test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq '.targetCommitish')" = "$GITHUB_SHA"
           test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')" -eq 2
@@ -90,5 +89,5 @@ jobs:
           if [[ "$artifact_outcome" == 'success' || "$release_outcome" == 'success' ]]; then
             exit 0
           fi
-          echo "Neither artifact storage nor the private draft release accepted the candidate."
+          echo "Neither artifact storage nor the draft release accepted the candidate."
           exit 1
