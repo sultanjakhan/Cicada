@@ -638,6 +638,24 @@ pub fn mvp_update_activity(
 }
 
 fn auto_install_allowed(app: &AppHandle, state: &UpdateState) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        // A signed production EXE can also be opened with an isolated QA data
+        // profile. That instance must not replace the owner's installed app.
+        let standard = app
+            .path()
+            .app_data_dir()
+            .map_err(|_| "Не удалось проверить профиль.")?;
+        let expected = std::env::var_os("LOCALAPPDATA")
+            .map(std::path::PathBuf::from)
+            .map(|p| p.join("Programs").join("Hanni MVP").join("hanni-mvp.exe"));
+        if crate::app_data_dir(app)? != standard || std::env::current_exe().ok() != expected {
+            return Err(
+                "Автообновление отложено: используется отдельная копия или профиль проверки."
+                    .into(),
+            );
+        }
+    }
     #[cfg(not(target_os = "android"))]
     if let Some(window) = app.get_webview_window("main") {
         let visible = window
