@@ -1,7 +1,6 @@
 package app.hanni.mvp.android.installer
 
 import android.app.Activity
-import android.app.PendingIntent
 import android.app.Application
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -21,7 +20,6 @@ import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
 import java.io.File
 import java.security.MessageDigest
-import java.security.SecureRandom
 
 internal const val STATUS_LAUNCHED = "launched"
 internal const val STATUS_PERMISSION_REQUIRED = "permission_required"
@@ -104,7 +102,7 @@ class HanniUpdateResultReceiver : BroadcastReceiver() {
 internal class InstallStatusStore(context: Context) {
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    fun save(status: String, sessionId: Int, code: Int? = null, message: String? = null, pendingIntent: String? = null) {
+    fun save(status: String, sessionId: Int, code: Int? = null, message: String? = null, pendingIntent: String? = null, versionCode: Long? = null) {
         prefs.edit()
             .putString(PREF_STATUS, status)
             .putInt(PREF_SESSION_ID, sessionId)
@@ -113,11 +111,13 @@ internal class InstallStatusStore(context: Context) {
             .putLong(PREF_UPDATED_AT, System.currentTimeMillis())
             .apply {
                 if (pendingIntent == null) remove(PREF_PENDING_INTENT) else putString(PREF_PENDING_INTENT, pendingIntent)
+                if (versionCode != null) putLong(PREF_VERSION_CODE, versionCode)
             }
             .apply()
     }
 
     fun sessionId(): Int = prefs.getInt(PREF_SESSION_ID, -1)
+    fun versionCode(): Long = prefs.getLong(PREF_VERSION_CODE, 0)
     fun token(): String = prefs.getString(PREF_TOKEN, "") ?: ""
     /** One durable state transition before PackageInstaller can issue a callback. */
     fun beginSession(sessionId: Int, token: String, versionCode: Long) {
@@ -152,7 +152,7 @@ internal class InstallStatusStore(context: Context) {
 @TauriPlugin
 class AndroidInstallerPlugin(private val activity: Activity) : Plugin(activity) {
     init {
-        UpdateActivityGuard.install(activity.application)
+        UpdateActivityGuard.install(activity.application, activity)
     }
     @Command
     fun installVerified(invoke: Invoke) {
@@ -163,16 +163,18 @@ class AndroidInstallerPlugin(private val activity: Activity) : Plugin(activity) 
             if (args.automatic && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
                 // Android 7–11 cannot request unattended sessions. Never start
                 // a confirmation Activity from a background automatic request.
-                invoke.resolve(status(STATUS_PENDING_USER_ACTION))
+                invoke.resolve(status("unsupported"))
                 return
             }
             if (!canRequestPackageInstalls()) {
+                InstallStatusStore(activity).save(STATUS_PERMISSION_REQUIRED, -1, message = "Android install permission is required", versionCode = args.expectedVersionCode)
                 invoke.resolve(status(STATUS_PERMISSION_REQUIRED))
                 return
             }
 
             if (InstallPolicy.usesUnattendedSession(Build.VERSION.SDK_INT, args.automatic)) {
-                invoke.resolve(commitUnattendedInstall(apk, args.expectedVersionCode))
+                WorkerSession.commit(activity, apk, args.expectedVersionCode)
+                invoke.resolve(status(STATUS_INSTALLING))
             } else {
                 launchLegacyInstaller(apk)
                 invoke.resolve(status(STATUS_LAUNCHED))
@@ -232,44 +234,6 @@ class AndroidInstallerPlugin(private val activity: Activity) : Plugin(activity) 
         }
     }
 
-    private fun commitUnattendedInstall(apk: File, versionCode: Long): JSObject {
-        val installer = activity.packageManager.packageInstaller
-        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
-            setAppPackageName(InstallPolicy.expectedPackageId)
-            setSize(apk.length())
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
-            }
-        }
-        val sessionId = installer.createSession(params)
-        val store = InstallStatusStore(activity)
-        val token = newCallbackToken()
-        store.beginSession(sessionId, token, versionCode)
-        try {
-            installer.openSession(sessionId).use { session ->
-                apk.inputStream().use { input ->
-                    session.openWrite("base.apk", 0, apk.length()).use { output ->
-                        input.copyTo(output)
-                        session.fsync(output)
-                    }
-                }
-                val callbackIntent = Intent(activity, HanniUpdateResultReceiver::class.java).apply {
-                    action = INSTALL_RESULT_ACTION
-                    setPackage(activity.packageName)
-                    putExtra(EXTRA_CALLBACK_TOKEN, token)
-                }
-                val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-                val callback = PendingIntent.getBroadcast(activity, sessionId, callbackIntent, flags)
-                session.commit(callback.intentSender)
-            }
-        } catch (error: Exception) {
-            installer.abandonSession(sessionId)
-            store.save(STATUS_FAILURE, sessionId, message = error.message)
-            throw error
-        }
-        return status(STATUS_INSTALLING)
-    }
-
     private fun launchLegacyInstaller(apk: File) {
         val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.android-installer", apk)
         activity.startActivity(Intent(Intent.ACTION_VIEW).apply {
@@ -278,8 +242,6 @@ class AndroidInstallerPlugin(private val activity: Activity) : Plugin(activity) 
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         })
     }
-
-    private fun newCallbackToken(): String = ByteArray(32).also { SecureRandom().nextBytes(it) }.toHex()
 
     private fun validateCandidate(args: InstallVerifiedArgs): File {
         require(args.expectedVersionCode > 0) { "Expected version code must be positive" }

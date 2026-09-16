@@ -1,18 +1,19 @@
 package app.hanni.mvp.android.installer
 
-import android.util.Base64
 import org.bouncycastle.crypto.digests.Blake2bDigest
 import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters
 import org.bouncycastle.crypto.signers.Ed25519Signer
 import java.io.File
+import java.util.Base64
 
 /** Strict subset used by minisign-verify 0.2.5 in the Rust updater. */
 internal object MinisignVerifier {
     private val base64 = Regex("[A-Za-z0-9+/]*={0,2}")
 
-    fun verifyFile(file: File, publicKeyText: String, signatureText: String) {
-        val key = parsePublicKey(publicKeyText)
-        val signature = parseSignature(signatureText)
+    /** Input is the base64 wire value carried by Tauri's pubkey and manifest. */
+    fun verifyFile(file: File, publicKeyWire: String, signatureWire: String) {
+        val key = parsePublicKey(decodeOuter(publicKeyWire))
+        val signature = parseSignature(decodeOuter(signatureWire))
         require(signature.keyId.contentEquals(key.keyId)) { "Update signing key id does not match" }
         val message = when (signature.algorithm) {
             "ED" -> blake2b512(file)
@@ -56,10 +57,14 @@ internal object MinisignVerifier {
 
     private fun decode(value: String): ByteArray {
         require(value.isNotEmpty() && base64.matches(value) && value.length % 4 == 0) { "Invalid update base64" }
-        return try { Base64.decode(value, Base64.NO_WRAP) } catch (_: IllegalArgumentException) {
+        return try { Base64.getDecoder().decode(value) } catch (_: IllegalArgumentException) {
             throw IllegalArgumentException("Invalid update base64")
         }
     }
+
+    private fun decodeOuter(value: String): String = try {
+        String(decode(value), Charsets.UTF_8)
+    } catch (_: Exception) { throw IllegalArgumentException("Invalid update signature envelope") }
 
     private fun blake2b512(file: File): ByteArray {
         val digest = Blake2bDigest(512)

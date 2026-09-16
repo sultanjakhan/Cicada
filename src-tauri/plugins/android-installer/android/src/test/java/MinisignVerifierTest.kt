@@ -1,6 +1,5 @@
 package app.hanni.mvp.android.installer
 
-import android.util.Base64
 import java.io.File
 import java.nio.file.Files
 import org.junit.Assert.assertThrows
@@ -14,7 +13,7 @@ class MinisignVerifierTest {
     fun verifiesTheSamePrehashedMinisignFixtureAsRust() {
         val file = Files.createTempFile("hanni-minisign", ".txt").toFile()
         file.writeText("Fictional update verifier test.")
-        MinisignVerifier.verifyFile(file, decode(publicKey), decode(signature))
+        MinisignVerifier.verifyFile(file, publicKey, signature)
     }
 
     @Test
@@ -23,8 +22,8 @@ class MinisignVerifierTest {
         file.writeText("Fictional update verifier test.")
         val lines = decode(signature).trimEnd().lines().toMutableList()
         lines[3] = lines[3].dropLast(1) + "A"
-        assertThrows(IllegalArgumentException::class.java) { MinisignVerifier.verifyFile(file, decode(publicKey), lines.joinToString("\n")) }
+        assertThrows(IllegalArgumentException::class.java) { MinisignVerifier.verifyFile(file, publicKey, java.util.Base64.getEncoder().encodeToString(lines.joinToString("\n").toByteArray())) }
     }
 
-    private fun decode(value: String): String = Base64.decode(value, Base64.NO_WRAP).toString(Charsets.UTF_8)
+    private fun decode(value: String): String = java.util.Base64.getDecoder().decode(value).toString(Charsets.UTF_8)
 }
