@@ -1,5 +1,14 @@
 # Hanni MVP
 
+Owner authorization, 2026-09-16 (unattended updates): extend the existing signed
+Windows/Android update channel to download and install without routine clicks,
+including scheduled checks while the app is closed. Preserve signatures, app
+identity, data and backups. Defer installation while the user is editing or using
+the visible app. Android must respect a system request for user confirmation and
+report it honestly. This supersedes the explicit-install-only restriction below.
+The owner authorized implementation, signed delivery and preserved-data device
+verification; unavailable devices remain an explicit acceptance limit.
+
 Owner authorization, 2026-09-16: add signed application updates for Windows and
 Android through an authenticated channel. Keep the stable Android signing key,
 preserve application identity and data, and back up before installation. Android

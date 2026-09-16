@@ -1,44 +1,64 @@
-const INTERVAL = 6 * 60 * 60 * 1000;
-const busyPhases = new Set(['checking', 'downloading']);
+const busyPhases = new Set(['checking', 'downloading', 'installing']);
+const EDITORS = 'dialog[open], [role="dialog"], .modal-overlay, [contenteditable="true"], [contenteditable=""]';
 
-// One check on startup and after returning online/foreground. Never install
-// automatically: the user can be editing a task or running its timer.
-export function startAppUpdates({ window, invoke, listen, notify = () => {} }) {
-  let disposed = false, checking = false, lastAttempt = 0, unlisten, announced;
+// Native code owns scheduling and installation. No fresh, safe UI lease means
+// no automatic restart of an open application.
+export function updateActivity(window, { getPendingOperations = () => 0, hasUnsavedDrafts = () => false } = {}) {
+  const document = window.document;
+  const hasEditor = [...document.querySelectorAll(EDITORS)].some(node =>
+    !node.hidden && !node.closest('[hidden], [aria-hidden="true"]'));
+  return { hidden: document.visibilityState === 'hidden',
+    safeToInstall: !hasEditor && !getPendingOperations() && !hasUnsavedDrafts() };
+}
+
+export function startAppUpdates({ window, invoke, listen, notify = () => {}, getPendingOperations, hasUnsavedDrafts }) {
+  let disposed = false, polling = false, reporting = false, reportAgain = false, announced;
+  const subscriptions = [];
   const accept = status => {
     if (disposed) return;
     window.dispatchEvent(new window.CustomEvent('hanni:update-status', { detail: status }));
-    if (status.phase === 'available' && status.version !== announced) {
+    if (['permission_required', 'confirmation_required'].includes(status.phase) && status.version !== announced) {
       announced = status.version;
-      notify(`Доступна Hanni MVP ${status.version}. Обновление — в настройках.`);
+      notify('Android просит подтвердить обновление Hanni. Открой настройки приложения.');
     }
   };
-  async function check() {
-    if (disposed || checking || window.navigator.onLine === false || Date.now() - lastAttempt < INTERVAL) return;
-    checking = true;
+  async function report() {
+    if (disposed) return;
+    if (reporting) { reportAgain = true; return; }
+    reporting = true;
     try {
-      const status = await invoke('mvp_update_status');
-      if (!status.configured || busyPhases.has(status.phase) || ['permission_required', 'installer_opened'].includes(status.phase)) return;
-      lastAttempt = Date.now();
-      accept(await invoke('mvp_update_check'));
-    } catch {
-      // A failed request may retry when connectivity returns, without flooding
-      // the service on repeated foreground events.
-      lastAttempt = Date.now() - INTERVAL + 60_000;
-    }
-    finally { checking = false; }
+      do {
+        reportAgain = false;
+        await invoke('mvp_update_activity', { activity: updateActivity(window, { getPendingOperations, hasUnsavedDrafts }) });
+      } while (reportAgain && !disposed);
+    } catch { /* The native lease expires if the UI cannot report. */ }
+    finally { reporting = false; }
   }
-  Promise.resolve(listen('hanni:update-status', event => accept(event.payload))).then(stop => {
-    if (disposed) stop(); else unlisten = stop;
-  }).catch(() => {});
-  const foreground = () => { if (window.document.visibilityState !== 'hidden') void check(); };
-  const startup = window.setTimeout(check, 8000);
-  const interval = window.setInterval(foreground, INTERVAL);
+  async function poll() {
+    if (disposed || polling) return;
+    polling = true;
+    try { accept(await invoke('mvp_update_status')); } catch { /* An IPC failure is not installation success. */ }
+    finally { polling = false; }
+  }
+  for (const [event, handler] of [['hanni:update-status', event => accept(event.payload)], ['hanni:update-activity-probe', report]]) {
+    Promise.resolve(listen(event, handler)).then(stop => { if (disposed) stop(); else subscriptions.push(stop); }).catch(() => {});
+  }
+  const foreground = () => { void report(); void poll(); };
+  const observer = new window.MutationObserver(report);
+  observer.observe(window.document.documentElement, { childList: true, subtree: true, attributes: true,
+    attributeFilter: ['open', 'hidden', 'aria-hidden', 'contenteditable'] });
+  window.addEventListener('hanni:update-activity-probe', report);
+  window.addEventListener('focus', report); window.addEventListener('blur', report);
   window.addEventListener('online', foreground);
   window.document.addEventListener('visibilitychange', foreground);
+  const interval = window.setInterval(foreground, 15_000);
+  foreground();
   return () => {
-    disposed = true; unlisten?.(); window.clearTimeout(startup); window.clearInterval(interval);
+    disposed = true; subscriptions.forEach(stop => stop()); observer.disconnect(); window.clearInterval(interval);
+    window.removeEventListener('hanni:update-activity-probe', report);
+    window.removeEventListener('focus', report); window.removeEventListener('blur', report);
     window.removeEventListener('online', foreground); window.document.removeEventListener('visibilitychange', foreground);
+    void invoke('mvp_update_activity', { activity: { hidden: false, safeToInstall: false } }).catch(() => {});
   };
 }
 
@@ -60,21 +80,25 @@ export function mountAppUpdates(element, { invoke }) {
     const phase = status?.phase, android = status?.platform === 'android-aarch64';
     const messages = {
       checking:'Проверяем обновления…', current:'Установлена последняя версия.',
-      available:`Доступна версия ${status?.version}.`, downloading:'Загружаем и проверяем обновление…',
-      permission_required:'Разреши Hanni устанавливать обновления, затем нажми «Скачать и обновить».',
+      available:`Доступна версия ${status?.version}. Она загрузится автоматически.`, downloading:'Загружаем и проверяем обновление…',
+      prepared:'Обновление загружено. Установится автоматически, когда ты закончишь работу.',
+      deferred:'Обновление ждёт окончания работы. Сохрани изменения и сверни или закрой приложение.',
+      installing:'Устанавливаем обновление…',
+      permission_required:'Разреши Hanni устанавливать обновления в настройках Android.',
+      confirmation_required:'Android просит подтвердить установку обновления.',
       installer_opened:android ? 'Подтверди обновление в системном окне Android. Если закрыл его, можно повторить.' : 'Установщик запущен. Приложение будет перезапущено.',
-      error:'Проверка или установка не завершена.', idle:'Проверка при запуске включена.',
+      error:'Проверка или установка не завершена. Повторим позже.', idle:'Автоматические обновления включены.',
     };
     q('status').textContent = status ? `Hanni MVP ${status.installed_version}. ${!status.configured ? 'Канал обновлений недоступен в этой сборке.' : messages[phase] || ''}` : 'Не удалось прочитать состояние обновлений.';
     q('notes').textContent = status?.notes || '';
     q('error').textContent = status?.error || '';
     q('error').hidden = !status?.error;
-    q('hint').textContent = android ? 'Новые версии проверяются при открытии приложения. Установку подтверждает Android; данные сохраняются.' : 'Новые версии проверяются при открытии приложения. Перезапуск — после нажатия кнопки обновления.';
+    q('hint').textContent = android ? 'Hanni сама загружает и устанавливает новые версии. Если Android потребует подтверждение, здесь появится кнопка. Данные сохраняются.' : 'Hanni сама загружает и устанавливает новые версии, когда ты не работаешь в приложении. Данные сохраняются.';
     const blocked = busy || busyPhases.has(phase);
     q('check').disabled = blocked || (status && !status.configured);
-    q('install').hidden = !status?.version || !['available', 'permission_required', 'installer_opened'].includes(phase);
+    q('install').hidden = !status?.version || !['available', 'prepared', 'deferred', 'permission_required', 'confirmation_required', 'installer_opened'].includes(phase);
     q('install').disabled = blocked;
-    q('install').textContent = android ? 'Скачать и обновить' : 'Обновить и перезапустить';
+    q('install').textContent = phase === 'confirmation_required' ? 'Подтвердить установку' : android ? 'Обновить сейчас' : 'Обновить и перезапустить';
     q('permission').hidden = phase !== 'permission_required'; q('permission').disabled = busy;
     q('progress').hidden = phase !== 'downloading'; q('progress').max = status?.size || 1;
     q('progress').value = status?.downloaded || 0;
@@ -90,7 +114,8 @@ export function mountAppUpdates(element, { invoke }) {
     } finally { busy = false; render(); }
   }
   q('check').onclick = () => void perform('mvp_update_check');
-  q('install').onclick = () => void perform('mvp_update_install', { expectedVersion:status.version });
+  q('install').onclick = () => void (status.phase === 'confirmation_required'
+    ? perform('mvp_update_confirm') : perform('mvp_update_install', { expectedVersion:status.version }));
   q('permission').onclick = () => void perform('mvp_update_open_permission');
   const changed = event => { if (!disposed) { status = event.detail; render(); } };
   window.addEventListener('hanni:update-status', changed);

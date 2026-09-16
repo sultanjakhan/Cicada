@@ -6,6 +6,8 @@ import { sanitizeBlockEditorData } from './block-editor-security.js';
 let nextInstance = 0;
 // Window-local drafts retain the exact version they were based on, never a fresh replacement version.
 const drafts = new Map(), pendingDrafts = new Map(), retainedEditors = new Map();
+// Closed editors may still own an unsaved window-local draft.
+export const hasUnsavedCalendarNoteDrafts = () => drafts.size > 0 || pendingDrafts.size > 0 || retainedEditors.size > 0;
 const keyOf = id => id == null ? 'new' : String(id);
 const blockSignature = data => JSON.stringify((data?.blocks || []).map(({ id, ...block }) => block));
 export function isCalendarNote(note) {
