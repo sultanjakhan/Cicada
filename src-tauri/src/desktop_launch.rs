@@ -304,6 +304,7 @@ mod tests {
         for mode in [
             Options::SyncCheck,
             Options::ConfigureSync("pairing.json".into()),
+            Options::UpdateBackground,
         ] {
             let mut context = tauri::test::mock_context::<tauri::test::MockRuntime, _>(
                 tauri::test::noop_assets(),

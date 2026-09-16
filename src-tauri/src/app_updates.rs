@@ -274,11 +274,14 @@ fn prepared_paths(app: &AppHandle, version: &str) -> Result<(std::path::PathBuf,
 fn read_prepared(app: &AppHandle, candidate: &Candidate) -> Result<Option<Vec<u8>>, String> {
     let (path, meta) = prepared_paths(app, &candidate.version)?;
     if !meta.exists() { return Ok(None); }
+    let length = std::fs::metadata(&meta).map_err(|_| "Не удалось прочитать подготовленное обновление.")?.len();
+    if length == 0 || length > MAX_MANIFEST { return Err("Подготовленное обновление повреждено.".into()); }
     let raw = std::fs::read(&meta).map_err(|_| "Не удалось прочитать подготовленное обновление.")?;
     let saved: PreparedUpdate = serde_json::from_slice(&raw).map_err(|_| "Подготовленное обновление повреждено.")?;
     if saved.candidate.version != candidate.version || saved.candidate.package != candidate.package {
         return Err("Подготовленное обновление не соответствует выпуску.".into());
     }
+    if std::fs::metadata(&path).map_err(|_| "Подготовленный пакет не найден.")?.len() != candidate.package.size { return Err("Подготовленный пакет повреждён.".into()); }
     let bytes = std::fs::read(&path).map_err(|_| "Подготовленный пакет не найден.")?;
     verify(&bytes, &candidate.package, PUBLIC_KEY)?;
     Ok(Some(bytes))
@@ -291,6 +294,10 @@ pub async fn mvp_update_prepare(app: AppHandle, state: State<'_, UpdateState>) -
     let _busy = state.acquire()?;
     let candidate = state.candidate.lock().map_err(|_| "Повтори проверку обновлений.")?.clone().ok_or("Сначала проверь обновления.")?;
     let result: Result<UpdateStatus, String> = async {
+        if read_prepared(&app, &candidate)?.is_some() {
+            state.change(&app, |s| { s.phase = "prepared".into(); s.downloaded = candidate.package.size; });
+            return Ok(state.snapshot(&app));
+        }
         let (feed, token) = config()?;
         let url = package_url(&feed, &candidate.package.url)?;
         state.change(&app, |s| { s.phase = "downloading".into(); s.error = None; s.downloaded = 0; });
@@ -539,6 +546,11 @@ async fn install_update(
         };
         // Consistent backup before either platform installer may stop the process.
         crate::create_backup(app.clone(), app.state::<crate::AppState>())?;
+        if automatic {
+            // Network and backup can take time; never rely on the lease checked
+            // before downloading.
+            auto_install_allowed(&app, state.inner())?;
+        }
         #[cfg(target_os = "android")]
         {
             use hanni_mvp_android_installer::{
