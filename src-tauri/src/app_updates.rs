@@ -18,7 +18,7 @@ const MAX_MANIFEST: u64 = 64 * 1024;
 const UPDATE_URL: Option<&str> = option_env!("HANNI_MVP_UPDATES_URL");
 const UPDATE_TOKEN: Option<&str> = option_env!("HANNI_MVP_UPDATES_TOKEN");
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 struct Package {
     url: String,
     signature: String,
@@ -271,6 +271,19 @@ fn prepared_paths(app: &AppHandle, version: &str) -> Result<(std::path::PathBuf,
     Ok((dir.join(format!("hanni-mvp-{version}.package")), dir.join("prepared.json")))
 }
 
+fn read_prepared(app: &AppHandle, candidate: &Candidate) -> Result<Option<Vec<u8>>, String> {
+    let (path, meta) = prepared_paths(app, &candidate.version)?;
+    if !meta.exists() { return Ok(None); }
+    let raw = std::fs::read(&meta).map_err(|_| "Не удалось прочитать подготовленное обновление.")?;
+    let saved: PreparedUpdate = serde_json::from_slice(&raw).map_err(|_| "Подготовленное обновление повреждено.")?;
+    if saved.candidate.version != candidate.version || saved.candidate.package != candidate.package {
+        return Err("Подготовленное обновление не соответствует выпуску.".into());
+    }
+    let bytes = std::fs::read(&path).map_err(|_| "Подготовленный пакет не найден.")?;
+    verify(&bytes, &candidate.package, PUBLIC_KEY)?;
+    Ok(Some(bytes))
+}
+
 /// Downloads a selected release into private cache and records it atomically.
 /// It deliberately does not hand the package to an installer.
 #[tauri::command]
@@ -457,15 +470,20 @@ pub async fn mvp_update_install(
             s.error = None;
             s.downloaded = 0;
         });
-        let mut last = 0;
-        let bytes = fetch(url, token, candidate.package.size, |received| {
-            if received - last >= 256 * 1024 || received == candidate.package.size {
-                last = received;
-                state.change(&app, |s| s.downloaded = received);
-            }
-        })
-        .await?;
-        verify(&bytes, &candidate.package, PUBLIC_KEY)?;
+        let bytes = if let Some(bytes) = read_prepared(&app, &candidate)? {
+            state.change(&app, |s| s.downloaded = candidate.package.size);
+            bytes
+        } else {
+            let mut last = 0;
+            let bytes = fetch(url, token, candidate.package.size, |received| {
+                if received - last >= 256 * 1024 || received == candidate.package.size {
+                    last = received;
+                    state.change(&app, |s| s.downloaded = received);
+                }
+            }).await?;
+            verify(&bytes, &candidate.package, PUBLIC_KEY)?;
+            bytes
+        };
         // Consistent backup before either platform installer may stop the process.
         crate::create_backup(app.clone(), app.state::<crate::AppState>())?;
         #[cfg(target_os = "android")]
