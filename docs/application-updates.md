@@ -1,5 +1,23 @@
 # Application updates
 
+## Companion icon, 0.3.15 (2026-09-16)
+
+The owner selected the charcoal Companion on white, without a wordmark.
+`src/app-icon.svg` is the vector source for the frontend and generated PNG/ICO/ICNS
+assets. Android launcher resources are generated from the same packaged PNG.
+Application identifiers, product names and signing keys remain stable.
+
+Signed candidates from commit `60c51ca8e55c282fd5922882e6326f6e3e04cefe` passed
+[both platform jobs](https://github.com/sultanjakhan/hanni-mvp/actions/runs/35120459079).
+The Windows update from 0.3.14 was installed after an encrypted recovery backup.
+All 32 database tables and sync credentials were retained, excluding only the
+expected `mvp_sync_meta.last_success` timestamp from the comparison. Native version
+and logo-source checks passed in the installed profile; an isolated native window
+confirmed the visual result with zero console errors and no desktop activation.
+The installed executable icon and the launcher image inside the signed APK were
+also inspected. Physical Android installation remains unverified: ADB reports no
+connected device. Private evidence is under `.local/companion-20260916-d291/`.
+
 Starting with 0.3.14, the native updater checks after startup and every six hours,
 downloads verified packages, and installs when the app is idle and hidden.
 Open editors, unsaved drafts, native mutations and active timers defer it. A
