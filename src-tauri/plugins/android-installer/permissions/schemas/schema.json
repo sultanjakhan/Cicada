@@ -295,18 +295,6 @@
       "type": "string",
       "oneOf": [
         {
-          "description": "Enables the schedule_auto_install command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-schedule-auto-install",
-          "markdownDescription": "Enables the schedule_auto_install command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the schedule_auto_install command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-schedule-auto-install",
-          "markdownDescription": "Denies the schedule_auto_install command without any pre-configured scope."
-        },
-        {
           "description": "Enables the get_install_status command without any pre-configured scope.",
           "type": "string",
           "const": "allow-get-install-status",
@@ -353,6 +341,18 @@
           "type": "string",
           "const": "deny-open-pending-user-action",
           "markdownDescription": "Denies the open_pending_user_action command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the schedule_auto_install command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-schedule-auto-install",
+          "markdownDescription": "Enables the schedule_auto_install command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the schedule_auto_install command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-schedule-auto-install",
+          "markdownDescription": "Denies the schedule_auto_install command without any pre-configured scope."
         }
       ]
     }

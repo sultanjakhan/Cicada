@@ -43,7 +43,8 @@ def sha256(path: Path) -> str:
 
 
 def source_metadata() -> tuple[str, str, dict, str]:
-    require(not output('git', 'status', '--porcelain'), 'Commit source changes before packaging.')
+    dirty = output('git', 'status', '--porcelain')
+    require(not dirty, 'Commit source changes before packaging:\n' + dirty)
     commit = output('git', 'rev-parse', 'HEAD')
     origin = output('git', 'remote', 'get-url', 'origin')
     require(origin.removesuffix('.git').endswith('/hanni-mvp'),

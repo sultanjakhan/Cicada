@@ -1,6 +1,6 @@
 # Application updates
 
-Starting with 0.3.11, the native updater checks after startup and every six hours,
+Starting with 0.3.12, the native updater checks after startup and every six hours,
 downloads verified packages, and installs when the app is idle and hidden.
 Open editors, unsaved drafts, native mutations and active timers defer it. A
 renderer lease must remain safe for 30 seconds and expire after 90 seconds.

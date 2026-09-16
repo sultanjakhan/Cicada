@@ -326,10 +326,11 @@ class AndroidInstallerPlugin(private val activity: Activity) : Plugin(activity) 
 
     private fun status(value: String): JSObject = JSObject().apply { put("status", value) }
 
-    @Suppress("DEPRECATION")
-    private fun Intent.parcelableIntent(key: String): Intent? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        getParcelableExtra(key, Intent::class.java)
-    } else {
-        getParcelableExtra(key)
-    }
+}
+
+@Suppress("DEPRECATION")
+private fun Intent.parcelableIntent(key: String): Intent? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+    getParcelableExtra(key, Intent::class.java)
+} else {
+    getParcelableExtra(key)
 }
