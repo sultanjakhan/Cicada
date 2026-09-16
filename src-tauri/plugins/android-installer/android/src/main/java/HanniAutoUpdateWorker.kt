@@ -30,12 +30,14 @@ class HanniAutoUpdateWorker(context: Context, params: WorkerParameters) : Corout
         if (store.status().getString("status") in setOf(STATUS_INSTALLING, STATUS_PENDING_USER_ACTION)) return@withContext Result.success()
         try {
             val manifest = JSONObject(fetch(UpdateConfiguration.url(), 64 * 1024))
+            val manifestVersion = manifest.getString("version")
             val packageInfo = manifest.getJSONObject("platforms").getJSONObject("android-aarch64")
             val versionCode = packageInfo.getLong("version_code")
             val url = packageInfo.getString("url")
             val signature = packageInfo.getString("signature")
             val sha256 = packageInfo.getString("sha256")
             val size = packageInfo.getLong("size")
+            require(manifestVersionCode(manifestVersion) == versionCode) { "Manifest Android version is inconsistent" }
             require(size in 1..InstallPolicy.maxApkBytes && InstallPolicy.isLowercaseSha256(sha256))
             require(UpdateConfiguration.isAllowedPackageUrl(url))
             val updates = File(applicationContext.cacheDir, "updates").apply { mkdirs() }
@@ -65,7 +67,7 @@ class HanniAutoUpdateWorker(context: Context, params: WorkerParameters) : Corout
 }
 
 internal object UpdateConfiguration {
-    fun isConfigured() = BuildConfig.HANNI_MVP_UPDATES_URL.isNotBlank() && BuildConfig.HANNI_MVP_UPDATES_TOKEN.length >= 32 && BuildConfig.HANNI_MVP_UPDATE_PUBLIC_KEY.isNotBlank()
+    fun isConfigured() = try { val feed = URI(BuildConfig.HANNI_MVP_UPDATES_URL); feed.scheme == "https" && feed.userInfo == null && feed.rawQuery == null && feed.rawFragment == null && BuildConfig.HANNI_MVP_UPDATES_TOKEN.length >= 32 && BuildConfig.HANNI_MVP_UPDATE_PUBLIC_KEY.isNotBlank() } catch (_: Exception) { false }
     fun url(): String = BuildConfig.HANNI_MVP_UPDATES_URL
     fun publicKey(): String = BuildConfig.HANNI_MVP_UPDATE_PUBLIC_KEY
     fun isAllowedPackageUrl(value: String): Boolean {
@@ -73,6 +75,12 @@ internal object UpdateConfiguration {
         return candidate.scheme == "https" && candidate.rawQuery == null && candidate.rawFragment == null && candidate.userInfo == null && candidate.host == feed.host && candidate.port == feed.port && candidate.path.startsWith("/releases/")
     }
     fun authorization() = "Bearer ${BuildConfig.HANNI_MVP_UPDATES_TOKEN}"
+}
+private fun manifestVersionCode(version: String): Long {
+    val parts = Regex("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$").matchEntire(version)?.groupValues ?: throw IllegalArgumentException("Invalid release version")
+    val major = parts[1].toLong(); val minor = parts[2].toLong(); val patch = parts[3].toLong()
+    require(minor < 1000 && patch < 1000)
+    return Math.addExact(Math.addExact(Math.multiplyExact(major, 1_000_000), Math.multiplyExact(minor, 1_000)), patch)
 }
 
 private class TransientUpdateException : Exception()
