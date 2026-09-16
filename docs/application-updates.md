@@ -1,16 +1,25 @@
 # Application updates
 
-Windows and Android check the signed release feed after startup, then every six
-hours while open and when returning to the foreground. Failed checks can retry
-after one minute. Settings provide an explicit retry and install action. No
-background Android service, forced restart, or change to Calendar records is used.
+Starting with 0.3.11, the native updater checks after startup and every six hours,
+downloads verified packages, and installs when the app is idle and hidden.
+Open editors, unsaved drafts, native mutations and active timers defer it. A
+renderer lease must remain safe for 30 seconds and expire after 90 seconds.
+Failed checks/installations retry with bounded backoff; installation attempts
+are recorded on disk so process restarts cannot create an immediate retry loop.
+Settings retain an explicit check/install action and report system restrictions.
 
 Windows uses the official Tauri updater and NSIS. `windows/update-hooks.nsh`
 replaces only NSIS's basename-wide process termination: the old executable is
-retained beside the installed file before replacement. Android downloads into
-private cache and opens the system package installer after checking the package,
-version and existing signer again. Android may first require allowing Hanni to
-install packages, and always owns the final installation confirmation.
+retained beside the installed file before replacement. Only the installed Windows
+binary with the standard data profile registers per-user logon and six-hour tasks.
+Their windowless `--update-background` process skips when the profile is already
+open. Automatic installation leaves the app closed and does not take focus.
+Android 12+ uses PackageInstaller sessions requesting no user action. A six-hour
+WorkManager task also checks while no Activity exists, subject to network, battery
+and storage constraints. Both paths recheck package, version and existing signer.
+Android may require a one-time install permission or system confirmation; Hanni
+reports that state and opens the system UI only through an explicit user action.
+Android 7–11 retain manual installation. OS scheduling is not an exact deadline.
 
 The client checks HTTPS origin, bounded size, SHA-256 and a pinned Minisign key.
 Before handing off to the installer it creates a consistent SQLite backup.

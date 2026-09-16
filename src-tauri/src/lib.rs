@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 mod app_updates;
 mod update_background;
+mod update_journal;
 mod calendar_compat;
 mod desktop_launch;
 mod mvp_sync;
@@ -536,6 +537,11 @@ pub fn run() {
                 Ok(())
             })();
             if let Err(error) = initialized {
+                if startup_options.is_update_background() && error.to_string().contains("already open for this profile") {
+                    // An interactive instance owns this profile. This is a
+                    // normal scheduled skip, not a failed installation.
+                    std::process::exit(0);
+                }
                 if startup_options != desktop_launch::Options::Interactive {
                     desktop_launch::fail_and_exit();
                 }

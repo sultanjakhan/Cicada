@@ -3,7 +3,10 @@ use tauri::{AppHandle, Manager};
 
 pub(crate) async fn run(app: AppHandle) -> Result<i32, String> {
     #[cfg(not(windows))]
-    { let _ = app; return Ok(0); }
+    {
+        let _ = app;
+        return Ok(0);
+    }
     #[cfg(windows)]
     {
         // setup holds this file lock for every instance using the same profile.
@@ -14,7 +17,13 @@ pub(crate) async fn run(app: AppHandle) -> Result<i32, String> {
             let state = app.state::<crate::app_updates::UpdateState>();
             crate::app_updates::mvp_update_prepare(app.clone(), state).await?;
             let state = app.state::<crate::app_updates::UpdateState>();
-            crate::app_updates::install_update(app, state, status.version.unwrap_or_default(), true).await?;
+            crate::app_updates::install_update(
+                app.clone(),
+                state,
+                status.version.unwrap_or_default(),
+                true,
+            )
+            .await?;
         }
         Ok(0)
     }

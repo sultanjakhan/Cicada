@@ -48,12 +48,13 @@ pub struct UpdateStatus {
     configured: bool,
     installed_version: String,
     platform: String,
-    phase: String,
-    version: Option<String>,
+    pub(crate) phase: String,
+    pub(crate) version: Option<String>,
     notes: String,
     size: u64,
     downloaded: u64,
     error: Option<String>,
+    background_error: Option<String>,
 }
 #[derive(Default)]
 pub struct UpdateState {
@@ -77,6 +78,12 @@ struct UiLease {
     since: Instant,
     reported_at: Instant,
 }
+impl UiLease {
+    fn eligible_at(&self, now: Instant) -> bool {
+        now.saturating_duration_since(self.since) >= Duration::from_secs(30)
+            && now.saturating_duration_since(self.reported_at) <= Duration::from_secs(90)
+    }
+}
 struct Busy<'a>(&'a AtomicBool);
 impl Drop for Busy<'_> {
     fn drop(&mut self) {
@@ -84,6 +91,28 @@ impl Drop for Busy<'_> {
     }
 }
 impl UpdateState {
+    fn report_activity(&self, activity: UpdateActivity, now: Instant) {
+        if let Ok(mut lease) = self.ui_safe.lock() {
+            if activity.safe_to_install && activity.hidden {
+                match lease.as_mut() {
+                    Some(current)
+                        if now.saturating_duration_since(current.reported_at)
+                            <= Duration::from_secs(90) =>
+                    {
+                        current.reported_at = now
+                    }
+                    _ => {
+                        *lease = Some(UiLease {
+                            since: now,
+                            reported_at: now,
+                        })
+                    }
+                }
+            } else {
+                *lease = None;
+            }
+        }
+    }
     fn acquire(&self) -> Result<Busy<'_>, String> {
         self.busy
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -265,23 +294,48 @@ fn verify(bytes: &[u8], package: &Package, key: &str) -> Result<(), String> {
         .map_err(|_| "Подпись обновления не прошла проверку. Установка отменена.".into())
 }
 
-fn prepared_paths(app: &AppHandle, version: &str) -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
-    let dir = app.path().app_cache_dir().map_err(|_| "Не удалось открыть папку обновлений.")?.join("updates");
+fn prepared_paths(
+    app: &AppHandle,
+    version: &str,
+) -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
+    let dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|_| "Не удалось открыть папку обновлений.")?
+        .join("updates");
     std::fs::create_dir_all(&dir).map_err(|_| "Не удалось создать папку обновлений.")?;
-    Ok((dir.join(format!("hanni-mvp-{version}.package")), dir.join("prepared.json")))
+    Ok((
+        dir.join(format!("hanni-mvp-{version}.package")),
+        dir.join("prepared.json"),
+    ))
 }
 
 fn read_prepared(app: &AppHandle, candidate: &Candidate) -> Result<Option<Vec<u8>>, String> {
     let (path, meta) = prepared_paths(app, &candidate.version)?;
-    if !meta.exists() { return Ok(None); }
-    let length = std::fs::metadata(&meta).map_err(|_| "Не удалось прочитать подготовленное обновление.")?.len();
-    if length == 0 || length > MAX_MANIFEST { return Err("Подготовленное обновление повреждено.".into()); }
-    let raw = std::fs::read(&meta).map_err(|_| "Не удалось прочитать подготовленное обновление.")?;
-    let saved: PreparedUpdate = serde_json::from_slice(&raw).map_err(|_| "Подготовленное обновление повреждено.")?;
-    if saved.candidate.version != candidate.version || saved.candidate.package != candidate.package {
+    if !meta.exists() {
+        return Ok(None);
+    }
+    let length = std::fs::metadata(&meta)
+        .map_err(|_| "Не удалось прочитать подготовленное обновление.")?
+        .len();
+    if length == 0 || length > MAX_MANIFEST {
+        return Err("Подготовленное обновление повреждено.".into());
+    }
+    let raw =
+        std::fs::read(&meta).map_err(|_| "Не удалось прочитать подготовленное обновление.")?;
+    let saved: PreparedUpdate =
+        serde_json::from_slice(&raw).map_err(|_| "Подготовленное обновление повреждено.")?;
+    if saved.candidate.version != candidate.version || saved.candidate.package != candidate.package
+    {
         return Err("Подготовленное обновление не соответствует выпуску.".into());
     }
-    if std::fs::metadata(&path).map_err(|_| "Подготовленный пакет не найден.")?.len() != candidate.package.size { return Err("Подготовленный пакет повреждён.".into()); }
+    if std::fs::metadata(&path)
+        .map_err(|_| "Подготовленный пакет не найден.")?
+        .len()
+        != candidate.package.size
+    {
+        return Err("Подготовленный пакет повреждён.".into());
+    }
     let bytes = std::fs::read(&path).map_err(|_| "Подготовленный пакет не найден.")?;
     verify(&bytes, &candidate.package, PUBLIC_KEY)?;
     Ok(Some(bytes))
@@ -290,31 +344,60 @@ fn read_prepared(app: &AppHandle, candidate: &Candidate) -> Result<Option<Vec<u8
 /// Downloads a selected release into private cache and records it atomically.
 /// It deliberately does not hand the package to an installer.
 #[tauri::command]
-pub async fn mvp_update_prepare(app: AppHandle, state: State<'_, UpdateState>) -> Result<UpdateStatus, String> {
+pub async fn mvp_update_prepare(
+    app: AppHandle,
+    state: State<'_, UpdateState>,
+) -> Result<UpdateStatus, String> {
     let _busy = state.acquire()?;
-    let candidate = state.candidate.lock().map_err(|_| "Повтори проверку обновлений.")?.clone().ok_or("Сначала проверь обновления.")?;
+    let candidate = state
+        .candidate
+        .lock()
+        .map_err(|_| "Повтори проверку обновлений.")?
+        .clone()
+        .ok_or("Сначала проверь обновления.")?;
     let result: Result<UpdateStatus, String> = async {
-        if read_prepared(&app, &candidate)?.is_some() {
-            state.change(&app, |s| { s.phase = "prepared".into(); s.downloaded = candidate.package.size; });
+        // A missing, superseded or corrupt cache is replaced only by freshly
+        // downloaded bytes that pass the pinned signature check below.
+        if matches!(read_prepared(&app, &candidate), Ok(Some(_))) {
+            state.change(&app, |s| {
+                s.phase = "prepared".into();
+                s.downloaded = candidate.package.size;
+            });
             return Ok(state.snapshot(&app));
         }
         let (feed, token) = config()?;
         let url = package_url(&feed, &candidate.package.url)?;
-        state.change(&app, |s| { s.phase = "downloading".into(); s.error = None; s.downloaded = 0; });
-        let bytes = fetch(url, token, candidate.package.size, |received| state.change(&app, |s| s.downloaded = received)).await?;
+        state.change(&app, |s| {
+            s.phase = "downloading".into();
+            s.error = None;
+            s.downloaded = 0;
+        });
+        let bytes = fetch(url, token, candidate.package.size, |received| {
+            state.change(&app, |s| s.downloaded = received)
+        })
+        .await?;
         verify(&bytes, &candidate.package, PUBLIC_KEY)?;
         let (path, meta) = prepared_paths(&app, &candidate.version)?;
-        let temporary = path.with_extension("part");
-        std::fs::write(&temporary, &bytes).map_err(|_| "Недостаточно места для обновления.")?;
-        std::fs::rename(&temporary, &path).map_err(|_| "Не удалось сохранить обновление.")?;
-        let raw = serde_json::to_vec(&PreparedUpdate { candidate: candidate.clone(), prepared_at: chrono::Utc::now().to_rfc3339() }).map_err(|_| "Не удалось записать состояние обновления.")?;
-        let temporary_meta = meta.with_extension("part");
-        std::fs::write(&temporary_meta, raw).map_err(|_| "Не удалось записать состояние обновления.")?;
-        std::fs::rename(&temporary_meta, meta).map_err(|_| "Не удалось записать состояние обновления.")?;
-        state.change(&app, |s| { s.phase = "prepared".into(); s.downloaded = candidate.package.size; });
+        crate::update_journal::atomic_write(&path, &bytes)?;
+        let raw = serde_json::to_vec(&PreparedUpdate {
+            candidate: candidate.clone(),
+            prepared_at: chrono::Utc::now().to_rfc3339(),
+        })
+        .map_err(|_| "Не удалось записать состояние обновления.")?;
+        crate::update_journal::atomic_write(&meta, &raw)?;
+        state.change(&app, |s| {
+            s.phase = "prepared".into();
+            s.downloaded = candidate.package.size;
+        });
         Ok(state.snapshot(&app))
-    }.await;
-    if let Err(ref error) = result { state.change(&app, |s| { s.phase="error".into(); s.error=Some(error.clone()); }); }
+    }
+    .await;
+    if let Err(ref error) = result {
+        state.change(&app, |s| {
+            s.phase = "error".into();
+            s.error = Some(error.clone());
+        });
+    }
     result
 }
 
@@ -322,55 +405,161 @@ pub async fn mvp_update_prepare(app: AppHandle, state: State<'_, UpdateState>) -
 /// the renderer lease (or by the separate closed-app runner), so this may only
 /// check and prepare a verified package.
 pub fn start(app: AppHandle) {
-    if config().is_err() { return; }
+    if config().is_err() {
+        return;
+    }
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_secs(8)).await;
+        #[cfg(target_os = "android")]
+        {
+            use hanni_mvp_android_installer::AndroidInstallerExt;
+            if !app
+                .android_installer()
+                .schedule_auto_install()
+                .is_ok_and(|result| result.scheduled)
+            {
+                app.state::<UpdateState>().change(&app, |s| {
+                    s.background_error =
+                        Some("Не удалось включить фоновые проверки Android.".into())
+                });
+            }
+        }
+        let mut next_check = Instant::now();
+        let mut failures = 0u32;
         loop {
-            let state = app.state::<UpdateState>();
-            if matches!(mvp_update_check(app.clone(), state).await, Ok(UpdateStatus { phase, .. }) if phase == "available") {
-                let state = app.state::<UpdateState>();
-                if mvp_update_prepare(app.clone(), state).await.is_ok() {
-                    // A busy user gets another chance shortly without another
-                    // feed request.  A successful Windows install exits here.
-                    loop {
-                        let version = app.state::<UpdateState>().candidate.lock().ok().and_then(|v| v.as_ref().map(|v| v.version.clone()));
-                        let Some(version) = version else { break; };
-                        if mvp_update_auto_install(app.clone(), app.state::<UpdateState>(), version).await.is_ok() { break; }
-                        app.state::<UpdateState>().change(&app, |s| s.phase = "deferred".into());
-                        tokio::time::sleep(Duration::from_secs(60)).await;
+            let observed = mvp_update_status(app.clone(), app.state::<UpdateState>());
+            if !matches!(
+                observed.phase.as_str(),
+                "installing" | "installer_opened" | "confirmation_required" | "permission_required"
+            ) {
+                if observed.phase == "idle" || Instant::now() >= next_check {
+                    match mvp_update_check(app.clone(), app.state::<UpdateState>()).await {
+                        Ok(_) => {
+                            failures = 0;
+                            next_check = Instant::now() + Duration::from_secs(6 * 60 * 60);
+                        }
+                        Err(_) => {
+                            failures = failures.saturating_add(1);
+                            next_check = Instant::now()
+                                + Duration::from_secs(crate::update_journal::retry_seconds(
+                                    failures,
+                                ));
+                        }
+                    }
+                }
+                let status = app.state::<UpdateState>().snapshot(&app);
+                if status.phase == "available" {
+                    if mvp_update_prepare(app.clone(), app.state::<UpdateState>())
+                        .await
+                        .is_err()
+                    {
+                        failures = failures.saturating_add(1);
+                        next_check = Instant::now()
+                            + Duration::from_secs(crate::update_journal::retry_seconds(failures));
+                    }
+                }
+                let status = app.state::<UpdateState>().snapshot(&app);
+                if matches!(status.phase.as_str(), "prepared" | "deferred") {
+                    if let Some(version) = status.version {
+                        if let Err(error) = mvp_update_auto_install(
+                            app.clone(),
+                            app.state::<UpdateState>(),
+                            version,
+                        )
+                        .await
+                        {
+                            let deferred = error.starts_with("Автообновление отложено:");
+                            app.state::<UpdateState>().change(&app, |s| {
+                                s.phase = if deferred { "deferred" } else { "error" }.into();
+                                s.error = if deferred { None } else { Some(error) };
+                            });
+                            if !deferred {
+                                failures = failures.saturating_add(1);
+                                next_check = Instant::now()
+                                    + Duration::from_secs(crate::update_journal::retry_seconds(
+                                        failures,
+                                    ));
+                            }
+                        }
                     }
                 }
             }
-            tokio::time::sleep(Duration::from_secs(6 * 60 * 60)).await;
+            tokio::time::sleep(Duration::from_secs(60)).await;
         }
     });
 }
 
 /// Enrol only the installed current-user binary.  Debug/QA profiles and a
-/// redirected WebView/data directory never create persistent OS tasks.
+/// nonstandard data directory never create persistent OS tasks.
 pub fn enroll_windows_task(app: AppHandle) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
+        if config().is_err() {
+            return;
+        }
         // A production launcher may explicitly pass the standard data path;
         // compare the resolved target instead of treating that as a QA marker.
-        let Ok(standard_data) = app.path().app_data_dir() else { return; };
+        let Ok(standard_data) = app.path().app_data_dir() else {
+            return;
+        };
         #[cfg(debug_assertions)]
-        if std::env::var_os("HANNI_MVP_DATA_DIR").is_some_and(|value| std::path::PathBuf::from(value) != standard_data) { return; }
-        let Ok(local) = std::env::var("LOCALAPPDATA") else { return; };
-        let expected = std::path::PathBuf::from(local).join("Programs").join("Hanni MVP").join("hanni-mvp.exe");
-        let Ok(exe) = std::env::current_exe() else { return; };
-        if exe != expected || !expected.is_file() { return; }
+        if std::env::var_os("HANNI_MVP_DATA_DIR")
+            .is_some_and(|value| std::path::PathBuf::from(value) != standard_data)
+        {
+            return;
+        }
+        let Ok(local) = std::env::var("LOCALAPPDATA") else {
+            return;
+        };
+        let expected = std::path::PathBuf::from(local)
+            .join("Programs")
+            .join("Hanni MVP")
+            .join("hanni-mvp.exe");
+        let Ok(exe) = std::env::current_exe() else {
+            return;
+        };
+        if exe != expected || !expected.is_file() {
+            return;
+        }
+        let Some(system_root) = std::env::var_os("SystemRoot") else {
+            return;
+        };
+        let scheduler = std::path::PathBuf::from(system_root)
+            .join("System32")
+            .join("schtasks.exe");
         let task = "Hanni MVP automatic updates";
         let command = format!("\"{}\" --update-background", expected.display());
         for (suffix, schedule, extra) in [
             ("", "ONLOGON", Vec::<&str>::new()),
             (" (6h)", "HOURLY", vec!["/MO", "6"]),
         ] {
-            let mut call = std::process::Command::new("schtasks.exe");
-            call.args(["/Create", "/TN", &format!("{task}{suffix}"), "/TR", &command, "/SC", schedule, "/RL", "LIMITED", "/F"]);
+            let mut call = std::process::Command::new(&scheduler);
+            call.args([
+                "/Create",
+                "/TN",
+                &format!("{task}{suffix}"),
+                "/TR",
+                &command,
+                "/SC",
+                schedule,
+                "/RL",
+                "LIMITED",
+                "/IT",
+                "/F",
+            ]);
             call.args(extra);
-            let _ = call.creation_flags(0x08000000).status(); // CREATE_NO_WINDOW
+            let succeeded = call
+                .creation_flags(0x08000000)
+                .output()
+                .is_ok_and(|result| result.status.success()); // CREATE_NO_WINDOW
+            if !succeeded {
+                app.state::<UpdateState>().change(&app, |s| {
+                    s.background_error = Some(
+                        "Windows не разрешила включить проверки при закрытом приложении.".into(),
+                    );
+                });
+            }
         }
     }
 }
@@ -380,13 +569,52 @@ pub fn mvp_update_status(app: AppHandle, state: State<'_, UpdateState>) -> Updat
     {
         use hanni_mvp_android_installer::{AndroidInstallerExt, InstallStatus};
         if let Ok(result) = app.android_installer().get_install_status() {
-            state.change(&app, |s| s.phase = match result.status {
-                InstallStatus::Installing => "installing",
-                InstallStatus::PendingUserAction => "confirmation_required",
-                InstallStatus::Success => "current",
-                InstallStatus::Failure => "error",
-                _ => return,
-            }.into());
+            state.change(&app, |s| {
+                // Reconciliation clears the persisted permission status when
+                // the owner grants Android's one-time install permission.
+                if result.status == InstallStatus::Idle && s.phase == "permission_required" {
+                    s.phase = "idle".into();
+                    s.error = None;
+                    return;
+                }
+                // A callback from a previous version must not hide a newer feed.
+                if matches!(
+                    result.status,
+                    InstallStatus::Success | InstallStatus::Idle | InstallStatus::Unsupported
+                ) {
+                    return;
+                }
+                if matches!(s.phase.as_str(), "checking" | "downloading") {
+                    return;
+                }
+                if result.status == InstallStatus::Failure
+                    && matches!(
+                        s.phase.as_str(),
+                        "available" | "prepared" | "deferred" | "current"
+                    )
+                {
+                    return;
+                }
+                s.phase = match result.status {
+                    InstallStatus::Installing => "installing",
+                    InstallStatus::PendingUserAction => "confirmation_required",
+                    InstallStatus::PermissionRequired => "permission_required",
+                    InstallStatus::Failure => "error",
+                    _ => return,
+                }
+                .into();
+                if let Some(code) = result.version_code.filter(|c| *c > 0) {
+                    s.version = Some(format!(
+                        "{}.{}.{}",
+                        code / 1_000_000,
+                        (code / 1000) % 1000,
+                        code % 1000
+                    ));
+                }
+                if result.status == InstallStatus::Failure {
+                    s.error = Some("Android не завершил установку. Повторим позже.".into());
+                }
+            });
         }
     }
     state.snapshot(&app)
@@ -397,24 +625,21 @@ pub fn mvp_update_status(app: AppHandle, state: State<'_, UpdateState>) -> Updat
 /// timer is present.  This does not affect the explicit Settings action.
 #[tauri::command]
 pub fn mvp_update_activity(state: State<'_, UpdateState>, activity: UpdateActivity) {
-    if let Ok(mut lease) = state.ui_safe.lock() {
-        if activity.safe_to_install && activity.hidden {
-            let now = Instant::now();
-            match lease.as_mut() {
-                Some(current) => current.reported_at = now,
-                None => *lease = Some(UiLease { since: now, reported_at: now }),
-            }
-        } else {
-            *lease = None;
-        }
-    }
+    state.report_activity(activity, Instant::now());
 }
 
 fn auto_install_allowed(app: &AppHandle, state: &UpdateState) -> Result<(), String> {
+    #[cfg(not(target_os = "android"))]
     if let Some(window) = app.get_webview_window("main") {
-        let visible = window.is_visible().map_err(|_| "Не удалось проверить окно приложения.")?;
-        let minimized = window.is_minimized().map_err(|_| "Не удалось проверить окно приложения.")?;
-        let focused = window.is_focused().map_err(|_| "Не удалось проверить окно приложения.")?;
+        let visible = window
+            .is_visible()
+            .map_err(|_| "Не удалось проверить окно приложения.")?;
+        let minimized = window
+            .is_minimized()
+            .map_err(|_| "Не удалось проверить окно приложения.")?;
+        let focused = window
+            .is_focused()
+            .map_err(|_| "Не удалось проверить окно приложения.")?;
         if focused || (visible && !minimized) {
             return Err("Автообновление отложено: окно приложения активно.".into());
         }
@@ -427,10 +652,10 @@ fn auto_install_allowed(app: &AppHandle, state: &UpdateState) -> Result<(), Stri
         .ui_safe
         .lock()
         .map_err(|_| "Не удалось проверить состояние приложения.")?;
-    if lease.as_ref().is_none_or(|lease| {
-        lease.since.elapsed() < Duration::from_secs(30)
-            || lease.reported_at.elapsed() > Duration::from_secs(90)
-    }) {
+    if lease
+        .as_ref()
+        .is_none_or(|lease| !lease.eligible_at(Instant::now()))
+    {
         return Err("Автообновление отложено: приложение ещё может быть занято.".into());
     }
     let app_state = app.state::<crate::AppState>();
@@ -517,7 +742,6 @@ pub async fn mvp_update_check(
     result
 }
 
-#[tauri::command(rename_all = "camelCase")]
 pub(crate) async fn install_update(
     app: AppHandle,
     state: State<'_, UpdateState>,
@@ -534,6 +758,21 @@ pub(crate) async fn install_update(
     if candidate.version != expected_version {
         return Err("Доступная версия изменилась. Повтори проверку.".into());
     }
+    let (_, metadata_path) = prepared_paths(&app, &candidate.version)?;
+    let attempt_path = metadata_path.with_file_name("attempt.json");
+    if automatic
+        && !crate::update_journal::allowed(
+            &attempt_path,
+            &candidate.version,
+            &candidate.package.sha256,
+            crate::update_journal::now(),
+        )?
+    {
+        return Err(
+            "Предыдущая установка не завершилась. Следующая автоматическая попытка будет позже."
+                .into(),
+        );
+    }
     let result: Result<UpdateStatus, String> = async {
         let (feed, token) = config()?;
         let url = package_url(&feed, &candidate.package.url)?;
@@ -542,7 +781,7 @@ pub(crate) async fn install_update(
             s.error = None;
             s.downloaded = 0;
         });
-        let bytes = if let Some(bytes) = read_prepared(&app, &candidate)? {
+        let bytes = if let Ok(Some(bytes)) = read_prepared(&app, &candidate) {
             state.change(&app, |s| s.downloaded = candidate.package.size);
             bytes
         } else {
@@ -552,7 +791,8 @@ pub(crate) async fn install_update(
                     last = received;
                     state.change(&app, |s| s.downloaded = received);
                 }
-            }).await?;
+            })
+            .await?;
             verify(&bytes, &candidate.package, PUBLIC_KEY)?;
             bytes
         };
@@ -582,6 +822,15 @@ pub(crate) async fn install_update(
                     .map_err(|_| "Не удалось заменить загруженный пакет.")?;
             }
             std::fs::rename(&temporary, &path).map_err(|_| "Не удалось сохранить обновление.")?;
+            if automatic {
+                auto_install_allowed(&app, state.inner())?;
+            }
+            crate::update_journal::record(
+                &attempt_path,
+                &candidate.version,
+                &candidate.package.sha256,
+                crate::update_journal::now(),
+            )?;
             let result = app
                 .android_installer()
                 .install_verified(InstallVerifiedRequest {
@@ -594,11 +843,12 @@ pub(crate) async fn install_update(
                 s.phase = match result {
                     InstallStatus::Launched => "installer_opened",
                     InstallStatus::PermissionRequired => "permission_required",
-                    InstallStatus::Unsupported => "unsupported",
+                    InstallStatus::Unsupported => "manual_required",
                     InstallStatus::Installing => "installing",
                     InstallStatus::PendingUserAction => "confirmation_required",
                     InstallStatus::Success => "current",
                     InstallStatus::Failure => "error",
+                    InstallStatus::Idle => "idle",
                 }
                 .into()
             });
@@ -630,6 +880,12 @@ pub(crate) async fn install_update(
                 return Err("Выпуск изменился. Повтори проверку.".into());
             }
             state.change(&app, |s| s.phase = "installer_opened".into());
+            crate::update_journal::record(
+                &attempt_path,
+                &candidate.version,
+                &candidate.package.sha256,
+                crate::update_journal::now(),
+            )?;
             update
                 .install(&bytes)
                 .map_err(|_| "Не удалось запустить установку. Повтори попытку.")?;
@@ -647,7 +903,11 @@ pub(crate) async fn install_update(
 }
 
 #[tauri::command(rename_all = "camelCase")]
-pub async fn mvp_update_install(app: AppHandle, state: State<'_, UpdateState>, expected_version: String) -> Result<UpdateStatus, String> {
+pub async fn mvp_update_install(
+    app: AppHandle,
+    state: State<'_, UpdateState>,
+    expected_version: String,
+) -> Result<UpdateStatus, String> {
     install_update(app, state, expected_version, false).await
 }
 
@@ -666,7 +926,10 @@ pub fn mvp_update_open_permission(app: AppHandle) -> Result<(), String> {
 /// Android owns the final confirmation.  This command is intentionally a
 /// no-op unless its persisted package-installer session asked for user action.
 #[tauri::command]
-pub fn mvp_update_confirm(app: AppHandle, state: State<'_, UpdateState>) -> Result<UpdateStatus, String> {
+pub fn mvp_update_confirm(
+    app: AppHandle,
+    state: State<'_, UpdateState>,
+) -> Result<UpdateStatus, String> {
     #[cfg(target_os = "android")]
     {
         use hanni_mvp_android_installer::{AndroidInstallerExt, InstallStatus};
@@ -676,11 +939,14 @@ pub fn mvp_update_confirm(app: AppHandle, state: State<'_, UpdateState>) -> Resu
             return Err("Подтверждение обновления сейчас не требуется.".into());
         }
         let opened = installer.open_pending_user_action()?;
-        state.change(&app, |s| s.phase = match opened {
-            InstallStatus::PendingUserAction => "confirmation_required",
-            InstallStatus::Installing => "installing",
-            _ => "installer_opened",
-        }.into());
+        state.change(&app, |s| {
+            s.phase = match opened {
+                InstallStatus::PendingUserAction => "confirmation_required",
+                InstallStatus::Installing => "installing",
+                _ => "installer_opened",
+            }
+            .into()
+        });
     }
     #[cfg(not(target_os = "android"))]
     let _ = &state;
@@ -690,6 +956,57 @@ pub fn mvp_update_confirm(app: AppHandle, state: State<'_, UpdateState>) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn returning_to_editor_or_missing_heartbeat_restarts_safe_wait() {
+        let state = UpdateState::default();
+        let now = Instant::now();
+        let report = |safe, hidden, seconds| {
+            state.report_activity(
+                UpdateActivity {
+                    safe_to_install: safe,
+                    hidden,
+                },
+                now + Duration::from_secs(seconds),
+            )
+        };
+        report(true, true, 0);
+        assert!(!state
+            .ui_safe
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .eligible_at(now + Duration::from_secs(29)));
+        report(true, true, 30);
+        assert!(state
+            .ui_safe
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .eligible_at(now + Duration::from_secs(30)));
+        report(false, true, 31);
+        assert!(state.ui_safe.lock().unwrap().is_none());
+        report(true, true, 32);
+        assert!(!state
+            .ui_safe
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .eligible_at(now + Duration::from_secs(33)));
+        // A renderer frozen for over 90s cannot restore its old permission.
+        report(true, true, 123);
+        assert!(!state
+            .ui_safe
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .eligible_at(now + Duration::from_secs(123)));
+        report(true, false, 124);
+        assert!(state.ui_safe.lock().unwrap().is_none());
+    }
     #[test]
     fn signed_payload_is_accepted_but_replaced_bytes_are_rejected() {
         let bytes = include_bytes!("../../tests/fixtures/updates/sample.txt");
