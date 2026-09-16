@@ -13,6 +13,7 @@ use tauri::{Manager, State};
 use uuid::Uuid;
 
 mod app_updates;
+mod update_background;
 mod calendar_compat;
 mod desktop_launch;
 mod mvp_sync;
@@ -24,6 +25,15 @@ mod workspace_ipc_tests;
 const SCHEMA_VERSION: i64 = 5;
 
 pub struct AppState(Mutex<Connection>);
+pub struct AppInstanceLock(std::fs::File);
+
+fn acquire_instance_lock(data_dir: &std::path::Path) -> Result<AppInstanceLock, String> {
+    let file = std::fs::OpenOptions::new().read(true).write(true).create(true)
+        .open(data_dir.join("hanni-mvp.instance.lock"))
+        .map_err(|_| fail("open application instance lock"))?;
+    file.try_lock().map_err(|_| fail("Hanni MVP is already open for this profile"))?;
+    Ok(AppInstanceLock(file))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Item {
@@ -510,14 +520,19 @@ pub fn run() {
         .setup(move |app| {
             let initialized = (|| -> Result<(), Box<dyn std::error::Error>> {
                 let data_dir = app_data_dir(app.handle())?;
+                let instance_lock = acquire_instance_lock(&data_dir)?;
                 let connection = Connection::open(data_dir.join("calendar.db"))
                     .map_err(|e| fail(format!("open calendar database: {e}")))?;
                 connection.pragma_update(None, "journal_mode", "WAL")?;
                 connection.busy_timeout(Duration::from_secs(5))?;
                 init_schema(&connection)?;
                 app.manage(AppState(Mutex::new(connection)));
-                mvp_sync::start(app.handle(), data_dir.join("calendar.db"));
-                app_updates::start(app.handle().clone());
+                app.manage(instance_lock);
+                if !startup_options.is_update_background() {
+                    mvp_sync::start(app.handle(), data_dir.join("calendar.db"));
+                    app_updates::start(app.handle().clone());
+                    app_updates::enroll_windows_task(app.handle().clone());
+                }
                 Ok(())
             })();
             if let Err(error) = initialized {

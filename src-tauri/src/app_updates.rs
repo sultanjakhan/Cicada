@@ -338,8 +338,47 @@ pub fn start(app: AppHandle) {
         }
     });
 }
+
+/// Enrol only the installed current-user binary.  Debug/QA profiles and a
+/// redirected WebView/data directory never create persistent OS tasks.
+pub fn enroll_windows_task(_app: AppHandle) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        if std::env::var_os("HANNI_MVP_DATA_DIR").is_some()
+            || std::env::var_os("WEBVIEW2_USER_DATA_FOLDER").is_some() { return; }
+        let Ok(local) = std::env::var("LOCALAPPDATA") else { return; };
+        let expected = std::path::PathBuf::from(local).join("Programs").join("Hanni MVP").join("hanni-mvp.exe");
+        let Ok(exe) = std::env::current_exe() else { return; };
+        if exe != expected || !expected.is_file() { return; }
+        let task = "Hanni MVP automatic updates";
+        let command = format!("\"{}\" --update-background", expected.display());
+        for (suffix, schedule, extra) in [
+            ("", "ONLOGON", Vec::<&str>::new()),
+            (" (6h)", "HOURLY", vec!["/MO", "6"]),
+        ] {
+            let mut call = std::process::Command::new("schtasks.exe");
+            call.args(["/Create", "/TN", &format!("{task}{suffix}"), "/TR", &command, "/SC", schedule, "/RL", "LIMITED", "/F"]);
+            call.args(extra);
+            let _ = call.creation_flags(0x08000000).status(); // CREATE_NO_WINDOW
+        }
+    }
+}
 #[tauri::command]
 pub fn mvp_update_status(app: AppHandle, state: State<'_, UpdateState>) -> UpdateStatus {
+    #[cfg(target_os = "android")]
+    {
+        use hanni_mvp_android_installer::{AndroidInstallerExt, InstallStatus};
+        if let Ok(result) = app.android_installer().get_install_status() {
+            state.change(&app, |s| s.phase = match result.status {
+                InstallStatus::Installing => "installing",
+                InstallStatus::PendingUserAction => "confirmation_required",
+                InstallStatus::Success => "current",
+                InstallStatus::Failure => "error",
+                _ => return,
+            }.into());
+        }
+    }
     state.snapshot(&app)
 }
 
@@ -399,7 +438,7 @@ pub async fn mvp_update_auto_install(
     expected_version: String,
 ) -> Result<UpdateStatus, String> {
     auto_install_allowed(&app, state.inner())?;
-    mvp_update_install(app, state, expected_version).await
+    install_update(app, state, expected_version, true).await
 }
 
 #[tauri::command]
@@ -457,10 +496,11 @@ pub async fn mvp_update_check(
 }
 
 #[tauri::command(rename_all = "camelCase")]
-pub async fn mvp_update_install(
+async fn install_update(
     app: AppHandle,
     state: State<'_, UpdateState>,
     expected_version: String,
+    automatic: bool,
 ) -> Result<UpdateStatus, String> {
     let _busy = state.acquire()?;
     let candidate = state
@@ -521,12 +561,17 @@ pub async fn mvp_update_install(
                     path: path.to_string_lossy().into_owned(),
                     expected_version_code: candidate.package.version_code.unwrap(),
                     expected_sha256: candidate.package.sha256.to_ascii_lowercase(),
+                    automatic,
                 })?;
             state.change(&app, |s| {
                 s.phase = match result {
                     InstallStatus::Launched => "installer_opened",
                     InstallStatus::PermissionRequired => "permission_required",
                     InstallStatus::Unsupported => "unsupported",
+                    InstallStatus::Installing => "installing",
+                    InstallStatus::PendingUserAction => "confirmation_required",
+                    InstallStatus::Success => "current",
+                    InstallStatus::Failure => "error",
                 }
                 .into()
             });
@@ -568,6 +613,11 @@ pub async fn mvp_update_install(
         });
     }
     result
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn mvp_update_install(app: AppHandle, state: State<'_, UpdateState>, expected_version: String) -> Result<UpdateStatus, String> {
+    install_update(app, state, expected_version, false).await
 }
 
 #[tauri::command]

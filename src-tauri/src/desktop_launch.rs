@@ -15,6 +15,7 @@ pub(crate) enum Options {
     Interactive,
     ConfigureSync(PathBuf),
     SyncCheck,
+    UpdateBackground,
     Background,
     Minimized,
 }
@@ -40,6 +41,8 @@ impl Options {
             Self::ConfigureSync(PathBuf::from(path))
         } else if flag == "--sync-check" {
             Self::SyncCheck
+        } else if flag == "--update-background" {
+            Self::UpdateBackground
         } else if flag == "--background" {
             Self::Background
         } else if flag == "--minimized" && cfg!(target_os = "macos") {
@@ -54,8 +57,10 @@ impl Options {
     }
 
     pub(crate) fn is_one_shot(&self) -> bool {
-        matches!(self, Self::ConfigureSync(_) | Self::SyncCheck)
+        matches!(self, Self::ConfigureSync(_) | Self::SyncCheck | Self::UpdateBackground)
     }
+
+    pub(crate) fn is_update_background(&self) -> bool { *self == Self::UpdateBackground }
 
     pub(crate) fn apply_context<R: tauri::Runtime>(&self, context: &mut tauri::Context<R>) {
         if self.is_one_shot() {
@@ -92,6 +97,14 @@ impl Options {
             return;
         }
         if !self.is_one_shot() {
+            return;
+        }
+        if self.is_update_background() {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let code = crate::update_background::run(app).await.unwrap_or(1);
+                app.exit(code);
+            });
             return;
         }
         let options = self.clone();
@@ -134,6 +147,7 @@ impl Options {
                 .await
                 .map_err(|_| "mvp_sync_configuration_failed")?;
         }
+        if *self == Self::UpdateBackground { return Err("mvp_update_background_not_initialized"); }
         // A round already using the old configuration must not acknowledge the new one.
         let initial = loop {
             let status = crate::mvp_sync::mvp_sync_status(app.clone())
@@ -263,6 +277,7 @@ mod tests {
     fn exclusive_modes_and_config_path_are_parsed() {
         assert_eq!(parse(&[]), Ok(Options::Interactive));
         assert_eq!(parse(&["--sync-check"]), Ok(Options::SyncCheck));
+        assert_eq!(parse(&["--update-background"]), Ok(Options::UpdateBackground));
         assert_eq!(parse(&["--background"]), Ok(Options::Background));
         #[cfg(target_os = "macos")]
         assert_eq!(parse(&["--minimized"]), Ok(Options::Minimized));
