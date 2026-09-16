@@ -1,8 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
   <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+  <!-- API 31+: lets an installer of record ask PackageInstaller to update itself
+       without a confirmation sheet. The OS may still return PENDING_USER_ACTION. -->
+  <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
 
   <application>
+    <receiver
+      android:name="app.hanni.mvp.android.installer.HanniUpdateResultReceiver"
+      android:exported="false" />
     <provider
       android:name="app.hanni.mvp.android.installer.HanniUpdateFileProvider"
       android:authorities="${applicationId}.android-installer"

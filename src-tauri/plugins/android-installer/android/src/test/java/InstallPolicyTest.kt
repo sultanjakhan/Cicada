@@ -30,4 +30,19 @@ class InstallPolicyTest {
         assertTrue(InstallPolicy.hasAllowedSize(InstallPolicy.maxApkBytes))
         assertFalse(InstallPolicy.hasAllowedSize(InstallPolicy.maxApkBytes + 1))
     }
+
+    @Test
+    fun unattendedSessionIsRestrictedToAndroid12AndAnExplicitRequest() {
+        assertFalse(InstallPolicy.usesUnattendedSession(30, true))
+        assertFalse(InstallPolicy.usesUnattendedSession(31, false))
+        assertTrue(InstallPolicy.usesUnattendedSession(31, true))
+    }
+
+    @Test
+    fun callbackMustMatchBothCurrentSessionAndOpaqueToken() {
+        assertTrue(InstallPolicy.acceptsCallback(42, "token", 42, "token"))
+        assertFalse(InstallPolicy.acceptsCallback(42, "token", 43, "token"))
+        assertFalse(InstallPolicy.acceptsCallback(42, "token", 42, "other"))
+        assertFalse(InstallPolicy.acceptsCallback(42, "", 42, ""))
+    }
 }

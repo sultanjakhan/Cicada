@@ -10,6 +10,32 @@
 <tr>
 <td>
 
+`hanni-mvp-android-installer:allow-get-install-status`
+
+</td>
+<td>
+
+Enables the get_install_status command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`hanni-mvp-android-installer:deny-get-install-status`
+
+</td>
+<td>
+
+Denies the get_install_status command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `hanni-mvp-android-installer:allow-install-verified`
 
 </td>
@@ -55,6 +81,32 @@ Enables the open_install_permission command without any pre-configured scope.
 <td>
 
 Denies the open_install_permission command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`hanni-mvp-android-installer:allow-open-pending-user-action`
+
+</td>
+<td>
+
+Enables the open_pending_user_action command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`hanni-mvp-android-installer:deny-open-pending-user-action`
+
+</td>
+<td>
+
+Denies the open_pending_user_action command without any pre-configured scope.
 
 </td>
 </tr>

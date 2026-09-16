@@ -1,9 +1,13 @@
 package app.hanni.mvp.android.installer
 
 import android.app.Activity
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
+import android.content.pm.PackageInstaller
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -16,9 +20,25 @@ import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
 import java.io.File
 import java.security.MessageDigest
+import java.security.SecureRandom
 
 private const val STATUS_LAUNCHED = "launched"
 private const val STATUS_PERMISSION_REQUIRED = "permission_required"
+private const val STATUS_INSTALLING = "installing"
+private const val STATUS_PENDING_USER_ACTION = "pending_user_action"
+private const val STATUS_SUCCESS = "success"
+private const val STATUS_FAILURE = "failure"
+private const val STATUS_IDLE = "idle"
+private const val INSTALL_RESULT_ACTION = "app.hanni.mvp.android.installer.INSTALL_RESULT"
+private const val EXTRA_CALLBACK_TOKEN = "callback_token"
+private const val PREFS_NAME = "hanni_android_installer"
+private const val PREF_STATUS = "status"
+private const val PREF_SESSION_ID = "session_id"
+private const val PREF_TOKEN = "callback_token"
+private const val PREF_STATUS_CODE = "status_code"
+private const val PREF_STATUS_MESSAGE = "status_message"
+private const val PREF_UPDATED_AT = "updated_at"
+private const val PREF_PENDING_INTENT = "pending_intent"
 
 // A distinct provider class prevents manifest-merger collisions with Tauri's
 // own FileProvider and preserves this provider's private updates-only paths.
@@ -34,6 +54,12 @@ internal object InstallPolicy {
         candidate.path.startsWith(updatesRoot.path + File.separator)
 
     fun hasAllowedSize(size: Long): Boolean = size in 1..maxApkBytes
+
+    fun usesUnattendedSession(apiLevel: Int, automatic: Boolean): Boolean =
+        automatic && apiLevel >= Build.VERSION_CODES.S
+
+    fun acceptsCallback(expectedSessionId: Int, expectedToken: String, sessionId: Int, token: String?): Boolean =
+        expectedSessionId == sessionId && expectedToken.isNotBlank() && expectedToken == token
 }
 
 @InvokeArg
@@ -41,12 +67,70 @@ class InstallVerifiedArgs {
     lateinit var path: String
     var expectedVersionCode: Long = 0
     lateinit var expectedSha256: String
+    var automatic: Boolean = false
+}
+
+/** Receives only the explicit PendingIntent created by this plugin. */
+class HanniUpdateResultReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != INSTALL_RESULT_ACTION) return
+        val store = InstallStatusStore(context)
+        val expectedSession = store.sessionId()
+        val sessionId = intent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1)
+        if (!InstallPolicy.acceptsCallback(expectedSession, store.token(), sessionId, intent.getStringExtra(EXTRA_CALLBACK_TOKEN))) {
+            return
+        }
+
+        val code = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
+        val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
+        when (code) {
+            PackageInstaller.STATUS_SUCCESS -> store.save(STATUS_SUCCESS, sessionId, code, message)
+            PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+                val userIntent = intent.parcelableIntent(Intent.EXTRA_INTENT)
+                if (userIntent == null) {
+                    store.save(STATUS_FAILURE, sessionId, code, "Android requested user action without an intent")
+                } else {
+                    store.save(STATUS_PENDING_USER_ACTION, sessionId, code, message, userIntent.toUri(0))
+                }
+            }
+            else -> store.save(STATUS_FAILURE, sessionId, code, message)
+        }
+    }
+}
+
+private class InstallStatusStore(context: Context) {
+    private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    fun save(status: String, sessionId: Int, code: Int? = null, message: String? = null, pendingIntent: String? = null) {
+        prefs.edit()
+            .putString(PREF_STATUS, status)
+            .putInt(PREF_SESSION_ID, sessionId)
+            .putInt(PREF_STATUS_CODE, code ?: Int.MIN_VALUE)
+            .putString(PREF_STATUS_MESSAGE, message)
+            .putLong(PREF_UPDATED_AT, System.currentTimeMillis())
+            .apply {
+                if (pendingIntent == null) remove(PREF_PENDING_INTENT) else putString(PREF_PENDING_INTENT, pendingIntent)
+            }
+            .apply()
+    }
+
+    fun sessionId(): Int = prefs.getInt(PREF_SESSION_ID, -1)
+    fun token(): String = prefs.getString(PREF_TOKEN, "") ?: ""
+    fun setToken(token: String) = prefs.edit().putString(PREF_TOKEN, token).apply()
+    fun pendingUserIntent(): String? = prefs.getString(PREF_PENDING_INTENT, null)
+    fun status(): JSObject = JSObject().apply {
+        put("status", prefs.getString(PREF_STATUS, STATUS_IDLE))
+        put("sessionId", sessionId())
+        put("statusCode", prefs.getInt(PREF_STATUS_CODE, Int.MIN_VALUE))
+        put("statusMessage", prefs.getString(PREF_STATUS_MESSAGE, null))
+        put("updatedAtMs", prefs.getLong(PREF_UPDATED_AT, 0))
+    }
 }
 
 /**
  * Last native boundary before handing a verified update to Android's package
- * installer. It does not download an APK and does not report installation as
- * complete: Android owns confirmation, cancellation and final outcome.
+ * installer. It does not download an APK. Completion comes only from the
+ * PackageInstaller callback persisted by HanniUpdateResultReceiver.
  */
 @TauriPlugin
 class AndroidInstallerPlugin(private val activity: Activity) : Plugin(activity) {
@@ -61,18 +145,12 @@ class AndroidInstallerPlugin(private val activity: Activity) : Plugin(activity) 
                 return
             }
 
-            val uri = FileProvider.getUriForFile(
-                activity,
-                "${activity.packageName}.android-installer",
-                apk,
-            )
-            val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, "application/vnd.android.package-archive")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (InstallPolicy.usesUnattendedSession(Build.VERSION.SDK_INT, args.automatic)) {
+                invoke.resolve(commitUnattendedInstall(apk))
+            } else {
+                launchLegacyInstaller(apk)
+                invoke.resolve(status(STATUS_LAUNCHED))
             }
-            activity.startActivity(intent)
-            invoke.resolve(status(STATUS_LAUNCHED))
         } catch (error: Exception) {
             invoke.reject(error.message ?: "Could not prepare Android system installer")
         }
@@ -94,6 +172,77 @@ class AndroidInstallerPlugin(private val activity: Activity) : Plugin(activity) 
             invoke.reject(error.message ?: "Could not open Android install permission settings")
         }
     }
+
+    /** Returns the last PackageInstaller result saved in private app storage. */
+    @Command
+    fun getInstallStatus(invoke: Invoke) {
+        invoke.resolve(InstallStatusStore(activity).status())
+    }
+
+    /** Explicit UI action for the rare OS fallback after STATUS_PENDING_USER_ACTION. */
+    @Command
+    fun openPendingUserAction(invoke: Invoke) {
+        try {
+            val store = InstallStatusStore(activity)
+            require(store.status().getString("status") == STATUS_PENDING_USER_ACTION) { "No Android confirmation is pending" }
+            val serialized = requireNotNull(store.pendingUserIntent()) { "Pending Android confirmation intent is unavailable" }
+            val intent = Intent.parseUri(serialized, 0).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            activity.startActivity(intent)
+            invoke.resolve(status(STATUS_LAUNCHED))
+        } catch (error: Exception) {
+            invoke.reject(error.message ?: "Could not open Android confirmation")
+        }
+    }
+
+    private fun commitUnattendedInstall(apk: File): JSObject {
+        val installer = activity.packageManager.packageInstaller
+        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
+            setAppPackageName(InstallPolicy.expectedPackageId)
+            setSize(apk.length())
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+            }
+        }
+        val sessionId = installer.createSession(params)
+        val store = InstallStatusStore(activity)
+        val token = newCallbackToken()
+        store.setToken(token)
+        store.save(STATUS_INSTALLING, sessionId)
+        try {
+            installer.openSession(sessionId).use { session ->
+                apk.inputStream().use { input ->
+                    session.openWrite("base.apk", 0, apk.length()).use { output ->
+                        input.copyTo(output)
+                        session.fsync(output)
+                    }
+                }
+                val callbackIntent = Intent(activity, HanniUpdateResultReceiver::class.java).apply {
+                    action = INSTALL_RESULT_ACTION
+                    setPackage(activity.packageName)
+                    putExtra(EXTRA_CALLBACK_TOKEN, token)
+                }
+                val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+                val callback = PendingIntent.getBroadcast(activity, sessionId, callbackIntent, flags)
+                session.commit(callback.intentSender)
+            }
+        } catch (error: Exception) {
+            installer.abandonSession(sessionId)
+            store.save(STATUS_FAILURE, sessionId, message = error.message)
+            throw error
+        }
+        return status(STATUS_INSTALLING)
+    }
+
+    private fun launchLegacyInstaller(apk: File) {
+        val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.android-installer", apk)
+        activity.startActivity(Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        })
+    }
+
+    private fun newCallbackToken(): String = ByteArray(32).also { SecureRandom().nextBytes(it) }.toHex()
 
     private fun validateCandidate(args: InstallVerifiedArgs): File {
         require(args.expectedVersionCode > 0) { "Expected version code must be positive" }
@@ -175,4 +324,11 @@ class AndroidInstallerPlugin(private val activity: Activity) : Plugin(activity) 
         Build.VERSION.SDK_INT < Build.VERSION_CODES.O || activity.packageManager.canRequestPackageInstalls()
 
     private fun status(value: String): JSObject = JSObject().apply { put("status", value) }
+
+    @Suppress("DEPRECATION")
+    private fun Intent.parcelableIntent(key: String): Intent? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        getParcelableExtra(key, Intent::class.java)
+    } else {
+        getParcelableExtra(key)
+    }
 }

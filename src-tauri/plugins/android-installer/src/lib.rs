@@ -21,6 +21,10 @@ pub struct InstallVerifiedRequest {
     pub expected_version_code: u64,
     /// Lowercase SHA-256 of the exact file.
     pub expected_sha256: String,
+    /// Requests Android 12+ PackageInstaller session delivery. Older Android
+    /// versions deliberately retain the existing explicit system installer.
+    #[serde(default)]
+    pub automatic: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -28,6 +32,11 @@ pub struct InstallVerifiedRequest {
 pub enum InstallStatus {
     Launched,
     PermissionRequired,
+    Installing,
+    PendingUserAction,
+    Success,
+    Failure,
+    Idle,
     Unsupported,
 }
 
@@ -35,9 +44,16 @@ pub enum InstallStatus {
 /// envelope explicit prevents Rust from accidentally trying to deserialize the
 /// whole object as the `InstallStatus` string itself.
 #[derive(Debug, Deserialize)]
-#[cfg(any(target_os = "android", test))]
-struct InstallResponse {
-    status: InstallStatus,
+pub struct InstallStatusResponse {
+    pub status: InstallStatus,
+    #[serde(default)]
+    pub session_id: Option<i32>,
+    #[serde(default)]
+    pub status_code: Option<i32>,
+    #[serde(default)]
+    pub status_message: Option<String>,
+    #[serde(default)]
+    pub updated_at_ms: Option<i64>,
 }
 
 /// Access to the bounded Android package-installer bridge.
@@ -58,7 +74,7 @@ impl<R: Runtime> AndroidInstaller<R> {
         let Some(handle) = &self.0 else {
             return Ok(InstallStatus::Unsupported);
         };
-        let response: InstallResponse = handle
+        let response: InstallStatusResponse = handle
             .run_mobile_plugin("installVerified", request)
             .map_err(|error| error.to_string())?;
         Ok(response.status)
@@ -76,10 +92,58 @@ impl<R: Runtime> AndroidInstaller<R> {
         let Some(handle) = &self.0 else {
             return Ok(InstallStatus::Unsupported);
         };
-        let response: InstallResponse = handle
+        let response: InstallStatusResponse = handle
             .run_mobile_plugin("openInstallPermission", ())
             .map_err(|error| error.to_string())?;
         Ok(response.status)
+        }
+    }
+
+    /// Reads the last system PackageInstaller callback stored in Android's
+    /// private preferences. `Installing` only means the session was committed;
+    /// `Success` is the terminal confirmation from Android.
+    pub fn get_install_status(&self) -> Result<InstallStatusResponse, String> {
+        #[cfg(not(target_os = "android"))]
+        {
+            Ok(InstallStatusResponse {
+                status: InstallStatus::Unsupported,
+                session_id: None,
+                status_code: None,
+                status_message: None,
+                updated_at_ms: None,
+            })
+        }
+        #[cfg(target_os = "android")]
+        {
+            let Some(handle) = &self.0 else {
+                return Ok(InstallStatusResponse {
+                    status: InstallStatus::Unsupported,
+                    session_id: None,
+                    status_code: None,
+                    status_message: None,
+                    updated_at_ms: None,
+                });
+            };
+            handle
+                .run_mobile_plugin("getInstallStatus", ())
+                .map_err(|error| error.to_string())
+        }
+    }
+
+    /// Opens the system confirmation only after Android returned and persisted
+    /// `PendingUserAction`; never called by automatic installation itself.
+    pub fn open_pending_user_action(&self) -> Result<InstallStatus, String> {
+        #[cfg(not(target_os = "android"))]
+        { Ok(InstallStatus::Unsupported) }
+        #[cfg(target_os = "android")]
+        {
+            let Some(handle) = &self.0 else {
+                return Ok(InstallStatus::Unsupported);
+            };
+            let response: InstallStatusResponse = handle
+                .run_mobile_plugin("openPendingUserAction", ())
+                .map_err(|error| error.to_string())?;
+            Ok(response.status)
         }
     }
 }
@@ -117,13 +181,25 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
 
 #[cfg(test)]
 mod tests {
-    use super::{InstallResponse, InstallStatus, InstallVerifiedRequest};
+    use super::{InstallStatus, InstallStatusResponse, InstallVerifiedRequest};
 
     #[test]
     fn response_envelope_maps_kotlin_permission_status() {
-        let response: InstallResponse =
+        let response: InstallStatusResponse =
             serde_json::from_str(r#"{"status":"permission_required"}"#).unwrap();
         assert_eq!(response.status, InstallStatus::PermissionRequired);
+    }
+
+    #[test]
+    fn response_envelope_preserves_pending_user_action_details() {
+        let response: InstallStatusResponse = serde_json::from_str(
+            r#"{"status":"pending_user_action","sessionId":41,"statusCode":-1,"updatedAtMs":42}"#,
+        )
+        .unwrap();
+        assert_eq!(response.status, InstallStatus::PendingUserAction);
+        assert_eq!(response.session_id, Some(41));
+        assert_eq!(response.status_code, Some(-1));
+        assert_eq!(response.updated_at_ms, Some(42));
     }
 
     #[test]
@@ -132,10 +208,12 @@ mod tests {
             path: "/private/cache/updates/hanni.apk".into(),
             expected_version_code: 3004,
             expected_sha256: "a".repeat(64),
+            automatic: true,
         };
         let json = serde_json::to_value(request).unwrap();
         assert_eq!(json["expectedVersionCode"], 3004);
         assert_eq!(json["expectedSha256"], "a".repeat(64));
+        assert_eq!(json["automatic"], true);
         assert!(json.get("expected_version_code").is_none());
     }
 }
