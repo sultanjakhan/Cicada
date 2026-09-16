@@ -86,9 +86,9 @@ pub(crate) async fn run(app: AppHandle) -> Result<i32, String> {
 mod tests {
     #[test]
     fn logon_registration_scopes_trigger_to_current_user_and_preserves_unicode_paths() {
-        let xml = super::logon_task_xml(r"C:\Users\user & test\hanni-mvp.exe", "S-1-5-21-123");
+        let xml = super::logon_task_xml(r"C:\Example\Кириллица & test\hanni-mvp.exe", "S-1-5-21-123");
         assert_eq!(xml.matches("<UserId>S-1-5-21-123</UserId>").count(), 2);
-        assert!(xml.contains("user &amp; test"));
+        assert!(xml.contains("Кириллица &amp; test"));
         assert!(xml.contains("<LogonType>InteractiveToken</LogonType>"));
         assert!(xml.contains("<RunLevel>LeastPrivilege</RunLevel>"));
     }
