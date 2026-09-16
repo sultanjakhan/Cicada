@@ -44,6 +44,7 @@ pub enum InstallStatus {
 /// envelope explicit prevents Rust from accidentally trying to deserialize the
 /// whole object as the `InstallStatus` string itself.
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct InstallStatusResponse {
     pub status: InstallStatus,
     #[serde(default)]
@@ -54,6 +55,15 @@ pub struct InstallStatusResponse {
     pub status_message: Option<String>,
     #[serde(default)]
     pub updated_at_ms: Option<i64>,
+    #[serde(default)]
+    pub version_code: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AutoInstallScheduleResponse {
+    pub scheduled: bool,
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 /// Access to the bounded Android package-installer bridge.
@@ -111,6 +121,7 @@ impl<R: Runtime> AndroidInstaller<R> {
                 status_code: None,
                 status_message: None,
                 updated_at_ms: None,
+                version_code: None,
             })
         }
         #[cfg(target_os = "android")]
@@ -122,6 +133,7 @@ impl<R: Runtime> AndroidInstaller<R> {
                     status_code: None,
                     status_message: None,
                     updated_at_ms: None,
+                    version_code: None,
                 });
             };
             handle
@@ -144,6 +156,23 @@ impl<R: Runtime> AndroidInstaller<R> {
                 .run_mobile_plugin("openPendingUserAction", ())
                 .map_err(|error| error.to_string())?;
             Ok(response.status)
+        }
+    }
+
+    /// Enrolls the Android-only, connectivity-constrained six-hour worker.
+    /// It returns `scheduled = false` when the release build has no configured
+    /// authenticated update channel.
+    pub fn schedule_auto_install(&self) -> Result<AutoInstallScheduleResponse, String> {
+        #[cfg(not(target_os = "android"))]
+        {
+            Ok(AutoInstallScheduleResponse { scheduled: false, reason: Some("unsupported".into()) })
+        }
+        #[cfg(target_os = "android")]
+        {
+            let Some(handle) = &self.0 else {
+                return Ok(AutoInstallScheduleResponse { scheduled: false, reason: Some("unsupported".into()) });
+            };
+            handle.run_mobile_plugin("scheduleAutoInstall", ()).map_err(|error| error.to_string())
         }
     }
 }

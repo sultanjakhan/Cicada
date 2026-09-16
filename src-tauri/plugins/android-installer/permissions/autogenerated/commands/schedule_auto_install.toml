@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-schedule-auto-install"
+description = "Enables the schedule_auto_install command without any pre-configured scope."
+commands.allow = ["schedule_auto_install"]
+
+[[permission]]
+identifier = "deny-schedule-auto-install"
+description = "Denies the schedule_auto_install command without any pre-configured scope."
+commands.deny = ["schedule_auto_install"]

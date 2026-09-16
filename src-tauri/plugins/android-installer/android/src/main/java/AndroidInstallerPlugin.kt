@@ -2,6 +2,7 @@ package app.hanni.mvp.android.installer
 
 import android.app.Activity
 import android.app.PendingIntent
+import android.app.Application
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -22,15 +23,15 @@ import java.io.File
 import java.security.MessageDigest
 import java.security.SecureRandom
 
-private const val STATUS_LAUNCHED = "launched"
-private const val STATUS_PERMISSION_REQUIRED = "permission_required"
-private const val STATUS_INSTALLING = "installing"
-private const val STATUS_PENDING_USER_ACTION = "pending_user_action"
-private const val STATUS_SUCCESS = "success"
-private const val STATUS_FAILURE = "failure"
-private const val STATUS_IDLE = "idle"
-private const val INSTALL_RESULT_ACTION = "app.hanni.mvp.android.installer.INSTALL_RESULT"
-private const val EXTRA_CALLBACK_TOKEN = "callback_token"
+internal const val STATUS_LAUNCHED = "launched"
+internal const val STATUS_PERMISSION_REQUIRED = "permission_required"
+internal const val STATUS_INSTALLING = "installing"
+internal const val STATUS_PENDING_USER_ACTION = "pending_user_action"
+internal const val STATUS_SUCCESS = "success"
+internal const val STATUS_FAILURE = "failure"
+internal const val STATUS_IDLE = "idle"
+internal const val INSTALL_RESULT_ACTION = "app.hanni.mvp.android.installer.INSTALL_RESULT"
+internal const val EXTRA_CALLBACK_TOKEN = "callback_token"
 private const val PREFS_NAME = "hanni_android_installer"
 private const val PREF_STATUS = "status"
 private const val PREF_SESSION_ID = "session_id"
@@ -39,6 +40,7 @@ private const val PREF_STATUS_CODE = "status_code"
 private const val PREF_STATUS_MESSAGE = "status_message"
 private const val PREF_UPDATED_AT = "updated_at"
 private const val PREF_PENDING_INTENT = "pending_intent"
+private const val PREF_VERSION_CODE = "version_code"
 
 // A distinct provider class prevents manifest-merger collisions with Tauri's
 // own FileProvider and preserves this provider's private updates-only paths.
@@ -82,6 +84,7 @@ class HanniUpdateResultReceiver : BroadcastReceiver() {
         }
 
         val code = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
+        if (store.isTerminalFor(sessionId)) return
         val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
         when (code) {
             PackageInstaller.STATUS_SUCCESS -> store.save(STATUS_SUCCESS, sessionId, code, message)
@@ -98,7 +101,7 @@ class HanniUpdateResultReceiver : BroadcastReceiver() {
     }
 }
 
-private class InstallStatusStore(context: Context) {
+internal class InstallStatusStore(context: Context) {
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     fun save(status: String, sessionId: Int, code: Int? = null, message: String? = null, pendingIntent: String? = null) {
@@ -116,7 +119,20 @@ private class InstallStatusStore(context: Context) {
 
     fun sessionId(): Int = prefs.getInt(PREF_SESSION_ID, -1)
     fun token(): String = prefs.getString(PREF_TOKEN, "") ?: ""
-    fun setToken(token: String) = prefs.edit().putString(PREF_TOKEN, token).apply()
+    /** One durable state transition before PackageInstaller can issue a callback. */
+    fun beginSession(sessionId: Int, token: String, versionCode: Long) {
+        prefs.edit()
+            .putString(PREF_TOKEN, token)
+            .putString(PREF_STATUS, STATUS_INSTALLING)
+            .putInt(PREF_SESSION_ID, sessionId)
+            .putInt(PREF_STATUS_CODE, Int.MIN_VALUE)
+            .remove(PREF_STATUS_MESSAGE)
+            .remove(PREF_PENDING_INTENT)
+            .putLong(PREF_UPDATED_AT, System.currentTimeMillis())
+            .putLong(PREF_VERSION_CODE, versionCode)
+            .commit()
+    }
+    fun isTerminalFor(sessionId: Int): Boolean = sessionId() == sessionId && prefs.getString(PREF_STATUS, STATUS_IDLE) in setOf(STATUS_SUCCESS, STATUS_FAILURE)
     fun pendingUserIntent(): String? = prefs.getString(PREF_PENDING_INTENT, null)
     fun status(): JSObject = JSObject().apply {
         put("status", prefs.getString(PREF_STATUS, STATUS_IDLE))
@@ -124,6 +140,7 @@ private class InstallStatusStore(context: Context) {
         put("statusCode", prefs.getInt(PREF_STATUS_CODE, Int.MIN_VALUE))
         put("statusMessage", prefs.getString(PREF_STATUS_MESSAGE, null))
         put("updatedAtMs", prefs.getLong(PREF_UPDATED_AT, 0))
+        put("versionCode", prefs.getLong(PREF_VERSION_CODE, 0))
     }
 }
 
@@ -134,19 +151,28 @@ private class InstallStatusStore(context: Context) {
  */
 @TauriPlugin
 class AndroidInstallerPlugin(private val activity: Activity) : Plugin(activity) {
+    init {
+        UpdateActivityGuard.install(activity.application)
+    }
     @Command
     fun installVerified(invoke: Invoke) {
         try {
             val args = invoke.parseArgs(InstallVerifiedArgs::class.java)
             val apk = validateCandidate(args)
 
+            if (args.automatic && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                // Android 7–11 cannot request unattended sessions. Never start
+                // a confirmation Activity from a background automatic request.
+                invoke.resolve(status(STATUS_PENDING_USER_ACTION))
+                return
+            }
             if (!canRequestPackageInstalls()) {
                 invoke.resolve(status(STATUS_PERMISSION_REQUIRED))
                 return
             }
 
             if (InstallPolicy.usesUnattendedSession(Build.VERSION.SDK_INT, args.automatic)) {
-                invoke.resolve(commitUnattendedInstall(apk))
+                invoke.resolve(commitUnattendedInstall(apk, args.expectedVersionCode))
             } else {
                 launchLegacyInstaller(apk)
                 invoke.resolve(status(STATUS_LAUNCHED))
@@ -179,6 +205,18 @@ class AndroidInstallerPlugin(private val activity: Activity) : Plugin(activity) 
         invoke.resolve(InstallStatusStore(activity).status())
     }
 
+    @Command
+    fun scheduleAutoInstall(invoke: Invoke) {
+        try {
+            invoke.resolve(JSObject().apply {
+                put("scheduled", HanniAutoUpdateWorker.schedule(activity.applicationContext))
+                if (!UpdateConfiguration.isConfigured()) put("reason", "update_channel_unconfigured")
+            })
+        } catch (error: Exception) {
+            invoke.reject(error.message ?: "Could not schedule automatic Android updates")
+        }
+    }
+
     /** Explicit UI action for the rare OS fallback after STATUS_PENDING_USER_ACTION. */
     @Command
     fun openPendingUserAction(invoke: Invoke) {
@@ -194,7 +232,7 @@ class AndroidInstallerPlugin(private val activity: Activity) : Plugin(activity) 
         }
     }
 
-    private fun commitUnattendedInstall(apk: File): JSObject {
+    private fun commitUnattendedInstall(apk: File, versionCode: Long): JSObject {
         val installer = activity.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
             setAppPackageName(InstallPolicy.expectedPackageId)
@@ -206,8 +244,7 @@ class AndroidInstallerPlugin(private val activity: Activity) : Plugin(activity) 
         val sessionId = installer.createSession(params)
         val store = InstallStatusStore(activity)
         val token = newCallbackToken()
-        store.setToken(token)
-        store.save(STATUS_INSTALLING, sessionId)
+        store.beginSession(sessionId, token, versionCode)
         try {
             installer.openSession(sessionId).use { session ->
                 apk.inputStream().use { input ->

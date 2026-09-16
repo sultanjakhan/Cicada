@@ -10,6 +10,32 @@
 <tr>
 <td>
 
+`hanni-mvp-android-installer:allow-schedule-auto-install`
+
+</td>
+<td>
+
+Enables the schedule_auto_install command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`hanni-mvp-android-installer:deny-schedule-auto-install`
+
+</td>
+<td>
+
+Denies the schedule_auto_install command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `hanni-mvp-android-installer:allow-get-install-status`
 
 </td>
