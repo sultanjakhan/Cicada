@@ -45,6 +45,7 @@ class AndroidPackageHelpersTest(unittest.TestCase):
         configured = MODULE.with_compressed_native_libraries(source)
         self.assertTrue(configured.startswith(source))
         self.assertIn('jniLibs.useLegacyPackaging = true', configured)
+        self.assertIn('resources.excludes.add("META-INF/versions/9/OSGI-INF/MANIFEST.MF")', configured)
         self.assertEqual(MODULE.with_compressed_native_libraries(configured), configured)
 
     def test_compressed_native_packaging_refuses_conflicting_policy(self):

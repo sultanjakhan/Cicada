@@ -528,39 +528,34 @@ pub fn enroll_windows_task(app: AppHandle) {
         let scheduler = std::path::PathBuf::from(system_root)
             .join("System32")
             .join("schtasks.exe");
-        let task = "Hanni MVP automatic updates";
+        let logon = crate::update_background::enroll_logon_task(&scheduler, &expected);
         let command = format!("\"{}\" --update-background", expected.display());
-        for (suffix, schedule, extra) in [
-            ("", "ONLOGON", Vec::<&str>::new()),
-            (" (6h)", "HOURLY", vec!["/MO", "6"]),
-        ] {
-            let mut call = std::process::Command::new(&scheduler);
-            call.args([
+        let periodic = std::process::Command::new(&scheduler)
+            .args([
                 "/Create",
                 "/TN",
-                &format!("{task}{suffix}"),
+                "Hanni MVP automatic updates (6h)",
                 "/TR",
                 &command,
                 "/SC",
-                schedule,
+                "HOURLY",
+                "/MO",
+                "6",
                 "/RL",
                 "LIMITED",
                 "/IT",
                 "/F",
-            ]);
-            call.args(extra);
-            let succeeded = call
-                .creation_flags(0x08000000)
-                .output()
-                .is_ok_and(|result| result.status.success()); // CREATE_NO_WINDOW
-            if !succeeded {
-                app.state::<UpdateState>().change(&app, |s| {
-                    s.background_error = Some(
-                        "Windows не разрешила включить проверки при закрытом приложении.".into(),
-                    );
-                });
-            }
-        }
+            ])
+            .creation_flags(0x08000000)
+            .output()
+            .is_ok_and(|result| result.status.success());
+        app.state::<UpdateState>().change(&app, |s| {
+            s.background_error = if logon && periodic {
+                None
+            } else {
+                Some("Windows ?? ????????? ???????? ???????? ??? ???????? ??????????.".into())
+            };
+        });
     }
 }
 #[tauri::command]

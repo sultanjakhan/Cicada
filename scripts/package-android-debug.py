@@ -63,7 +63,11 @@ def disable_debug_symbol_preservation():
 
 def with_compressed_native_libraries(source):
     """Use AGP's supported compression/extraction mode for sideload delivery."""
-    block = '\nandroid {\n    packaging {\n        jniLibs.useLegacyPackaging = true\n    }\n}\n'
+    # JSpecify and Bouncy Castle both ship this desktop OSGi descriptor.
+    # Android does not load OSGi bundles; exclude only the colliding metadata.
+    block = ('\nandroid {\n    packaging {\n        jniLibs.useLegacyPackaging = true\n'
+             '        resources.excludes.add("META-INF/versions/9/OSGI-INF/MANIFEST.MF")\n'
+             '    }\n}\n')
     if 'useLegacyPackaging' in source:
         require(block in source and source.count('useLegacyPackaging') == 1,
                 'Existing native library packaging differs; review it first.')
