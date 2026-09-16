@@ -517,6 +517,7 @@ pub fn run() {
                 init_schema(&connection)?;
                 app.manage(AppState(Mutex::new(connection)));
                 mvp_sync::start(app.handle(), data_dir.join("calendar.db"));
+                app_updates::start(app.handle().clone());
                 Ok(())
             })();
             if let Err(error) = initialized {
@@ -536,7 +537,10 @@ pub fn run() {
             create_backup,
             app_updates::mvp_update_status,
             app_updates::mvp_update_check,
+            app_updates::mvp_update_prepare,
             app_updates::mvp_update_install,
+            app_updates::mvp_update_activity,
+            app_updates::mvp_update_auto_install,
             app_updates::mvp_update_open_permission,
             mvp_sync::mvp_sync_status,
             mvp_sync::mvp_sync_configure,

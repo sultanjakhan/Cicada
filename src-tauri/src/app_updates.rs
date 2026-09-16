@@ -8,7 +8,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Mutex,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -18,7 +18,7 @@ const MAX_MANIFEST: u64 = 64 * 1024;
 const UPDATE_URL: Option<&str> = option_env!("HANNI_MVP_UPDATES_URL");
 const UPDATE_TOKEN: Option<&str> = option_env!("HANNI_MVP_UPDATES_TOKEN");
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct Package {
     url: String,
     signature: String,
@@ -33,10 +33,15 @@ struct Manifest {
     notes: String,
     platforms: HashMap<String, Package>,
 }
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Candidate {
     version: String,
     package: Package,
+}
+#[derive(Serialize, Deserialize)]
+struct PreparedUpdate {
+    candidate: Candidate,
+    prepared_at: String,
 }
 #[derive(Clone, Default, Serialize)]
 pub struct UpdateStatus {
@@ -54,7 +59,23 @@ pub struct UpdateStatus {
 pub struct UpdateState {
     candidate: Mutex<Option<Candidate>>,
     status: Mutex<UpdateStatus>,
+    /// A renderer can grant this only while it has no uncommitted editor state
+    /// and is hidden.  Native installation consumes the lease instead of
+    /// trusting an old visibility event.
+    ui_safe: Mutex<Option<UiLease>>,
     busy: AtomicBool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateActivity {
+    pub safe_to_install: bool,
+    pub hidden: bool,
+}
+
+struct UiLease {
+    since: Instant,
+    reported_at: Instant,
 }
 struct Busy<'a>(&'a AtomicBool);
 impl Drop for Busy<'_> {
@@ -243,9 +264,119 @@ fn verify(bytes: &[u8], package: &Package, key: &str) -> Result<(), String> {
     key.verify(bytes, &signature, true)
         .map_err(|_| "Подпись обновления не прошла проверку. Установка отменена.".into())
 }
+
+fn prepared_paths(app: &AppHandle, version: &str) -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
+    let dir = app.path().app_cache_dir().map_err(|_| "Не удалось открыть папку обновлений.")?.join("updates");
+    std::fs::create_dir_all(&dir).map_err(|_| "Не удалось создать папку обновлений.")?;
+    Ok((dir.join(format!("hanni-mvp-{version}.package")), dir.join("prepared.json")))
+}
+
+/// Downloads a selected release into private cache and records it atomically.
+/// It deliberately does not hand the package to an installer.
+#[tauri::command]
+pub async fn mvp_update_prepare(app: AppHandle, state: State<'_, UpdateState>) -> Result<UpdateStatus, String> {
+    let _busy = state.acquire()?;
+    let candidate = state.candidate.lock().map_err(|_| "Повтори проверку обновлений.")?.clone().ok_or("Сначала проверь обновления.")?;
+    let result: Result<UpdateStatus, String> = async {
+        let (feed, token) = config()?;
+        let url = package_url(&feed, &candidate.package.url)?;
+        state.change(&app, |s| { s.phase = "downloading".into(); s.error = None; s.downloaded = 0; });
+        let bytes = fetch(url, token, candidate.package.size, |received| state.change(&app, |s| s.downloaded = received)).await?;
+        verify(&bytes, &candidate.package, PUBLIC_KEY)?;
+        let (path, meta) = prepared_paths(&app, &candidate.version)?;
+        let temporary = path.with_extension("part");
+        std::fs::write(&temporary, &bytes).map_err(|_| "Недостаточно места для обновления.")?;
+        std::fs::rename(&temporary, &path).map_err(|_| "Не удалось сохранить обновление.")?;
+        let raw = serde_json::to_vec(&PreparedUpdate { candidate: candidate.clone(), prepared_at: chrono::Utc::now().to_rfc3339() }).map_err(|_| "Не удалось записать состояние обновления.")?;
+        let temporary_meta = meta.with_extension("part");
+        std::fs::write(&temporary_meta, raw).map_err(|_| "Не удалось записать состояние обновления.")?;
+        std::fs::rename(&temporary_meta, meta).map_err(|_| "Не удалось записать состояние обновления.")?;
+        state.change(&app, |s| { s.phase = "prepared".into(); s.downloaded = candidate.package.size; });
+        Ok(state.snapshot(&app))
+    }.await;
+    if let Err(ref error) = result { state.change(&app, |s| { s.phase="error".into(); s.error=Some(error.clone()); }); }
+    result
+}
+
+/// Native polling survives a renderer reload.  Installation remains guarded by
+/// the renderer lease (or by the separate closed-app runner), so this may only
+/// check and prepare a verified package.
+pub fn start(app: AppHandle) {
+    if config().is_err() { return; }
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(8)).await;
+        loop {
+            let state = app.state::<UpdateState>();
+            if matches!(mvp_update_check(app.clone(), state).await, Ok(UpdateStatus { phase, .. }) if phase == "available") {
+                let state = app.state::<UpdateState>();
+                let _ = mvp_update_prepare(app.clone(), state).await;
+            }
+            tokio::time::sleep(Duration::from_secs(6 * 60 * 60)).await;
+        }
+    });
+}
 #[tauri::command]
 pub fn mvp_update_status(app: AppHandle, state: State<'_, UpdateState>) -> UpdateStatus {
     state.snapshot(&app)
+}
+
+/// Records a short-lived renderer lease for automatic installation.  An
+/// interactive renderer must clear it whenever an editor, dialog, or active
+/// timer is present.  This does not affect the explicit Settings action.
+#[tauri::command]
+pub fn mvp_update_activity(state: State<'_, UpdateState>, activity: UpdateActivity) {
+    if let Ok(mut lease) = state.ui_safe.lock() {
+        if activity.safe_to_install && activity.hidden {
+            let now = Instant::now();
+            match lease.as_mut() {
+                Some(current) => current.reported_at = now,
+                None => *lease = Some(UiLease { since: now, reported_at: now }),
+            }
+        } else {
+            *lease = None;
+        }
+    }
+}
+
+fn auto_install_allowed(app: &AppHandle, state: &UpdateState) -> Result<(), String> {
+    let lease = state
+        .ui_safe
+        .lock()
+        .map_err(|_| "Не удалось проверить состояние приложения.")?;
+    if lease.as_ref().is_none_or(|lease| {
+        lease.since.elapsed() < Duration::from_secs(30)
+            || lease.reported_at.elapsed() > Duration::from_secs(90)
+    }) {
+        return Err("Автообновление отложено: приложение ещё может быть занято.".into());
+    }
+    let app_state = app.state::<crate::AppState>();
+    let conn = app_state
+        .0
+        .lock()
+        .map_err(|_| "Не удалось проверить активную задачу.")?;
+    let active: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM timeline_blocks WHERE is_active=1)",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|_| "Не удалось проверить активную задачу.")?;
+    if active {
+        return Err("Автообновление отложено: идёт активная задача.".into());
+    }
+    Ok(())
+}
+
+/// The unattended foreground path is deliberately narrower than the manual
+/// action: it needs a fresh hidden/safe renderer lease and no active timer.
+#[tauri::command(rename_all = "camelCase")]
+pub async fn mvp_update_auto_install(
+    app: AppHandle,
+    state: State<'_, UpdateState>,
+    expected_version: String,
+) -> Result<UpdateStatus, String> {
+    auto_install_allowed(&app, state.inner())?;
+    mvp_update_install(app, state, expected_version).await
 }
 
 #[tauri::command]
