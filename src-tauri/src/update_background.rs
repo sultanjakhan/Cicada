@@ -3,7 +3,7 @@ use tauri::{AppHandle, Manager};
 
 #[cfg(windows)]
 pub(crate) fn enroll_logon_task(scheduler: &std::path::Path, executable: &std::path::Path) -> bool {
-    use std::{io::Write, os::windows::process::CommandExt};
+    use std::os::windows::process::CommandExt;
     let result = (|| -> Option<()> {
         let user = std::process::Command::new(scheduler.with_file_name("whoami.exe"))
             .args(["/user", "/fo", "csv", "/nh"])
@@ -23,17 +23,10 @@ pub(crate) fn enroll_logon_task(scheduler: &std::path::Path, executable: &std::p
             return None;
         }
         let xml = logon_task_xml(&executable.to_string_lossy(), sid);
-        // schtasks loads task XML as UTF-16, including paths with Cyrillic.
-        let bytes: Vec<u8> = std::iter::once(0xfeffu16)
-            .chain(xml.encode_utf16())
-            .flat_map(u16::to_le_bytes)
-            .collect();
-        let mut file = tempfile::NamedTempFile::new().ok()?;
-        file.write_all(&bytes).ok()?;
-        file.as_file().sync_all().ok()?;
+        let file = write_task_xml(&xml).ok()?;
         let created = std::process::Command::new(scheduler)
             .args(["/Create", "/TN", "Hanni MVP automatic updates", "/XML"])
-            .arg(file.path())
+            .arg(file.as_os_str())
             .arg("/F")
             .creation_flags(0x08000000)
             .output()
@@ -41,6 +34,21 @@ pub(crate) fn enroll_logon_task(scheduler: &std::path::Path, executable: &std::p
         created.status.success().then_some(())
     })();
     result.is_some()
+}
+
+#[cfg(windows)]
+fn write_task_xml(xml: &str) -> std::io::Result<tempfile::TempPath> {
+    use std::io::Write;
+    // schtasks requests exclusive file access. Close the writing handle before
+    // invoking it, keeping the path guard alive for automatic cleanup.
+    let bytes: Vec<u8> = std::iter::once(0xfeffu16)
+        .chain(xml.encode_utf16())
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    let mut file = tempfile::NamedTempFile::new()?;
+    file.write_all(&bytes)?;
+    file.as_file().sync_all()?;
+    Ok(file.into_temp_path())
 }
 
 #[cfg(windows)]
@@ -85,8 +93,22 @@ pub(crate) async fn run(app: AppHandle) -> Result<i32, String> {
 #[cfg(all(test, windows))]
 mod tests {
     #[test]
+    fn task_xml_allows_the_schedulers_exclusive_reader() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let path = super::write_task_xml("<Task />").unwrap();
+        let reader = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&path);
+        assert!(reader.is_ok());
+        drop(reader);
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(bytes.starts_with(&[0xff, 0xfe]));
+    }
+    #[test]
     fn logon_registration_scopes_trigger_to_current_user_and_preserves_unicode_paths() {
-        let xml = super::logon_task_xml(r"C:\Example\Кириллица & test\hanni-mvp.exe", "S-1-5-21-123");
+        let xml =
+            super::logon_task_xml(r"C:\Example\Кириллица & test\hanni-mvp.exe", "S-1-5-21-123");
         assert_eq!(xml.matches("<UserId>S-1-5-21-123</UserId>").count(), 2);
         assert!(xml.contains("Кириллица &amp; test"));
         assert!(xml.contains("<LogonType>InteractiveToken</LogonType>"));
