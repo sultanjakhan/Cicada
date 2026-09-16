@@ -572,6 +572,30 @@ pub fn mvp_update_open_permission(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Android owns the final confirmation.  This command is intentionally a
+/// no-op unless its persisted package-installer session asked for user action.
+#[tauri::command]
+pub fn mvp_update_confirm(app: AppHandle, state: State<'_, UpdateState>) -> Result<UpdateStatus, String> {
+    #[cfg(target_os = "android")]
+    {
+        use hanni_mvp_android_installer::{AndroidInstallerExt, InstallStatus};
+        let installer = app.android_installer();
+        let current = installer.get_install_status()?;
+        if current.status != InstallStatus::PendingUserAction {
+            return Err("Подтверждение обновления сейчас не требуется.".into());
+        }
+        let opened = installer.open_pending_user_action()?;
+        state.change(&app, |s| s.phase = match opened {
+            InstallStatus::PendingUserAction => "confirmation_required",
+            InstallStatus::Installing => "installing",
+            _ => "installer_opened",
+        }.into());
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = &state;
+    Ok(state.snapshot(&app))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

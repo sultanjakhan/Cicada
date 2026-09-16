@@ -542,6 +542,7 @@ pub fn run() {
             app_updates::mvp_update_activity,
             app_updates::mvp_update_auto_install,
             app_updates::mvp_update_open_permission,
+            app_updates::mvp_update_confirm,
             mvp_sync::mvp_sync_status,
             mvp_sync::mvp_sync_configure,
             mvp_sync::mvp_sync_set_enabled,
