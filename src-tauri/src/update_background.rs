@@ -28,3 +28,17 @@ pub(crate) async fn run(app: AppHandle) -> Result<i32, String> {
         Ok(0)
     }
 }
+
+#[cfg(all(test, windows))]
+mod tests {
+    #[test]
+    fn running_profile_excludes_updater_but_other_profiles_remain_independent() {
+        let profile = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let interactive = crate::acquire_instance_lock(profile.path()).unwrap();
+        assert!(crate::acquire_instance_lock(profile.path()).is_err());
+        assert!(crate::acquire_instance_lock(other.path()).is_ok());
+        drop(interactive);
+        assert!(crate::acquire_instance_lock(profile.path()).is_ok());
+    }
+}

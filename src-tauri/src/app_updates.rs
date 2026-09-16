@@ -624,7 +624,21 @@ pub fn mvp_update_status(app: AppHandle, state: State<'_, UpdateState>) -> Updat
 /// interactive renderer must clear it whenever an editor, dialog, or active
 /// timer is present.  This does not affect the explicit Settings action.
 #[tauri::command]
-pub fn mvp_update_activity(state: State<'_, UpdateState>, activity: UpdateActivity) {
+pub fn mvp_update_activity(
+    app: AppHandle,
+    state: State<'_, UpdateState>,
+    mut activity: UpdateActivity,
+) {
+    // WebView2 can keep document.visibilityState = visible while its native
+    // window is minimized. Only the OS may widen this part of the UI lease;
+    // the renderer must still report no unsaved edits or pending mutations.
+    #[cfg(not(target_os = "android"))]
+    if let Some(window) = app.get_webview_window("main") {
+        activity.hidden =
+            window.is_minimized().unwrap_or(false) || !window.is_visible().unwrap_or(true);
+    }
+    #[cfg(target_os = "android")]
+    let _ = app;
     state.report_activity(activity, Instant::now());
 }
 
