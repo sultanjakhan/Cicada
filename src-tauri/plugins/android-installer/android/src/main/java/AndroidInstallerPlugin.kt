@@ -118,6 +118,7 @@ internal class InstallStatusStore(context: Context) {
 
     fun sessionId(): Int = prefs.getInt(PREF_SESSION_ID, -1)
     fun versionCode(): Long = prefs.getLong(PREF_VERSION_CODE, 0)
+    fun updatedAtMs(): Long = prefs.getLong(PREF_UPDATED_AT, 0)
     fun token(): String = prefs.getString(PREF_TOKEN, "") ?: ""
     /** One durable state transition before PackageInstaller can issue a callback. */
     fun beginSession(sessionId: Int, token: String, versionCode: Long) {
@@ -204,6 +205,7 @@ class AndroidInstallerPlugin(private val activity: Activity) : Plugin(activity) 
     /** Returns the last PackageInstaller result saved in private app storage. */
     @Command
     fun getInstallStatus(invoke: Invoke) {
+        WorkerSession.reconcile(activity)
         invoke.resolve(InstallStatusStore(activity).status())
     }
 

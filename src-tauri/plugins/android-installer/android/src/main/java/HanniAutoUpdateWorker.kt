@@ -58,6 +58,7 @@ class HanniAutoUpdateWorker(context: Context, params: WorkerParameters) : Corout
             WorkerSession.commit(applicationContext, apk, versionCode)
             Result.success()
         } catch (_: TransientUpdateException) { Result.retry() }
+        catch (_: java.io.IOException) { store.save(STATUS_FAILURE, store.sessionId(), message = "Network update check failed"); Result.retry() }
         catch (error: Exception) { store.save(STATUS_FAILURE, store.sessionId(), message = error.message); Result.success() }
     }
 
@@ -148,10 +149,21 @@ internal object WorkerSession {
     @Synchronized fun reconcile(context: Context): String {
         val store = InstallStatusStore(context)
         val current = store.status().getString("status")
+        if (current == STATUS_PERMISSION_REQUIRED && context.packageManager.canRequestPackageInstalls()) {
+            store.save(STATUS_IDLE, -1, versionCode = store.versionCode().takeIf { it > 0 })
+            return STATUS_IDLE
+        }
         if (current != STATUS_INSTALLING) return current
         val id = store.sessionId()
-        if (context.packageManager.packageInstaller.getSessionInfo(id) != null) return current
-        val resolved = if (InstalledVersion.code(context) >= store.versionCode()) STATUS_SUCCESS else STATUS_FAILURE
+        val session = context.packageManager.packageInstaller.getSessionInfo(id)
+        if (session != null) {
+            val abandonedBeforeCommit = !session.isSealed && !session.isActive &&
+                System.currentTimeMillis() - store.updatedAtMs() > 5 * 60 * 1000
+            if (!abandonedBeforeCommit) return current
+            context.packageManager.packageInstaller.abandonSession(id)
+        }
+        val expectedVersion = store.versionCode()
+        val resolved = if (expectedVersion > 0 && InstalledVersion.code(context) >= expectedVersion) STATUS_SUCCESS else STATUS_FAILURE
         store.save(resolved, id, message = if (resolved == STATUS_FAILURE) "Android installation session disappeared" else null)
         return resolved
     }
