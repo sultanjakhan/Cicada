@@ -10,6 +10,7 @@
 .calendar-now h2 { margin: 0; font-size: clamp(20px, 2.8vw, 28px); line-height: 1.3; font-weight: 650; overflow-wrap: anywhere; }
 .calendar-now .calendar-now__goal h2 { font-size: 18px; }
 .calendar-now .calendar-now__card { border: 1px solid var(--cn-line); border-radius: 16px; background: var(--cn-surface); padding: 28px; min-width: 0; }
+.calendar-now .calendar-now__card + .calendar-now__goal { margin-top:16px; margin-bottom:0; }
 .calendar-now .calendar-now__status { display:flex; align-items:center; gap:8px; color:var(--cn-muted); font-size:13px; margin:0 0 10px; }
 .calendar-now[data-state="active"] .calendar-now__status::before { content:""; flex:none; width:8px; height:8px; border-radius:50%; background:var(--color-green); }
 .calendar-now .calendar-now__meta, .calendar-now .calendar-now__support { color: var(--cn-muted); margin: 14px 0 0; line-height: 1.5; overflow-wrap: anywhere; }

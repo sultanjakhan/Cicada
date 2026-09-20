@@ -1,4 +1,4 @@
-// A read-only projection of existing tasks. Execution remains owned by Calendar Now.
+// Existing task records; all execution actions use the shared Calendar commands.
 const setImportantBadge = (document, host, task) => {
   if (task?.source_type !== 'note' || !Number.isFinite(Number(task?.priority)) || Number(task.priority) < 5) return;
   const badge = document.createElement('span'); badge.className = 'task-importance-badge'; badge.dataset.importantBadge = ''; badge.title = 'Важная задача';
@@ -12,13 +12,14 @@ const PAGE_SIZE = 50;
 let instance = 0;
 
 export function mountCalendarDashboardTasks(element, dependencies) {
-  const { invoke, openTask } = dependencies;
+  const { invoke, openTask, executeAction, notifyChange } = dependencies;
   const now = dependencies.now || (() => new Date());
   const embedded = dependencies.embedded === true;
   const document = element.ownerDocument, window = document.defaultView;
   const prefix = `calendar-task-overview-${++instance}`;
   let rows = null, current = { key: '', state: '' }, date = localDate(now()), followToday = true;
   let disposed = false, revision = 0, loading = false, failed = false, expanded = false, page = 0;
+  let actionBusy = false;
   element.classList.add('calendar-task-overview');
   element.classList.toggle('calendar-task-overview--embedded', embedded);
   element.innerHTML = embedded ? `<div data-overview-embedded aria-live="polite"></div>` : `<section aria-labelledby="${prefix}-title">
@@ -34,6 +35,9 @@ export function mountCalendarDashboardTasks(element, dependencies) {
   </section>`;
   const query = name => element.querySelector(`[data-overview-${name}]`);
   const embeddedHost = query('embedded');
+  const actionMessage = document.createElement('p');
+  actionMessage.className = 'cto-message'; actionMessage.setAttribute('role', 'status');
+  element.append(actionMessage);
   const title = query('title'), toggle = query('toggle'), todayFilter = query('today-filter'), message = query('message'), retry = query('retry');
   const today = query('today'), all = query('all'), groups = query('groups'), pagination = query('pagination');
   const dateLabel = value => {
@@ -70,6 +74,13 @@ export function mountCalendarDashboardTasks(element, dependencies) {
       else if (row.has_work || row.actual_minutes > 0) parts.push('На паузе');
       meta.textContent = parts.join(' · ');
       button.append(titleWrap); if (parts.length) button.append(meta); item.append(button);
+      if (executeAction) {
+        const run = document.createElement('button'); run.type = 'button'; run.className = 'cto-execute';
+        run.dataset.overviewExecute = taskKey(row); run.dataset.overviewScope = scope;
+        run.textContent = row.is_active ? 'Пауза' : row.has_work || row.actual_minutes > 0 ? 'Продолжить' : 'Начать';
+        run.setAttribute('aria-label', `${run.textContent}: ${row.title}`); run.disabled = actionBusy;
+        item.append(run);
+      }
       if (dependencies.mountMenu) {
         const more = document.createElement('button'); more.type = 'button'; more.className = 'cto-task-more'; more.textContent = '⋯';
         more.dataset.recordMenu = ''; more.dataset.overviewMenuTask = taskKey(row); more.dataset.overviewScope = scope;
@@ -168,12 +179,37 @@ export function mountCalendarDashboardTasks(element, dependencies) {
     if (!embedded && (button === toggle || button === todayFilter)) { expanded = button === toggle; page = 0; render(); }
     else if (!embedded && button === retry) void refresh();
     else if (!embedded && (button === query('prev') || button === query('next'))) { page += button === query('prev') ? -1 : 1; render(); title.focus(); }
+    else if ('overviewExecute' in button.dataset) {
+      const row = rows?.find(value => taskKey(value) === button.dataset.overviewExecute);
+      if (row) void execute(row);
+    }
     else if ('overviewTask' in button.dataset) {
       const key = button.dataset.overviewTask, scope = button.dataset.overviewScope;
       const row = rows?.find(value => taskKey(value) === key);
       if (row && openTask) openTask(row, () => { if (!disposed && element.isConnected) (findRowButton(key, scope) || title).focus(); });
     }
   };
+  async function execute(row) {
+    if (disposed || actionBusy) return;
+    actionBusy = true; actionMessage.textContent = ''; actionMessage.setAttribute('role', 'status'); render();
+    try {
+      const result = await executeAction(row, row.is_active ? 'pause' : 'start');
+      if(result===false)return;
+      notifyChange?.();
+      if (!disposed) { await refresh(); actionMessage.textContent = row.is_active ? 'Задача на паузе.' : 'Задача в работе.'; }
+    } catch (error) {
+      if (error?.refreshRequired) notifyChange?.();
+      if (!disposed) { await refresh(); actionMessage.setAttribute('role', 'alert'); actionMessage.textContent = error?.message || 'Не удалось выполнить действие. Попробуй ещё раз.'; }
+    } finally {
+      actionBusy = false;
+      if (!disposed) {
+        render();
+        const button = [...element.querySelectorAll('[data-overview-execute]')].find(value => value.dataset.overviewExecute === taskKey(row));
+        if (button) button.focus({preventScroll:true});
+        else { actionMessage.tabIndex = -1; actionMessage.focus({preventScroll:true}); }
+      }
+    }
+  }
   const onExternal = event => { void refresh(event.detail?.remoteSync ? event.detail.canCommit : null); };
   const onKey = event => { if (!embedded && event.key === 'Escape' && expanded && all.contains(event.target)) { event.preventDefault(); event.stopPropagation(); expanded = false; page = 0; render(); todayFilter.focus(); } };
   element.addEventListener('click', onClick);

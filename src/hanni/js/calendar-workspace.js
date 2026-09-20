@@ -15,6 +15,8 @@ import { planCalendarTaskForDay } from './calendar-task-planning.js';
 import { mountCalendarContextMenu } from './calendar-context-menu.js';
 import { createCalendarDialog } from './calendar-dialog.js';
 import { mountCalendarRecurring } from './calendar-recurring.js';
+import { openRecurringRun } from './calendar-routine-execution.js';
+import { startCalendarExecution } from './calendar-execution.js';
 import { mountCalendarDayBanner } from './calendar-day-banner.js';
 import { loadCalendarPreferences } from './calendar-display-preferences.js';
 import { mountGoalDevelopment, mountGoalDevelopmentSummary, attachDevelopmentTask } from './calendar-development.js';
@@ -73,12 +75,14 @@ function openGoalDevelopment(goal, selection = {}) {
 const key = (r) => `${r.source_type}:${r.source_id}`;
 const changed = () => { window.dispatchEvent(new Event('task-state-changed')); window.dispatchEvent(new Event('hanni:calendar-refresh')); };
 
-export async function executeCalendarTaskAction(record, action) {
+export async function executeCalendarTaskAction(record, action, { allowSwitch = false } = {}) {
   if (record.source_type !== 'note' || record.readonly || record.completed || record.archived || ['done', 'skipped', 'missed'].includes(record.status_extra)) throw new Error('Эта задача уже недоступна для выполнения. Обнови календарь.');
   const active = await invoke('get_active_block', {});
   const sameTask = active?.source_type === 'note' && String(active.source_id) === String(record.source_id);
   if (action === 'start') {
+    if (allowSwitch) return (await startCalendarExecution(invoke, record, document)) !== null;
     if (active && !sameTask) throw new Error('Уже выполняется другая задача. Сначала поставь её на паузу.');
+    if (sameTask) return;
     await invoke('start_task_block', { sourceType: 'note', sourceId: String(record.source_id), failIfActive: true, completionDate: record.date || views.iso(new Date()) });
   } else if (action === 'pause') {
     if (!sameTask) throw new Error('Состояние задачи изменилось. Обнови календарь перед паузой.');
@@ -509,7 +513,7 @@ export async function loadCalendarWorkspace(el) {
     renderDash: (pane) => {
       pane.innerHTML = '<div data-calendar-day-banner></div><div data-calendar-now></div><div data-calendar-recurring></div>';
       disposeDayBanner = mountCalendarDayBanner(pane.querySelector('[data-calendar-day-banner]'),{invoke});
-      const taskOptions = { invoke, mountMenu:mountRecordMenu, openTask:(row,returnFocus)=>showRecord(calendarRecord(row),returnFocus) };
+      const taskOptions = { invoke, mountMenu:mountRecordMenu, openTask:(row,returnFocus)=>showRecord(calendarRecord(row),returnFocus), executeAction:(row,action)=>executeCalendarTaskAction(calendarRecord(row),action,{allowSwitch:true}), notifyChange:changed };
       const showAllTasks = () => {
         if(tasksDialog)return;
         const dialog=createCalendarDialog({document,title:'Все задачи',onClose:()=>{disposeTasks?.();disposeTasks=null;tasksDialog=null;}});
@@ -525,7 +529,11 @@ export async function loadCalendarWorkspace(el) {
       disposeNow = mountCalendarNow(pane.querySelector('[data-calendar-now]'), {
         openGoalDetails:openGoalDevelopment,
         mountGoalSummary:(host,goal)=>mountGoalDevelopmentSummary(host,{invoke,goalId:goal.id,onOpen:selection=>openGoalDevelopment(goal,selection)}),
-        openTaskDetails: (row, restore) => showRecord(calendarRecord({ ...row, date: row.date || row.completion_date || null }), restore),
+        openTaskDetails: (row, restore) => {
+          if(row.source_type==='schedule'){
+            const [id,date]=JSON.parse(row.source_id);openRecurringRun({document,invoke,id,date});
+          }else showRecord(calendarRecord({ ...row, date: row.date || row.completion_date || null }), restore);
+        },
         openGoals: async id => {
           await openPane('goals');
           if (id != null && S.activeTab === 'calendar' && S._unifiedPane.calendar === 'goals') el.querySelector(`[data-edit-goal="${id}"]`)?.focus();
@@ -541,7 +549,7 @@ export async function loadCalendarWorkspace(el) {
         invoke, state:tasksPaneState, mountMenu:mountRecordMenu, notifyChange:changed,
         openTask:(row,restore) => showRecord(calendarRecord(row),restore),
         editDate:(row,restore) => taskEditor(calendarRecord(row),restore,'date',()=>revision===workspaceRevision && pane.isConnected),
-        executeAction:(row,action) => executeCalendarTaskAction(calendarRecord(row),action),
+        executeAction:(row,action) => executeCalendarTaskAction(calendarRecord(row),action,{allowSwitch:true}),
       });
     },
     renderGoals: async (pane) => {

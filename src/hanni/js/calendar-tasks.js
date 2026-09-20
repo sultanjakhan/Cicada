@@ -62,7 +62,12 @@ export function mountCalendarTasks(host, dependencies) {
       const estimate=node('span','ct-estimate',row.duration_minutes>0?`${row.duration_minutes} мин`:'');
       const more=control('ct-more','⋯',()=>{});more.dataset.recordMenu='';more.setAttribute('aria-label',`Действия: ${row.title}`);more.setAttribute('aria-haspopup','menu');more.setAttribute('aria-expanded','false');more.disabled=busy;
       for(const [button,action] of [[title,'open'],[date,'date'],[more,'menu'],[complete,'finish']]){button.dataset.taskId=id;button.dataset.taskControl=action;}
-      item.append(complete,content,estimate,date,more);ul.append(item);
+      const execution = node('span','ct-execution');
+      if (!closed(row)) {
+        const run = control('ct-run',row.is_active?'Пауза':row.has_work||row.actual_minutes>0?'Продолжить':'Начать',()=>void finish(row,row.is_active?'pause':'start'));
+        run.disabled=busy;run.dataset.taskId=id;run.dataset.taskControl='execute';run.setAttribute('aria-label',`${run.textContent}: ${row.title}`);execution.append(run);
+      }
+      item.append(complete,content,estimate,date,execution,more);ul.append(item);
     }
     if(!visible.length)list.append(node('p','ct-empty',query||state.goal?'Нет задач с такими условиями. Измени поиск или фильтры.':state.filter==='completed'?'Завершённых задач пока нет.':state.filter==='undated'?'Все задачи распределены по дням.':state.filter==='today'?'На сегодня задач нет.':'Задач пока нет. Добавь первую кнопкой «Новая задача» выше.'));
     q('pages').hidden=visible.length<=50;q('prev').disabled=state.page===0;q('next').disabled=(state.page+1)*50>=visible.length;
@@ -83,10 +88,10 @@ export function mountCalendarTasks(host, dependencies) {
     }catch{if(!disposed&&request===revision){message.textContent=ready?'Не удалось обновить задачи. Показан предыдущий список.':'Не удалось загрузить задачи. Это не означает, что список пуст.';q('retry').hidden=false;}}
     finally{if(!disposed&&request===revision)host.removeAttribute('aria-busy');}
   }
-  async function finish(row){
+  async function finish(row,action='finish'){
     if(busy||disposed)return;busy=true;revision++;feedback='';message.textContent='';render();
-    try{await executeAction(row,'finish');notifyChange();busy=false;await refresh();if(!disposed){feedback='Задача завершена.';message.textContent=feedback;restore(taskKey(row));}}
-    catch(error){busy=false;await refresh();if(!disposed){feedback=error?.message||'Не удалось завершить задачу.';message.textContent=feedback;message.setAttribute('role','alert');}}
+    try{const result=await executeAction(row,action);if(result===false)return;notifyChange();busy=false;await refresh();if(!disposed){feedback={start:'Задача в работе.',pause:'Задача на паузе.',finish:'Задача завершена.'}[action];message.textContent=feedback;message.setAttribute('role','status');restore(taskKey(row),action==='finish'?'open':'execute');}}
+    catch(error){if(error?.refreshRequired)notifyChange();busy=false;await refresh();if(!disposed){feedback=error?.message||'Не удалось выполнить действие.';message.textContent=feedback;message.setAttribute('role','alert');}}
     finally{busy=false;render();}
   }
   const disposeMenu=mountMenu?.(host,{getRecord:item=>rows.find(row=>taskKey(row)===item.dataset.contextRecord),restoreFocus:(item,trigger)=>restore(item.dataset.contextRecord,'recordMenu' in trigger.dataset?'menu':'open')});

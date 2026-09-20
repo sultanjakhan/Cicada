@@ -15,6 +15,10 @@ function planFields(fields, old, today, id) {
   for (const date of [plan.startsOn,plan.endsOn,plan.createdOn]) if (date && !validDate(date)) throw Error('Проверь дату.');
   if (plan.endsOn && plan.endsOn < (plan.startsOn || plan.createdOn)) throw Error('Конец курса должен быть не раньше начала.');
   if (plan.time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(plan.time)) throw Error('Проверь время.');
+  plan.mode = fields.mode || 'check';
+  if (!['check','activity','chain'].includes(plan.mode) || plan.kind==='rule' && plan.mode!=='check') throw Error('Правило можно только отмечать.');
+  plan.steps = plan.mode==='chain' ? (fields.steps || []).map(step=>({title:String(step.title||'').trim()})) : [];
+  if (plan.mode==='chain' && (!plan.steps.length || plan.steps.length>50 || plan.steps.some(step=>!step.title || step.title.length>160))) throw Error('Укажи от 1 до 50 шагов, до 160 символов каждый.');
   return plan;
 }
 export function parseRecurring(raw) {
@@ -33,6 +37,7 @@ export function parseRecurring(raw) {
       for (const [id,record] of Object.entries(records)) {
         if (record.snapshot.id!==id || !allowed(record.snapshot.kind).includes(record.status)) throw Error();
         planFields(record.snapshot,record.snapshot,day,id);
+        if (record.run && (!Array.isArray(record.run.steps) || !record.run.steps.length || record.run.steps.length>50 || record.run.steps.some(step=>typeof step.title!=='string'||!step.title.trim()||step.title.length>160||!['pending','done','skipped'].includes(step.status)))) throw Error();
       }
     }
   } catch { throw Error('Не удалось прочитать дела и правила. Сохранённые данные не изменены.'); }
@@ -45,7 +50,7 @@ export function recurringItems(state,date) {
   if (!validDate(date)) throw Error('Выбери корректную дату.');
   const records=state.days[date]||{};
   const plans=new Map(state.plans.filter(plan=>applies(plan,date)).map(plan=>[plan.id,{...plan,status:'pending'}]));
-  for (const [id,record] of Object.entries(records)) plans.set(id,{...record.snapshot,status:record.status});
+  for (const [id,record] of Object.entries(records)) plans.set(id,{...record.snapshot,status:record.status,run:record.run});
   return [...plans.values()].sort((a,b)=>(a.time||'99').localeCompare(b.time||'99')||a.title.localeCompare(b.title,'ru'));
 }
 export function createRecurringStore(invoke,{now=()=>new Date(),uuid=()=>crypto.randomUUID()}={}) {
@@ -69,7 +74,7 @@ export function createRecurringStore(invoke,{now=()=>new Date(),uuid=()=>crypto.
       const plan=planFields(fields,old,dateKey(now()),id||uuid());
       if (old) state.plans[state.plans.indexOf(old)]=plan; else state.plans.push(plan);
       const record=state.days[dateKey(now())]?.[plan.id];
-      if (record) record.snapshot=clone(plan);
+      if (record && !record.run && record.status==='pending') record.snapshot=clone(plan);
       return plan.id;
     }); },
     setStatus(id,status,date=dateKey(now())) { return update(state=>{
@@ -78,8 +83,29 @@ export function createRecurringStore(invoke,{now=()=>new Date(),uuid=()=>crypto.
       const plan=record?.snapshot||state.plans.find(item=>item.id===id);
       if (!plan || (!record&&!applies(plan,date))) throw Error('На этот день повторение не запланировано.');
       if (!allowed(plan.kind).includes(status)) throw Error('Недопустимая отметка.');
+      if (record?.run) throw Error('Открой выполнение, чтобы завершить или пропустить его шаг.');
       state.days[date]||={};
       state.days[date][id]={snapshot:clone(plan),status};
     }); },
+    ensureRun(id,date=dateKey(now())) { return update(state=>{
+      if (!validDate(date) || date>dateKey(now())) throw Error('Запустить можно только наступившее занятие.');
+      const unfinished=Object.entries(state.days).find(([,records])=>records[id]?.run&&records[id].status==='pending');
+      if(unfinished)return {id,date:unfinished[0]};
+      const previous=state.days[date]?.[id];
+      if(previous?.run || previous && previous.status!=='pending') throw Error('Это выполнение уже отмечено. История сохранена.');
+      if(date!==dateKey(now()))throw Error('Новое выполнение начинается сегодня.');
+      const plan=state.plans.find(item=>item.id===id);
+      if(!plan?.active || plan.kind!=='action' || !['activity','chain'].includes(plan.mode))throw Error('Это занятие недоступно для запуска.');
+      const snapshot=clone(plan);
+      const steps=(plan.mode==='chain'?plan.steps:[{title:plan.title}]).map(step=>({title:step.title,status:'pending'}));
+      state.days[date]||={};state.days[date][id]={snapshot,status:'pending',run:{steps,createdAt:now().toISOString()}};
+      return {id,date};
+    }); },
   };
+}
+
+export const recurringSourceId = (id,date,index) => JSON.stringify([id,date,index]);
+export function unfinishedRun(state,id) {
+  const found=Object.entries(state.days).find(([,records])=>records[id]?.run&&records[id].status==='pending');
+  return found ? {date:found[0],record:found[1][id]} : null;
 }

@@ -3,6 +3,7 @@ import { rankTasks as defaultRankTasks } from './task-picker-sort.js';
 import { loadCategoryWeights } from './task-picker-view.js';
 import { ICONS } from './icons.js';
 import { createCalendarDialog } from './calendar-dialog.js';
+import { startCalendarExecution } from './calendar-execution.js';
 
 const buttonContent = (icon, label) => `<span class="calendar-now__button-icon" aria-hidden="true">${ICONS[icon]}</span><span data-action-label>${label}</span>`;
 
@@ -24,7 +25,7 @@ const validDate = value => {
   const date = new Date(`${value}T12:00:00`);
   return Number.isFinite(date.getTime()) && dateOf(date) === value ? value : null;
 };
-const freshState = () => ({ version: 1, goalId: null, selectionMode: 'auto', selection: null, execution: null, completed: null });
+const freshState = () => ({ version: 1, goalId: null, selectionMode: 'auto', selection: null, execution: null, completed: null, returnTo: null });
 const taskOf = row => ({
   source_type: row.source_type, source_id: String(row.source_id),
   title: row.title || 'Без названия',
@@ -44,6 +45,7 @@ function restoreState(raw) {
     execution: value.execution && Number.isSafeInteger(value.execution.blockId) && /^\d{4}-\d{2}-\d{2}$/.test(value.execution.date) && validTask(value.execution.task)
       ? { blockId: value.execution.blockId, date: value.execution.date, task: taskOf(value.execution.task) } : null,
     completed: validTask(value.completed) ? taskOf(value.completed) : null,
+    returnTo: validTask(value.returnTo) ? taskOf(value.returnTo) : null,
   };
 }
 
@@ -71,18 +73,6 @@ export function mountCalendarNow(element, dependencies = {}) {
   element.classList.add('calendar-now');
   element.classList.toggle('calendar-now--compact', dependencies.compact === true);
   element.innerHTML = `
-    <section class="calendar-now__goal" aria-labelledby="${prefix}-goal-label ${prefix}-goal-title">
-      <div class="calendar-now__goal-top"><p class="calendar-now__eyebrow" id="${prefix}-goal-label"><span class="calendar-now__goal-symbol" aria-hidden="true">${ICONS.flag}</span>Главная цель</p><button type="button" data-action="open-goal" class="calendar-now__quiet" aria-label="Сменить главную цель" aria-haspopup="dialog"><span class="calendar-now__button-icon" data-ui="goal-change-icon" aria-hidden="true" hidden>${ICONS.cycle}</span><span data-action-label>Выбрать цель</span></button></div>
-      <h2 id="${prefix}-goal-title"><button type="button" data-action="goal-details" class="calendar-now__goal-link" title="Открыть цель" aria-haspopup="dialog" hidden><span data-ui="goal-title"></span></button><span data-ui="goal-empty"></span></h2>
-      <span data-ui="goal-status" class="calendar-now__goal-status" hidden></span>
-      <p data-ui="goal-stage" class="calendar-now__goal-stage" hidden></p>
-      <p data-ui="goal-meta" class="calendar-now__goal-meta" hidden></p>
-      <p data-ui="goal-hint" class="calendar-now__goal-hint" hidden></p>
-      <div data-goal-development hidden></div>
-      <div class="calendar-now__goal-actions">
-        <button type="button" data-action="browse-goals" class="calendar-now__quiet" hidden>Все цели</button>
-      </div>
-    </section>
     <section class="calendar-now__card" data-ui="card" tabindex="-1" aria-labelledby="${prefix}-title" aria-busy="true">
       <p class="calendar-now__eyebrow">Текущая задача</p>
       <p data-ui="status" class="calendar-now__status" hidden></p>
@@ -98,6 +88,7 @@ export function mountCalendarNow(element, dependencies = {}) {
         <button type="button" data-action="next" class="calendar-now__primary" hidden>${buttonContent('arrowRight', 'Следующая задача')}</button>
         <button type="button" data-action="choose-goal" class="calendar-now__primary" hidden>${buttonContent('target', 'Выбрать цель')}</button>
         <button type="button" data-action="calendar" class="calendar-now__secondary" hidden>${buttonContent('calendar', 'Открыть календарь')}</button>
+        <button type="button" data-action="return" class="calendar-now__quiet" hidden></button>
       </div>
       <form data-ui="task-form" id="${prefix}-tasks" class="calendar-now__picker" hidden>
         <div data-ui="task-alternatives" class="calendar-now__alternatives"></div>
@@ -108,6 +99,18 @@ export function mountCalendarNow(element, dependencies = {}) {
           <div class="calendar-now__picker-actions"><button type="submit" class="calendar-now__primary">Выбрать</button><button type="button" data-action="auto" class="calendar-now__quiet">По рекомендации</button></div>
         </div>
       </form>
+    </section>
+    <section class="calendar-now__goal" aria-labelledby="${prefix}-goal-label ${prefix}-goal-title">
+      <div class="calendar-now__goal-top"><p class="calendar-now__eyebrow" id="${prefix}-goal-label"><span class="calendar-now__goal-symbol" aria-hidden="true">${ICONS.flag}</span>Главная цель</p><button type="button" data-action="open-goal" class="calendar-now__quiet" aria-label="Сменить главную цель" aria-haspopup="dialog"><span class="calendar-now__button-icon" data-ui="goal-change-icon" aria-hidden="true" hidden>${ICONS.cycle}</span><span data-action-label>Выбрать цель</span></button></div>
+      <h2 id="${prefix}-goal-title"><button type="button" data-action="goal-details" class="calendar-now__goal-link" title="Открыть цель" aria-haspopup="dialog" hidden><span data-ui="goal-title"></span></button><span data-ui="goal-empty"></span></h2>
+      <span data-ui="goal-status" class="calendar-now__goal-status" hidden></span>
+      <p data-ui="goal-stage" class="calendar-now__goal-stage" hidden></p>
+      <p data-ui="goal-meta" class="calendar-now__goal-meta" hidden></p>
+      <p data-ui="goal-hint" class="calendar-now__goal-hint" hidden></p>
+      <div data-goal-development hidden></div>
+      <div class="calendar-now__goal-actions">
+        <button type="button" data-action="browse-goals" class="calendar-now__quiet" hidden>Все цели</button>
+      </div>
     </section>
     <div data-ui="error" class="calendar-now__error" role="alert" hidden><p data-ui="error-text"></p><button type="button" data-action="retry" class="calendar-now__secondary">Повторить</button></div>
     <span data-ui="live" class="calendar-now__sr" role="status" aria-live="polite"></span>`;
@@ -424,7 +427,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     actions['open-goal'].title = active ? 'Для смены цели поставь задачу на паузу' : '';
     const status = { active: 'В работе', paused: 'На паузе', completed: 'Завершено' }[currentState];
     ui.status.textContent = status || ''; ui.status.hidden = !status;
-    ui.title.textContent = task?.title || (!snapshot ? 'Загружаем текущую задачу…' : !selectedGoal() ? 'Выбери главную цель выше — здесь появится задача.' : 'Для этой цели пока нет подходящей задачи.');
+    ui.title.textContent = task?.title || (!snapshot ? 'Загружаем текущую задачу…' : !selectedGoal() ? 'Начни задачу из списка или выбери цель.' : 'Для этой цели пока нет подходящей задачи.');
     setImportantBadge(document, ui.title.parentElement, task);
     const canOpenTask = !!task && !!dependencies.openTaskDetails;
     actions['task-details'].hidden = !canOpenTask;
@@ -435,6 +438,8 @@ export function mountCalendarNow(element, dependencies = {}) {
     ui.support.hidden = currentState !== 'empty' || !selectedGoal();
     ui.support.textContent = selectedGoal() ? 'Свяжи задачу с целью в календаре. Запуск остаётся твоим решением.' : '';
     const visible = currentState === 'active' ? ['pause', 'finish', 'switch-task'] : currentState === 'paused' ? ['start', 'finish', 'switch-task'] : currentState === 'completed' ? ['next'] : currentState === 'recommendation' ? ['start', 'open-task'] : currentState === 'empty' && selectedGoal() ? ['calendar'] : [];
+    if(saved.returnTo && keyOf(saved.returnTo)!==keyOf(task))visible.push('return');
+    actions.return.textContent=saved.returnTo?`Вернуться: ${saved.returnTo.title}`:'';
     for (const button of ui.card.querySelectorAll('.calendar-now__actions button')) {
       button.hidden = !visible.includes(button.dataset.action); button.disabled = busy || reading || !!failure;
     }
@@ -510,6 +515,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     const before = JSON.stringify(state);
     if (active) {
       const task = await resolveTask(active, planned, state);
+      if(state.execution && keyOf(state.execution.task)!==keyOf(task))state.returnTo=taskOf(state.execution.task);
       state.execution = { blockId: Number(active.id), date: active.date, task }; state.completed = null;
     } else if (state.execution) {
       const block = blocks.find(item => Number(item.id) === state.execution.blockId);
@@ -529,12 +535,13 @@ export function mountCalendarNow(element, dependencies = {}) {
           state.execution = null; state.selection = null; state.selectionMode = 'auto';
         }
       }
+      if(block && !task && state.execution?.task.source_type==='schedule')task=(await api('get_schedules',{})).find(row=>String(row.id)===String(state.execution.task.source_id));
       if (block && task) {
         const previous = state.execution.task;
         state.execution.task = taskOf({ ...previous, ...task, source_type: previous.source_type, source_id: previous.source_id, completion_date: previous.completion_date });
       }
       if (!block) { state.execution = null; state.selection = null; state.selectionMode = 'auto'; }
-      else if (task?.completed || task?.status_extra === 'done') { state.completed = state.execution.task; state.execution = null; }
+      else if (task?.completed || ['done','skipped'].includes(task?.status_extra)) { state.completed = state.execution.task; state.execution = null; }
     }
     const timedTask = state.execution?.task || state.completed;
     const workTime = timedTask ? { key: keyOf(timedTask), occurrence: timedTask.completion_date,
@@ -591,12 +598,15 @@ export function mountCalendarNow(element, dependencies = {}) {
       saved.completed = null; saved.selection = null; saved.selectionMode = 'auto';
     } else {
       const active = await api('get_active_block', {});
-      if (operation.kind === 'start') {
-        if (active && keyOf(active) !== keyOf(operation.task)) throw new Error('different-active');
-        const blockId = active?.id ?? await api('start_task_block', {
+      if (operation.kind === 'start' || operation.kind === 'return') {
+        if (operation.kind==='start' && active && keyOf(active) !== keyOf(operation.task)) throw new Error('different-active');
+        const blockId = operation.kind==='return' ? await startCalendarExecution(api,operation.task,document) : active?.id ?? await api('start_task_block', {
           sourceType: operation.task.source_type, sourceId: String(operation.task.source_id), failIfActive: true,
           completionDate: operation.task.completion_date || operation.task.date || localDate(),
         });
+        if(blockId===null){operation.cancelled=true;return;}
+        if(saved.execution && keyOf(saved.execution.task)!==keyOf(operation.task))saved.returnTo=taskOf(saved.execution.task);
+        else if(keyOf(saved.returnTo)===keyOf(operation.task))saved.returnTo=null;
         saved.execution = { blockId: Number(blockId), date: active?.date || localDate(), task: taskOf(operation.task) }; saved.completed = null;
       } else {
         if (active && Number(active.id) !== operation.execution.blockId) throw new Error('different-active');
@@ -607,6 +617,7 @@ export function mountCalendarNow(element, dependencies = {}) {
             if (!blocks.some(block => Number(block.id) === operation.execution.blockId && !block.is_active)) throw new Error('missing-block');
           }
           if (operation.kind === 'switch-task') {
+            saved.returnTo=taskOf(operation.execution.task);
             saved.execution = null; saved.completed = null; saved.selection = null; saved.selectionMode = 'auto';
           } else saved.execution = operation.execution;
         } else {
@@ -632,6 +643,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     busy = true; stateVersion++; failure = null; closePicker(); render();
     try {
       if (!operation.phase || operation.phase === 'action') { operation.phase = 'action'; await perform(operation); operation.phase = 'save'; }
+      if(operation.cancelled)return;
       if (disposed) return;
       if (operation.phase === 'save') { await persist(); operation.phase = 'refresh'; }
       await fetchSnapshot();
@@ -704,7 +716,8 @@ export function mountCalendarNow(element, dependencies = {}) {
       if (task) void run({ kind: 'select', task: taskOf(task) });
       return;
     }
-    if (action === 'start') { const task = chosenTask(); if (task) void run({ kind: 'start', task: taskOf(task) }); }
+    if(action==='return' && saved.returnTo){void run({kind:'return',task:taskOf(saved.returnTo)});}
+    else if (action === 'start') { const task = chosenTask(); if (task) void run({ kind: 'start', task: taskOf(task) }); }
     else if (action === 'pause' || action === 'finish' || action === 'switch-task') { if (saved.execution) void run({ kind: action, execution: structuredClone(saved.execution) }); }
     else if (action === 'next' || action === 'auto') void run({ kind: action });
   };

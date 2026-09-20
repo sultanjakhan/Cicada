@@ -19,7 +19,7 @@ const{
 = require('jsdom');
 const toData = source => 'data:text/javascript;base64,' + Buffer.from(source).toString('base64');
 const source = fs.readFileSync(path.join(root, 'src/hanni/js/calendar-now.js'), 'utf8') .replace(/^import .*state\.js';$/m, 'const defaultInvoke = () => { throw new Error("Inject invoke in tests"); };') .replace(/^import .*task-picker-sort\.js';$/m, 'const defaultRankTasks = items => items;') .replace(/^import .*task-picker-view\.js';$/m, 'const loadCategoryWeights = async () => ({});') .replace("'./icons.js'", JSON.stringify(toData(fs.readFileSync(path.join(root, 'src/hanni/js/icons.js'), 'utf8')))) .replace("'./calendar-dialog.js'", JSON.stringify(toData(fs.readFileSync(path.join(root, 'src/hanni/js/calendar-dialog.js'), 'utf8'))));
-const modulePromise = import(toData(source));
+const modulePromise = import(toData(source.replace("'./calendar-execution.js'", JSON.stringify(new URL('../src/hanni/js/calendar-execution.js', import.meta.url).href))));
 const rankPromise = import(toData(fs.readFileSync(path.join(root, 'src/hanni/js/task-picker-sort.js'), 'utf8')));
 const clone = value => structuredClone(value);
 const blank = () => ({
@@ -1140,6 +1140,20 @@ for (const paused of [false, true]) test(`switching a ${paused ? 'paused' : 'run
    assert.equal(y.host.dataset.state, 'recommendation');
    assert.equal(y.data.blocks[0].duration_minutes, 12);
    assert.equal(y.action('switch-task').hidden, true);
+});
+
+test('return keeps the previous task across restart without starting it automatically', async t => {
+   const x=await mount(t);
+   await x.choose('task','note:task-a');await x.click('start');await x.click('pause');await x.click('switch-task');
+   const starts=x.data.count('start_task_block');
+   assert.equal(JSON.parse(x.data.stored).returnTo.source_id,'task-a');
+   x.cleanup();const y=await mount(t,x.data);
+   assert.equal(y.data.count('start_task_block'),starts);
+   assert.equal(y.action('return').hidden,false);
+   await y.click('return');
+   assert.equal(y.host.dataset.state,'active');
+   assert.equal(JSON.parse(y.data.stored).execution.task.source_id,'task-a');
+   assert.equal(y.data.count('finish_task_block'),0);
 });
 
 test('switch retry saves an already paused task without executing pause again', async t => {

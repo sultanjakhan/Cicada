@@ -1,0 +1,24 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+import { startCalendarExecution } from '../src/hanni/js/calendar-execution.js';
+const settle=()=>new Promise(resolve=>setImmediate(resolve));
+test('switch names previous work, cancellation preserves it, stale confirmation cannot stop different work',async t=>{
+  const dom=new JSDOM('<main></main>');t.after(()=>dom.window.close());
+  dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};
+  dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;this.dispatchEvent(new dom.window.Event('close'));};
+  let active={id:1,source_type:'note',source_id:'old'},calls=[];
+  const invoke=async(name,args)=>{calls.push(name);if(name==='get_active_block')return active;if(name==='get_note')return{title:'Предыдущая работа'};if(name==='pause_task_block'){assert.equal(args.blockId,1);active=null;return;}if(name==='start_task_block')return 2;throw Error(name);};
+  const task={source_type:'note',source_id:'next',title:'Следующая работа',date:'2026-09-20'};
+  const cancelled=startCalendarExecution(invoke,task,dom.window.document);await settle();
+  assert.match(dom.window.document.querySelector('dialog').textContent,/Предыдущая работа/);
+  dom.window.document.querySelector('[data-dialog-close]').click();assert.equal(await cancelled,null);
+  assert.equal(calls.includes('pause_task_block'),false);
+  const stale=startCalendarExecution(invoke,task,dom.window.document);await settle();active={...active,id:3};
+  dom.window.document.querySelector('form').dispatchEvent(new dom.window.Event('submit',{cancelable:true}));
+  await assert.rejects(stale,/изменилась/);assert.equal(calls.includes('pause_task_block'),false);
+  active={id:1,source_type:'note',source_id:'old'};
+  const switched=startCalendarExecution(invoke,task,dom.window.document);await settle();
+  dom.window.document.querySelector('form').dispatchEvent(new dom.window.Event('submit',{cancelable:true}));
+  assert.equal(await switched,2);assert.equal(calls.filter(name=>name==='pause_task_block').length,1);
+});

@@ -17,6 +17,9 @@
 .calendar-task-overview :focus-visible { outline: 3px solid var(--cto-focus, #216e4e); outline-offset: 3px; }
 [data-theme="dark"] .calendar-task-overview { --cto-focus: #8acfa9; }
 .calendar-task-overview .cto-list { list-style: none; margin: 0; padding: 0; }
+.calendar-task-overview .cto-list li { display:flex; align-items:center; gap:8px; }
+.calendar-task-overview .cto-task { flex:1; min-width:0; }
+.calendar-task-overview .cto-execute { flex:none; font-size:13px; }
 .calendar-task-overview .cto-list li { margin: 0; border-bottom: 1px solid var(--border-subtle); }
 .calendar-task-overview .cto-list li:last-child { border-bottom:0; }
 .calendar-task-overview .cto-task { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 12px; text-align: left; padding: 12px 4px; border: 0; border-radius: 0; background: transparent; }

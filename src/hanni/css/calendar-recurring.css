@@ -15,3 +15,14 @@
 @media(max-width:740px){.calendar-recurring--today .calendar-recurring__card{padding:18px}.calendar-recurring__heading{align-items:flex-start;flex-direction:column}.calendar-recurring__tools{width:100%;justify-content:space-between}.calendar-recurring--today .calendar-recurring__row{gap:12px;flex-wrap:wrap}.calendar-recurring__copy{flex-basis:100%}.calendar-recurring--today .calendar-recurring__marks{flex-wrap:wrap}.calendar-recurring__section{flex-wrap:wrap;gap:12px}}
 
 .calendar-recurring__tools .calendar-recurring__text{min-height:32px;padding:8px 4px}
+.calendar-routine-library-row { display:flex; align-items:center; gap:8px; min-width:0; }
+.calendar-routine-library-row > [data-recurring-edit] { flex:1; min-width:0; }
+.calendar-routine-library-row[hidden] { display:none; }
+.calendar-routine-controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.calendar-routine-controls input { flex:1; min-width:140px; }
+.calendar-routine-controls button, .calendar-routine-library-row > button { min-height:44px; }
+.calendar-routine-steps { margin:0 0 16px; padding-left:24px; }
+.calendar-routine-steps li { padding:8px 0 8px 4px; }
+.calendar-routine-steps li > span { overflow-wrap:anywhere; }
+.calendar-routine-steps small { display:block; margin-top:3px; color:var(--text-secondary); }
+.calendar-routine-steps [aria-current] { font-weight:600; }

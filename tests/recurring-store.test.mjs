@@ -12,6 +12,29 @@ test('concurrent controllers serialize updates against latest snapshot',async()=
 test('new plan without start cannot appear before creation',async()=>{const {store}=setup();const {state}=await store.savePlan({...action,startsOn:''});assert.equal(recurringItems(state,'2026-09-12').length,0);});
 test('invalid snapshots never silently reset data',()=>{assert.throws(()=>parseRecurring('{'));assert.throws(()=>parseRecurring('{"version":2,"plans":[],"days":{}}'));});
 
+test('a runnable occurrence is stable across retries, definition edits and midnight',async()=>{
+  const x=setup();
+  const fields={...action,mode:'chain',steps:[{title:'Prepare'},{title:'Practice'},{title:'Review'}]};
+  const {result:id}=await x.store.savePlan(fields);
+  const first=await x.store.ensureRun(id);
+  assert.deepEqual(first.result,{id,date:'2026-09-13'});
+  const original=JSON.stringify(first.state.days['2026-09-13'][id]);
+  await x.store.savePlan({...fields,title:'Edited',steps:[{title:'Replacement'}]},id);
+  assert.equal(JSON.stringify((await x.store.read()).days['2026-09-13'][id]),original);
+  x.advance();
+  const resumed=await x.store.ensureRun(id);
+  assert.deepEqual(resumed.result,first.result);
+  assert.equal(Object.keys(resumed.state.days).length,1);
+  await assert.rejects(x.store.setStatus(id,'done','2026-09-13'),/выполнение/);
+});
+
+test('rules and checkmarks do not acquire an execution, malformed steps are rejected',async()=>{
+  const {store}=setup();const {result:id}=await store.savePlan({...action,kind:'rule'});
+  await assert.rejects(store.ensureRun(id),/недоступно/);
+  await assert.rejects(store.savePlan({...action,kind:'rule',mode:'activity'}),/Правило/);
+  await assert.rejects(store.savePlan({...action,mode:'chain',steps:[]}),/шагов/);
+});
+
 test('concurrent remote apply between read and write rejects stale recurring snapshot',async()=>{
   let raw=null,changed=false;const remote=JSON.stringify({version:1,plans:[],days:{}});
   const invoke=async(command,args)=>{if(command==='get_ui_state')return raw;assert.equal(args.expectedValue,'');raw=remote;changed=true;if(args.expectedValue!==raw)throw Error('mvp_sync_stale_ui_state');raw=args.value;};

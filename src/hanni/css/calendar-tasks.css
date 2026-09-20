@@ -11,7 +11,9 @@
 .calendar-tasks [data-tasks-message]:empty { display: none; }
 .ct-group { font-size: 12px; font-weight: 500; color: var(--text-secondary); margin: 26px 0 6px; }
 .ct-list { padding: 0; margin: 0; list-style: none; }
-.ct-row { display: grid; grid-template-columns: 36px minmax(0,1fr) auto auto 36px; gap: 12px; align-items: center; border-bottom: 1px solid var(--border-default); padding: 12px 0; }
+.ct-row { display: grid; grid-template-columns: 36px minmax(0,1fr) auto auto auto 36px; gap: 12px; align-items: center; border-bottom: 1px solid var(--border-default); padding: 12px 0; }
+.ct-run { border:1px solid var(--border-default); border-radius:7px; background:var(--bg-card); padding:8px 10px; min-height:40px; cursor:pointer; font-size:13px !important; }
+.ct-run:disabled { opacity:.55; cursor:default; }
 .ct-content { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .ct-title-wrap { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; flex-wrap: wrap; }
 .ct-title, .ct-date, .ct-more { border: 0; background: transparent; cursor: pointer; }
@@ -39,6 +41,7 @@
   .ct-more { grid-column:4; grid-row:1; }
   .ct-date { grid-column:2; grid-row:2; justify-self:start; margin-left:-8px; }
   .ct-estimate { grid-column:3; grid-row:2; }
+  .ct-execution { grid-column:2 / 4; grid-row:3; }
   .ct-estimate:empty { display:none; }
   .ct-filters { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:3px; }
   .ct-filters button { padding:8px 9px; font-size:12px; }
