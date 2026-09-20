@@ -112,14 +112,16 @@ test('upstream mobile mode enables its CSS and closes the drawer through its bac
   assert.equal(w.document.querySelector('.drawer-backdrop').classList.contains('visible'), false);
 });
 
-test('v7 Today embeds native tasks and connects recurring Add, All tasks and Schedule', async t => {
+test('Today has one task list and creation stays in the routine manager', async t => {
   const {w,click,errors}=await launch(t);
   assert.equal(w.document.querySelectorAll('.calendar-recurring__card').length,1);
   assert.equal(w.document.querySelector('[data-calendar-tasks]'),null);
   assert.ok(w.document.querySelector('[data-calendar-recurring] [data-overview-embedded]'));
   assert.equal(w.document.querySelector('[data-undo-day]'),null);
-  await click('[data-recurring-add]');
+  assert.equal(w.document.querySelector('[data-calendar-recurring] [data-recurring-add]'),null);
+  await click('[data-recurring-manage]');
   assert.equal(w.document.querySelectorAll('dialog[open]').length,1);
+  await click('[data-recurring-add]');
   assert.equal(w.document.querySelector('[data-add-kind="norm"]'),null);
   assert.equal(w.document.querySelector('[data-add-kind="task"]'), null);
   assert.ok(w.document.querySelector('[data-add-kind="action"]'));
@@ -127,6 +129,7 @@ test('v7 Today embeds native tasks and connects recurring Add, All tasks and Sch
   await click('[data-add-kind="action"]');
   assert.ok(w.document.querySelector('[name="title"]'));
   assert.equal(w.document.querySelector('[data-add-kind]'),null,'choice closes before the shared Task/Event form opens');
+  await click('dialog[open]:last-of-type footer [data-dialog-close]');
   await click('dialog[open] footer [data-dialog-close]');
   await click('[data-recurring-all]');
   assert.equal(w.document.querySelector('dialog [data-overview-all]').hidden,false);

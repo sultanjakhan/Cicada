@@ -6,14 +6,15 @@ const openDialogs=new WeakMap();
 export function openRecurringRun({document,invoke,id,date,start=false}) {
   if(openDialogs.has(document))return openDialogs.get(document);
   const win=document.defaultView,store=createRecurringStore(invoke);
-  let disposed=false,busy=false,origin=date||store.today(),record=null,rows=[],current=null;
+  let disposed=false,busy=false,origin=date||store.today(),record=null,rows=[],current=-1,readVersion=0;
   const dialog=createCalendarDialog({document,title:'Выполнение рутины',onClose:()=>{disposed=true;win.removeEventListener('task-state-changed',onExternal);win.removeEventListener('hanni:calendar-refresh',onExternal);openDialogs.delete(document);}});
   dialog.modal.classList.add('calendar-routine-dialog');
   dialog.modal.querySelector('footer [data-dialog-close]').textContent='Закрыть';
   openDialogs.set(document,dialog);
   const notify=()=>{win.dispatchEvent(new win.Event('task-state-changed'));win.dispatchEvent(new win.Event('hanni:recurring-changed'));win.dispatchEvent(new win.Event('hanni:calendar-refresh'));};
-  const button=(label,action)=>{const node=document.createElement('button');node.type='button';node.textContent=label;node.dataset.runAction=action;node.addEventListener('click',()=>void perform(action));return node;};
+  const button=(label,action)=>{const expectedStep=current;const node=document.createElement('button');node.type='button';node.textContent=label;node.dataset.runAction=action;node.addEventListener('click',()=>void perform(action,expectedStep));return node;};
   function render(){
+    const focused=dialog.body.contains(document.activeElement)?document.activeElement.dataset.runAction:null;
     dialog.body.replaceChildren();
     if(!record)return;
     dialog.modal.querySelector('h2').textContent=record.snapshot.title;
@@ -40,21 +41,29 @@ export function openRecurringRun({document,invoke,id,date,start=false}) {
       dialog.body.append(message);
     }
     dialog.setPending(busy);
+    if(focused&&!busy)dialog.body.querySelector(`[data-run-action="${focused}"]`)?.focus();
   }
   async function refresh(){
-    const state=await store.read();
+    const version=++readVersion;
+    const [state,nextRows]=await Promise.all([store.read(),invoke('get_schedules',{})]);
+    if(disposed||version!==readVersion)return false;
     const run=state.days[origin]?.[id];
-    record=run?.run?run:null;
-    rows=await invoke('get_schedules',{});
-    if(!disposed)render();
+    record=run?.run?run:null;rows=nextRows;
+    current=record?record.run.steps.findIndex(step=>step.status==='pending'):-1;
+    render();return true;
   }
-  async function perform(action){
+  async function perform(action,expectedStep=current){
     if(busy||disposed)return;busy=true;dialog.setPending(true);dialog.showError('');
     try{
-      await refresh();
+      if(!await refresh()||disposed)return;
+      if(!record)throw Error('Выполнение больше недоступно. Закрой окно и обнови рутины.');
+      if(current!==expectedStep)throw Error('Шаг уже изменился. Проверь текущее выполнение перед следующим действием.');
       if(current<0)throw Error('Это выполнение уже закончено.');
       const sourceId=recurringSourceId(id,origin,current),row=rows.find(item=>String(item.id)===sourceId);
-      if(action==='start')await startCalendarExecution(invoke,{source_type:'schedule',source_id:sourceId,title:row?.title||record.snapshot.title,completion_date:origin},document);
+      if(action==='start'){
+        const started=await startCalendarExecution(invoke,{source_type:'schedule',source_id:sourceId,title:row?.title||record.snapshot.title,completion_date:origin},document);
+        if(started===null)return;
+      }
       else if(action==='skip')await invoke('skip_recurring_step',{sourceId});
       else{
         const active=await invoke('get_active_block',{});
@@ -78,9 +87,14 @@ export function openRecurringRun({document,invoke,id,date,start=false}) {
   dialog.open();dialog.body.textContent='Загружаем выполнение…';
   void (async()=>{
     try{
-      const state=await store.read(),existing=unfinishedRun(state,id);
-      if(existing)origin=existing.date;
-      if(!state.days[origin]?.[id]?.run){const result=await store.ensureRun(id,origin);origin=result.result.date;}
+      const state=await store.read();
+      if(disposed)return;
+      if(!state.days[origin]?.[id]?.run){
+        const existing=unfinishedRun(state,id);
+        if(existing)origin=existing.date;
+        else if(start){const result=await store.ensureRun(id,origin);origin=result.result.date;}
+        else throw Error('Выполнение ещё не начато. Закрой окно и нажми «Начать» у рутины.');
+      }
       await refresh();
       if(start&&!disposed)await perform('start');
     }catch(error){dialog.showError(error?.message||String(error));}

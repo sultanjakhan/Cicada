@@ -33,9 +33,9 @@ test('active stage limits the compact skill view and can return to the whole goa
   const controller = await mountGoalDevelopment(root, { invoke, goal:{ id:'g', title:'Goal' } });
   assert.equal(root.querySelectorAll('[data-dev-skill]').length, 1);
   assert.equal(root.querySelector('[data-dev-skill]').textContent, 'API');
-  root.querySelector('[data-dev-stage-filter]').click(); await settle();
-  const dialog = document.querySelector('dialog[open]'); dialog.querySelector('input[value=""]').click(); dialog.querySelector('form').dispatchEvent(new dom.window.Event('submit', { bubbles:true, cancelable:true })); await settle(); await settle();
+  root.querySelector('[data-dev-stage-clear]').click(); await settle(); await settle();
   assert.equal(root.querySelectorAll('[data-dev-skill]').length, 2);
+  assert.equal(root.querySelectorAll('details.dev-group, details.dev-topic').length, 0, 'stage selection is enough; skill text does not require nested disclosures');
   controller.dispose(); t.after(() => root.remove());
 });
 

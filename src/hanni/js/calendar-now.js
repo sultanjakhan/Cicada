@@ -543,6 +543,25 @@ export function mountCalendarNow(element, dependencies = {}) {
       if (!block) { state.execution = null; state.selection = null; state.selectionMode = 'auto'; }
       else if (task?.completed || ['done','skipped'].includes(task?.status_extra)) { state.completed = state.execution.task; state.execution = null; }
     }
+    if(state.returnTo){
+      const previous=state.returnTo;
+      let row;
+      if(previous.source_type==='note')row=await api('get_note',{id:String(previous.source_id)});
+      else if(previous.source_type==='event')row=(await api('get_all_events',{})).find(item=>String(item.id)===String(previous.source_id));
+      else if(previous.source_type==='schedule'){
+        const schedules=await api('get_schedules',{});
+        row=schedules.find(item=>String(item.id)===String(previous.source_id));
+        if(row?.completed||['done','skipped'].includes(row?.status_extra)){
+          // A finished step can return to the next unfinished step of the same run.
+          try{const [id,day]=JSON.parse(previous.source_id);row=schedules.find(item=>{
+            const [otherId,otherDay]=JSON.parse(item.id);
+            return id===otherId&&day===otherDay&&!item.completed&&!['done','skipped'].includes(item.status_extra);
+          });}catch{row=null;}
+        }
+      }
+      state.returnTo=row&&!row.completed&&!['done','skipped'].includes(row.status||row.status_extra)
+        ?taskOf({...previous,...row,source_type:previous.source_type,source_id:String(row.source_id??row.id??previous.source_id)}) : null;
+    }
     const timedTask = state.execution?.task || state.completed;
     const workTime = timedTask ? { key: keyOf(timedTask), occurrence: timedTask.completion_date,
       seconds: await readWorkSeconds(timedTask) } : null;
@@ -607,7 +626,7 @@ export function mountCalendarNow(element, dependencies = {}) {
         if(blockId===null){operation.cancelled=true;return;}
         if(saved.execution && keyOf(saved.execution.task)!==keyOf(operation.task))saved.returnTo=taskOf(saved.execution.task);
         else if(keyOf(saved.returnTo)===keyOf(operation.task))saved.returnTo=null;
-        saved.execution = { blockId: Number(blockId), date: active?.date || localDate(), task: taskOf(operation.task) }; saved.completed = null;
+        saved.execution = { blockId: Number(blockId), date: operation.kind==='return'?localDate():active?.date || localDate(), task: taskOf(operation.task) }; saved.completed = null;
       } else {
         if (active && Number(active.id) !== operation.execution.blockId) throw new Error('different-active');
         if (operation.kind === 'pause' || operation.kind === 'switch-task') {
@@ -633,7 +652,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     if (message === 'mvp_sync_stale_ui_state') return 'Выбор изменён на другом устройстве. Нажми «Повторить», чтобы загрузить актуальное состояние.';
     if (message === 'active') return 'Для смены цели поставь текущую задачу на паузу.';
     if (message === 'different-active') return 'Сейчас запущена другая задача. Обнови экран перед продолжением.';
-    if (operation.kind === 'start' && message === 'source record not found') return 'Задача уже завершена или недоступна. Обнови экран.';
+    if (['start','return'].includes(operation.kind) && message === 'source record not found') return 'Задача уже завершена или недоступна. Обнови экран.';
     if (operation.phase === 'save') return 'Действие применено, но не удалось сохранить выбор. Повтор сохранит его без повторного запуска задачи.';
     if (operation.phase === 'refresh') return 'Не удалось обновить текущую задачу. Последний выбор сохранён.';
     return ({ start: 'Не удалось запустить задачу.', pause: 'Не удалось поставить задачу на паузу.', finish: 'Не удалось завершить задачу.', 'switch-task': 'Не удалось сменить задачу. Текущая задача сохранена.' })[operation.kind] || 'Не удалось сохранить выбор.';
@@ -653,12 +672,12 @@ export function mountCalendarNow(element, dependencies = {}) {
       // A different active task is never closed implicitly by this surface.
       const message = errorMessage(error);
       if (message === 'mvp_sync_stale_ui_state') { remotePending = true; needsSave = false; }
-      if (message === 'mvp_sync_stale_ui_state' || message === 'different-active' || (operation.kind === 'start' && message === 'source record not found')) {
+      if (message === 'mvp_sync_stale_ui_state' || message === 'different-active' || (['start','return'].includes(operation.kind) && message === 'source record not found')) {
         failure.operation = { kind: 'refresh', phase: 'refresh' };
       }
     } finally {
       busy = false; render();
-      if (disposed && ['start', 'pause', 'finish', 'switch-task'].includes(operation.kind)) {
+      if (disposed && ['start', 'return', 'pause', 'finish', 'switch-task'].includes(operation.kind)) {
         // The command may have committed after navigation; the current mount rereads DB.
         window.dispatchEvent(new window.Event('task-state-changed'));
         window.dispatchEvent(new window.CustomEvent('hanni:calendar-refresh'));
@@ -669,7 +688,7 @@ export function mountCalendarNow(element, dependencies = {}) {
           else (ui.card.querySelector('.calendar-now__actions button:not([hidden])') || ui.card).focus();
         }
         if (!failure && operation.kind === 'switch-task' && selectedGoal()) openPicker('task', actions['open-task']);
-        if (['start', 'pause', 'finish', 'switch-task'].includes(operation.kind) && operation.phase === 'refresh') {
+        if (['start', 'return', 'pause', 'finish', 'switch-task'].includes(operation.kind) && operation.phase === 'refresh') {
           window.dispatchEvent(new window.Event('task-state-changed'));
           window.dispatchEvent(new window.CustomEvent('hanni:calendar-refresh'));
         }

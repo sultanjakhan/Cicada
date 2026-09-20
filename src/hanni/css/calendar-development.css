@@ -5,3 +5,30 @@
 .calendar-development{--accent:#242424}.dev-skills>header{flex-wrap:wrap}.dev-skills>header h3{order:0}.dev-skills>header>span{order:1;margin-left:auto}.dev-skills>header input[type=search]{order:2;flex-basis:100%;width:100%;min-width:0;border:1px solid var(--border,#ddd);border-radius:8px;padding:10px 12px;font:inherit;min-height:42px;background:var(--surface,#fff);color:inherit}
 .calendar-native-dialog .calendar-editor-fields>label>input:not([type=checkbox]):not([type=radio]),.calendar-native-dialog .calendar-editor-fields>label>textarea,.calendar-native-dialog .calendar-editor-fields>label>select,.dev-picker input[type=search]{box-sizing:border-box;width:100%;min-width:0;border:1px solid var(--border,#ddd);border-radius:8px;padding:10px 12px;font:inherit;background:var(--surface,#fff);color:inherit;min-height:42px}.dev-picker-topics button{font:inherit;border:1px solid var(--border,#ddd);border-radius:8px;background:var(--surface,#fff);padding:10px 12px;color:inherit}.dev-picker-topics button[aria-pressed=true]{background:#242424;color:white}
 .calendar-development{gap:10px}.calendar-development>header,.calendar-development section>header{gap:8px}.calendar-development>header>div:last-child{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}.dev-focus,.dev-stages,.dev-skills{padding:12px;border-radius:8px}.dev-group,.dev-topic{padding:7px;border-radius:6px}.dev-topic{margin-top:6px}.dev-stage,.dev-skill{padding-top:7px}.calendar-development-intro{margin-top:12px;padding-top:10px;border-top:1px solid var(--border,#ddd)}.calendar-development-intro__field{white-space:pre-line}.calendar-development-intro__field strong{color:var(--text-primary,#202124)}
+.calendar-development > header { align-items:flex-start; }
+.calendar-development > header > div:first-child { min-width:0; flex:1; }
+.calendar-development h2 { font-size:22px; line-height:1.35; overflow-wrap:anywhere; }
+.calendar-development .dev-focus, .calendar-development .dev-stages, .calendar-development .dev-skills { border:0; border-top:1px solid var(--border-default); border-radius:0; padding:12px 0 0; }
+.calendar-development .dev-focus { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.calendar-development .dev-group, .calendar-development .dev-topic { padding:0; border:0; border-radius:0; }
+.calendar-development .dev-group > header { margin-top:12px; }
+.calendar-development .dev-topic > header { padding:8px 0; font-size:13px; }
+.calendar-development .dev-topic > header > span, .calendar-development .dev-group > header > span { font-size:12px; color:var(--text-secondary); }
+.calendar-development .dev-stage { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px 16px; }
+.calendar-development .dev-stage > div:last-child { justify-content:flex-end; max-width:310px; }
+.calendar-development .dev-skill { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:4px 16px; align-items:start; }
+.calendar-development .dev-skill > button { grid-column:1; padding:4px 0; border:0; text-align:left; font:inherit; font-weight:600; overflow-wrap:anywhere; }
+.calendar-development .dev-skill > span, .calendar-development .dev-skill-detail { grid-column:1; }
+.calendar-development .dev-skill > div { grid-column:2; grid-row:1 / 4; justify-content:flex-end; max-width:290px; }
+.calendar-development button { min-height:40px; }
+.calendar-development [data-dev-remove], .calendar-development [data-dev-stage-delete] { border-color:transparent; color:var(--text-secondary); }
+.calendar-development [data-dev-stage-active] { font-weight:600; }
+.calendar-development-intro { border:0; padding:0; margin:0; font-size:14px; }
+.calendar-development-intro:empty { display:none; }
+.calendar-development-intro p { margin:6px 0; }
+@media(max-width:620px) {
+  .calendar-development .dev-stage, .calendar-development .dev-skill { grid-template-columns:minmax(0,1fr); }
+  .calendar-development .dev-skill > div { grid-column:1; grid-row:auto; justify-content:flex-start; max-width:none; }
+  .calendar-development .dev-stage > div:last-child { justify-content:flex-start; max-width:none; }
+  .calendar-development .dev-focus { align-items:flex-start; flex-wrap:wrap; }
+}

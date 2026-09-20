@@ -54,11 +54,7 @@ function openGoalDevelopment(goal, selection = {}) {
   const dialog = createCalendarDialog({document,title:'Цель',onClose:()=>{mounted?.dispose();developmentDialog=null;}});
   developmentDialog = dialog; dialog.modal.classList.add('calendar-development-dialog');
   dialog.modal.querySelector('footer [data-dialog-close]').textContent='Закрыть';
-  const intro = document.createElement('section'); intro.className='calendar-development-intro';
-  if(goal.description){const description=document.createElement('p');description.textContent=goal.description;intro.append(description);}
-  if(goal.criteria){const criteria=document.createElement('p');criteria.className='calendar-development-intro__field';criteria.innerHTML='<strong>Критерии готовности</strong><br>';criteria.append(document.createTextNode(goal.criteria));intro.append(criteria);}
-  if(goal.deadline){const deadline=document.createElement('p');deadline.textContent='Срок цели: '+goal.deadline;intro.append(deadline);}
-  const host=document.createElement('div');dialog.body.append(host,intro);dialog.open();
+  const host=document.createElement('div');dialog.body.append(host);dialog.open();
   void mountGoalDevelopment(host,{invoke,goal,onCreateTask:skill=>{
     dialog.close();
     void showCalendarCreateModal(null,{initialNoDate:true,initialTitle:skill.skillTitle,goalId:goal.id,goalTitle:goal.title,
