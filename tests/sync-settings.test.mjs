@@ -31,3 +31,11 @@ test('failed configuration keeps the input for retry without exposing transport 
   assert.equal(x.q('code').value,'{"token":"secret-token-in-error"}');assert.doesNotMatch(x.host.textContent,/secret-token-in-error/);assert.match(x.q('error').textContent,/Не удалось/);assert.equal(x.q('save').disabled,false);
   x.dispose();assert.equal(x.q('code').value,'');
 });
+test('background scheduling error is visible, foreground error wins and cleared status restores the panel', async t => {
+  const x=mount(t,command=>command==='mvp_sync_status'?{...initial(),configured:true,enabled:true,background_error:'mvp_sync_background_schedule_failed'}:initial());await tick();
+  assert.equal(x.q('error').hidden,false);assert.match(x.q('error').textContent,/Не удалось включить фоновую синхронизацию/);
+  x.dom.window.dispatchEvent(new x.dom.window.CustomEvent('hanni:sync-status',{detail:{...initial(),configured:true,enabled:true,last_error:'content_sync_network_unavailable',background_error:'mvp_sync_background_schedule_failed'}}));
+  assert.match(x.q('error').textContent,/Сеть недоступна/);
+  x.dom.window.dispatchEvent(new x.dom.window.CustomEvent('hanni:sync-status',{detail:{...initial(),configured:true,enabled:true}}));
+  assert.equal(x.q('error').hidden,true);assert.match(x.q('status').textContent,/Подключение включено/);
+});
