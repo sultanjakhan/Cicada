@@ -435,6 +435,7 @@ pub fn save_calendar_task(
     estimate_minutes: Option<i64>,
     goal_id: Option<String>,
     expected_version: Option<i64>,
+    important: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     validate_title(&title)?;
@@ -442,6 +443,9 @@ pub fn save_calendar_task(
     if let Some(value) = estimate_minutes {
         duration(value)?;
     }
+    // Omitted importance preserves existing priorities for date-only edits and
+    // older clients. The task UI exposes only the explicit highest priority.
+    let priority = important.map(|value| if value { 5_i64 } else { 0_i64 });
     let mut conn = lock(&state)?;
     let transaction = conn.transaction().map_err(|e| fail(e.to_string()))?;
     if let Some(goal) = goal_id.as_deref() {
@@ -458,7 +462,7 @@ pub fn save_calendar_task(
     }
     let item_id = match id {
         Some(id) => {
-            let changed=transaction.execute("UPDATE items SET title=?1,date=?2,duration_minutes=COALESCE(?3,0),updated_at=?4,version=version+1 WHERE id=?5 AND kind='task' AND status IN ('task','done') AND (?6 IS NULL OR version=?6)",params![title.trim(),due_date,estimate_minutes,now(),id,expected_version]).map_err(|e|fail(e.to_string()))?;
+            let changed=transaction.execute("UPDATE items SET title=?1,date=?2,duration_minutes=COALESCE(?3,0),updated_at=?4,version=version+1,priority=COALESCE(?7,priority) WHERE id=?5 AND kind='task' AND status IN ('task','done') AND (?6 IS NULL OR version=?6)",params![title.trim(),due_date,estimate_minutes,now(),id,expected_version,priority]).map_err(|e|fail(e.to_string()))?;
             if changed != 1 {
                 return Err(fail("task changed elsewhere or was deleted"));
             }
@@ -470,7 +474,7 @@ pub fn save_calendar_task(
             }
             let id = Uuid::new_v4().to_string();
             let n = now();
-            transaction.execute("INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,status) VALUES(?1,'task',?2,'',?3,NULL,COALESCE(?4,0),0,1,?5,?5,'task','#9B9B9B',0,0,'','task')",params![id,title.trim(),due_date,estimate_minutes,n]).map_err(|e|fail(e.to_string()))?;
+            transaction.execute("INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,status) VALUES(?1,'task',?2,'',?3,NULL,COALESCE(?4,0),0,1,?5,?5,'task','#9B9B9B',COALESCE(?6,0),0,'','task')",params![id,title.trim(),due_date,estimate_minutes,n,priority]).map_err(|e|fail(e.to_string()))?;
             id
         }
     };

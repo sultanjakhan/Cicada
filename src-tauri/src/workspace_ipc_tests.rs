@@ -20,6 +20,7 @@ fn fixture_with_connection(
     let app = mock_builder()
         .manage(AppState(Mutex::new(conn)))
         .invoke_handler(tauri::generate_handler![
+            crate::delete_item,
             api::get_goals,
             api::save_calendar_goal,
             api::delete_goal,
@@ -1916,6 +1917,83 @@ fn stale_forms_and_missing_goals_cannot_overwrite_or_leave_phantom_tasks() {
         "parentGoalId":child,"clearParent":false,"currentValue":null})
     )
     .is_err());
+}
+
+#[test]
+fn task_importance_survives_rescheduling_without_changing_execution() {
+    let (_app, view) = fixture();
+    let id = call(&view, "save_calendar_task", json!({
+        "title":"Important task", "dueDate":"2026-09-20", "estimateMinutes":25,
+        "important":true
+    })).unwrap();
+    let fresh = || call(&view, "get_calendar_task", json!({"id":id})).unwrap();
+    assert_eq!(fresh()["priority"], 5);
+    let block = call(&view, "start_task_block", json!({
+        "sourceType":"note", "sourceId":id, "failIfActive":true
+    })).unwrap();
+    let day = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let blocks = || call(&view, "get_timeline_blocks", json!({"date":day})).unwrap();
+    let running = blocks();
+    call(&view, "save_calendar_task", json!({
+        "id":id, "title":"Important task", "dueDate":"2026-09-21",
+        "estimateMinutes":25, "expectedVersion":fresh()["version"], "important":false
+    })).unwrap();
+    assert_eq!(fresh()["priority"], 0);
+    assert_eq!(blocks(), running, "importance must not change the running block");
+    call(&view, "pause_task_block", json!({"blockId":block})).unwrap();
+    let paused = blocks();
+    call(&view, "save_calendar_task", json!({
+        "id":id, "title":"Important task", "dueDate":null,
+        "estimateMinutes":25, "expectedVersion":fresh()["version"], "important":true
+    })).unwrap();
+    for date in [Value::Null, json!("2026-09-19"), json!("2026-09-22")] {
+        call(&view, "save_calendar_task", json!({
+            "id":id, "title":"Important task", "dueDate":date,
+            "estimateMinutes":25, "expectedVersion":fresh()["version"]
+        })).unwrap();
+        assert_eq!(fresh()["priority"], 5, "date-only clients preserve importance");
+        assert_eq!(fresh()["date"], date);
+        assert_eq!(blocks(), paused, "editing a paused task must not resume it");
+    }
+    let tasks = call(&view, "get_calendar_tasks", json!({"includeCompleted":false})).unwrap();
+    assert_eq!(tasks.as_array().unwrap().len(), 1, "same task identity, no copy");
+    assert_eq!(tasks[0]["source_id"], id);
+    call(&view, "complete_calendar_task", json!({"id":id})).unwrap();
+    assert_eq!(fresh()["priority"], 5);
+    assert!(call(&view, "get_calendar_tasks", json!({"includeCompleted":false}))
+        .unwrap().as_array().unwrap().is_empty());
+    call(&view, "delete_item", json!({"id":id,"expectedVersion":fresh()["version"]})).unwrap();
+    assert!(call(&view, "save_calendar_task", json!({
+        "id":id, "title":"Deleted task", "important":true
+    })).is_err(), "a deleted important task cannot be recreated by a stale form");
+}
+
+#[test]
+fn task_importance_preserves_legacy_values_and_rejects_stale_or_invalid_edits() {
+    let (app, view) = fixture();
+    let id = call(&view, "save_calendar_task", json!({"title":"Existing task"})).unwrap();
+    assert_eq!(call(&view, "get_calendar_task", json!({"id":id})).unwrap()["priority"], 0);
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        conn.execute("UPDATE items SET priority=3 WHERE id=?1", [id.as_str().unwrap()]).unwrap();
+    }
+    call(&view, "save_calendar_task", json!({
+        "id":id, "title":"Renamed task", "expectedVersion":1, "important":null
+    })).unwrap();
+    assert_eq!(call(&view, "get_calendar_task", json!({"id":id})).unwrap()["priority"], 3);
+    call(&view, "save_calendar_task", json!({
+        "id":id, "title":"Renamed task", "expectedVersion":2, "important":true
+    })).unwrap();
+    let before = call(&view, "get_calendar_task", json!({"id":id})).unwrap();
+    for args in [
+        json!({"id":id,"title":"Stale task","expectedVersion":2,"important":false}),
+        json!({"id":id,"title":"Invalid task","expectedVersion":3,"important":"false"}),
+        json!({"id":id,"title":"Invalid goal","expectedVersion":3,"important":false,"goalId":"missing"}),
+    ] {
+        assert!(call(&view, "save_calendar_task", args).is_err());
+        assert_eq!(call(&view, "get_calendar_task", json!({"id":id})).unwrap(), before);
+    }
 }
 
 #[test]
