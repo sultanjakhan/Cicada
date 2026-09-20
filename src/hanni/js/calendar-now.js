@@ -25,7 +25,7 @@ const validDate = value => {
   const date = new Date(`${value}T12:00:00`);
   return Number.isFinite(date.getTime()) && dateOf(date) === value ? value : null;
 };
-const freshState = () => ({ version: 1, goalId: null, selectionMode: 'auto', selection: null, execution: null, completed: null, returnTo: null });
+const freshState = () => ({ version: 1, goalId: null, selectionMode: 'auto', selection: null, execution: null, completed: null, returnTo: null, observedBlockId:null });
 const taskOf = row => ({
   source_type: row.source_type, source_id: String(row.source_id),
   title: row.title || 'Без названия',
@@ -46,6 +46,8 @@ function restoreState(raw) {
       ? { blockId: value.execution.blockId, date: value.execution.date, task: taskOf(value.execution.task) } : null,
     completed: validTask(value.completed) ? taskOf(value.completed) : null,
     returnTo: validTask(value.returnTo) ? taskOf(value.returnTo) : null,
+    observedBlockId: Number.isSafeInteger(value.observedBlockId) ? value.observedBlockId
+      : value.observedBlockId===null ? null : Number.isSafeInteger(value.execution?.blockId) ? value.execution.blockId : undefined,
   };
 }
 
@@ -503,20 +505,33 @@ export function mountCalendarNow(element, dependencies = {}) {
     if (reload && !canApplyRemote()) return;
     const raw = !initialized || reload ? await api('get_ui_state', { key: STATE_KEY }) : stateRaw;
     const state = initialized && !reload ? structuredClone(saved) : restoreState(raw);
-    const [goals, links, planned, active, todayBlocks, pins, weights] = await Promise.all([
+    const [goals, links, planned, active, todayBlocks, pins, weights, latest] = await Promise.all([
       api('get_goals', { tabName: null }), api('get_calendar_task_goals', {}),
       api('get_calendar_records', { start: date, end: date }), api('get_active_block', {}), api('get_timeline_blocks', { date }),
       api('get_task_pins', {}).catch(() => []), loadWeights().catch(() => ({})),
+      api('get_latest_task_block', {}),
     ]);
-    const extraDates = [...new Set([active?.date, state.execution?.date].filter(value => value && value !== date))];
+    const extraDates = [...new Set([active?.date, latest?.date, state.execution?.date].filter(value => value && value !== date))];
     const extraBlocks = await Promise.all(extraDates.map(value => api('get_timeline_blocks', { date: value })));
     const blocks = [...new Map([...todayBlocks, ...extraBlocks.flat()].map(block => [block.id, block])).values()];
     if (disposed || stateVersion !== version || (reload && (remoteReadVersion !== remoteVersion || !canApplyRemote()))) return;
     const before = JSON.stringify(state);
+    // Record a migration baseline for older saved selections. A later native
+    // block identifies work started and paused while this pane was unmounted.
+    if(state.observedBlockId===undefined&&Number.isSafeInteger(latest?.id))state.observedBlockId=latest.id;
+    if(!active && Number.isSafeInteger(latest?.id) && latest.id!==state.observedBlockId){
+      state.observedBlockId=latest.id;
+      try{
+        const task=await resolveTask(latest,planned,state);
+        if(state.execution&&keyOf(state.execution.task)!==keyOf(task))state.returnTo=taskOf(state.execution.task);
+        state.execution={blockId:latest.id,date:latest.date,task};state.completed=null;
+      }catch(error){if(error?.message!=='missing-record')throw error;}
+    }
     if (active) {
       const task = await resolveTask(active, planned, state);
       if(state.execution && keyOf(state.execution.task)!==keyOf(task))state.returnTo=taskOf(state.execution.task);
       state.execution = { blockId: Number(active.id), date: active.date, task }; state.completed = null;
+      state.observedBlockId=Number(active.id);
     } else if (state.execution) {
       const block = blocks.find(item => Number(item.id) === state.execution.blockId);
       let task = planned.find(item => keyOf(item) === keyOf(state.execution.task) &&
@@ -559,7 +574,7 @@ export function mountCalendarNow(element, dependencies = {}) {
           });}catch{row=null;}
         }
       }
-      state.returnTo=row&&!row.completed&&!['done','skipped'].includes(row.status||row.status_extra)
+      state.returnTo=row&&!row.archived&&!row.completed&&!['done','skipped'].includes(row.status||row.status_extra)
         ?taskOf({...previous,...row,source_type:previous.source_type,source_id:String(row.source_id??row.id??previous.source_id)}) : null;
     }
     const timedTask = state.execution?.task || state.completed;
@@ -756,6 +771,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     // A direct start from Today should bring its live controls into view.
     // A routine dialog keeps its own controls and must retain focus.
     await refresh();
+    while(readFlight&&!disposed)await readFlight;
     if(!disposed&&!busy&&!document.querySelector('dialog[open]')){
       ui.card.scrollIntoView?.({block:'nearest'});
       actions.pause.focus({preventScroll:true});

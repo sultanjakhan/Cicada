@@ -108,6 +108,7 @@ function backend(initial = blank()){
           }
      else if (command === 'get_task_pins') result = [];
      else if (command === 'get_active_block') result = state.blocks.find(block => block.is_active) || null;
+     else if (command === 'get_latest_task_block') result = state.blocks.at(-1) || null;
      else if (command === 'get_timeline_blocks') result = state.blocks.filter(block => block.date === args.date);
      else if (command === 'get_all_events') result = state.tasks.filter(task => task.source_type === 'event').map(task => ({
        ...task, id: task.source_id
@@ -1154,6 +1155,24 @@ test('return keeps the previous task across restart without starting it automati
    assert.equal(y.host.dataset.state,'active');
    assert.equal(JSON.parse(y.data.stored).execution.task.source_id,'task-a');
    assert.equal(y.data.count('finish_task_block'),0);
+});
+
+test('remount adopts work started and paused in another pane without reviving an explicitly cleared block', async t => {
+   const x=await mount(t);
+   await x.choose('task','note:task-a');await x.click('start');await x.click('pause');
+   x.cleanup();
+   const id=await x.data.invoke('start_task_block',{sourceType:'event',sourceId:'event-a',failIfActive:true});
+   await x.data.invoke('pause_task_block',{blockId:id});
+   const starts=x.data.count('start_task_block');
+   const y=await mount(t,x.data);
+   assert.equal(JSON.parse(y.data.stored).execution.task.source_id,'event-a');
+   assert.equal(JSON.parse(y.data.stored).returnTo.source_id,'task-a');
+   assert.equal(y.host.dataset.state,'paused');
+   assert.equal(y.data.count('start_task_block'),starts,'reading another pane must not start work');
+   await y.click('switch-task');await y.click('cancel-picker');y.cleanup();
+   const z=await mount(t,y.data);
+   assert.equal(JSON.parse(z.data.stored).execution,null,'explicitly changing task must remain cleared');
+   assert.equal(z.data.count('start_task_block'),starts);
 });
 
 test('switch retry saves an already paused task without executing pause again', async t => {
