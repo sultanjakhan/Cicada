@@ -48,7 +48,7 @@ internal object ContentSyncResultPolicy {
 class HanniContentSyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         UpdateActivityGuard.install(applicationContext as android.app.Application)
-        if (UpdateActivityGuard.hasLiveActivity()) {
+        if (UpdateActivityGuard.hasStartedActivity()) {
             ContentSyncReceipt.save(applicationContext, ContentSyncCodes.SKIP_FOREGROUND)
             return@withContext Result.success()
         }
