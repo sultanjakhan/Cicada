@@ -56,7 +56,7 @@ function openGoalDevelopment(goal, selection = {}) {
   dialog.modal.querySelector('footer [data-dialog-close]').textContent='Закрыть';
   const intro = document.createElement('section'); intro.className='calendar-development-intro';
   if(goal.description){const description=document.createElement('p');description.textContent=goal.description;intro.append(description);}
-  if(goal.criteria){const details=document.createElement('details'),summary=document.createElement('summary'),body=document.createElement('p');summary.textContent='Критерии готовности';body.textContent=goal.criteria;details.append(summary,body);intro.append(details);}
+  if(goal.criteria){const criteria=document.createElement('p');criteria.className='calendar-development-intro__field';criteria.innerHTML='<strong>Критерии готовности</strong><br>';criteria.append(document.createTextNode(goal.criteria));intro.append(criteria);}
   if(goal.deadline){const deadline=document.createElement('p');deadline.textContent='Срок цели: '+goal.deadline;intro.append(deadline);}
   const host=document.createElement('div');dialog.body.append(host,intro);dialog.open();
   void mountGoalDevelopment(host,{invoke,goal,onCreateTask:skill=>{

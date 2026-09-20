@@ -26,6 +26,19 @@ test('normalization retains an active stage, its outcome and its scoped focus', 
   assert.throws(() => normalizeDevelopmentState({ version:99, goals:{} }), /Неподдерживаемый/);
 });
 
+test('active stage limits the compact skill view and can return to the whole goal', async t => {
+  const root = document.createElement('div'); document.body.append(root);
+  let stored = JSON.stringify({ version:1, goals:{ g:{ skills:[{id:'a',title:'API',topic:'API'},{id:'b',title:'SQL',topic:'SQL'}], stages:[{id:'s',title:'API stage',skillIds:['a'],focusId:null}], activeStageId:'s',focusId:null } } });
+  const invoke = async (command, args) => { if (command === 'get_ui_state') return stored; if (command === 'set_ui_state') { stored = args.value; return; } throw Error(command); };
+  const controller = await mountGoalDevelopment(root, { invoke, goal:{ id:'g', title:'Goal' } });
+  assert.equal(root.querySelectorAll('[data-dev-skill]').length, 1);
+  assert.equal(root.querySelector('[data-dev-skill]').textContent, 'API');
+  root.querySelector('[data-dev-stage-filter]').click(); await settle();
+  const dialog = document.querySelector('dialog[open]'); dialog.querySelector('input[value=""]').click(); dialog.querySelector('form').dispatchEvent(new dom.window.Event('submit', { bubbles:true, cancelable:true })); await settle(); await settle();
+  assert.equal(root.querySelectorAll('[data-dev-skill]').length, 2);
+  controller.dispose(); t.after(() => root.remove());
+});
+
 test('JSON import accepts generic skills and rejects malformed or empty input', () => {
   const imported = validateDevelopmentImport(JSON.stringify([{ id:'x', title:'Indexes', topic:'SQL', group:'soft', level:2, result:'Show index plan', exercise:'Compare query' }]));
   assert.equal(imported.goals.imported.skills[0].title, 'Indexes');

@@ -41,6 +41,12 @@
 .calendar-goal-choice[aria-current="true"] { border-color: var(--accent-fill); background: var(--bg-hover); }
 .calendar-goal-choice .calendar-goal-current { flex-shrink: 0; padding-top: 3px; font-size: 12px; color: var(--text-secondary); }
 .calendar-goal-picker [data-goal-empty] { color: var(--text-secondary); font-size: 13px; }
+.calendar-native-dialog[data-goal-create] { width: min(calc(100% - 32px), 640px); max-width: 640px; }
+.calendar-native-dialog[data-goal-create] .calendar-editor-header { padding: 16px 20px 12px; }
+.calendar-native-dialog[data-goal-create] .calendar-editor-body { padding: 0 20px 8px; }
+.calendar-native-dialog[data-goal-create] .calendar-editor-field { gap: 5px; margin-bottom: 10px; }
+.calendar-native-dialog[data-goal-create] .calendar-goal-fields fieldset { margin-bottom: 10px; padding: 6px 10px; }
+.calendar-native-dialog[data-goal-create] .calendar-goal-fields textarea { min-height: 72px; }
 .calendar-native-dialog.calendar-note-dialog { width: min(calc(100% - 32px), 720px); max-width: 720px; }
 .calendar-note-dialog textarea { box-sizing: border-box; min-width: 0; width: 100%; min-height: 230px; padding: 12px; border: 1px solid var(--border-default); border-radius: 8px; color: var(--text-primary); background: var(--bg-page); font: inherit; font-size: 15px; line-height: 1.6; resize: vertical; }
 .calendar-note-dialog .calendar-note-status { margin: 0 0 14px; color: var(--text-secondary); font-size: 12px; }
