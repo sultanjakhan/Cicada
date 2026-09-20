@@ -40,6 +40,16 @@ test('Today combines current-date task and pending rule under one Дела headi
   assert.equal(row.querySelector('.calendar-recurring__marks [data-recurring-details]').textContent,'Отметить');
 });
 
+test('Today count says other work remains when current task is paused', async t => {
+  const dom=new JSDOM('<main></main>'); const host=dom.window.document.querySelector('main'); let raw=JSON.stringify(state);
+  const invoke=async(command,args)=>command==='get_ui_state'?raw:command==='set_ui_state'?(raw=args.value,null):command==='get_calendar_tasks'?[task]:null;
+  const dispose=mountCalendarRecurring(host,{invoke,now:()=>new Date(`${today}T12:00:00`),mountTasks:slot=>mountCalendarDashboardTasks(slot,{invoke,now:()=>new Date(`${today}T12:00:00`),embedded:true})});
+  t.after(()=>{dispose();dom.window.close();}); await new Promise(resolve=>setImmediate(resolve)); await new Promise(resolve=>setImmediate(resolve));
+  dispose.setCurrentTask({key:'note:task-1',state:'paused'});
+  assert.equal(host.querySelector('[data-recurring-count]').textContent,'Ещё 1 дел на сегодня');
+  assert.doesNotMatch(host.querySelector('[data-recurring-tasks]').textContent,/Подготовить SQL-запрос/);
+});
+
 test('Embedded task controller omits tasks when the selected date is not today', async t => {
   const dom=new JSDOM('<main></main>'); const host=dom.window.document.querySelector('main'); const counts=[];
   const dispose=mountCalendarDashboardTasks(host,{invoke:async()=>[task],now:()=>new Date(`${today}T12:00:00`),embedded:true,onCount:value=>counts.push(value)});
@@ -47,11 +57,33 @@ test('Embedded task controller omits tasks when the selected date is not today',
   assert.match(host.textContent,/Подготовить SQL-запрос/);
   dispose.setDate('2026-09-12');
   assert.doesNotMatch(host.textContent,/Подготовить SQL-запрос/);
-  assert.equal(counts.at(-1),0);
+  assert.equal(counts.at(-1).visible,0);
   dom.window.dispatchEvent(new dom.window.Event('focus'));
   await new Promise(resolve=>setTimeout(resolve,0));
   assert.doesNotMatch(host.textContent,/Подготовить SQL-запрос/,'refresh must retain the chosen history date');
-  assert.equal(counts.at(-1),0);
+  assert.equal(counts.at(-1).visible,0);
+});
+
+test('History is secondary, cancel keeps Today, past date applies, and Today returns explicitly', async t => {
+  const dom=new JSDOM('<main></main>'); const host=dom.window.document.querySelector('main');
+  dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};
+  dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;this.dispatchEvent(new dom.window.Event('close'));};
+  const dispose=mountCalendarRecurring(host,{invoke:async command=>command==='get_ui_state'?JSON.stringify(state):null,now:()=>new Date(`${today}T12:00:00`)});
+  t.after(()=>{dispose();dom.window.close();}); await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(host.querySelector('[data-recurring-date]'),null);
+  host.querySelector('[data-recurring-history]').click();
+  let dialog=dom.window.document.querySelector('dialog[open]');
+  assert.equal(dialog.querySelector('[data-history-date]').value,today);
+  dialog.querySelector('[data-dialog-close]').click();
+  assert.equal(host.querySelector('[data-recurring-heading]').textContent,'Сегодня');
+  host.querySelector('[data-recurring-history]').click(); dialog=dom.window.document.querySelector('dialog[open]');
+  const input=dialog.querySelector('[data-history-date]'); input.value='2026-09-12'; dialog.querySelector('form').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));
+  assert.equal(host.querySelector('[data-recurring-heading]').textContent,'Дневные отметки');
+  assert.match(host.querySelector('[data-recurring-history]').textContent,/История/);
+  host.querySelector('[data-recurring-history]').click(); dialog=dom.window.document.querySelector('dialog[open]');
+  dialog.querySelector('[data-history-today]').click(); dialog.querySelector('[data-dialog-submit]')?.click();
+  dialog.querySelector('form').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));
+  assert.equal(host.querySelector('[data-recurring-heading]').textContent,'Сегодня');
 });
 
 test('Recurring disposes a function task controller and releases a temporary settings mount on close', async t => {

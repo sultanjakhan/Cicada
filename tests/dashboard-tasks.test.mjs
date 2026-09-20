@@ -31,6 +31,23 @@ test('Today shows all five other tasks; All includes current and other dates wit
   assert.equal(x.q('all').hidden,true);
 });
 
+test('Today excludes current from rows and count only when it is on today', async t => {
+  const rows = [task('current'), task('other'), task('paused',{has_work:true})];
+  const x = await mount(t,rows);
+  x.dispose.setCurrentTask({key:'note:current',state:'paused'});
+  assert.equal(x.q('today-count').textContent,'2');
+  assert.equal(x.q('today').querySelectorAll('li').length,2);
+  x.dispose.setCurrentTask({key:'note:missing',state:'paused'});
+  assert.equal(x.q('today-count').textContent,'3');
+  assert.equal(x.q('today').querySelectorAll('li').length,3);
+  x.dispose.setCurrentTask({key:'note:other-date',state:'paused'});
+  assert.equal(x.q('today-count').textContent,'3');
+  x.dispose.setCurrentTask({key:'note:current',state:'paused'});
+  x.dispose.setDate('2026-09-11');
+  assert.equal(x.q('today-count').textContent,'0');
+  assert.equal(x.q('today').querySelectorAll('li').length,0);
+});
+
 test('Today paginates its own rows and a completion refresh updates both counters', async t => {
   const rows = Array.from({length:52},(_,i) => task(String(i)));
   const x = await mount(t,rows);

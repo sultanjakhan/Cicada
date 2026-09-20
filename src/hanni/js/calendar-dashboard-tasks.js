@@ -86,14 +86,14 @@ export function mountCalendarDashboardTasks(element, dependencies) {
     const focused = document.activeElement;
     const focusedKey = element.contains(focused) ? focused.dataset.overviewTask || focused.dataset.overviewMenuTask : null;
     const focusedScope = focused?.dataset.overviewScope;
-    const items = ordered(), todayItems = items.filter(row => row.date === date && taskKey(row) !== current.key);
+    const items = ordered(), todayAllItems = items.filter(row => row.date === date), todayItems = todayAllItems.filter(row => taskKey(row) !== current.key);
     query('today-count').textContent = String(todayItems.length);
     query('all-count').textContent = String(items.length);
-    todayFilter.setAttribute('aria-label', `Сегодня: ${todayItems.length} задач, без текущей`);
+    todayFilter.setAttribute('aria-label', `Сегодня: ${todayItems.length} задач${current.key ? ', текущая показана выше' : ''}`);
     toggle.setAttribute('aria-label', `Все незавершённые задачи: ${items.length}`);
     toggle.setAttribute('aria-pressed', String(expanded)); todayFilter.setAttribute('aria-pressed', String(!expanded));
     all.hidden = !expanded; today.hidden = expanded;
-    query('description').textContent = expanded ? 'Все незавершённые, включая текущую задачу.' : current.key ? 'Текущая задача показана выше.' : '';
+    query('description').textContent = expanded ? 'Все незавершённые, включая текущую задачу.' : current.key ? 'Текущая задача показана выше; счётчик учитывает другие задачи.' : '';
     query('description').hidden = !query('description').textContent;
     const visibleItems = expanded ? items : todayItems;
     page = Math.max(0, Math.min(page, Math.ceil(visibleItems.length / PAGE_SIZE) - 1));
@@ -128,8 +128,9 @@ export function mountCalendarDashboardTasks(element, dependencies) {
     element.setAttribute('aria-busy', String(loading));
     if (rows === null) { embeddedHost.textContent = loading ? 'Загружаем задачи…' : ''; return; }
     const items = ordered();
-    const todayItems = date === localDate(now()) ? items.filter(row => row.date === date && taskKey(row) !== current.key) : [];
-    notifyCount(todayItems.length);
+    const todayAllItems = date === localDate(now()) ? items.filter(row => row.date === date) : [];
+    const todayItems = todayAllItems.filter(row => taskKey(row) !== current.key);
+    notifyCount({ total: todayAllItems.length, visible: todayItems.length, hasCurrentToday: todayAllItems.some(row => taskKey(row) === current.key), currentKey: current.key, currentState: current.state });
     embeddedHost.replaceChildren();
     if (failed) { empty(embeddedHost, 'Не удалось обновить список задач.'); return; }
     if (!todayItems.length) return;
@@ -186,6 +187,6 @@ export function mountCalendarDashboardTasks(element, dependencies) {
   };
   dispose.showAll = () => { if (embedded) dependencies.onShowAll?.(); else if (!expanded) { expanded = true; page = 0; render(); } };
   dispose.showToday = () => { if (embedded) dependencies.onShowToday?.(); else if (expanded) { expanded = false; page = 0; render(); } };
-  dispose.onCount = listener => { countListener = typeof listener === 'function' ? listener : null; if (countListener && rows) countListener(ordered().filter(row => row.date === date && taskKey(row) !== current.key).length); return () => { if (countListener === listener) countListener = null; }; };
+  dispose.onCount = listener => { countListener = typeof listener === 'function' ? listener : null; if (countListener && rows) { const all = ordered().filter(row => row.date === date); countListener({ total: all.length, visible: all.filter(row => taskKey(row) !== current.key).length, hasCurrentToday: all.some(row => taskKey(row) === current.key), currentKey: current.key, currentState: current.state }); } return () => { if (countListener === listener) countListener = null; }; };
   return dispose;
 }

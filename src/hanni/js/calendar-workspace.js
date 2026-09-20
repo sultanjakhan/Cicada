@@ -521,10 +521,6 @@ export async function loadCalendarWorkspace(el) {
       disposeRecurring = mountCalendarRecurring(pane.querySelector('[data-calendar-recurring]'), {
         invoke, showCompleted:preferences.showCompleted,
         mountTasks:host=>mountCalendarDashboardTasks(host,{...taskOptions,embedded:true,onShowAll:showAllTasks}),
-        onCreateTask:()=>{
-          const revision=workspaceRevision;
-          showCalendarCreateModal(views.iso(new Date()),{isCurrent:()=>revision===workspaceRevision&&pane.isConnected&&S.activeTab==='calendar',returnFocus:()=>pane.querySelector('[data-recurring-add]')?.focus()});
-        },
       });
       disposeNow = mountCalendarNow(pane.querySelector('[data-calendar-now]'), {
         openGoalDetails:openGoalDevelopment,

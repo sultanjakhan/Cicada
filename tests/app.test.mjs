@@ -112,7 +112,7 @@ test('upstream mobile mode enables its CSS and closes the drawer through its bac
   assert.equal(w.document.querySelector('.drawer-backdrop').classList.contains('visible'), false);
 });
 
-test('v7 Today embeds native tasks and connects Add, All tasks and Schedule', async t => {
+test('v7 Today embeds native tasks and connects recurring Add, All tasks and Schedule', async t => {
   const {w,click,errors}=await launch(t);
   assert.equal(w.document.querySelectorAll('.calendar-recurring__card').length,1);
   assert.equal(w.document.querySelector('[data-calendar-tasks]'),null);
@@ -121,10 +121,13 @@ test('v7 Today embeds native tasks and connects Add, All tasks and Schedule', as
   await click('[data-recurring-add]');
   assert.equal(w.document.querySelectorAll('dialog[open]').length,1);
   assert.equal(w.document.querySelector('[data-add-kind="norm"]'),null);
-  await click('[data-add-kind="task"]');
-  assert.ok(w.document.querySelector('#evm-form'));
+  assert.equal(w.document.querySelector('[data-add-kind="task"]'), null);
+  assert.ok(w.document.querySelector('[data-add-kind="action"]'));
+  assert.ok(w.document.querySelector('[data-add-kind="rule"]'));
+  await click('[data-add-kind="action"]');
+  assert.ok(w.document.querySelector('[name="title"]'));
   assert.equal(w.document.querySelector('[data-add-kind]'),null,'choice closes before the shared Task/Event form opens');
-  await click('#evm-close');
+  await click('dialog[open] footer [data-dialog-close]');
   await click('[data-recurring-all]');
   assert.equal(w.document.querySelector('dialog [data-overview-all]').hidden,false);
   await click('dialog footer [data-dialog-close]');
