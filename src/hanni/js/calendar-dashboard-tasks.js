@@ -192,10 +192,12 @@ export function mountCalendarDashboardTasks(element, dependencies) {
   };
   async function execute(row) {
     if (disposed || actionBusy) return;
+    let started = false;
     actionBusy = true; actionMessage.textContent = ''; actionMessage.setAttribute('role', 'status'); render();
     try {
       const result = await executeAction(row, row.is_active ? 'pause' : 'start');
       if(result===false)return;
+      started = !row.is_active;
       notifyChange?.();
       if (!disposed) { await refresh(); actionMessage.textContent = row.is_active ? 'Задача на паузе.' : 'Задача в работе.'; }
     } catch (error) {
@@ -206,8 +208,11 @@ export function mountCalendarDashboardTasks(element, dependencies) {
       if (!disposed) {
         render();
         const button = [...element.querySelectorAll('[data-overview-execute]')].find(value => value.dataset.overviewExecute === taskKey(row));
-        if (button) button.focus({preventScroll:true});
-        else { actionMessage.tabIndex = -1; actionMessage.focus({preventScroll:true}); }
+        const handedOff = started && !window.dispatchEvent(new window.Event('hanni:execution-started',{cancelable:true}));
+        if (!handedOff) {
+          if (button) button.focus({preventScroll:true});
+          else { actionMessage.tabIndex = -1; actionMessage.focus({preventScroll:true}); }
+        }
       }
     }
   }

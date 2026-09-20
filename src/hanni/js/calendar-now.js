@@ -767,9 +767,10 @@ export function mountCalendarNow(element, dependencies = {}) {
     if (event.detail?.remoteSync) { remotePending = true; remoteVersion++; remoteGuard = event.detail.canCommit || null; }
     void refresh();
   };
-  const onStarted = async () => {
+  const onStarted = async event => {
     // A direct start from Today should bring its live controls into view.
     // A routine dialog keeps its own controls and must retain focus.
+    event.preventDefault();
     await refresh();
     while(readFlight&&!disposed)await readFlight;
     if(!disposed&&!busy&&!document.querySelector('dialog[open]')){

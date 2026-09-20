@@ -12,6 +12,11 @@ for (const surface of ['overview', 'tasks']) {
     const date = `${day.getFullYear()}-${String(day.getMonth()+1).padStart(2,'0')}-${String(day.getDate()).padStart(2,'0')}`;
     let rows = [{source_type:'note',source_id:'free-task',title:'Задача без цели',status_extra:'task',date:null}];
     let release, rejectNext=false, calls=[];
+    let startNotifications=0;
+    dom.window.addEventListener('hanni:execution-started',()=>{
+      startNotifications++;
+      assert.equal(host.querySelector('[data-overview-execute]').disabled,false,'focus handoff follows the final list render');
+    });
     const dependencies = {
       invoke: async command => command==='get_calendar_tasks'?rows:[],
       openTask:()=>{},editDate:()=>{},notifyChange:()=>{},
@@ -32,10 +37,12 @@ for (const surface of ['overview', 'tasks']) {
     assert.equal(run().textContent,'Начать');
     run().click();run().click();assert.deepEqual(calls,['start']);
     release();await settle();await settle();assert.equal(run().textContent,'Пауза');
+    assert.equal(startNotifications,surface==='overview'?1:0);
     run().click();release();await settle();await settle();assert.equal(run().textContent,'Продолжить');
     rejectNext=true;run().click();release();await settle();await settle();
     assert.equal(run().textContent,'Продолжить');assert.equal(run().disabled,false);
     assert.match(host.querySelector('[role=alert]').textContent,/Другая задача/);
+    assert.equal(startNotifications,surface==='overview'?1:0,'pause and failure do not hand off focus');
     rejectNext=false;run().click();release();await settle();await settle();
     assert.equal(run().textContent,'Пауза');
   });

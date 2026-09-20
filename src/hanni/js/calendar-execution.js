@@ -21,8 +21,6 @@ export async function startCalendarExecution(invoke, task, document) {
     if(current)await invoke('pause_task_block',{blockId:Number(active.id)});
   }
   const id=await invoke('start_task_block',{sourceType:task.source_type,sourceId:String(task.source_id),failIfActive:true,completionDate:task.completion_date||task.date||localDay()});
-  const win=document.defaultView;
-  win.dispatchEvent(new win.Event('hanni:execution-started'));
   return id;
 }
 const localDay=()=>{const date=new Date();return`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;};
