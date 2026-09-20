@@ -1,5 +1,21 @@
 # Hanni MVP
 
+Owner authorization, 2026-09-20: implement the reviewed task-execution and compact
+goal package (private issues #84, #88–93). Put the current task before the goal
+summary and expose Start/Resume/Pause on existing task lists. Reuse task identity
+and timeline records. Repeating entries may be checkmarks, runnable activities,
+or ordered step chains. Keep them in the existing Calendar routine manager;
+do not add a placeholder project or a second dashboard widget. No mandatory
+countdown, automatic next step, or automatic restart. Preserve a return to the
+previous unfinished task. All routine titles and steps come from user data.
+
+Owner correction, 2026-09-20: compact the complete goal view and its editors.
+Preserve all goal information and the existing stage filters; do not replace
+them with a brief summary that hides the remaining content. Avoid nested
+disclosures around the skill text. Today uses compact separate groups; its
+duplicate Add action is removed. These are product decisions, not a claim
+that a candidate has been integrated, installed, or verified on every device.
+
 Owner authorization, 2026-09-16 (open source): publish this independent MVP
 under MIT, retaining third-party licenses and attribution. Keep the previous
 GitHub repository, build logs and artifacts in a private archive. Publish only

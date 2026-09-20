@@ -124,9 +124,8 @@ test('Today has one task list and creation stays in the routine manager', async 
   await click('[data-recurring-add]');
   assert.equal(w.document.querySelector('[data-add-kind="norm"]'),null);
   assert.equal(w.document.querySelector('[data-add-kind="task"]'), null);
-  assert.ok(w.document.querySelector('[data-add-kind="action"]'));
-  assert.ok(w.document.querySelector('[data-add-kind="rule"]'));
-  await click('[data-add-kind="action"]');
+  assert.ok(w.document.querySelector('[name="kind"] option[value="action"]'));
+  assert.ok(w.document.querySelector('[name="kind"] option[value="rule"]'));
   assert.ok(w.document.querySelector('[name="title"]'));
   assert.equal(w.document.querySelector('[data-add-kind]'),null,'choice closes before the shared Task/Event form opens');
   await click('dialog[open]:last-of-type footer [data-dialog-close]');

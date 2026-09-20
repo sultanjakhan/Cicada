@@ -35,6 +35,10 @@ test('active stage limits the compact skill view and can return to the whole goa
   assert.equal(root.querySelector('[data-dev-skill]').textContent, 'API');
   root.querySelector('[data-dev-stage-clear]').click(); await settle(); await settle();
   assert.equal(root.querySelectorAll('[data-dev-skill]').length, 2);
+  root.querySelector('[data-dev-stage-active="s"]').click(); await settle();
+  assert.equal(JSON.parse(stored).goals.g.activeStageId,'s');
+  assert.equal(root.querySelectorAll('[data-dev-skill]').length,1);
+  assert.equal(root.querySelector('[data-dev-skill]').textContent,'API');
   assert.equal(root.querySelectorAll('details.dev-group, details.dev-topic').length, 0, 'stage selection is enough; skill text does not require nested disclosures');
   controller.dispose(); t.after(() => root.remove());
 });

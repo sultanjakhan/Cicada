@@ -54,7 +54,7 @@ fn schedule_context(
         return Err(fail("schedule run is not pending"));
     }
     let snapshot = record["snapshot"].clone();
-    if snapshot["version"] != 1
+    if state["version"] != 1
         || snapshot["id"].as_str() != Some(plan_id.as_str())
         || snapshot["kind"] != "action"
     {
@@ -68,9 +68,10 @@ fn schedule_context(
         .as_str()
         .ok_or_else(|| fail("schedule title is invalid"))?;
     validate_title(snapshot_title)?;
-    let snapshot_steps = snapshot["steps"]
+    let activity_steps = vec![json!({"title": snapshot_title})];
+    let snapshot_steps = if mode == "activity" { Some(&activity_steps) } else { snapshot["steps"]
         .as_array()
-        .filter(|steps| (1..=50).contains(&steps.len()))
+        .filter(|steps| (1..=50).contains(&steps.len())) }
         .ok_or_else(|| fail("schedule steps are invalid"))?;
     for step in snapshot_steps {
         validate_title(
@@ -1223,9 +1224,6 @@ pub fn finish_task_block(block_id: i64, state: State<'_, AppState>) -> Result<()
         return transaction.commit().map_err(|e| fail(e.to_string()));
     }
     stop(&transaction, block_id, true)?;
-    if source_type == "schedule" {
-        set_schedule_step(&transaction, &source_id, "done")?;
-    }
     transaction.commit().map_err(|e| fail(e.to_string()))
 }
 
@@ -1373,7 +1371,7 @@ mod tests {
     fn recurring_fixture(conn: &Connection) {
         crate::init_schema(conn).unwrap();
         conn.execute("INSERT OR REPLACE INTO app_settings(key,value,updated_at) VALUES('device_id','test-device','now')", []).unwrap();
-        let state = json!({"version":1,"plans":[{"id":"p","title":"План","kind":"action","mode":"chain","steps":[{"title":"Первый"},{"title":"Второй"}]}],"days":{"2026-09-20":{"p":{"snapshot":{"version":1,"id":"p","kind":"action","title":"План","mode":"chain","steps":[{"title":"Первый"},{"title":"Второй"}]},"status":"pending","run":{"steps":[{"title":"Первый","status":"pending"},{"title":"Второй","status":"pending"}],"createdAt":"2026-09-20T00:00:00Z"}}}}});
+        let state: Value = serde_json::from_str(include_str!("../../tests/fixtures/recurring-chain.json")).unwrap();
         conn.execute(
             "INSERT INTO ui_state(key,value,updated_at) VALUES('calendar_recurring_v1',?1,'now')",
             [state.to_string()],
@@ -1388,7 +1386,7 @@ mod tests {
         let (_, origin, index, _, title) = schedule_context(&conn, &source).unwrap();
         assert_eq!(
             (origin, index, title),
-            ("2026-09-20".to_string(), 0, "План · Первый".to_string())
+            ("2026-09-20".to_string(), 0, "Chain · First".to_string())
         );
         let tx = conn.unchecked_transaction().unwrap();
         set_schedule_step(&tx, &source, "done").unwrap();
@@ -1417,7 +1415,7 @@ mod tests {
         conn.execute("INSERT INTO timeline_blocks(id,source_type,source_id,date,start_time,duration_minutes,duration_seconds,is_active,completion_date,created_at,updated_at) VALUES(41,'schedule',?1,'2026-09-21','10:00',12,720,0,'2026-09-20','2026-09-21T10:00:00Z','2026-09-21T10:12:00Z')", [&source]).unwrap();
         let rows = schedule_projections(&conn, Some("2026-09-20"), Some("2026-09-20")).unwrap();
         let row = rows.iter().find(|row| row["source_id"] == source).unwrap();
-        assert_eq!(row["title"], "План · Первый");
+        assert_eq!(row["title"], "Chain · First");
         assert_eq!(row["date"], "2026-09-20");
         assert_eq!(row["block_id"], 41);
         assert_eq!(row["block_date"], "2026-09-21");

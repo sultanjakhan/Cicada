@@ -153,7 +153,8 @@ export function mountCalendarDashboardTasks(element, dependencies) {
     embeddedHost.replaceChildren();
     if (failed) { empty(embeddedHost, 'Не удалось обновить список задач.'); return; }
     if (!todayItems.length) return;
-    embeddedHost.append(taskList(todayItems, 'today'));
+    const heading=document.createElement('h3');heading.className='cto-group-title';heading.textContent='Задачи';
+    embeddedHost.append(heading,taskList(todayItems, 'today'));
   }
   async function refresh(canCommit = null) {
     if (disposed) return;

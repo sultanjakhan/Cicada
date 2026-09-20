@@ -1171,6 +1171,15 @@ test('switch retry saves an already paused task without executing pause again', 
    assert.equal(x.ui('task-form').hidden, false);
 });
 
+test('return no longer offers a task completed elsewhere', async t => {
+   const x=await mount(t);
+   await x.choose('task','note:task-a');await x.click('start');await x.click('pause');await x.click('switch-task');
+   x.data.tasks.find(task=>task.source_id==='task-a').completed=true;
+   await x.refresh();
+   assert.equal(x.action('return').hidden,true);
+   assert.equal(JSON.parse(x.data.stored).returnTo,null);
+});
+
 test('switching never pauses a different concurrently started task or clears the saved execution', async t => {
    const x = await mount(t);
    await x.click('start');

@@ -1847,7 +1847,7 @@ fn dashboard_timer_uses_numeric_blocks_and_can_finish_a_paused_task() {
 #[test]
 fn recurring_activity_runtime_uses_one_step_source_and_rejects_stale_finish() {
     let (_app, view) = fixture();
-    let recurring = json!({"version":1,"plans":[{"id":"p","title":"Chain","kind":"action","mode":"chain","steps":[{"title":"First"},{"title":"Second"}]}],"days":{"2026-09-20":{"p":{"snapshot":{"version":1,"id":"p","kind":"action","title":"Chain","mode":"chain","steps":[{"title":"First"},{"title":"Second"}]},"status":"pending","run":{"steps":[{"title":"First","status":"pending"},{"title":"Second","status":"pending"}],"createdAt":"2026-09-20T00:00:00Z"}}}}});
+    let recurring: Value = serde_json::from_str(include_str!("../../tests/fixtures/recurring-chain.json")).unwrap();
     call(&view, "set_ui_state", json!({"key":"calendar_recurring_v1","value":recurring.to_string()})).unwrap();
     let first = json!(["p","2026-09-20",0]).to_string();
     let second = json!(["p","2026-09-20",1]).to_string();
@@ -1871,13 +1871,44 @@ fn recurring_activity_runtime_uses_one_step_source_and_rejects_stale_finish() {
 #[test]
 fn recurring_step_can_be_skipped_before_start_without_creating_a_block() {
     let (_app, view) = fixture();
-    let recurring = json!({"version":1,"plans":[{"id":"p","title":"One","kind":"action","mode":"activity","steps":[{"title":"Do"}]}],"days":{"2026-09-20":{"p":{"snapshot":{"version":1,"id":"p","kind":"action","title":"One","mode":"activity","steps":[{"title":"Do"}]},"status":"pending","run":{"steps":[{"title":"Do","status":"pending"}],"createdAt":"2026-09-20T00:00:00Z"}}}}});
+    let recurring: Value = serde_json::from_str(include_str!("../../tests/fixtures/recurring-activity.json")).unwrap();
     call(&view, "set_ui_state", json!({"key":"calendar_recurring_v1","value":recurring.to_string()})).unwrap();
     let source = json!(["p","2026-09-20",0]).to_string();
     call(&view, "skip_recurring_step", json!({"sourceId":source})).unwrap();
     assert!(call(&view, "start_task_block", json!({"sourceType":"schedule","sourceId":source})).is_err());
     let blocks = call(&view, "get_timeline_blocks", json!({"date":"2026-09-20"})).unwrap();
     assert!(blocks.as_array().unwrap().iter().all(|block| block["source_id"] != source));
+}
+
+#[test]
+fn recurring_activity_resumes_and_cannot_finish_an_obsolete_block() {
+    let (_app, view) = fixture();
+    let recurring: Value = serde_json::from_str(include_str!("../../tests/fixtures/recurring-activity.json")).unwrap();
+    call(&view, "set_ui_state", json!({"key":"calendar_recurring_v1","value":recurring.to_string()})).unwrap();
+    let source = json!(["p","2026-09-20",0]).to_string();
+    let first=call(&view,"start_task_block",json!({"sourceType":"schedule","sourceId":source})).unwrap();
+    call(&view,"pause_task_block",json!({"blockId":first})).unwrap();
+    let second=call(&view,"start_task_block",json!({"sourceType":"schedule","sourceId":source})).unwrap();
+    assert_ne!(first,second);
+    assert!(call(&view,"finish_task_block",json!({"blockId":first})).is_err());
+    call(&view,"pause_task_block",json!({"blockId":second})).unwrap();
+    call(&view,"skip_recurring_step",json!({"sourceId":source})).unwrap();
+    assert!(call(&view,"finish_task_block",json!({"blockId":second})).is_err());
+    let row=call(&view,"get_schedules",json!({})).unwrap();
+    assert_eq!(row[0]["status_extra"],"skipped");
+}
+
+#[test]
+fn skipping_a_routine_never_stops_unrelated_work() {
+    let (_app,view)=fixture();
+    let recurring: Value=serde_json::from_str(include_str!("../../tests/fixtures/recurring-chain.json")).unwrap();
+    call(&view,"set_ui_state",json!({"key":"calendar_recurring_v1","value":recurring.to_string()})).unwrap();
+    let task=call(&view,"save_calendar_task",json!({"title":"Unrelated","id":null,"dueDate":null,"estimateMinutes":null,"goalId":null})).unwrap();
+    let active=call(&view,"start_task_block",json!({"sourceType":"note","sourceId":task})).unwrap();
+    assert!(call(&view,"skip_recurring_step",json!({"sourceId":json!(["p","2026-09-20",0]).to_string()})).is_err());
+    assert_eq!(call(&view,"get_active_block",json!({})).unwrap()["id"],active);
+    let rows=call(&view,"get_schedules",json!({})).unwrap();
+    assert!(rows.as_array().unwrap().iter().all(|row|row["status_extra"]=="pending"));
 }
 
 #[test]

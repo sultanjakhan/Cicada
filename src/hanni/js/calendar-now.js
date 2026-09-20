@@ -752,8 +752,18 @@ export function mountCalendarNow(element, dependencies = {}) {
     if (event.detail?.remoteSync) { remotePending = true; remoteVersion++; remoteGuard = event.detail.canCommit || null; }
     void refresh();
   };
+  const onStarted = async () => {
+    // A direct start from Today should bring its live controls into view.
+    // A routine dialog keeps its own controls and must retain focus.
+    await refresh();
+    if(!disposed&&!busy&&!document.querySelector('dialog[open]')){
+      ui.card.scrollIntoView?.({block:'nearest'});
+      actions.pause.focus({preventScroll:true});
+    }
+  };
   element.addEventListener('click', onClick); element.addEventListener('submit', onSubmit); element.addEventListener('keydown', onKeydown);
   window.addEventListener('task-state-changed', onExternal);
+  window.addEventListener('hanni:execution-started', onStarted);
   window.addEventListener('focus', onExternal);
   const timer = window.setInterval(() => { if (snapshot && localDate() !== snapshot.date && !busy && !reading) void refresh(); renderTime(); }, 1000);
   void refresh();
@@ -762,6 +772,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     disposed = true; stateVersion++; goalDialog?.dispose(); goalPicker?.editor.dispose(); window.clearInterval(timer);
     element.removeEventListener('click', onClick); element.removeEventListener('submit', onSubmit); element.removeEventListener('keydown', onKeydown);
     window.removeEventListener('task-state-changed', onExternal); window.removeEventListener('focus', onExternal);
+    window.removeEventListener('hanni:execution-started', onStarted);
   };
   // Goal cards share this mount's save queue and preserve paused execution.
   async function selectGoal(value) {

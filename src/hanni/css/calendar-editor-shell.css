@@ -47,6 +47,9 @@
 .calendar-native-dialog[data-goal-create] .calendar-editor-field { gap: 5px; margin-bottom: 10px; }
 .calendar-native-dialog[data-goal-create] .calendar-goal-fields fieldset { margin-bottom: 10px; padding: 6px 10px; }
 .calendar-native-dialog[data-goal-create] .calendar-goal-fields textarea { min-height: 72px; }
+.calendar-goal-fields select { box-sizing:border-box; width:100%; min-width:0; min-height:42px; padding:10px 12px; border:1px solid var(--border-default); border-radius:8px; color:var(--text-primary); background:var(--bg-page); font:inherit; }
+.calendar-goal-fields [data-numeric-fields]:not([hidden]) { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+@media(max-width:620px) { .calendar-goal-fields [data-numeric-fields]:not([hidden]) { grid-template-columns:1fr; gap:0; } }
 .calendar-native-dialog.calendar-note-dialog { width: min(calc(100% - 32px), 720px); max-width: 720px; }
 .calendar-note-dialog textarea { box-sizing: border-box; min-width: 0; width: 100%; min-height: 230px; padding: 12px; border: 1px solid var(--border-default); border-radius: 8px; color: var(--text-primary); background: var(--bg-page); font: inherit; font-size: 15px; line-height: 1.6; resize: vertical; }
 .calendar-note-dialog .calendar-note-status { margin: 0 0 14px; color: var(--text-secondary); font-size: 12px; }

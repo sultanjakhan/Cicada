@@ -37,7 +37,7 @@ export function openRecurringRun({document,invoke,id,date,start=false}) {
     }else{
       const message=document.createElement('p');
       const done=record.run.steps.filter(step=>step.status==='done').length;
-      message.textContent=`Выполнение закончено: ${done} из ${record.run.steps.length} ${done===1?'шага выполнен':'шагов выполнено'}.`;
+      message.textContent=`Выполнение закончено. Выполнено шагов: ${done} из ${record.run.steps.length}.`;
       dialog.body.append(message);
     }
     dialog.setPending(busy);
@@ -80,7 +80,10 @@ export function openRecurringRun({document,invoke,id,date,start=false}) {
       }
       notify();await refresh();
     }catch(error){dialog.showError(error?.message||String(error));}
-    finally{busy=false;if(!disposed){dialog.setPending(false);}}
+    finally{busy=false;if(!disposed){
+      dialog.setPending(false);
+      if(dialog.error.hidden)(dialog.body.querySelector('[data-run-action]')||dialog.modal.querySelector('footer [data-dialog-close]'))?.focus();
+    }}
   }
   const onExternal=()=>{if(!busy&&!disposed)void refresh().catch(error=>dialog.showError(error?.message||String(error)));};
   win.addEventListener('task-state-changed',onExternal);win.addEventListener('hanni:calendar-refresh',onExternal);
