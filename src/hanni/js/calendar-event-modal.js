@@ -116,6 +116,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
   let endDateExpanded = initEnd.date !== initDate;
   let availableGoalIds = new Set();
   let goalDraft = options.goalId == null ? null : String(options.goalId);
+  let importantChanged = false;
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay evm-overlay';
@@ -160,6 +161,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
       <p class="evm-goal-path" id="evm-goal-path" aria-live="polite" hidden></p>
       <p class="evm-error" id="evm-goal-error" role="alert" hidden></p>
       <button type="button" class="btn-secondary" id="evm-goal-retry" hidden>Повторить загрузку целей</button>
+      <label class="evm-important" data-editor-task for="evm-important"><input type="checkbox" id="evm-important"${taskId != null && Number(task?.priority) >= 5 ? ' checked' : ''}> <span>Важная</span></label>
       <details class="evm-advanced">
         <summary>Детали <span>необязательно</span></summary>
         <div class="evm-advanced-content">
@@ -229,6 +231,8 @@ export async function showEventModal(eventId = null, initialDate = null, options
   const rangeHint = overlay.querySelector('#evm-range-hint');
   const noDate = overlay.querySelector('#evm-no-date');
   const estimateInput = overlay.querySelector('#evm-task-estimate');
+  const importantInput = overlay.querySelector('#evm-important');
+  importantInput?.addEventListener('change', () => { importantChanged = true; });
   const endDateField = overlay.querySelector('#evm-end-date-field');
   const endDateToggle = overlay.querySelector('#evm-end-date-toggle');
   const fields = overlay.querySelector('#evm-fields');
@@ -461,7 +465,8 @@ export async function showEventModal(eventId = null, initialDate = null, options
       setPending(true);
       try {
         if (!acknowledgedTask) {
-          savedEventId = await invoke('save_calendar_task', { id: savedEventId, title, dueDate, estimateMinutes, goalId: desiredGoalId, expectedVersion: savedVersion });
+          const important = isEdit ? (importantChanged ? Boolean(importantInput?.checked) : null) : Boolean(importantInput?.checked);
+          savedEventId = await invoke('save_calendar_task', { id: savedEventId, title, dueDate, estimateMinutes, goalId: desiredGoalId, expectedVersion: savedVersion, important });
           acknowledgedTask = { id:savedEventId, goalId:desiredGoalId };
         }
         if (options.onTaskSaved) {

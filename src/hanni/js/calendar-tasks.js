@@ -1,3 +1,10 @@
+const setImportantBadge = (document, host, task) => {
+  if (task?.source_type !== 'note' || Number(task?.priority) < 5) return;
+  const badge = document.createElement('span'); badge.className = 'task-importance-badge'; badge.dataset.importantBadge = ''; badge.title = 'Важная задача';
+  const flag = document.createElement('span'); flag.setAttribute('aria-hidden', 'true'); flag.textContent = '⚑';
+  const label = document.createElement('span'); label.textContent = 'Важная'; badge.append(flag, label); host.append(badge);
+};
+
 const taskKey = row => `${row.source_type}:${row.source_id}`;
 const closed = row => row.completed || ['done', 'skipped', 'missed'].includes(row.status_extra);
 const dayOf = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -48,7 +55,7 @@ export function mountCalendarTasks(host, dependencies) {
       if(currentGroup!==lastGroup){list.append(node('h3','ct-group',labels[currentGroup]));ul=node('ul','ct-list');list.append(ul);lastGroup=currentGroup;}
       const id=taskKey(row), item=node('li','ct-row');item.dataset.contextRecord=id;
       const complete=control('ct-complete',closed(row)?'✓':'',()=>void finish(row));complete.disabled=busy||closed(row);complete.setAttribute('aria-label',`${closed(row)?'Завершена':'Завершить'}: ${row.title}`);
-      const title=control('ct-title',row.title,()=>openTask(row,()=>restore(id)));const content=node('div','ct-content');content.append(title);
+      const title=control('ct-title',row.title,()=>openTask(row,()=>restore(id)));const titleWrap=node('span','ct-title-wrap');titleWrap.append(title);setImportantBadge(doc,titleWrap,row);const content=node('div','ct-content');content.append(titleWrap);
       const parts=[goalPath(goalFor(row)),row.is_active?'В работе':row.has_work?'На паузе':''].filter(Boolean);
       if(parts.length)content.append(node('span','ct-meta',parts.join(' · ')));
       const date=control('ct-date',row.date?new Intl.DateTimeFormat('ru',{day:'numeric',month:'short',...(row.date.slice(0,4)!==today.slice(0,4)?{year:'numeric'}:{})}).format(new Date(`${row.date}T12:00:00`)):'Без даты',()=>editDate(row,()=>restore(id,'date')));date.disabled=busy;

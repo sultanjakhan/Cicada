@@ -29,6 +29,14 @@ test('task catalogue filters actual records by day, completion, search and paren
   x.host.querySelector('[data-task-control="open"]').click();assert.deepEqual(x.opened,['API']);
 });
 
+test('important badge is shown for priority five note tasks only', async t=>{
+  const x=await setup(t);
+  const rows=await x.dependencies.invoke('get_calendar_tasks'); rows[0].priority=5;
+  x.dom.window.dispatchEvent(new x.dom.window.Event('task-state-changed')); await settle(); await settle();
+  assert.ok(x.host.querySelectorAll('[data-important-badge]').length >= 1);
+  assert.match(x.host.textContent,/Важная/);
+});
+
 test('completion updates the same task and count, while a failed refresh preserves visible records', async t=>{
   const x=await setup(t);x.host.querySelector('[data-task-control="finish"]').click();await settle();await settle();
   assert.deepEqual(x.actions,[['API','finish']]);assert.deepEqual(x.titles(),['SQL']);assert.equal(x.host.querySelector('[data-tasks-count]').textContent,'1');

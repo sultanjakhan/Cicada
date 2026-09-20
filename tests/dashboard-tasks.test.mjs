@@ -31,6 +31,15 @@ test('Today shows all five other tasks; All includes current and other dates wit
   assert.equal(x.q('all').hidden,true);
 });
 
+test('important badge is limited to native note tasks and appears in Today and All', async t => {
+  const rows = [task('important', { priority: 5 }), task('ordinary', { priority: 4 }), task('event', { source_type: 'event', priority: 5 })];
+  const x = await mount(t, rows);
+  assert.equal(x.q('today').querySelectorAll('[data-important-badge]').length, 1);
+  assert.equal(x.q('today').textContent.includes('Важная'), true);
+  x.q('toggle').click();
+  assert.equal(x.q('all').querySelectorAll('[data-important-badge]').length, 1);
+});
+
 test('Today excludes current from rows and count only when it is on today', async t => {
   const rows = [task('current'), task('other'), task('paused',{has_work:true})];
   const x = await mount(t,rows);

@@ -26,6 +26,8 @@
 .evm-modal #evm-end-date-field { margin-top: 8px; }
 .evm-modal .evm-duration-summary { margin: 8px 0 12px; color: var(--text-secondary); font-size: 12px; }
 .evm-modal .evm-estimate, .evm-modal .evm-goal-field { margin-bottom: 16px; }
+.evm-modal .evm-important { display: inline-flex; align-items: center; gap: 8px; margin: 2px 0 16px; min-height: 38px; cursor: pointer; }
+.evm-modal .evm-important input { width: 18px; height: 18px; }
 .evm-modal .evm-goal-path { margin: -8px 0 16px; color: var(--text-secondary); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
 .evm-modal #evm-title { font-size: 16px; }
 .evm-modal .evm-when-row { display: grid; grid-template-columns: 1.3fr 1fr; gap: 12px; margin: 0; }
