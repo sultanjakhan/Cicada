@@ -1014,24 +1014,32 @@ for (const sourceType of ['note', 'event']) test(`running and paused ${sourceTyp
    await x.choose('task', `${sourceType}:${task.source_id}`);
    await x.click('start');
    const execution=JSON.parse(data.stored).execution, blocks=clone(data.blocks);
-   task.title='Новое название'; task.duration_minutes=45; task.date='2026-09-06';
+   task.title='Новое название'; task.duration_minutes=45; task.date='2026-09-06'; task.priority=5;
    await x.refresh();
    assert.equal(x.host.dataset.state,'active');
    assert.equal(x.ui('title').textContent,'Новое название');
+   assert.equal(x.host.querySelectorAll('[data-important-badge]').length,sourceType==='note'?1:0);
    assert.match(x.ui('meta').textContent,/из 45 мин/);
    assert.equal(JSON.parse(data.stored).execution.task.date,'2026-09-06');
    assert.equal(JSON.parse(data.stored).execution.task.completion_date,execution.task.completion_date);
    assert.deepEqual(data.blocks,blocks);
    await x.click('pause');
    const paused=clone(data.blocks);
-   task.title='Изменено на паузе'; task.duration_minutes=60;
+   task.title='Изменено на паузе'; task.duration_minutes=60; task.priority=0;
    await x.refresh();
    assert.equal(x.host.dataset.state,'paused');
    assert.equal(x.ui('title').textContent,'Изменено на паузе');
+   assert.equal(x.host.querySelectorAll('[data-important-badge]').length,0);
    assert.match(x.ui('meta').textContent,/из 60 мин/);
    assert.equal(JSON.parse(data.stored).execution.blockId,execution.blockId);
    assert.deepEqual(data.blocks,paused);
    assert.equal(data.count('start_task_block'),1);
+   const legacy=JSON.parse(data.stored);delete legacy.execution.task.priority;delete task.priority;
+   data.stored=JSON.stringify(legacy);x.cleanup();
+   const restored=await mount(t,data);
+   assert.equal(restored.host.dataset.state,'paused');
+   assert.equal(restored.host.querySelectorAll('[data-important-badge]').length,0,'legacy state is not important');
+   assert.deepEqual(data.blocks,paused);
 });
 
 test('main goal shows the current task branch without repeating its title or inventing progress', async t => {

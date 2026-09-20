@@ -34,7 +34,7 @@ test('task editor preserves legacy priority until the important checkbox changes
   w.__TAURI__={core:{invoke:async(command,args)=>{
     if(command==='list_event_categories')return [];
     if(command==='get_goals')return [];
-    if(command==='get_calendar_task'){reads++;return {id:'task-3',title:'Legacy',date:'2026-09-20',priority:reads===1?3:5,version:2};}
+    if(command==='get_calendar_task'){reads++;if(reads===3)throw Error('temporary read failure');return {id:'task-3',title:'Legacy',date:'2026-09-20',priority:reads===1?3:5,version:2};}
     if(command==='save_calendar_task'){saves.push(args);return 'task-3';}
     if(command==='get_calendar_task_goals')return [];
     throw Error(command);
@@ -48,4 +48,10 @@ test('task editor preserves legacy priority until the important checkbox changes
   await showEventModal(null,null,{kind:'task',taskId:'task-3'}); await settle();
   form=document.querySelector('#evm-form'); form.querySelector('#evm-important').click(); form.requestSubmit(); await settle();
   assert.equal(saves[1].important,false);
+  await showEventModal(null,null,{kind:'task',taskId:'task-3'}); await settle();
+  assert.equal(document.querySelector('#evm-fields').disabled,true);
+  document.querySelector('#evm-record-retry').click(); await settle();
+  assert.equal(document.querySelector('#evm-important').checked,true,'retry loads the saved importance');
+  document.querySelector('#evm-form').requestSubmit(); await settle();
+  assert.equal(saves[2].important,null,'successful retry alone does not change priority');
 });

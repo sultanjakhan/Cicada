@@ -4,9 +4,9 @@ import { JSDOM } from 'jsdom';
 import { mountCalendarDashboardTasks } from '../src/hanni/js/calendar-dashboard-tasks.js';
 
 const task = (id, values = {}) => ({ source_type:'note', source_id:id, title:`Задача ${id}`, status_extra:'task', date:'2026-09-12', duration_minutes:30, ...values });
-async function mount(t, rows) {
+async function mount(t, rows, now = () => new Date('2026-09-12T12:00:00')) {
   const dom = new JSDOM('<main></main>'), host = dom.window.document.querySelector('main');
-  const dispose = mountCalendarDashboardTasks(host, { invoke:async () => rows, now:() => new Date('2026-09-12T12:00:00') });
+  const dispose = mountCalendarDashboardTasks(host, { invoke:async () => rows, now });
   t.after(() => { dispose(); dom.window.close(); });
   await new Promise(resolve => setImmediate(resolve));
   return { host, dispose, window:dom.window, q:name => host.querySelector(`[data-overview-${name}]`) };
@@ -39,6 +39,24 @@ test('important badge is limited to native note tasks and appears in Today and A
   x.q('toggle').click();
   assert.equal(x.q('all').querySelectorAll('[data-important-badge]').length, 2);
   assert.match(x.q('all').textContent, /later/);
+});
+
+test('important task follows its planned date across midnight and rescheduling', async t => {
+  let clock = new Date('2026-09-12T23:59:00');
+  const rows = [task('important', { priority: 5 })];
+  const x = await mount(t, rows, () => clock);
+  assert.equal(x.q('today').querySelectorAll('[data-important-badge]').length, 1);
+  clock = new Date('2026-09-13T00:01:00');
+  x.window.dispatchEvent(new x.window.Event('focus'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(x.q('today').querySelectorAll('[data-overview-task]').length, 0);
+  x.q('toggle').click();
+  assert.equal(x.q('all').querySelectorAll('[data-important-badge]').length, 1);
+  rows[0].date = '2026-09-13';
+  x.window.dispatchEvent(new x.window.Event('task-state-changed'));
+  await new Promise(resolve => setImmediate(resolve));
+  x.q('today-filter').click();
+  assert.equal(x.q('today').querySelectorAll('[data-important-badge]').length, 1);
 });
 
 test('Today excludes current from rows and count only when it is on today', async t => {

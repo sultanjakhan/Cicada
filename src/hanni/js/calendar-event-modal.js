@@ -371,6 +371,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
       task = value; recordReady = true;
       savedVersion = task.version ?? null;
       titleInput.value = task.title; dateInput.value = task.date || ''; noDate.checked = !task.date; estimateInput.value = task.duration_minutes ?? '';
+      importantInput.checked = Number(task.priority) >= 5; importantChanged = false;
       showError(''); showRecordState(); updateEditorType();
       if (isTopModal()) (options.initialFocus === 'date' ? (noDate.checked ? noDate : dateInput) : titleInput).focus();
       await loadGoals();
