@@ -20,9 +20,8 @@
 .calendar-now .calendar-now__button-icon { display: inline-flex; flex: 0 0 16px; width: 16px; height: 16px; }
 .calendar-now [data-action-label] { min-width: 0; }
 .calendar-now button:disabled { cursor: default; opacity: .55; }
-.calendar-now button.calendar-now__task-link { display:block; width:fit-content; min-height:44px; padding:0; border:0; border-radius:4px; color:inherit; background:transparent; text-align:left; font:inherit; line-height:inherit; }
+.calendar-now button.calendar-now__task-link { display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap; width:fit-content; max-width:100%; min-height:44px; padding:0; border:0; border-radius:4px; color:inherit; background:transparent; text-align:left; font:inherit; line-height:inherit; }
 .calendar-now .calendar-now__task-link > [data-ui="title"] { min-width:0; }
-.calendar-now .calendar-now__task-link { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; flex-wrap: wrap; }
 .calendar-now .task-importance-badge { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; color: #a52f28; font-size: 12px; font-weight: 650; white-space: nowrap; }
 .calendar-now .task-importance-badge > span:first-child { font-size: 15px; line-height: 1; }
 .calendar-now .calendar-now__task-link:not(:disabled):is(:hover,:focus-visible) > [data-ui="title"],
