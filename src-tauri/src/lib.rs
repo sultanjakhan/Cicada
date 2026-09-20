@@ -599,6 +599,7 @@ pub fn run() {
             calendar_compat::update_event_category,
             calendar_compat::delete_event_category,
             calendar_compat::get_timeline_blocks,
+            calendar_compat::get_latest_task_block,
             calendar_compat::get_active_block,
             calendar_compat::start_task_block,
             calendar_compat::pause_task_block,

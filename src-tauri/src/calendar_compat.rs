@@ -1069,6 +1069,29 @@ pub fn get_timeline_blocks(date: String, state: State<'_, AppState>) -> Result<V
     Ok(rows)
 }
 #[tauri::command]
+pub fn get_latest_task_block(state: State<'_, AppState>) -> Result<Option<Value>, String> {
+    let conn = lock(&state)?;
+    conn.query_row(
+        "SELECT id,source_type,source_id,date,start_time,end_time,duration_minutes,CASE WHEN duration_seconds > 0 THEN duration_seconds ELSE duration_minutes * 60 END,is_active,completion_date,created_at FROM timeline_blocks WHERE source_type IN ('note','event','schedule') ORDER BY created_at DESC,id DESC LIMIT 1",
+        [],
+        |r| Ok(json!({
+            "id": r.get::<_, i64>(0)?,
+            "source_type": r.get::<_, String>(1)?,
+            "source_id": r.get::<_, String>(2)?,
+            "date": r.get::<_, String>(3)?,
+            "start_time": r.get::<_, String>(4)?,
+            "end_time": r.get::<_, Option<String>>(5)?,
+            "duration_minutes": r.get::<_, i64>(6)?,
+            "duration_seconds": r.get::<_, i64>(7)?,
+            "is_active": r.get::<_, i64>(8)? != 0,
+            "completion_date": r.get::<_, Option<String>>(9)?,
+            "created_at": r.get::<_, String>(10)?
+        })),
+    )
+    .optional()
+    .map_err(|e| fail(e.to_string()))
+}
+#[tauri::command]
 pub fn get_active_block(state: State<'_, AppState>) -> Result<Option<Value>, String> {
     let conn = lock(&state)?;
     conn.query_row("SELECT id,source_type,source_id,date,start_time,completion_date FROM timeline_blocks WHERE is_active=1 ORDER BY id DESC LIMIT 1",[],|r|Ok(json!({"id":r.get::<_,i64>(0)?,"source_type":r.get::<_,String>(1)?,"source_id":r.get::<_,String>(2)?,"date":r.get::<_,String>(3)?,"start_time":r.get::<_,String>(4)?,"completion_date":r.get::<_,Option<String>>(5)?}))).optional().map_err(|e|fail(e.to_string()))

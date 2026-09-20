@@ -47,6 +47,7 @@ fn fixture_with_connection(
             api::skip_recurring_step,
             api::get_active_block,
             api::get_timeline_blocks,
+            api::get_latest_task_block,
             api::get_calendar_task_minutes,
             api::get_calendar_task_seconds,
             api::get_ui_state,
@@ -1842,6 +1843,27 @@ fn dashboard_timer_uses_numeric_blocks_and_can_finish_a_paused_task() {
         call(&view, "get_note", json!({"id":task})).unwrap()["status"],
         "done"
     );
+}
+
+#[test]
+fn latest_task_block_restores_the_last_paused_source_without_copying_rows() {
+    let (_app, view) = fixture();
+    let task1 = call(&view, "save_calendar_task", json!({"id":null,"title":"First","dueDate":null,"estimateMinutes":10,"goalId":null})).unwrap();
+    let task2 = call(&view, "save_calendar_task", json!({"id":null,"title":"Second","dueDate":null,"estimateMinutes":10,"goalId":null})).unwrap();
+    let block1 = call(&view, "start_task_block", json!({"sourceType":"note","sourceId":task1,"failIfActive":true})).unwrap();
+    call(&view, "pause_task_block", json!({"blockId":block1})).unwrap();
+    let block2 = call(&view, "start_task_block", json!({"sourceType":"note","sourceId":task2,"failIfActive":true})).unwrap();
+    call(&view, "pause_task_block", json!({"blockId":block2})).unwrap();
+    let latest = call(&view, "get_latest_task_block", json!({})).unwrap();
+    assert_eq!(latest["id"], block2);
+    assert_eq!(latest["source_type"], "note");
+    assert_eq!(latest["source_id"], task2);
+    assert_eq!(latest["is_active"], false);
+    assert!(call(&view, "get_active_block", json!({})).unwrap().is_null());
+    let rows = call(&view, "get_timeline_blocks", json!({"date":latest["date"]})).unwrap();
+    assert_eq!(rows.as_array().unwrap().len(), 2);
+    assert!(rows.as_array().unwrap().iter().any(|row| row["id"] == block1));
+    assert!(rows.as_array().unwrap().iter().any(|row| row["id"] == block2));
 }
 
 #[test]
