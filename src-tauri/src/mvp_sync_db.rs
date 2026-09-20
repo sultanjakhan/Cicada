@@ -2,7 +2,7 @@
 //! Source rows keep their original identity; wire records address composite keys
 //! and individual JSON records without transporting device settings.
 use chrono::{DateTime, Local, SecondsFormat, Utc};
-use rusqlite::{params, types::Value as SqlValue, Connection, OptionalExtension};
+use rusqlite::{params, types::Value as SqlValue, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
@@ -208,7 +208,7 @@ fn parse(raw: &str) -> Result<Value, String> {
 fn parse_keys(raw: &str) -> Result<Vec<Value>, String> {
     serde_json::from_str(raw).map_err(|_| "mvp_sync_invalid_key".into())
 }
-fn record_local(
+pub(crate) fn record_local(
     conn: &Connection,
     kind: &str,
     keys: Vec<Value>,
@@ -704,6 +704,15 @@ pub(crate) fn set_ui(
     expected: Option<&str>,
 ) -> Result<(), String> {
     let tx = sql(conn.unchecked_transaction())?;
+    set_ui_in_transaction(&tx, key, value, expected)?;
+    sql(tx.commit())
+}
+pub(crate) fn set_ui_in_transaction(
+    tx: &Transaction<'_>,
+    key: &str,
+    value: &str,
+    expected: Option<&str>,
+) -> Result<(), String> {
     let prior = read_ui(&tx, key)?;
     if let Some(expected) = expected {
         if prior.as_deref().unwrap_or("") != expected {
@@ -732,7 +741,7 @@ pub(crate) fn set_ui(
         }
         write_ui(&tx, key, value)?;
     }
-    sql(tx.commit())
+    Ok(())
 }
 fn object(value: &Value) -> Result<&Map<String, Value>, String> {
     value.as_object().ok_or("mvp_sync_invalid_snapshot".into())
