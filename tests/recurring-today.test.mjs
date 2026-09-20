@@ -32,7 +32,7 @@ test('Today combines current-date task and pending rule under one Дела headi
   t.after(()=>{dispose();dom.window.close();}); await new Promise(resolve=>setTimeout(resolve,0)); await new Promise(resolve=>setTimeout(resolve,0));
   assert.equal(host.querySelector('[data-recurring-heading]').textContent,'Сегодня');
   assert.equal(host.querySelector('.calendar-recurring__section h3').textContent,'Дела');
-  assert.match(host.querySelector('[data-recurring-count]').textContent,/2 дел на сегодня/);
+  assert.match(host.querySelector('[data-recurring-count]').textContent,/2 дела на сегодня/);
   assert.match(host.textContent,/Подготовить SQL-запрос/);
   const row=host.querySelector('[data-recurring-id="rule-1"]');
   assert.match(row.textContent,/Обязательное · 09:00 · Вс · правило на день/);
@@ -46,10 +46,10 @@ test('Today count says other work remains when current task is paused', async t 
   const dispose=mountCalendarRecurring(host,{invoke,now:()=>new Date(`${today}T12:00:00`),mountTasks:slot=>mountCalendarDashboardTasks(slot,{invoke,now:()=>new Date(`${today}T12:00:00`),embedded:true})});
   t.after(()=>{dispose();dom.window.close();}); await new Promise(resolve=>setImmediate(resolve)); await new Promise(resolve=>setImmediate(resolve));
   dispose.setCurrentTask({key:'note:task-1',state:'paused'});
-  assert.equal(host.querySelector('[data-recurring-count]').textContent,'Ещё 1 дел на сегодня');
+  assert.equal(host.querySelector('[data-recurring-count]').textContent,'Ещё 1 дело на сегодня');
   assert.doesNotMatch(host.querySelector('[data-recurring-tasks]').textContent,/Подготовить SQL-запрос/);
   dispose.setCurrentTask({key:'note:task-1',state:'completed'});
-  assert.equal(host.querySelector('[data-recurring-count]').textContent,'1 дел на сегодня');
+  assert.equal(host.querySelector('[data-recurring-count]').textContent,'1 дело на сегодня');
 });
 
 test('Embedded task controller omits tasks when the selected date is not today', async t => {
@@ -82,7 +82,8 @@ test('History is secondary, cancel keeps Today, past date applies, and Today ret
   const input=dialog.querySelector('[data-history-date]'); input.value='2026-09-12'; dialog.querySelector('form').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));
   assert.equal(host.querySelector('[data-recurring-heading]').textContent,'Дневные отметки');
   assert.match(host.querySelector('[data-recurring-history]').textContent,/История/);
-  const todayButton=host.querySelector('[data-recurring-today]'); assert.equal(todayButton.hidden,false); todayButton.click();
+  const todayButton=host.querySelector('[data-recurring-today]'); assert.equal(todayButton.hidden,false); todayButton.focus(); todayButton.click();
+  assert.equal(dom.window.document.activeElement,host.querySelector('[data-recurring-history]'),'returning to Today keeps keyboard focus on a visible control');
   assert.equal(host.querySelector('[data-recurring-heading]').textContent,'Сегодня');
   assert.equal(todayButton.hidden,true);
 });
