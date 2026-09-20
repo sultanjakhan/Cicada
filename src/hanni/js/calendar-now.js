@@ -13,7 +13,7 @@ let stateWriteQueue = Promise.resolve();
 const keyOf = task => task ? `${task.source_type}:${String(task.source_id)}` : '';
 const setImportantBadge = (document, host, task) => {
   host?.querySelectorAll('[data-important-badge]').forEach(node => node.remove());
-  if (!host || task?.source_type !== 'note' || Number(task?.priority) < 5) return;
+  if (!host || task?.source_type !== 'note' || !Number.isFinite(Number(task?.priority)) || Number(task.priority) < 5) return;
   const badge = document.createElement('span'); badge.className = 'task-importance-badge'; badge.dataset.importantBadge = ''; badge.title = 'Важная задача';
   const flag = document.createElement('span'); flag.setAttribute('aria-hidden', 'true'); flag.textContent = '⚑';
   const label = document.createElement('span'); label.textContent = 'Важная'; badge.append(flag, label); host.append(badge);
@@ -28,7 +28,7 @@ const freshState = () => ({ version: 1, goalId: null, selectionMode: 'auto', sel
 const taskOf = row => ({
   source_type: row.source_type, source_id: String(row.source_id),
   title: row.title || 'Без названия',
-  priority: row.priority,
+  priority: Number.isFinite(Number(row.priority)) ? Number(row.priority) : 0,
   duration_minutes: Number(row.duration_minutes || row.target_minutes) || null,
   date: validDate(row.date), completion_date: validDate(row.completion_date) || validDate(row.date),
 });

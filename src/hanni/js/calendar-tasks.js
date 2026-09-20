@@ -1,5 +1,5 @@
 const setImportantBadge = (document, host, task) => {
-  if (task?.source_type !== 'note' || Number(task?.priority) < 5) return;
+  if (task?.source_type !== 'note' || !Number.isFinite(Number(task?.priority)) || Number(task.priority) < 5) return;
   const badge = document.createElement('span'); badge.className = 'task-importance-badge'; badge.dataset.importantBadge = ''; badge.title = 'Важная задача';
   const flag = document.createElement('span'); flag.setAttribute('aria-hidden', 'true'); flag.textContent = '⚑';
   const label = document.createElement('span'); label.textContent = 'Важная'; badge.append(flag, label); host.append(badge);
