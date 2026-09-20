@@ -19,16 +19,29 @@ internal object ContentSyncCodes {
     const val SKIP = 2
     const val BUSY = 3
     const val FAILURE = 4
+    const val SKIP_FOREGROUND = 5
 }
 
-internal object ContentSyncRetryPolicy {
+internal enum class ContentSyncOutcome {
+    SUCCESS,
+    RETRY,
+    FAILURE,
+}
+
+internal object ContentSyncResultPolicy {
     const val MAX_ATTEMPTS = 3
-    fun shouldRetry(code: Int, runAttemptCount: Int): Boolean =
-        (code == ContentSyncCodes.RETRY || code == ContentSyncCodes.BUSY) && runAttemptCount + 1 < MAX_ATTEMPTS
-}
-
-internal object ContentSyncSchedulePolicy {
-    fun shouldSchedule(enabled: Boolean): Boolean = enabled
+    fun outcome(code: Int, runAttemptCount: Int): ContentSyncOutcome = when (code) {
+        ContentSyncCodes.SUCCESS,
+        ContentSyncCodes.SKIP,
+        ContentSyncCodes.SKIP_FOREGROUND -> ContentSyncOutcome.SUCCESS
+        ContentSyncCodes.RETRY,
+        ContentSyncCodes.BUSY -> if (runAttemptCount + 1 < MAX_ATTEMPTS) {
+            ContentSyncOutcome.RETRY
+        } else {
+            ContentSyncOutcome.FAILURE
+        }
+        else -> ContentSyncOutcome.FAILURE
+    }
 }
 
 /** Closed-app content sync. It never creates an Activity or notification. */
@@ -36,27 +49,30 @@ class HanniContentSyncWorker(context: Context, params: WorkerParameters) : Corou
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         UpdateActivityGuard.install(applicationContext as android.app.Application)
         if (UpdateActivityGuard.hasLiveActivity()) {
-            ContentSyncReceipt.save(applicationContext, ContentSyncCodes.SUCCESS)
+            ContentSyncReceipt.save(applicationContext, ContentSyncCodes.SKIP_FOREGROUND)
             return@withContext Result.success()
         }
-        val database = File(applicationContext.applicationInfo.dataDir, "calendar.db").canonicalFile
-        if (!database.isFile) {
-            ContentSyncReceipt.save(applicationContext, ContentSyncCodes.SKIP)
-            return@withContext Result.success()
+        val code = try {
+            val database = File(applicationContext.applicationInfo.dataDir, "calendar.db").canonicalFile
+            if (!database.isFile) ContentSyncCodes.SKIP else ContentSyncNative.run(database.path)
+        } catch (_: LinkageError) {
+            ContentSyncCodes.FAILURE
+        } catch (_: Exception) {
+            ContentSyncCodes.FAILURE
         }
-        val code = try { ContentSyncNative.run(database.path) }
-        catch (_: LinkageError) { ContentSyncCodes.FAILURE }
-        catch (_: Exception) { ContentSyncCodes.FAILURE }
         ContentSyncReceipt.save(applicationContext, code)
-        if (ContentSyncRetryPolicy.shouldRetry(code, runAttemptCount)) Result.retry()
-        else Result.success()
+        when (ContentSyncResultPolicy.outcome(code, runAttemptCount)) {
+            ContentSyncOutcome.SUCCESS -> Result.success()
+            ContentSyncOutcome.RETRY -> Result.retry()
+            ContentSyncOutcome.FAILURE -> Result.failure()
+        }
     }
 
     companion object {
         private const val UNIQUE_WORK = "hanni-content-sync"
         fun schedule(context: Context, enabled: Boolean): Boolean {
             val manager = WorkManager.getInstance(context)
-            if (!ContentSyncSchedulePolicy.shouldSchedule(enabled)) {
+            if (!enabled) {
                 manager.cancelUniqueWork(UNIQUE_WORK)
                 return false
             }
@@ -91,6 +107,6 @@ internal object ContentSyncReceipt {
     private const val LAST_CODE = "last_status_code"
     fun save(context: Context, code: Int) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putLong(LAST_RUN_AT, System.currentTimeMillis()).putInt(LAST_CODE, code).apply()
+            .putLong(LAST_RUN_AT, System.currentTimeMillis()).putInt(LAST_CODE, code).commit()
     }
 }
