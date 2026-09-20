@@ -7,6 +7,7 @@ const COMMANDS: &[&str] = &[
     "get_install_status",
     "open_pending_user_action",
     "schedule_auto_install",
+    "schedule_content_sync",
 ];
 
 fn main() {

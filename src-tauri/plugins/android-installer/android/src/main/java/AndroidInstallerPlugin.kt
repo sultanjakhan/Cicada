@@ -221,6 +221,18 @@ class AndroidInstallerPlugin(private val activity: Activity) : Plugin(activity) 
         }
     }
 
+    @Command
+    fun scheduleContentSync(invoke: Invoke) {
+        try {
+            val enabled = invoke.parseArgs(ContentSyncScheduleArgs::class.java).enabled
+            invoke.resolve(JSObject().apply {
+                put("scheduled", HanniContentSyncWorker.schedule(activity.applicationContext, enabled))
+            })
+        } catch (error: Exception) {
+            invoke.reject(error.message ?: "Could not schedule content sync")
+        }
+    }
+
     /** Explicit UI action for the rare OS fallback after STATUS_PENDING_USER_ACTION. */
     @Command
     fun openPendingUserAction(invoke: Invoke) {
@@ -327,6 +339,9 @@ class AndroidInstallerPlugin(private val activity: Activity) : Plugin(activity) 
     private fun status(value: String): JSObject = JSObject().apply { put("status", value) }
 
 }
+
+@InvokeArg
+class ContentSyncScheduleArgs { var enabled: Boolean = false }
 
 @Suppress("DEPRECATION")
 private fun Intent.parcelableIntent(key: String): Intent? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

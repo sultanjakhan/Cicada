@@ -136,4 +136,30 @@ Denies the schedule_auto_install command without any pre-configured scope.
 
 </td>
 </tr>
+
+<tr>
+<td>
+
+`hanni-mvp-android-installer:allow-schedule-content-sync`
+
+</td>
+<td>
+
+Enables the schedule_content_sync command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`hanni-mvp-android-installer:deny-schedule-content-sync`
+
+</td>
+<td>
+
+Denies the schedule_content_sync command without any pre-configured scope.
+
+</td>
+</tr>
 </table>

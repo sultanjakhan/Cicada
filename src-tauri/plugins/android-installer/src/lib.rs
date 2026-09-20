@@ -175,6 +175,33 @@ impl<R: Runtime> AndroidInstaller<R> {
             handle.run_mobile_plugin("scheduleAutoInstall", ()).map_err(|error| error.to_string())
         }
     }
+
+    /// Enables or cancels the independent closed-app content-sync worker.
+    pub fn schedule_content_sync(&self, enabled: bool) -> Result<bool, String> {
+        #[cfg(not(target_os = "android"))]
+        {
+            let _ = enabled;
+            Ok(false)
+        }
+        #[cfg(target_os = "android")]
+        {
+            let Some(handle) = &self.0 else {
+                return Ok(false);
+            };
+            #[derive(Deserialize)]
+            struct Response {
+                scheduled: bool,
+            }
+            #[derive(Serialize)]
+            struct Request {
+                enabled: bool,
+            }
+            let response: Response = handle
+                .run_mobile_plugin("scheduleContentSync", Request { enabled })
+                .map_err(|error| error.to_string())?;
+            Ok(response.scheduled)
+        }
+    }
 }
 
 pub trait AndroidInstallerExt<R: Runtime> {
