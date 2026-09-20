@@ -4,6 +4,7 @@ use crate::{fail, get_item, validate_date, validate_time, AppState, Item};
 use chrono::{Local, Utc};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use tauri::State;
 use uuid::Uuid;
 
@@ -34,6 +35,10 @@ fn schedule_context(
         .ok_or_else(|| fail("invalid schedule source"))?
         .to_string();
     validate_date(&origin)?;
+    let today = Local::now().format("%Y-%m-%d").to_string();
+    if origin > today {
+        return Err(fail("schedule date is in the future"));
+    }
     let index = parts[2]
         .as_u64()
         .filter(|v| *v <= 10_000)
@@ -49,13 +54,59 @@ fn schedule_context(
         return Err(fail("schedule run is not pending"));
     }
     let snapshot = record["snapshot"].clone();
+    if snapshot["version"] != 1
+        || snapshot["id"].as_str() != Some(plan_id.as_str())
+        || snapshot["kind"] != "action"
+    {
+        return Err(fail("schedule snapshot is not runnable"));
+    }
     let mode = snapshot["mode"].as_str().unwrap_or("check");
     if !matches!(mode, "activity" | "chain") {
         return Err(fail("schedule is not runnable"));
     }
+    let snapshot_title = snapshot["title"]
+        .as_str()
+        .ok_or_else(|| fail("schedule title is invalid"))?;
+    validate_title(snapshot_title)?;
+    let snapshot_steps = snapshot["steps"]
+        .as_array()
+        .filter(|steps| (1..=50).contains(&steps.len()))
+        .ok_or_else(|| fail("schedule steps are invalid"))?;
+    for step in snapshot_steps {
+        validate_title(
+            step["title"]
+                .as_str()
+                .ok_or_else(|| fail("schedule step title is invalid"))?,
+        )?;
+    }
     let steps = record["run"]["steps"]
         .as_array()
         .ok_or_else(|| fail("schedule run has no steps"))?;
+    if steps.len() != snapshot_steps.len() {
+        return Err(fail("schedule run steps do not match snapshot"));
+    }
+    let created_at = record["run"]["createdAt"]
+        .as_str()
+        .ok_or_else(|| fail("schedule run timestamp is invalid"))?;
+    chrono::DateTime::parse_from_rfc3339(created_at)
+        .map_err(|_| fail("schedule run timestamp is invalid"))?;
+    for step in steps {
+        if !matches!(step["status"].as_str(), Some("pending" | "done" | "skipped")) {
+            return Err(fail("schedule step status is invalid"));
+        }
+        validate_title(
+            step["title"]
+                .as_str()
+                .ok_or_else(|| fail("schedule step title is invalid"))?,
+        )?;
+    }
+    let first_pending = steps
+        .iter()
+        .position(|step| step["status"] == "pending")
+        .ok_or_else(|| fail("schedule run is complete"))?;
+    if index != first_pending {
+        return Err(fail("schedule step is not current"));
+    }
     let step = steps
         .get(index)
         .ok_or_else(|| fail("schedule step not found"))?;
@@ -116,6 +167,31 @@ fn schedule_projections(
         None => return Ok(Vec::new()),
     };
     let state: Value = serde_json::from_str(&raw).map_err(|_| fail("invalid recurring state"))?;
+    let mut aggregates: HashMap<String, (bool, i64, i64, Option<i64>, Option<String>)> =
+        HashMap::new();
+    let mut statement = conn
+        .prepare(
+            "SELECT source_id, COALESCE(MAX(is_active),0), COALESCE(SUM(CASE WHEN duration_seconds>0 THEN duration_seconds ELSE duration_minutes*60 END),0), COUNT(*), (SELECT id FROM timeline_blocks latest WHERE latest.source_type='schedule' AND latest.source_id=timeline_blocks.source_id ORDER BY latest.created_at DESC,latest.id DESC LIMIT 1), (SELECT date FROM timeline_blocks latest WHERE latest.source_type='schedule' AND latest.source_id=timeline_blocks.source_id ORDER BY latest.created_at DESC,latest.id DESC LIMIT 1) FROM timeline_blocks WHERE source_type='schedule' GROUP BY source_id",
+        )
+        .map_err(|e| fail(e.to_string()))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)? != 0,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ))
+        })
+        .map_err(|e| fail(e.to_string()))?;
+    for row in rows {
+        let (source_id, active, seconds, has_work, block_id, block_date) =
+            row.map_err(|e| fail(e.to_string()))?;
+        aggregates.insert(source_id, (active, seconds, has_work, block_id, block_date));
+    }
+    drop(statement);
     let mut out = Vec::new();
     if let Some(days) = state["days"].as_object() {
         for (origin, records) in days {
@@ -136,7 +212,10 @@ fn schedule_projections(
                     }
                     for (index, step) in steps.iter().enumerate() {
                         let source_id = json!([plan_id, origin, index]).to_string();
-                        let (active, seconds, has_work, block_id, block_date): (bool, i64, i64, Option<i64>, Option<String>) = conn.query_row("SELECT COALESCE(MAX(is_active),0),COALESCE(SUM(CASE WHEN duration_seconds>0 THEN duration_seconds ELSE duration_minutes*60 END),0),COUNT(*),(SELECT id FROM timeline_blocks WHERE source_type='schedule' AND source_id=?1 ORDER BY created_at DESC,id DESC LIMIT 1),(SELECT date FROM timeline_blocks WHERE source_type='schedule' AND source_id=?1 ORDER BY created_at DESC,id DESC LIMIT 1) FROM timeline_blocks WHERE source_type='schedule' AND source_id=?1", [&source_id], |r| Ok((r.get::<_,i64>(0)? != 0,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).map_err(|e| fail(e.to_string()))?;
+                        let (active, seconds, has_work, block_id, block_date) = aggregates
+                            .get(&source_id)
+                            .cloned()
+                            .unwrap_or((false, 0, 0, None, None));
                         let title = if mode == "chain" {
                             format!(
                                 "{} · {}",
@@ -1020,13 +1099,6 @@ pub fn start_task_block(
         let date = Local::now().format("%Y-%m-%d").to_string();
         let t = Local::now().format("%H:%M:%S").to_string();
         conn.execute("INSERT INTO timeline_blocks(id,source_type,source_id,date,start_time,is_active,completion_date,created_at,updated_at) VALUES(?1,'schedule',?2,?3,?4,1,?5,?6,?6)", params![id,source_id,date,t,origin,timestamp]).map_err(|e| fail(e.to_string()))?;
-        crate::mvp_sync_db::record_local(
-            &conn,
-            "timeline_blocks",
-            vec![json!(id)],
-            json!({"id":id,"source_type":"schedule","source_id":source_id,"date":date,"start_time":t,"end_time":Value::Null,"duration_minutes":0,"duration_seconds":0,"is_active":true,"completion_date":origin,"created_at":timestamp,"updated_at":timestamp}),
-            false,
-        )?;
         let _ = title;
         return Ok(id);
     }
@@ -1073,13 +1145,6 @@ pub fn start_task_block(
     let id = crate::mvp_sync_db::timeline_id(&conn)?;
     let timestamp = now();
     conn.execute("INSERT INTO timeline_blocks(id,source_type,source_id,date,start_time,is_active,completion_date,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,1,?6,?7,?7)",params![id,source_type,source_id,date,t,completion_date,timestamp]).map_err(|e|fail(e.to_string()))?;
-    crate::mvp_sync_db::record_local(
-        &conn,
-        "timeline_blocks",
-        vec![json!(id)],
-        json!({"id":id,"source_type":source_type,"source_id":source_id,"date":date,"start_time":t,"end_time":Value::Null,"duration_minutes":0,"duration_seconds":0,"is_active":true,"completion_date":completion_date,"created_at":timestamp,"updated_at":timestamp}),
-        false,
-    )?;
     Ok(id)
 }
 fn stop(conn: &Connection, id: i64, complete: bool) -> Result<(), String> {
@@ -1101,8 +1166,6 @@ fn stop(conn: &Connection, id: i64, complete: bool) -> Result<(), String> {
         let duration_minutes = duration_seconds / 60;
         let updated = now();
         conn.execute("UPDATE timeline_blocks SET end_time=?1,duration_minutes=?2,duration_seconds=?3,is_active=0,updated_at=?4 WHERE id=?5",params![end,duration_minutes,duration_seconds,updated,id]).map_err(|e|fail(e.to_string()))?;
-        let row = conn.query_row("SELECT id,source_type,source_id,date,start_time,end_time,duration_minutes,duration_seconds,is_active,completion_date,created_at,updated_at FROM timeline_blocks WHERE id=?1", [id], |r| Ok(json!({"id":r.get::<_,i64>(0)?,"source_type":r.get::<_,String>(1)?,"source_id":r.get::<_,String>(2)?,"date":r.get::<_,String>(3)?,"start_time":r.get::<_,String>(4)?,"end_time":r.get::<_,Option<String>>(5)?,"duration_minutes":r.get::<_,i64>(6)?,"duration_seconds":r.get::<_,i64>(7)?,"is_active":r.get::<_,i64>(8)?!=0,"completion_date":r.get::<_,Option<String>>(9)?,"created_at":r.get::<_,String>(10)?,"updated_at":r.get::<_,String>(11)?}))).map_err(|e| fail(e.to_string()))?;
-        crate::mvp_sync_db::record_local(conn, "timeline_blocks", vec![json!(id)], row, false)?;
     }
     if complete {
         if typ == "note" || typ == "event" {
@@ -1129,10 +1192,33 @@ pub fn finish_task_block(block_id: i64, state: State<'_, AppState>) -> Result<()
             |r| Ok((r.get::<_, i64>(0)? != 0, r.get(1)?, r.get(2)?)),
         )
         .map_err(|_| fail("block not found"))?;
-    if !active {
-        if source_type == "schedule" {
-            return Err(fail("block is no longer active"));
+    if source_type == "schedule" {
+        // A paused block may finish only when it is the latest block for the
+        // current pending step and no other block of this source is active.
+        let _ = schedule_context(&transaction, &source_id)?;
+        let other_active: bool = transaction
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM timeline_blocks WHERE source_type='schedule' AND source_id=?1 AND is_active=1 AND id<>?2)",
+                params![&source_id, block_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| fail(e.to_string()))?;
+        let latest_id: Option<i64> = transaction
+            .query_row(
+                "SELECT id FROM timeline_blocks WHERE source_type='schedule' AND source_id=?1 ORDER BY created_at DESC,id DESC LIMIT 1",
+                [&source_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| fail(e.to_string()))?;
+        if other_active || latest_id != Some(block_id) {
+            return Err(fail("stale schedule block"));
         }
+        stop(&transaction, block_id, false)?;
+        set_schedule_step(&transaction, &source_id, "done")?;
+        return transaction.commit().map_err(|e| fail(e.to_string()));
+    }
+    if !active {
         stop(&transaction, block_id, true)?;
         return transaction.commit().map_err(|e| fail(e.to_string()));
     }
@@ -1149,11 +1235,24 @@ pub fn skip_recurring_step(source_id: String, state: State<'_, AppState>) -> Res
     let tx = conn
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|e| fail(e.to_string()))?;
-    let block: Option<i64> = tx.query_row("SELECT id FROM timeline_blocks WHERE source_type='schedule' AND source_id=?1 AND is_active=1 ORDER BY id DESC LIMIT 1", [&source_id], |r| r.get(0)).optional().map_err(|e| fail(e.to_string()))?;
-    let Some(block_id) = block else {
-        return Err(fail("schedule step is not active"));
-    };
-    stop(&tx, block_id, false)?;
+    let _ = schedule_context(&tx, &source_id)?;
+    let active_other: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM timeline_blocks WHERE is_active=1 AND (source_type<>'schedule' OR source_id<>?1))",
+            [&source_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| fail(e.to_string()))?;
+    if active_other {
+        return Err(fail("another task is active"));
+    }
+    let block: Option<i64> = tx
+        .query_row("SELECT id FROM timeline_blocks WHERE source_type='schedule' AND source_id=?1 AND is_active=1 ORDER BY id DESC LIMIT 1", [&source_id], |r| r.get(0))
+        .optional()
+        .map_err(|e| fail(e.to_string()))?;
+    if let Some(block_id) = block {
+        stop(&tx, block_id, false)?;
+    }
     set_schedule_step(&tx, &source_id, "skipped")?;
     tx.commit().map_err(|e| fail(e.to_string()))
 }
@@ -1274,7 +1373,7 @@ mod tests {
     fn recurring_fixture(conn: &Connection) {
         crate::init_schema(conn).unwrap();
         conn.execute("INSERT OR REPLACE INTO app_settings(key,value,updated_at) VALUES('device_id','test-device','now')", []).unwrap();
-        let state = json!({"version":1,"plans":[{"id":"p","title":"План","mode":"chain","steps":[{"title":"Первый"},{"title":"Второй"}]}],"days":{"2026-09-20":{"p":{"snapshot":{"id":"p","title":"План","mode":"chain","steps":[{"title":"Первый"},{"title":"Второй"}]},"status":"pending","run":{"steps":[{"title":"Первый","status":"pending"},{"title":"Второй","status":"pending"}],"createdAt":"2026-09-20T00:00:00Z"}}}}});
+        let state = json!({"version":1,"plans":[{"id":"p","title":"План","kind":"action","mode":"chain","steps":[{"title":"Первый"},{"title":"Второй"}]}],"days":{"2026-09-20":{"p":{"snapshot":{"version":1,"id":"p","kind":"action","title":"План","mode":"chain","steps":[{"title":"Первый"},{"title":"Второй"}]},"status":"pending","run":{"steps":[{"title":"Первый","status":"pending"},{"title":"Второй","status":"pending"}],"createdAt":"2026-09-20T00:00:00Z"}}}}});
         conn.execute(
             "INSERT INTO ui_state(key,value,updated_at) VALUES('calendar_recurring_v1',?1,'now')",
             [state.to_string()],
@@ -1333,7 +1432,7 @@ mod tests {
         state["days"]["2026-09-20"]["p"]["snapshot"]
             .as_object_mut()
             .unwrap()
-            .remove("mode");
+            .insert("kind".into(), json!("rule"));
         conn.execute(
             "UPDATE ui_state SET value=?1 WHERE key='calendar_recurring_v1'",
             [state.to_string()],

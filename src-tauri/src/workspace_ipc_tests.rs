@@ -1847,23 +1847,37 @@ fn dashboard_timer_uses_numeric_blocks_and_can_finish_a_paused_task() {
 #[test]
 fn recurring_activity_runtime_uses_one_step_source_and_rejects_stale_finish() {
     let (_app, view) = fixture();
-    let recurring = json!({"version":1,"plans":[{"id":"p","title":"Chain","mode":"chain","steps":[{"title":"First"},{"title":"Second"}]}],"days":{"2026-09-20":{"p":{"snapshot":{"id":"p","title":"Chain","mode":"chain","steps":[{"title":"First"},{"title":"Second"}]},"status":"pending","run":{"steps":[{"title":"First","status":"pending"},{"title":"Second","status":"pending"}],"createdAt":"2026-09-20T00:00:00Z"}}}}});
+    let recurring = json!({"version":1,"plans":[{"id":"p","title":"Chain","kind":"action","mode":"chain","steps":[{"title":"First"},{"title":"Second"}]}],"days":{"2026-09-20":{"p":{"snapshot":{"version":1,"id":"p","kind":"action","title":"Chain","mode":"chain","steps":[{"title":"First"},{"title":"Second"}]},"status":"pending","run":{"steps":[{"title":"First","status":"pending"},{"title":"Second","status":"pending"}],"createdAt":"2026-09-20T00:00:00Z"}}}}});
     call(&view, "set_ui_state", json!({"key":"calendar_recurring_v1","value":recurring.to_string()})).unwrap();
     let first = json!(["p","2026-09-20",0]).to_string();
+    let second = json!(["p","2026-09-20",1]).to_string();
+    assert!(call(&view, "start_task_block", json!({"sourceType":"schedule","sourceId":second,"failIfActive":true})).is_err());
     let block = call(&view, "start_task_block", json!({"sourceType":"schedule","sourceId":first,"failIfActive":true,"completionDate":"2026-09-20"})).unwrap();
     assert_eq!(call(&view, "start_task_block", json!({"sourceType":"schedule","sourceId":first,"failIfActive":true})).unwrap(), block);
+    call(&view, "pause_task_block", json!({"blockId":block})).unwrap();
     call(&view, "finish_task_block", json!({"blockId":block})).unwrap();
     assert!(call(&view, "finish_task_block", json!({"blockId":block})).is_err());
     let schedules = call(&view, "get_schedules", json!({"category":null})).unwrap();
     let first_row = schedules.as_array().unwrap().iter().find(|row| row["source_id"] == first).unwrap();
     assert_eq!(first_row["title"], "Chain · First"); assert_eq!(first_row["status_extra"], "done"); assert_eq!(first_row["completed"], true);
-    let second = json!(["p","2026-09-20",1]).to_string();
     let second_block = call(&view, "start_task_block", json!({"sourceType":"schedule","sourceId":second,"failIfActive":true})).unwrap();
     call(&view, "skip_recurring_step", json!({"sourceId":second})).unwrap();
     assert!(call(&view, "finish_task_block", json!({"blockId":second_block})).is_err());
     let schedules = call(&view, "get_schedules", json!({})).unwrap();
     let second_row = schedules.as_array().unwrap().iter().find(|row| row["source_id"] == second).unwrap();
     assert_eq!(second_row["status_extra"], "skipped"); assert_eq!(second_row["completed"], true);
+}
+
+#[test]
+fn recurring_step_can_be_skipped_before_start_without_creating_a_block() {
+    let (_app, view) = fixture();
+    let recurring = json!({"version":1,"plans":[{"id":"p","title":"One","kind":"action","mode":"activity","steps":[{"title":"Do"}]}],"days":{"2026-09-20":{"p":{"snapshot":{"version":1,"id":"p","kind":"action","title":"One","mode":"activity","steps":[{"title":"Do"}]},"status":"pending","run":{"steps":[{"title":"Do","status":"pending"}],"createdAt":"2026-09-20T00:00:00Z"}}}}});
+    call(&view, "set_ui_state", json!({"key":"calendar_recurring_v1","value":recurring.to_string()})).unwrap();
+    let source = json!(["p","2026-09-20",0]).to_string();
+    call(&view, "skip_recurring_step", json!({"sourceId":source})).unwrap();
+    assert!(call(&view, "start_task_block", json!({"sourceType":"schedule","sourceId":source})).is_err());
+    let blocks = call(&view, "get_timeline_blocks", json!({"date":"2026-09-20"})).unwrap();
+    assert!(blocks.as_array().unwrap().iter().all(|block| block["source_id"] != source));
 }
 
 #[test]

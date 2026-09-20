@@ -208,7 +208,7 @@ fn parse(raw: &str) -> Result<Value, String> {
 fn parse_keys(raw: &str) -> Result<Vec<Value>, String> {
     serde_json::from_str(raw).map_err(|_| "mvp_sync_invalid_key".into())
 }
-pub(crate) fn record_local(
+fn record_local(
     conn: &Connection,
     kind: &str,
     keys: Vec<Value>,
