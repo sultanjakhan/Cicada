@@ -409,6 +409,12 @@ fn concurrent_goal_cycles_and_dependent_deletions_are_quarantined() {
         goal(conn, "x", None);
         goal(conn, "y", None);
     }
+    let b_clock: i64 = scalar(&b, "SELECT clock FROM mvp_sync_meta").unwrap();
+    a.execute(
+        "UPDATE mvp_sync_meta SET clock=MAX(clock,?1) WHERE id=1",
+        [b_clock],
+    )
+    .unwrap();
     a.execute(
         "UPDATE calendar_goals SET parent_goal_id='y' WHERE id='x'",
         [],
@@ -419,6 +425,25 @@ fn concurrent_goal_cycles_and_dependent_deletions_are_quarantined() {
         [],
     )
     .unwrap();
+    let goal_x_key = json!(["calendar_goals", ["x"]]).to_string();
+    let a_stamp: String = a
+        .query_row(
+            "SELECT updated_at FROM sync_row_versions WHERE row_id=?1",
+            [&goal_x_key],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let b_stamp: String = b
+        .query_row(
+            "SELECT updated_at FROM sync_row_versions WHERE row_id=?1",
+            [&goal_x_key],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(
+        a_stamp > b_stamp,
+        "A edit must be newer than B seed: {a_stamp} <= {b_stamp}"
+    );
     apply(
         &mut b,
         &bc,
