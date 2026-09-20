@@ -23,6 +23,9 @@ mod schedule;
 mod secrets;
 #[path = "mvp_sync_transport.rs"]
 mod transport;
+#[cfg(any(target_os = "android", test))]
+#[path = "mvp_sync_background.rs"]
+mod background;
 
 const PROFILE: &str = "hanni-mvp-content-v1";
 #[derive(Clone, Serialize, Deserialize)]
@@ -109,6 +112,7 @@ struct Runtime {
     running: AtomicBool,
     pull_more: AtomicBool,
     last_error: Mutex<Option<String>>,
+    background_error: Mutex<Option<String>>,
 }
 impl Runtime {
     fn config(&self) -> Result<Option<RelayConfig>, String> {
@@ -156,7 +160,7 @@ fn status(conn: &Connection, runtime: &Runtime) -> Result<Value, String> {
                 .map(str::to_owned)
         });
     Ok(
-        json!({"configured":configured,"enabled":native["enabled"],"pending":native["pending_keys"].as_i64().unwrap_or(0),"conflicts":native["conflict_count"].as_i64().unwrap_or(0)+conflicts,"last_success":last_success,"last_error":error,"running":runtime.running.load(Ordering::SeqCst),"pull_more":runtime.pull_more.load(Ordering::SeqCst),"revision":native["revision"].as_str().unwrap_or("0")}),
+        json!({"configured":configured,"enabled":native["enabled"],"pending":native["pending_keys"].as_i64().unwrap_or(0),"conflicts":native["conflict_count"].as_i64().unwrap_or(0)+conflicts,"last_success":last_success,"last_error":error,"background_error":runtime.background_error.lock().map_err(|_| "mvp_sync_status_failed")?.clone(),"running":runtime.running.load(Ordering::SeqCst),"pull_more":runtime.pull_more.load(Ordering::SeqCst),"revision":native["revision"].as_str().unwrap_or("0")}),
     )
 }
 #[tauri::command]
@@ -179,6 +183,27 @@ fn backup_before_enable(conn: &Connection, runtime: &Runtime, value: bool) -> Re
             .map_err(|_| "mvp_sync_backup_failed")?;
     }
     Ok(())
+}
+// Reconcile from durable settings while the caller holds the configuration lock.
+// Scheduling failure must not pretend that the already saved settings rolled back.
+fn reconcile_background(app: &tauri::AppHandle, conn: &Connection, runtime: &Runtime) {
+    #[cfg(target_os = "android")]
+    {
+        use hanni_mvp_android_installer::AndroidInstallerExt;
+        let result = (|| -> Result<(), String> {
+            let enabled = schedule::read(conn)?.enabled && runtime.config()?.is_some();
+            let scheduled = app.android_installer().schedule_content_sync(enabled)?;
+            if scheduled != enabled {
+                return Err("mvp_sync_background_schedule_failed".into());
+            }
+            Ok(())
+        })();
+        if let Ok(mut error) = runtime.background_error.lock() {
+            *error = result.err().map(|_| "mvp_sync_background_schedule_failed".into());
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = (app, conn, runtime);
 }
 #[tauri::command(rename_all = "camelCase")]
 pub(crate) async fn mvp_sync_configure(
@@ -223,6 +248,7 @@ pub(crate) async fn mvp_sync_configure(
             .map_err(|_| "mvp_sync_status_failed")? = None;
         runtime.pull_more.store(true, Ordering::SeqCst);
         runtime.signal.notify_one();
+        reconcile_background(&app, &conn, &runtime);
         status(&conn, &runtime)
     })
     .await
@@ -248,6 +274,7 @@ pub(crate) async fn mvp_sync_set_enabled(
         self::enabled(&conn, enabled)?;
         runtime.pull_more.store(true, Ordering::SeqCst);
         runtime.signal.notify_one();
+        reconcile_background(&app, &conn, &runtime);
         status(&conn, &runtime)
     })
     .await
@@ -317,8 +344,24 @@ pub(crate) fn start(app: &tauri::AppHandle, path: PathBuf) {
         running: AtomicBool::new(false),
         pull_more: AtomicBool::new(true),
         last_error: Mutex::new(None),
+        background_error: Mutex::new(None),
     });
     app.manage(runtime.clone());
+    #[cfg(target_os = "android")]
+    {
+        let app = app.clone();
+        let runtime = runtime.clone();
+        tauri::async_runtime::spawn(async move {
+            // The mobile plugin bridge is ready after the Activity has loaded.
+            tokio::time::sleep(Duration::from_secs(8)).await;
+            let _ = tauri::async_runtime::spawn_blocking(move || {
+                let _guard = runtime.configuration.lock().map_err(|_| ())?;
+                let conn = open_existing(runtime.path.to_str().ok_or(())?).map_err(|_| ())?;
+                reconcile_background(&app, &conn, &runtime);
+                Ok::<(), ()>(())
+            }).await;
+        });
+    }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let mut socket: Option<tokio::task::JoinHandle<()>> = None;

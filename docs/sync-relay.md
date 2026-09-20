@@ -34,3 +34,25 @@ The additional `npm run test:native:checkpoint` gate verifies authenticated
 snapshot/restart/lost-ACK/GC recovery using the actual local Worker.
 Passing local checks is distinct from deployment and from verification on
 installed Mac, Windows and phone clients.
+
+## Android while the app is closed
+
+When content sync is configured and enabled, Android enrolls a unique periodic
+WorkManager job. It requires a network connection and adequate battery/storage,
+with a minimum interval of 15 minutes. Android may delay it; this is eventual
+exchange, not an instant push guarantee. See [periodic work constraints](https://developer.android.com/reference/androidx/work/PeriodicWorkRequest).
+
+The worker loads the native library without creating an Activity. It uses the
+same private database, credentials, encrypted transport and OS content-sync lease
+as foreground sync. It does not depend on update-channel configuration. Disabling
+content sync cancels the job; the native exchange also rechecks the saved flag.
+Transient errors and a busy lease get at most three attempts per cycle. Normal
+backgrounding/closure and a process killed by Android are different from a user
+force-stop, which must not be presented as supported background execution.
+
+The private `hanni_content_sync` preferences record only the latest attempt time
+and result code: 0 success, 1 retry, 2 disabled/unconfigured skip, 3 busy, 4 failure,
+5 visible Activity skip. A skip is not evidence of a successful exchange.
+`mvp_sync_status.background_error` reports failure to enroll the background job
+separately from foreground exchange errors. Device acceptance must verify the
+receipt, database convergence and process/Activity state together.

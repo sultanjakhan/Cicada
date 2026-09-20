@@ -1,7 +1,8 @@
 fn main() {
     let mut attributes = tauri_build::Attributes::new();
-    #[cfg(windows)]
-    {
+    // Build scripts run on the host. Only Windows *targets* accept MSVC
+    // manifest flags; cross-compiling Android on Windows must not receive them.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         // Tauri's default resource embeds the manifest only into app binaries.
         // MockRuntime tests also link Common Controls v6 and need the same
         // activation context: https://github.com/tauri-apps/tauri/issues/13419

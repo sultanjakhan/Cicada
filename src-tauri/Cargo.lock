@@ -1403,6 +1403,7 @@ dependencies = [
  "hanni-mvp-android-installer",
  "hex",
  "hmac",
+ "jni 0.21.1",
  "minisign-verify",
  "rand 0.9.5",
  "reqwest 0.12.28",
