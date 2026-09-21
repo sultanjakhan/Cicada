@@ -29,8 +29,8 @@ fn read_options(account: &str) -> security_framework::passwords::PasswordOptions
         static kSecUseAuthenticationUIFail: CFStringRef;
     }
     let mut options = PasswordOptions::new_generic_password(SERVICE, account);
-    // The upstream API has no per-query setter; these retained Security
-    // constants forbid background prompts without changing process-wide policy.
+    // This flag covers the modern backend; the file-based Keychain also needs
+    // SecKeychainSetUserInteractionAllowed below (Apple FB16959400).
     #[allow(deprecated)]
     unsafe {
         options.query.push((
@@ -41,8 +41,24 @@ fn read_options(account: &str) -> security_framework::passwords::PasswordOptions
     options
 }
 
+#[cfg(target_os = "macos")]
+fn forbid_keychain_dialogs() -> Result<(), String> {
+    #[link(name = "Security", kind = "framework")]
+    extern "C" {
+        fn SecKeychainSetUserInteractionAllowed(allowed: u8) -> i32;
+    }
+    // Keep this process noninteractive, including explicit configuration saves.
+    // Restoring interaction after a read can race another Keychain operation.
+    if unsafe { SecKeychainSetUserInteractionAllowed(0) } != 0 {
+        return Err("mvp_sync_credentials_unavailable".into());
+    }
+    Ok(())
+}
+
 pub(crate) fn read(database_path: &Path) -> Result<Option<String>, String> {
     let slot = account(database_path)?;
+    #[cfg(target_os = "macos")]
+    forbid_keychain_dialogs()?;
     #[cfg(target_os = "macos")]
     let bytes = match security_framework::passwords::generic_password(read_options(&slot)) {
         Ok(bytes) => bytes,
@@ -76,28 +92,6 @@ pub(crate) fn read(database_path: &Path) -> Result<Option<String>, String> {
     }
 }
 
-/// Only an explicit configuration save may request OS authorization.
-pub(crate) fn read_authorized(database_path: &Path) -> Result<Option<String>, String> {
-    #[cfg(target_os = "macos")]
-    {
-        use security_framework::passwords::{generic_password, PasswordOptions};
-        let slot = account(database_path)?;
-        let bytes = match generic_password(PasswordOptions::new_generic_password(SERVICE, &slot)) {
-            Ok(bytes) => bytes,
-            Err(error) if error.code() == -25300 => return Ok(None),
-            Err(_) => return Err("mvp_sync_credentials_unavailable".into()),
-        };
-        if bytes.len() > LIMIT {
-            return Err("mvp_sync_credentials_invalid".into());
-        }
-        String::from_utf8(bytes)
-            .map(Some)
-            .map_err(|_| "mvp_sync_credentials_invalid".into())
-    }
-    #[cfg(not(target_os = "macos"))]
-    read(database_path)
-}
-
 pub(crate) fn write(database_path: &Path, raw: &str) -> Result<(), String> {
     if raw.len() > LIMIT {
         return Err("mvp_sync_credentials_invalid".into());
@@ -105,6 +99,7 @@ pub(crate) fn write(database_path: &Path, raw: &str) -> Result<(), String> {
     let slot = account(database_path)?;
     #[cfg(target_os = "macos")]
     {
+        forbid_keychain_dialogs()?;
         security_framework::passwords::set_generic_password(SERVICE, &slot, raw.as_bytes())
             .map_err(|_| "mvp_sync_credentials_write_failed")?;
         if read(database_path)?.as_deref() != Some(raw) {
@@ -199,6 +194,17 @@ fn write_file(database_path: &Path, stored: &[u8]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn repeated_keychain_operations_keep_interaction_disabled() {
+        use security_framework::os::macos::keychain::SecKeychain;
+        // Only inspect process policy; never access the user's Keychain items.
+        for _ in 0..3 {
+            forbid_keychain_dialogs().unwrap();
+            assert!(!SecKeychain::user_interaction_allowed().unwrap());
+        }
+    }
 
     #[test]
     fn independent_profiles_never_share_a_credential_slot() {

@@ -106,7 +106,7 @@ fn open_existing(path: &str) -> Result<Connection, String> {
 }
 struct Runtime {
     path: PathBuf,
-    config: Mutex<Option<Option<RelayConfig>>>,
+    config: Mutex<Option<Result<Option<RelayConfig>, String>>>,
     configuration: Mutex<()>,
     signal: Arc<tokio::sync::Notify>,
     running: AtomicBool,
@@ -116,17 +116,26 @@ struct Runtime {
 }
 impl Runtime {
     fn config(&self) -> Result<Option<RelayConfig>, String> {
+        self.config_with(secrets::read)
+    }
+
+    fn config_with(
+        &self,
+        read: impl FnOnce(&std::path::Path) -> Result<Option<String>, String>,
+    ) -> Result<Option<RelayConfig>, String> {
         let mut cache = self
             .config
             .lock()
             .map_err(|_| "mvp_sync_configuration_busy")?;
         if let Some(value) = cache.as_ref() {
-            return Ok(value.clone());
+            return value.clone();
         }
-        let raw = secrets::read(&self.path)?;
-        let cfg = raw.as_deref().map(RelayConfig::parse).transpose()?;
+        // Status polling and the worker share both successful reads and failures.
+        // Only an explicit configuration save or a new process retries the store.
+        let cfg =
+            read(&self.path).and_then(|raw| raw.as_deref().map(RelayConfig::parse).transpose());
         *cache = Some(cfg.clone());
-        Ok(cfg)
+        cfg
     }
 }
 fn status(conn: &Connection, runtime: &Runtime) -> Result<Value, String> {
@@ -220,7 +229,7 @@ pub(crate) async fn mvp_sync_configure(
         let previous = match runtime.config() {
             Ok(value) => value,
             Err(error) if error == "mvp_sync_credentials_unavailable" => {
-                secrets::read_authorized(&runtime.path)?
+                secrets::read(&runtime.path)?
                     .as_deref()
                     .map(RelayConfig::parse)
                     .transpose()?
@@ -241,7 +250,7 @@ pub(crate) async fn mvp_sync_configure(
         *runtime
             .config
             .lock()
-            .map_err(|_| "mvp_sync_configuration_busy")? = Some(Some(cfg));
+            .map_err(|_| "mvp_sync_configuration_busy")? = Some(Ok(Some(cfg)));
         *runtime
             .last_error
             .lock()

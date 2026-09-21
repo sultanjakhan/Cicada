@@ -6,6 +6,35 @@ fn fixture() -> Connection {
     crate::init_schema(&conn).unwrap();
     conn
 }
+
+#[test]
+fn credential_failure_is_shared_by_repeated_status_and_worker_reads() {
+    let runtime = Runtime {
+        path: PathBuf::from("unused-synthetic-profile"),
+        config: Mutex::new(None),
+        configuration: Mutex::new(()),
+        signal: Arc::new(tokio::sync::Notify::new()),
+        running: AtomicBool::new(false),
+        pull_more: AtomicBool::new(true),
+        last_error: Mutex::new(None),
+        background_error: Mutex::new(None),
+    };
+    let calls = std::cell::Cell::new(0);
+    for _ in 0..100 {
+        let result = runtime.config_with(|_| {
+            calls.set(calls.get() + 1);
+            Err("mvp_sync_credentials_unavailable".into())
+        });
+        assert!(matches!(result, Err(e) if e == "mvp_sync_credentials_unavailable"));
+    }
+    assert_eq!(calls.get(), 1);
+    *runtime.config.lock().unwrap() = Some(Ok(None));
+    assert!(runtime
+        .config_with(|_| panic!("must use saved configuration"))
+        .unwrap()
+        .is_none());
+}
+
 #[test]
 fn migration_keeps_legacy_day_and_native_start_is_idempotent() {
     let conn = fixture();

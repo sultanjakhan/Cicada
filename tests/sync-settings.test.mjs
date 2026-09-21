@@ -4,6 +4,17 @@ import { JSDOM } from 'jsdom';
 import { mountSyncSettings } from '../src/hanni/js/sync-settings.js';
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const initial = () => ({ configured:false,enabled:false,pending:0,conflicts:0,last_success:null,last_error:null,running:false,revision:'0' });
+
+test('blocked Keychain access is not presented as an unpaired device or retried by rendering', async t => {
+  const state = {...initial(),enabled:true,last_error:'mvp_sync_credentials_unavailable'};
+  const x = mount(t, () => state); await tick();
+  for (let i = 0; i < 5; i++) x.dom.window.dispatchEvent(new x.dom.window.CustomEvent('hanni:sync-status', {detail:state}));
+  assert.match(x.q('status').textContent, /приостановлена/);
+  assert.match(x.q('error').textContent, /хранилищу ключей/);
+  assert.doesNotMatch(x.q('status').textContent, /ещё не подключено/);
+  assert.equal(x.q('now').disabled, true);
+  assert.equal(x.calls.length, 1);
+});
 function mount(t, transport = null) {
   const dom = new JSDOM('<div id="host"></div>', { url:'https://fixture.invalid',pretendToBeVisual:true }), calls = [], busy = [];
   const host = dom.window.document.querySelector('#host'), q = name => host.querySelector(`[data-sync-${name}]`);
