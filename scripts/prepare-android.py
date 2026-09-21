@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import xml.etree.ElementTree as ET
 
 ANDROID = '{http://schemas.android.com/apk/res/android}'
@@ -34,10 +35,11 @@ def require(condition, message):
 
 
 def prepare_launcher_icon(root):
-    source_icon = root / 'src-tauri/icons/icon.png'
+    source_icon = root / 'src/app-icon.svg'
     require(source_icon.is_file(), f'Missing approved launcher icon: {source_icon}')
     output = root / '.local/android-icon'
-    subprocess.run(['npm', 'run', 'tauri', '--', 'icon', str(source_icon), '--output', str(output)],
+    subprocess.run([sys.executable, str(root / 'scripts/generate-icons.py'),
+                    '--output', str(output), '--no-desktop'],
                    cwd=root, check=True)
     generated = output / 'android'
     require((generated / 'mipmap-hdpi/ic_launcher.png').is_file()

@@ -218,10 +218,12 @@ Privacy guard проверяет текущие текстовые файлы н
 
 ## Структура
 
-Логотип «Спутник» хранится в `src/app-icon.svg`: этот же SVG используется
-в оболочке и favicon. Иконки приложения в `src-tauri/icons/` получаются командой
-`npm run tauri -- icon src/app-icon.svg --output .local/generated-icons`;
-после генерации нужно перенести `icon.png`, `icon.ico` и `icon.icns` в каталог иконок.
+Чёрно-белый знак «цикада / песочные часы» хранится в `src/app-icon.svg`:
+этот же SVG используется в оболочке и favicon. Команда
+`python3 scripts/generate-icons.py` обновляет `icon.png`, `icon.ico` и `icon.icns`
+в `src-tauri/icons/`. Для Android она отдельно генерирует прозрачный передний
+слой и монохромный слой тематической иконки, сохраняя белый фон обычной иконки.
+`scripts/prepare-android.py` использует тот же генератор при каждой сборке APK.
 
 - `src/hanni/js`, `src/hanni/css` — перенесённые компоненты Calendar.
 - `src/app.js`, `src/index.html` — оболочка отдельного MVP.

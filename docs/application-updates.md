@@ -12,7 +12,7 @@ runs from the private development repository are not public-release evidence.
 Do not reuse old candidate assets under a new source SHA or overwrite a released
 version: increment the version and build from the reviewed public commit.
 
-The charcoal Companion icon on white is shared by the app and Android launcher.
+The black cicada/hourglass mark on white is shared by the app and Android launcher.
 Product names, application identity and both signing keys remain stable.
 
 ## Installation behavior
