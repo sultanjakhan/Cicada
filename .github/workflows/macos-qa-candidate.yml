@@ -26,6 +26,21 @@ jobs:
           workspaces: src-tauri
       - run: npm ci
       - run: npm run build
+      - name: Isolate WebKit storage and the frontend origin
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          config = json.loads(Path('src-tauri/tauri.conf.json').read_text())
+          window = config['app']['windows'][0]
+          window.update(title='Hanni MVP Execution QA',
+                        dataStoreIdentifier=list(bytes.fromhex(os.environ['GITHUB_SHA'][:32])))
+          override = {'identifier': 'app.hanni.mvp.qa.execution',
+                      'build': {'devUrl': 'http://127.0.0.1:1447'},
+                      'app': {'windows': [window]}}
+          with open(os.environ['GITHUB_ENV'], 'a') as stream:
+              stream.write('TAURI_CONFIG=' + json.dumps(override) + '\n')
+          PY
       - name: Build debug runtime with isolated-profile support
         run: cargo build --manifest-path src-tauri/Cargo.toml --locked
       - name: Identify the QA binary
@@ -48,6 +63,7 @@ jobs:
               'binary': 'hanni-mvp',
               'sha256': hashlib.sha256((root / 'hanni-mvp').read_bytes()).hexdigest(),
               'production_install': False,
+              'qa_config': json.loads(os.environ['TAURI_CONFIG']),
           }, indent=2) + '\n')
           PY
           ditto -c -k .local/macos-qa .local/macos-qa.zip
