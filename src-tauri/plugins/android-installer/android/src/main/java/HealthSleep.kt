@@ -17,7 +17,6 @@ import androidx.health.connect.client.request.ChangesTokenRequest
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.response.ReadRecordsResponse
 import androidx.health.connect.client.time.TimeRangeFilter
-import androidx.lifecycle.Lifecycle
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
@@ -191,13 +190,11 @@ internal object SleepImporter {
 internal class SleepBridge(private val activity: Activity) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var launcher: ActivityResultLauncher<Set<String>>? = null
-    private var pending: Invoke? = null
     fun register() {
         val host = activity as? ComponentActivity ?: return
-        launcher = host.activityResultRegistry.register("hanni_sleep_permission", PermissionController.createRequestPermissionResultContract()) {
-            val request = pending; pending = null
-            if (request != null) import(request)
-        }
+        // Android may return through a recreated Activity. The permission screen
+        // is only a launch acknowledgement; every import checks actual grants.
+        launcher = host.activityResultRegistry.register("hanni_sleep_permission", PermissionController.createRequestPermissionResultContract()) { }
     }
     private fun respond(invoke: Invoke, action: suspend () -> JSONObject) {
         scope.launch {
@@ -207,22 +204,23 @@ internal class SleepBridge(private val activity: Activity) {
     }
     fun status(invoke: Invoke) = respond(invoke) { SleepImporter.status(activity) }
     fun import(invoke: Invoke) = respond(invoke) {
-        val host = activity as? ComponentActivity
-        if (host?.lifecycle?.currentState?.isAtLeast(Lifecycle.State.RESUMED) != true) {
+        // The plugin constructor can retain the bootstrap Activity after Tauri
+        // recreates its window. Observe the application's live Activities instead.
+        if (!UpdateActivityGuard.hasStartedActivity()) {
             JSONObject().put("status", "foreground_required")
         } else SleepImporter.sync(activity.applicationContext, false)
     }
     fun connect(invoke: Invoke) {
         activity.runOnUiThread {
-            if (pending != null || launcher == null) { invoke.reject("health_sleep_permission_busy"); return@runOnUiThread }
+            if (launcher == null || !UpdateActivityGuard.hasStartedActivity()) { invoke.reject("health_sleep_foreground_required"); return@runOnUiThread }
             try {
                 if (!SleepImporter.available(activity)) { invoke.resolve(JSObject().apply { put("status", "provider_unavailable") }); return@runOnUiThread }
                 val client = HealthConnectClient.getOrCreate(activity)
                 val permissions = mutableSetOf(SleepImporter.readPermission)
                 if (SleepImporter.backgroundAvailable(client)) permissions.add(SleepImporter.backgroundPermission)
-                pending = invoke
                 launcher!!.launch(permissions)
-            } catch (_: Exception) { pending = null; invoke.reject("health_sleep_permission_failed") }
+                invoke.resolve(JSObject().apply { put("status", "permission_requested") })
+            } catch (_: Exception) { invoke.reject("health_sleep_permission_failed") }
         }
     }
 }

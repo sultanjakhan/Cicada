@@ -3,6 +3,7 @@ export function sleepStatusText(status) {
   if (status.status === 'unsupported') return 'Сон импортируется из Health Connect на телефоне Android и приходит сюда через синхронизацию.';
   if (status.status === 'provider_unavailable') return 'Health Connect недоступен. Установи или обнови его на телефоне.';
   if (status.status === 'permission_required') return 'Разреши Hanni MVP читать сон в Health Connect. Импортированные ранее записи сохранены.';
+  if (status.status === 'permission_requested') return 'Заверши системный запрос Health Connect, затем проверь сон. Разрешение ещё не подтверждено.';
   if (status.status === 'foreground_required') return 'Для чтения сна открой Hanni MVP на телефоне.';
   if (status.status !== 'ready' || status.lastError) return 'Последний импорт сна не завершён. Сохранённые записи не потеряны; повтори попытку.';
   if (!status.lastSuccess) return 'Доступ разрешён. Первый импорт сна ещё не подтверждён.';
@@ -30,7 +31,7 @@ export function mountSleepSettings(element, { invoke, setPending = () => {} }) {
     const ready = status?.status === 'ready', permission = status?.status === 'permission_required';
     q('connect').hidden = !permission && !(ready && status.backgroundAvailable && !status.backgroundGranted);
     q('connect').textContent = ready ? 'Разрешить чтение в фоне' : 'Разрешить чтение сна';
-    q('import').hidden = !ready && status?.status !== 'error' && status?.status !== 'foreground_required';
+    q('import').hidden = !ready && !['error', 'foreground_required', 'permission_requested'].includes(status?.status);
     q('retry').hidden = !!status && !['provider_unavailable', 'error'].includes(status.status);
     q('background').textContent = !ready ? '' : status.backgroundGranted
       ? 'Фоновое чтение разрешено. Android определяет время запуска; обновление может задерживаться.'
@@ -78,10 +79,12 @@ export function startSleepImport({ window, invoke, requestSync, requestRefresh }
   function dispose() {
     stopped = true; window.clearInterval(timer);
     window.document.removeEventListener('visibilitychange', visible);
+    window.removeEventListener('focus', visible);
     window.removeEventListener('hanni:sleep-imported', imported);
   }
   window.addEventListener('hanni:sleep-imported', imported);
   window.document.addEventListener('visibilitychange', visible);
+  window.addEventListener('focus', visible);
   timer = window.setInterval(check, 60_000);
   void check();
   return dispose;

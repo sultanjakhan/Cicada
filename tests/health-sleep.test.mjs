@@ -7,6 +7,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 
 test('sleep status separates permission, absent source data and unverified import', () => {
   assert.match(sleepStatusText({ status: 'permission_required' }), /Разреши/);
+  assert.match(sleepStatusText({ status: 'permission_requested' }), /ещё не подтверждено/);
   assert.match(sleepStatusText({ status: 'ready', records: 0 }), /ещё не подтверждён/);
   assert.match(sleepStatusText({ status: 'ready', records: 0, lastSuccess: '2026-01-01T00:00:00Z' }), /не найдено/);
   assert.match(sleepStatusText({ status: 'ready', records: 2, lastError: 'import_failed' }), /не завершён/);
@@ -35,6 +36,22 @@ test('connect is explicit, missing background support is visible, errors cannot 
   assert.equal(host.querySelector('[data-sleep-retry]').hidden, false);
 });
 
+test('opening system permission UI acknowledges launch without claiming access or locking settings', async t => {
+  const dom = new JSDOM('<section></section>', { pretendToBeVisual: true });
+  const host = dom.window.document.querySelector('section'), pending = [];
+  let imported = 0;
+  dom.window.addEventListener('hanni:sleep-imported', () => imported++);
+  const dispose = mountSleepSettings(host, { setPending: value => pending.push(value), invoke: async command =>
+    ({ status: command === 'health_sleep_connect' ? 'permission_requested' : 'permission_required' }) });
+  t.after(() => { dispose(); dom.window.close(); });
+  await tick(); host.querySelector('[data-sleep-connect]').click(); await tick();
+  assert.deepEqual(pending, [true, false]);
+  assert.equal(imported, 0);
+  assert.match(host.textContent, /Разрешение ещё не подтверждено/);
+  assert.equal(host.querySelector('[data-sleep-import]').hidden, false);
+  assert.equal(host.querySelector('[data-sleep-import]').disabled, false);
+});
+
 test('foreground import coalesces lifecycle triggers and sends only committed changes', async t => {
   const dom = new JSDOM('', { pretendToBeVisual: true });
   let release, calls = 0, sync = 0, refresh = 0;
@@ -42,11 +59,15 @@ test('foreground import coalesces lifecycle triggers and sends only committed ch
     requestSync: () => sync++, requestRefresh: () => refresh++ });
   t.after(() => { dispose(); dom.window.close(); });
   dom.window.document.dispatchEvent(new dom.window.Event('visibilitychange'));
+  dom.window.dispatchEvent(new dom.window.Event('focus'));
   assert.equal(calls, 1); release({ status: 'ready', changed: 2 }); await tick();
   assert.equal(sync, 1); assert.equal(refresh, 1);
-  dom.window.document.dispatchEvent(new dom.window.Event('visibilitychange'));
+  dom.window.dispatchEvent(new dom.window.Event('focus'));
   release({ status: 'ready', changed: 0 }); await tick(); assert.equal(sync, 1);
-  dispose(); dom.window.document.dispatchEvent(new dom.window.Event('visibilitychange')); assert.equal(calls, 2);
+  dispose();
+  dom.window.document.dispatchEvent(new dom.window.Event('visibilitychange'));
+  dom.window.dispatchEvent(new dom.window.Event('focus'));
+  assert.equal(calls, 2);
 });
 
 test('overnight projection counts stage sleep at wake date, and missing stages stay unknown', t => {
