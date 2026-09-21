@@ -5,7 +5,9 @@ Cloudflare Static Assets. It does not generate manifests, write storage, list
 directories, or make the files public.
 
 Only `GET` and `HEAD` are accepted. `/health` returns `ok`. The manifest is
-available at `/latest.json`; release files are limited to one safe filename
+available at `/latest.json` and at `/` for installed clients configured with only
+the origin. This alias uses the same authentication and never redirects.
+Release files are limited to one safe filename
 under `/releases/`. Both require `Authorization: Bearer <UPDATES_TOKEN>`.
 Requests are routed through the Worker before Static Assets so an asset cannot
 bypass this check. The Worker strips the Authorization header before forwarding

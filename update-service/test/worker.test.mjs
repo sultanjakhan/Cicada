@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { timingSafeEqual } from "node:crypto";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -122,4 +123,42 @@ test("missing secret fails closed before the assets binding", async () => {
     ASSETS: { fetch: () => { throw new Error("assets must not be reached"); } },
   });
   assert.equal(response.status, 503);
+});
+
+test("origin-only feed clients retain authentication, HEAD and private responses without redirects", async (t) => {
+  const previous = crypto.subtle.timingSafeEqual;
+  crypto.subtle.timingSafeEqual = (a, b) => timingSafeEqual(new Uint8Array(a), new Uint8Array(b));
+  t.after(() => {
+    if (previous === undefined) delete crypto.subtle.timingSafeEqual;
+    else crypto.subtle.timingSafeEqual = previous;
+  });
+  const received = [];
+  const env = {
+    UPDATES_TOKEN: token,
+    ASSETS: { fetch(request) {
+      received.push(request);
+      return new Response(request.method === "HEAD" ? null : '{"version":"0.3.17"}');
+    } },
+  };
+  for (const endpoint of ["/", "/latest.json"]) {
+    for (const authorization of [undefined, "Bearer wrong"]) {
+      const headers = authorization ? { Authorization: authorization } : {};
+      const denied = await worker.fetch(new Request(`https://updates.example${endpoint}`, { headers }), env);
+      assert.equal(denied.status, 401);
+    }
+  }
+  assert.equal(received.length, 0, "unauthorized requests never reach assets");
+  for (const method of ["GET", "HEAD"]) {
+    const response = await worker.fetch(new Request("https://updates.example/", {
+      method, headers: { Authorization: `Bearer ${token}` },
+    }), env);
+    const request = received.at(-1);
+    assert.equal(new URL(request.url).pathname, "/latest.json");
+    assert.equal(request.method, method);
+    assert.equal(request.headers.has("authorization"), false);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.has("location"), false);
+    assert.match(response.headers.get("cache-control"), /private, no-store/);
+    assert.equal(await response.text(), method === "HEAD" ? "" : '{"version":"0.3.17"}');
+  }
 });

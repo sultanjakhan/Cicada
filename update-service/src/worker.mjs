@@ -25,7 +25,7 @@ async function tokenMatches(provided, expected) {
 }
 
 function allowedPath(pathname) {
-  return pathname === "/latest.json" || releasePath.test(pathname);
+  return pathname === "/" || pathname === "/latest.json" || releasePath.test(pathname);
 }
 
 export default {
@@ -59,7 +59,10 @@ export default {
 
     const headers = new Headers(request.headers);
     headers.delete("Authorization");
-    const assetRequest = new Request(request, { headers });
+    // Shipped clients may store only the origin as their feed URL. Resolve it
+    // internally because native updaters deliberately refuse redirects.
+    if (url.pathname === "/") url.pathname = "/latest.json";
+    const assetRequest = new Request(url, { method: request.method, headers });
     const asset = await env.ASSETS.fetch(assetRequest);
     if (asset.status === 404) {
       return response(404, "Not found.");
