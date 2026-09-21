@@ -35,24 +35,6 @@ def executable(root, name):
     return path
 
 
-def prepare_launcher_icon(environment):
-    """Replace generated Android launcher resources from the approved source icon."""
-    source_icon = ROOT / 'src-tauri/icons/icon.png'
-    require(source_icon.is_file(), f'Missing approved launcher icon: {source_icon}')
-    output_directory = ROOT / '.local/android-icon'
-    subprocess.run(['npm', 'run', 'tauri', '--', 'icon', str(source_icon), '--output', str(output_directory)],
-                   cwd=ROOT, env=environment, check=True)
-    generated = output_directory / 'android'
-    resources = ROOT / 'src-tauri/gen/android/app/src/main/res'
-    require((generated / 'mipmap-hdpi/ic_launcher.png').is_file(),
-            'Tauri did not generate the Android launcher icon.')
-    for source in generated.rglob('*'):
-        if source.is_file():
-            destination = resources / source.relative_to(generated)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(source, destination)
-
-
 def disable_debug_symbol_preservation():
     """Keep the debug candidate small and verify the generated Gradle structure."""
     gradle = ROOT / 'src-tauri/gen/android/app/build.gradle.kts'
@@ -157,7 +139,6 @@ def main():
     subprocess.run(['npm', 'run', 'tauri', '--', 'android', 'init', '--ci', '--skip-targets-install'],
                    cwd=ROOT, env=environment, check=True)
     subprocess.run([sys.executable, 'scripts/prepare-android.py'], cwd=ROOT, env=environment, check=True)
-    prepare_launcher_icon(environment)
     disable_debug_symbol_preservation()
     subprocess.run(['npm', 'run', 'tauri', '--', 'android', 'build', '--debug', '--target', 'aarch64',
                     '--apk', '--ci'], cwd=ROOT, env=environment, check=True)

@@ -29,6 +29,10 @@ after every init: generated Android files are ignored and can be replaced by ini
 The guard also accepts a repository root argument and refuses other app identities
 or conflicting backup settings without overwriting them.
 
+Preparation also generates the standard and adaptive Android launcher icons from
+`src-tauri/icons/icon.png`. Run it for DEV builds too; skipping it leaves Tauri's
+default launcher icon in the generated project.
+
 The guard disables Android-managed backup and transfer of the MVP private
 profile, including synchronization credentials, temporary credential files and
 the database's device identity. It preserves the existing INTERNET permission and

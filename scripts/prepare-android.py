@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Apply and verify private-profile backup exclusions after Tauri Android init."""
+"""Apply MVP branding and private-profile backup exclusions after Android init."""
 import argparse
 import json
 from pathlib import Path
 import re
+import shutil
+import subprocess
 import xml.etree.ElementTree as ET
 
 ANDROID = '{http://schemas.android.com/apk/res/android}'
@@ -29,6 +31,24 @@ def structure(node):
 def require(condition, message):
     if not condition:
         raise SystemExit(message)
+
+
+def prepare_launcher_icon(root):
+    source_icon = root / 'src-tauri/icons/icon.png'
+    require(source_icon.is_file(), f'Missing approved launcher icon: {source_icon}')
+    output = root / '.local/android-icon'
+    subprocess.run(['npm', 'run', 'tauri', '--', 'icon', str(source_icon), '--output', str(output)],
+                   cwd=root, check=True)
+    generated = output / 'android'
+    require((generated / 'mipmap-hdpi/ic_launcher.png').is_file()
+            and (generated / 'mipmap-anydpi-v26/ic_launcher.xml').is_file(),
+            'Tauri did not generate both standard and adaptive launcher icons.')
+    resources = root / 'src-tauri/gen/android/app/src/main/res'
+    for source in generated.rglob('*'):
+        if source.is_file():
+            destination = resources / source.relative_to(generated)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, destination)
 
 
 def prepare(root):
@@ -102,6 +122,8 @@ def prepare(root):
     for name, expected in resources.items():
         require(structure(parse((directory / name).read_text(encoding='utf-8'))) == structure(parse(expected)),
                 f'Backup resource verification failed: {name}')
+    # Local DEV follows this same preparation path as signed CI packages.
+    prepare_launcher_icon(root)
 
 
 def main():
@@ -109,7 +131,7 @@ def main():
     parser.add_argument('root', nargs='?', type=Path, default=Path(__file__).resolve().parents[1],
                         help='MVP repository root; defaults to this script\'s repository')
     prepare(parser.parse_args().root.resolve())
-    print('MVP Android scaffold: backup exclusions and INTERNET verified.')
+    print('MVP Android scaffold: launcher branding, backup exclusions and INTERNET verified.')
 
 
 if __name__ == '__main__':
