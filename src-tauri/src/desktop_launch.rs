@@ -107,9 +107,17 @@ impl Options {
         if self.is_update_background() {
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
-                let code = crate::update_background::run(app.clone())
-                    .await
-                    .unwrap_or(1);
+                let result = tokio::time::timeout(
+                    Duration::from_secs(15 * 60),
+                    crate::update_background::run(app.clone()),
+                )
+                .await
+                .unwrap_or(Err("Проверка обновления превысила время ожидания.".into()));
+                #[cfg(target_os = "macos")]
+                if result.is_err() {
+                    let _ = crate::update_macos::record_result(&app, "error", None);
+                }
+                let code = result.unwrap_or(1);
                 app.exit(code);
             });
             return;
@@ -130,6 +138,15 @@ impl Options {
     }
 
     pub(crate) fn on_event(&self, app: &tauri::AppHandle, event: &tauri::RunEvent) {
+        #[cfg(target_os = "macos")]
+        if matches!(event, tauri::RunEvent::Exit) {
+            use tauri::Manager;
+            // Tauri starts the replacement before process exit and retains managed
+            // state. Release the file lock only at the final, non-cancellable exit.
+            if let Some(lock) = app.try_state::<crate::AppInstanceLock>() {
+                let _ = lock.0.unlock();
+            }
+        }
         #[cfg(target_os = "macos")]
         if *self == Self::Minimized && matches!(event, tauri::RunEvent::Reopen { .. }) {
             use tauri::Manager;

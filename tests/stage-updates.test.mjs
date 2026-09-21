@@ -30,7 +30,8 @@ function tauriSignature(payload, keys, prehashed = true) {
 async function candidate(root, kind, keys, source = 'a'.repeat(40)) {
   const spec = kind === 'windows'
     ? { platform: 'windows-x86_64', extension: '.exe' }
-    : { platform: 'android-aarch64', extension: '.apk' };
+    : kind === 'macos' ? { platform: 'darwin-aarch64', extension: '.app.tar.gz' }
+      : { platform: 'android-aarch64', extension: '.apk' };
   const version = '0.3.4';
   const asset = `Hanni-MVP-${version}-${spec.platform}${spec.extension}`;
   const directory = path.join(root, kind);
@@ -62,9 +63,12 @@ test('stages matching candidates and rejects traversal, source mismatch and tamp
     const keys = keyMaterial();
     const windows = await candidate(temporary, 'windows', keys);
     const android = await candidate(temporary, 'android', keys);
-    const staged = await stageUpdates({ windows, android, root: temporary, publicKeyText: keys.publicText,
+    const macos = await candidate(temporary, 'macos', keys);
+    const staged = await stageUpdates({ windows, android, macos, root: temporary, publicKeyText: keys.publicText,
       notes: 'Plain text', publishedAt: '2026-09-16T00:00:00.000Z' });
     assert.equal(staged.latest.platforms['android-aarch64'].version_code, 3004);
+    assert.match(staged.latest.platforms['darwin-aarch64'].url, /darwin-aarch64\.app\.tar\.gz$/);
+    assert.equal(Object.keys(staged.latest.platforms).length, 3);
     assert.equal(JSON.parse(await readFile(path.join(temporary, '.local/update-assets/latest.json'))).version, '0.3.4');
     for (const entry of Object.values(JSON.parse(await readFile(path.join(temporary, '.local/update-assets/latest.json'))).platforms)) {
       assert.match(new URL(entry.url).pathname, /^\/releases\/[A-Za-z0-9][A-Za-z0-9._-]*$/);
@@ -73,12 +77,12 @@ test('stages matching candidates and rejects traversal, source mismatch and tamp
     const manifest = JSON.parse(await readFile(path.join(windows, 'manifest.json')));
     manifest.asset = '../escape.exe';
     await writeFile(path.join(windows, 'manifest.json'), JSON.stringify(manifest));
-    await assert.rejects(stageUpdates({ windows, android, root: temporary, publicKeyText: keys.publicText }));
+    await assert.rejects(stageUpdates({ windows, android, macos, root: temporary, publicKeyText: keys.publicText }));
 
     manifest.asset = 'Hanni-MVP-0.3.4-windows-x86_64.exe';
     manifest.source = 'b'.repeat(40);
     await writeFile(path.join(windows, 'manifest.json'), JSON.stringify(manifest));
-    await assert.rejects(stageUpdates({ windows, android, root: temporary, publicKeyText: keys.publicText }));
+    await assert.rejects(stageUpdates({ windows, android, macos, root: temporary, publicKeyText: keys.publicText }));
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }

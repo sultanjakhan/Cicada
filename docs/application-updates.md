@@ -39,6 +39,22 @@ Android may require a one-time install permission or system confirmation; Hanni
 reports that state and opens the system UI only through an explicit user action.
 Android 7–11 retain manual installation. OS scheduling is not an exact deadline.
 
+macOS Apple Silicon support starts with 0.3.18. Install this bootstrap once in
+`~/Applications/Hanni MVP.app`; later signed releases use the same channel.
+The per-user `app.hanni.mvp.updates` LaunchAgent checks at login and every six
+hours without a window. The profile lock prevents it from interrupting an open
+instance; that instance uses the existing hidden/idle checks instead. Automatic
+installation leaves the app closed. The manual Settings action restarts it.
+DEV, relocated bundles, nonstandard profiles and non-writable bundles cannot
+replace the installed app. LaunchAgent errors appear in update settings; a
+private `updates/background.json` receipt records closed-app checks/installations.
+macOS may delay scheduled jobs during sleep or restrict background items.
+
+The macOS archive uses the existing pinned Minisign update key. Its application
+bundle retains the local ad-hoc code signature; Developer ID/notarization are
+not configured. This channel is for the owner's already trusted local install,
+not a claim of Apple-notarized public distribution.
+
 The client checks HTTPS origin, bounded size, SHA-256 and a pinned Minisign key.
 Before handing off to the installer it creates a consistent SQLite backup.
 The download bearer is a limited read capability embedded in the app; it is not
@@ -51,7 +67,7 @@ credentials. The independent data-sync service is unchanged.
 1. Increment `package.json`, its root lock entries, Cargo package/lock and Tauri
    config together. Commit the intended source on `main`, with the bundled license notices.
    Run the current-file and full-history privacy checks before pushing.
-2. Run the **Signed update candidate** workflow for that commit. It requires
+2. Run the **Signed update candidate** workflow with `platform=all` for that commit. It requires
    `MVP_UPDATER_PRIVATE_KEY`, `MVP_UPDATER_PRIVATE_KEY_PASSWORD`,
    `MVP_ANDROID_KEYSTORE_BASE64`, `MVP_UPDATES_URL`, and `MVP_UPDATES_TOKEN` repository
    secrets. Keep both signing keys stable. Android uses the same persistent
@@ -61,12 +77,12 @@ credentials. The independent data-sync service is unchanged.
    APK with `apksigner`; restoring a default Gradle key alone is insufficient.
    AGP compresses native libraries (`useLegacyPackaging = true`) to fit the
    25 MiB delivery limit. Android extracts them during installation.
-3. Download the two successful candidates. If GitHub artifact storage is full,
+3. Download all three successful candidates. If GitHub artifact storage is full,
    the workflow stores them in unpublished draft releases named
-   `windows-update-candidate-<run>` and `android-update-candidate-<run>`.
+   `<platform>-update-candidate-<run>` (Windows, Android or macOS).
    Verify the run's commit and each manifest's `source` before staging.
-4. Run `node scripts/stage-updates.mjs --windows <directory> --android <directory>`.
-   This verifies both signatures, hashes, versions and source equality, retaining
+4. Run `node scripts/stage-updates.mjs --windows <directory> --android <directory> --macos <directory>`.
+   This verifies all signatures, hashes, versions and source equality, retaining
    previous packages. It writes `.local/update-assets/latest.json` last.
 5. Deploy with `node sync-relay/node_modules/wrangler/bin/wrangler.js deploy
    --config update-service/wrangler.jsonc` from an authenticated operator session.
@@ -86,4 +102,5 @@ Previous private acceptance covered the Windows unattended updater and a manual
 Android update with preserved application records. The public release adds a
 new build and delivery check; it does not imply a new physical-device test.
 A successful CI build, signature verification, or download is not proof of
-installation on an unavailable phone. Native macOS updates are not configured.
+installation on an unavailable phone. macOS bootstrap installation and an actual
+subsequent automatic version upgrade must be verified separately.

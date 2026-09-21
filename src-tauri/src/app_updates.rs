@@ -144,6 +144,10 @@ fn platform() -> &'static str {
         "android-aarch64"
     } else if cfg!(windows) {
         "windows-x86_64"
+    } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        "darwin-aarch64"
+    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        "darwin-x86_64"
     } else {
         "unsupported"
     }
@@ -491,7 +495,14 @@ pub fn start(app: AppHandle) {
 
 /// Enrol only the installed current-user binary.  Debug/QA profiles and a
 /// nonstandard data directory never create persistent OS tasks.
-pub fn enroll_windows_task(app: AppHandle) {
+pub fn enroll_desktop_task(app: AppHandle) {
+    #[cfg(target_os = "macos")]
+    if config().is_ok() {
+        let result = crate::update_macos::enroll(&app);
+        app.state::<UpdateState>().change(&app, |s| {
+            s.background_error = result.err();
+        });
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -638,6 +649,8 @@ pub fn mvp_update_activity(
 }
 
 fn auto_install_allowed(app: &AppHandle, state: &UpdateState) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    crate::update_macos::installed_bundle(app)?;
     #[cfg(windows)]
     {
         // A signed production EXE can also be opened with an isolated QA data
@@ -670,20 +683,20 @@ fn auto_install_allowed(app: &AppHandle, state: &UpdateState) -> Result<(), Stri
         if focused || (visible && !minimized) {
             return Err("Автообновление отложено: окно приложения активно.".into());
         }
-    } else {
-        // The scheduled runner has no renderer and has already acquired the
-        // same-profile instance lock during setup.
-        return Ok(());
     }
-    let lease = state
-        .ui_safe
-        .lock()
-        .map_err(|_| "Не удалось проверить состояние приложения.")?;
-    if lease
-        .as_ref()
-        .is_none_or(|lease| !lease.eligible_at(Instant::now()))
-    {
-        return Err("Автообновление отложено: приложение ещё может быть занято.".into());
+    // The closed-app runner owns the profile lock and has no renderer lease,
+    // but a persisted active timer must still defer installation.
+    if cfg!(target_os = "android") || app.get_webview_window("main").is_some() {
+        let lease = state
+            .ui_safe
+            .lock()
+            .map_err(|_| "Не удалось проверить состояние приложения.")?;
+        if lease
+            .as_ref()
+            .is_none_or(|lease| !lease.eligible_at(Instant::now()))
+        {
+            return Err("Автообновление отложено: приложение ещё может быть занято.".into());
+        }
     }
     let app_state = app.state::<crate::AppState>();
     let conn = app_state
@@ -729,6 +742,8 @@ pub async fn mvp_update_check(
         s.error = None;
     });
     let result: Result<UpdateStatus, String> = async {
+        #[cfg(target_os = "macos")]
+        crate::update_macos::installed_bundle(&app)?;
         let (feed, token) = config()?;
         let bytes = fetch(feed.clone(), token, MAX_MANIFEST, |_| {}).await?;
         let manifest: Manifest = serde_json::from_slice(&bytes)
@@ -785,6 +800,8 @@ pub(crate) async fn install_update(
     if candidate.version != expected_version {
         return Err("Доступная версия изменилась. Повтори проверку.".into());
     }
+    #[cfg(target_os = "macos")]
+    crate::update_macos::installed_bundle(&app)?;
     let (_, metadata_path) = prepared_paths(&app, &candidate.version)?;
     let attempt_path = metadata_path.with_file_name("attempt.json");
     if automatic
@@ -916,6 +933,17 @@ pub(crate) async fn install_update(
             update
                 .install(&bytes)
                 .map_err(|_| "Не удалось запустить установку. Повтори попытку.")?;
+            #[cfg(target_os = "macos")]
+            {
+                let _ =
+                    crate::update_macos::record_result(&app, "installed", Some(&candidate.version));
+                // The macOS plugin replaces the bundle but does not exit or restart.
+                if automatic {
+                    app.exit(0);
+                } else {
+                    app.restart();
+                }
+            }
         }
         Ok(state.snapshot(&app))
     }

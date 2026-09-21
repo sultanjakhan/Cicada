@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 import os
+import platform
 from pathlib import Path
 import shutil
 import subprocess
@@ -22,6 +23,7 @@ MAX_ASSET_BYTES = 25 * 1024 * 1024
 PLATFORMS = {
     'windows': {'name': 'windows-x86_64', 'suffix': '.exe'},
     'android': {'name': 'android-aarch64', 'suffix': '.apk'},
+    'macos': {'name': 'darwin-aarch64', 'suffix': '.app.tar.gz'},
 }
 
 
@@ -126,6 +128,18 @@ def build_android(commit: str, version: str) -> tuple[Path, int]:
     return apk, code
 
 
+def build_macos(commit: str, version: str, environment: dict[str, str]) -> Path:
+    require(sys.platform == 'darwin' and platform.machine() == 'arm64',
+            'Build the macOS candidate on an Apple Silicon runner.')
+    subprocess.run([sys.executable, 'scripts/package-macos.py', '--updater'],
+                   cwd=ROOT, env=environment, check=True)
+    directory = ROOT / '.local/mac-package' / commit[:12]
+    manifest = json.loads((directory / 'manifest.json').read_text(encoding='utf-8'))
+    require(manifest['version'] == version and manifest['source_commit'] == commit,
+            'macOS candidate differs from the checked-out source.')
+    return directory / 'Hanni MVP.app.tar.gz'
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('platform', choices=sorted(PLATFORMS))
@@ -137,8 +151,10 @@ def main() -> None:
     version_code = None
     if args.platform == 'windows':
         built = build_windows(commit, version)
-    else:
+    elif args.platform == 'android':
         built, version_code = build_android(commit, version)
+    else:
+        built = build_macos(commit, version, environment)
 
     destination_dir = ROOT / '.local/update-candidate' / args.platform
     destination_dir.mkdir(parents=True, exist_ok=True)

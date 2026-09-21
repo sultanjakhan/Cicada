@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Verify two signed CI update candidates and stage a static Tauri feed offline.
+ * Verify signed CI update candidates and stage a static Tauri feed offline.
  *
  * Nothing here publishes files or contacts the update service. The output can
  * be reviewed before a separate deployment step copies `.local/update-assets`.
@@ -18,6 +18,7 @@ const MINISIGN_TRUSTED_PREFIX = 'trusted comment: ';
 const PLATFORMS = {
   windows: { platform: 'windows-x86_64', extension: '.exe' },
   android: { platform: 'android-aarch64', extension: '.apk' },
+  macos: { platform: 'darwin-aarch64', extension: '.app.tar.gz' },
 };
 
 function fail(message) {
@@ -118,7 +119,7 @@ async function readCandidate(directory, kind, publicKeyText) {
   if (kind === 'android') {
     requireValue(manifest.version_code === expectedVersionCode(version), 'Android version_code does not match version.');
   } else {
-    requireValue(!Object.hasOwn(manifest, 'version_code'), 'Windows candidate must not define Android version_code.');
+    requireValue(!Object.hasOwn(manifest, 'version_code'), 'Desktop candidate must not define Android version_code.');
   }
   return { kind, config, directory: source, manifest, asset, signature };
 }
@@ -141,17 +142,18 @@ async function preserveAsset(destination, contents) {
   await atomicWrite(destination, contents);
 }
 
-export async function stageUpdates({ windows, android, notes = '', publishedAt, root = ROOT, publicKeyText }) {
+export async function stageUpdates({ windows, android, macos, notes = '', publishedAt, root = ROOT, publicKeyText }) {
   requireValue(typeof notes === 'string' && notes.length <= 2000 && !/[<>]/.test(notes),
     'Release notes must be plain text up to 2000 characters.');
   const pinnedKey = publicKeyText ?? await readFile(path.join(root, 'src-tauri/update-public-key.txt'), 'utf8');
   const candidates = await Promise.all([
     readCandidate(windows, 'windows', pinnedKey),
     readCandidate(android, 'android', pinnedKey),
+    readCandidate(macos, 'macos', pinnedKey),
   ]);
-  const [first, second] = candidates;
-  requireValue(first.manifest.version === second.manifest.version, 'Candidate versions differ.');
-  requireValue(first.manifest.source.toLowerCase() === second.manifest.source.toLowerCase(), 'Candidate source commits differ.');
+  const [first] = candidates;
+  requireValue(candidates.every(c => c.manifest.version === first.manifest.version), 'Candidate versions differ.');
+  requireValue(candidates.every(c => c.manifest.source.toLowerCase() === first.manifest.source.toLowerCase()), 'Candidate source commits differ.');
   const timestamp = publishedAt ?? new Date().toISOString();
   requireValue(Number.isFinite(Date.parse(timestamp)), 'publishedAt must be an ISO timestamp.');
 
@@ -187,11 +189,11 @@ function parseArguments(argv) {
   for (let index = 0; index < argv.length; index += 2) {
     const name = argv[index];
     const value = argv[index + 1];
-    requireValue(['--windows', '--android', '--notes', '--published-at'].includes(name) && value !== undefined,
-      'Usage: stage-updates.mjs --windows <dir> --android <dir> [--notes <plain text>] [--published-at <ISO>]');
+    requireValue(['--windows', '--android', '--macos', '--notes', '--published-at'].includes(name) && value !== undefined,
+      'Usage: stage-updates.mjs --windows <dir> --android <dir> --macos <dir> [--notes <plain text>] [--published-at <ISO>]');
     options[name.slice(2).replaceAll('-', '')] = value;
   }
-  requireValue(options.windows && options.android, 'Both --windows and --android candidate directories are required.');
+  requireValue(options.windows && options.android && options.macos, 'Windows, Android and macOS candidate directories are required.');
   return options;
 }
 
@@ -200,6 +202,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   stageUpdates({
     windows: options.windows,
     android: options.android,
+    macos: options.macos,
     notes: options.notes ?? '',
     publishedAt: options.publishedat,
   }).then(({ output }) => console.log(output)).catch(error => {

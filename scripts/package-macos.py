@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build the independent MVP macOS app from a clean commit without installing it."""
 import hashlib
+import argparse
 import json
 import os
 from pathlib import Path
@@ -22,6 +23,9 @@ def require(condition, message):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--updater', action='store_true')
+    args = parser.parse_args()
     require(sys.platform == 'darwin', 'Build this package on macOS.')
     commit = output('git', 'rev-parse', 'HEAD')
     require(not output('git', 'status', '--porcelain'), 'Commit source changes before packaging.')
@@ -36,8 +40,12 @@ def main():
     for name in ('APPLE_ID', 'APPLE_PASSWORD', 'APPLE_TEAM_ID', 'APPLE_API_ISSUER',
                  'APPLE_API_KEY', 'APPLE_API_KEY_PATH', 'APPLE_CERTIFICATE', 'APPLE_CERTIFICATE_PASSWORD'):
         environment.pop(name, None)
-    subprocess.run(['npm', 'run', 'tauri', '--', 'build', '--bundles', 'app', '--ci',
-                    '--config', 'src-tauri/tauri.macos.conf.json'], cwd=ROOT, env=environment, check=True)
+    command = ['npm', 'run', 'tauri', '--', 'build', '--bundles', 'app', '--ci',
+               '--config', 'src-tauri/tauri.macos.conf.json']
+    if args.updater:
+        require(environment.get('TAURI_SIGNING_PRIVATE_KEY'), 'The updater signing key is required.')
+        command.extend(['--config', json.dumps({'bundle': {'createUpdaterArtifacts': True}})])
+    subprocess.run(command, cwd=ROOT, env=environment, check=True)
     require(not output('git', 'status', '--porcelain'), 'Build changed tracked source; inspect it before packaging again.')
     require(output('git', 'rev-parse', 'HEAD') == commit, 'Source commit changed during the build.')
     bundle = Path(metadata['target_directory']) / 'release/bundle/macos/Hanni MVP.app'
@@ -58,6 +66,11 @@ def main():
     archive = directory / 'Hanni MVP-macos.zip'
     subprocess.run(['ditto', '-c', '-k', '--sequesterRsrc', '--keepParent',
                     str(destination), str(archive)], check=True)
+    if args.updater:
+        import shutil
+        updater = bundle.with_name(bundle.name + '.tar.gz')
+        require(updater.is_file(), 'Tauri did not create the macOS updater archive.')
+        shutil.copyfile(updater, directory / updater.name)
     manifest = {
         'schema_version': 1, 'application': config['productName'], 'identifier': config['identifier'],
         'version': config['version'], 'channel': 'local-mvp', 'platform': 'macos-' + platform.machine(),

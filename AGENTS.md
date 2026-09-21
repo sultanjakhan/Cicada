@@ -1,5 +1,10 @@
 # Hanni MVP
 
+Owner authorization, 2026-09-21: make automatic updates work for the installed
+macOS MVP too. Extend the existing signed channel and idle/hidden installation
+rules, preserve the profile, and verify a real installed version upgrade. Keep
+local models stopped and use CI for heavy builds on this Mac session.
+
 Owner handoff, 2026-09-21: publish the accepted task-execution checkpoint so the
 owner can continue on Mac. Use `work/execution-ux-20260920-8bf4`; main integration
 and release are still separate. The sending Windows session stops writes to

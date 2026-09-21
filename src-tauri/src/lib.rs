@@ -15,6 +15,8 @@ use uuid::Uuid;
 
 mod app_updates;
 mod update_background;
+#[cfg(target_os = "macos")]
+mod update_macos;
 mod update_journal;
 mod calendar_compat;
 mod desktop_launch;
@@ -536,7 +538,7 @@ pub fn run() {
                 if !startup_options.is_update_background() {
                     mvp_sync::start(app.handle(), data_dir.join("calendar.db"));
                     app_updates::start(app.handle().clone());
-                    app_updates::enroll_windows_task(app.handle().clone());
+                    app_updates::enroll_desktop_task(app.handle().clone());
                 }
                 Ok(())
             })();

@@ -1,4 +1,4 @@
-//! Windowless, per-user Windows updater entry point.
+//! Windowless, per-user desktop updater entry point.
 use tauri::{AppHandle, Manager};
 
 #[cfg(windows)]
@@ -63,17 +63,19 @@ fn logon_task_xml(executable: &str, sid: &str) -> String {
 }
 
 pub(crate) async fn run(app: AppHandle) -> Result<i32, String> {
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = app;
         return Ok(0);
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     {
         // setup holds this file lock for every instance using the same profile.
         // Reaching here proves no interactive instance can be interrupted.
         let state = app.state::<crate::app_updates::UpdateState>();
         let status = crate::app_updates::mvp_update_check(app.clone(), state).await?;
+        #[cfg(target_os = "macos")]
+        crate::update_macos::record_result(&app, &status.phase, status.version.as_deref())?;
         if status.phase == "available" {
             let state = app.state::<crate::app_updates::UpdateState>();
             crate::app_updates::mvp_update_prepare(app.clone(), state).await?;

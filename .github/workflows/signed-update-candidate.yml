@@ -6,15 +6,15 @@ on:
       platform:
         description: Platforms to package
         type: choice
-        default: both
-        options: [both, windows, android]
+        default: all
+        options: [all, windows, android, macos]
 
 permissions:
   contents: read
 
 jobs:
   windows:
-    if: inputs.platform != 'android'
+    if: inputs.platform == 'all' || inputs.platform == 'windows'
     runs-on: windows-latest
     timeout-minutes: 45
     permissions:
@@ -80,7 +80,7 @@ jobs:
           test "${{ steps.artifact.outcome }}" = success || test "${{ steps.draft_release.outcome }}" = success
 
   android:
-    if: inputs.platform != 'windows'
+    if: inputs.platform == 'all' || inputs.platform == 'android'
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     permissions:
@@ -165,6 +165,73 @@ jobs:
           test "${#assets[@]}" -eq 3
           tag="android-update-candidate-${GITHUB_RUN_ID}"
           gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --latest=false --title "Hanni MVP Android update candidate ${GITHUB_RUN_ID}" --notes "CI delivery fallback; not published."
+          test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = true
+          test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq '.targetCommitish')" = "$GITHUB_SHA"
+          test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')" -eq 3
+      - name: Require candidate delivery
+        if: always()
+        shell: bash
+        run: |
+          test "${{ steps.artifact.outcome }}" = success || test "${{ steps.draft_release.outcome }}" = success
+
+  macos:
+    if: inputs.platform == 'all' || inputs.platform == 'macos'
+    runs-on: macos-15
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      MVP_UPDATER_PRIVATE_KEY: ${{ secrets.MVP_UPDATER_PRIVATE_KEY }}
+      MVP_UPDATER_PRIVATE_KEY_PASSWORD: ${{ secrets.MVP_UPDATER_PRIVATE_KEY_PASSWORD }}
+      HANNI_MVP_UPDATES_URL: ${{ secrets.MVP_UPDATES_URL }}
+      HANNI_MVP_UPDATES_TOKEN: ${{ secrets.MVP_UPDATES_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
+      - run: npm ci
+      - run: npm test
+      - run: npm run check:privacy
+      - run: npm run build
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+      - name: Build and sign macOS candidate
+        run: python3 scripts/package-update.py macos
+      - id: artifact
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: hanni-mvp-update-macos-${{ github.sha }}
+          path: .local/update-candidate/macos/*
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+      - id: draft_release
+        if: steps.artifact.outcome == 'failure'
+        continue-on-error: true
+        name: Draft-release fallback
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s nullglob
+          assets=(.local/update-candidate/macos/*)
+          test "${#assets[@]}" -eq 3
+          tag="macos-update-candidate-${GITHUB_RUN_ID}"
+          gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --latest=false --title "Hanni MVP macOS update candidate ${GITHUB_RUN_ID}" --notes "CI delivery fallback; not published."
           test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = true
           test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq '.targetCommitish')" = "$GITHUB_SHA"
           test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')" -eq 3
