@@ -1,5 +1,13 @@
 # Hanni MVP
 
+Owner handoff, 2026-09-21: publish the accepted task-execution checkpoint so the
+owner can continue on Mac. Use `work/execution-ux-20260920-8bf4`; main integration
+and release are still separate. The sending Windows session stops writes to
+this checkpoint after publication. The receiving session checks local WIP,
+remote HEAD and ownership, uses its own HANNI_SESSION_ID and preserves other
+worktrees. This does not transfer legacy Hanni or authorize overwriting an
+existing checkout. See [Mac handoff](docs/mac-handoff-20260921.md).
+
 Owner authorization, 2026-09-20: implement the reviewed task-execution and compact
 goal package (private issues #84, #88–93). Put the current task before the goal
 summary and expose Start/Resume/Pause on existing task lists. Reuse task identity
