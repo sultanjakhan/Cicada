@@ -1,0 +1,60 @@
+name: macOS isolated QA candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos-qa:
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - run: npm run build
+      - name: Build debug runtime with isolated-profile support
+        run: cargo build --manifest-path src-tauri/Cargo.toml --locked
+      - name: Identify the QA binary
+        shell: bash
+        run: |
+          mkdir -p .local/macos-qa
+          cp src-tauri/target/debug/hanni-mvp .local/macos-qa/hanni-mvp
+          codesign --force --sign - .local/macos-qa/hanni-mvp
+          codesign --verify --strict .local/macos-qa/hanni-mvp
+          python3 - <<'PY'
+          import hashlib, json, os, platform
+          from pathlib import Path
+          root = Path('.local/macos-qa')
+          config = json.loads(Path('src-tauri/tauri.conf.json').read_text())
+          (root / 'manifest.json').write_text(json.dumps({
+              'source_commit': os.environ['GITHUB_SHA'],
+              'version': config['version'],
+              'architecture': platform.machine(),
+              'profile': 'debug; isolated data directory; local Vite frontend',
+              'binary': 'hanni-mvp',
+              'sha256': hashlib.sha256((root / 'hanni-mvp').read_bytes()).hexdigest(),
+              'production_install': False,
+          }, indent=2) + '\n')
+          PY
+          ditto -c -k .local/macos-qa .local/macos-qa.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hanni-mvp-macos-qa-${{ github.sha }}
+          path: .local/macos-qa.zip
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 3
