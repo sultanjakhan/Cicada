@@ -261,7 +261,9 @@ fn item_value(
     } else {
         Some(item.duration_minutes)
     };
-    json!({"id":item.id,"title":item.title,"content":item.notes,"description":item.notes,"date":item.date,"time":item.time,"duration_minutes":duration_minutes,"category":category,"color":color,"priority":priority,"completed":item.completed,"version":item.version,"created_at":item.created_at,"updated_at":item.updated_at,"source":"manual","linked_tab":"","tags":tags,"archived":archived,"tab_name":if item.kind=="task" {"calendar"} else {""},"status":if item.completed && status=="task" {"done"} else {&status},"due_date":if item.kind=="task" {item.date.clone()} else {None},"content_blocks":blocks})
+    let mut value = json!({"id":item.id,"title":item.title,"content":item.notes,"description":item.notes,"date":item.date,"time":item.time,"duration_minutes":duration_minutes,"category":category,"color":color,"priority":priority,"completed":item.completed,"version":item.version,"created_at":item.created_at,"updated_at":item.updated_at,"source":"manual","linked_tab":"","tags":tags,"archived":archived,"tab_name":if item.kind=="task" {"calendar"} else {""},"status":if item.completed && status=="task" {"done"} else {&status},"due_date":if item.kind=="task" {item.date.clone()} else {None},"content_blocks":blocks});
+    crate::health_sleep::decorate(&mut value, &item.id, &tags);
+    value
 }
 fn load(conn: &Connection, id: &str) -> Result<Value, String> {
     let item = get_item(conn, id)?;
@@ -388,6 +390,7 @@ pub fn update_event(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let conn = lock(&state)?;
+    crate::health_sleep::editable(&id)?;
     let current = get_item(&conn, item_id(&id)?)?;
     if current.kind != "event" {
         return Err(fail("event not found"));
@@ -419,6 +422,7 @@ pub fn update_event(
 }
 #[tauri::command]
 pub fn delete_event(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    crate::health_sleep::editable(&id)?;
     let mut conn = lock(&state)?;
     let transaction = conn
         .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -585,7 +589,7 @@ fn calendar_list(
 ) -> Result<Vec<Value>, String> {
     let sql = format!(
         "WITH selected AS (
-            SELECT id,kind,title,date,time,duration_minutes,category,color,completed,status,priority,
+            SELECT id,kind,title,date,time,duration_minutes,category,color,completed,status,priority,tags,
                 CASE WHEN kind='event' THEN 'event' ELSE 'note' END AS source_type
             FROM items WHERE {predicate}
         ), timeline AS (
@@ -597,7 +601,7 @@ fn calendar_list(
             GROUP BY t.source_type,t.source_id
         )
         SELECT s.id,s.kind,s.title,s.date,s.time,s.duration_minutes,s.category,s.color,
-            s.completed,s.status,s.priority,COALESCE(t.active,0),COALESCE(t.seconds,0),COALESCE(t.has_work,0)
+            s.completed,s.status,s.priority,COALESCE(t.active,0),COALESCE(t.seconds,0),COALESCE(t.has_work,0),s.tags
         FROM selected s LEFT JOIN timeline t ON t.source_type=s.source_type AND t.source_id=s.id
         ORDER BY {order}"
     );
@@ -628,6 +632,7 @@ fn calendar_list(
                 value["category"] = json!(row.get::<_, String>(6)?);
                 value["color"] = json!(row.get::<_, String>(7)?);
             }
+            crate::health_sleep::decorate(&mut value, &row.get::<_,String>(0)?, &row.get::<_,String>(14)?);
             Ok(value)
         })
         .map_err(|e| fail(e.to_string()))?;
@@ -906,6 +911,7 @@ pub fn set_calendar_task_goal(
     goal_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    crate::health_sleep::editable(&source_id)?;
     if !matches!(source_type.as_str(), "note" | "event") {
         return Err(fail("invalid source type"));
     }
@@ -1104,6 +1110,7 @@ pub fn start_task_block(
     completion_date: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<i64, String> {
+    crate::health_sleep::editable(&source_id)?;
     let conn = lock(&state)?;
     if source_type == "schedule" {
         let (_, origin, _, _, title) = schedule_context(&conn, &source_id)?;
@@ -1349,6 +1356,25 @@ pub fn set_app_setting(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn health_events_are_readonly_in_calendar_lists_and_native_actions() {
+        use tauri::Manager;
+        let conn = Connection::open_in_memory().unwrap();
+        crate::init_schema(&conn).unwrap();
+        conn.execute("INSERT INTO items(id,kind,title,date,time,duration_minutes,version,created_at,updated_at,tags)
+            VALUES('hc-sleep:fixture','event','Fictional sleep','2026-01-01','23:00',480,1,'x','x',?1)",
+            [json!(["health:sleep:v1","health:asleep:420","health:origin:com.example.sleep"]).to_string()]).unwrap();
+        let rows = calendar_list(&conn,"kind='event'","s.id",&[],false).unwrap();
+        assert_eq!(rows[0]["readonly"],true);
+        assert_eq!(rows[0]["sleep_minutes"],420);
+        assert_eq!(rows[0]["health_kind"],"sleep");
+        assert_eq!(load(&conn,"hc-sleep:fixture").unwrap()["source"],"health_connect");
+        let app = tauri::test::mock_builder().manage(AppState(std::sync::Mutex::new(conn)))
+            .build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap();
+        assert_eq!(delete_event("hc-sleep:fixture".into(),app.state()).unwrap_err(),"health_sleep_readonly");
+        assert_eq!(start_task_block("event".into(),"hc-sleep:fixture".into(),None,None,app.state()).unwrap_err(),"health_sleep_readonly");
+        assert_eq!(set_calendar_task_goal("event".into(),"hc-sleep:fixture".into(),None,app.state()).unwrap_err(),"health_sleep_readonly");
+    }
     #[test]
     fn timer_closes_and_marks_only_a_task_complete() {
         let conn = Connection::open_in_memory().unwrap();

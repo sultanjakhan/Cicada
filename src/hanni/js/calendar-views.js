@@ -35,6 +35,7 @@ import { renderDayStartMarker } from './calendar-day-start.js';
       const origin = Date.UTC(year, month - 1, day) / 86400000;
       const start = minutes(record.time), end = start + record.durationMinutes;
       const isSleep = record.health_kind === 'sleep';
+      const sleepMinutes = record.sleep_minutes === undefined ? record.durationMinutes : record.sleep_minutes;
       const wakeDate = isSleep ? add(record.date, Math.floor(end / 1440)) : null;
       return dates.flatMap(date => {
         const [y, m, d] = date.split('-').map(Number);
@@ -42,12 +43,12 @@ import { renderDayStartMarker } from './calendar-day-start.js';
         const from = Math.max(start, offset), to = Math.min(end, offset + 1440);
         if (from >= to) {
           if (isSleep && date === wakeDate && end === offset) return [{ ...record, date, time: null, durationMinutes: null,
-            sleepWakeDate: wakeDate, sleepContinues: false, sleepCountedMinutes: record.durationMinutes }];
+            sleepWakeDate: wakeDate, sleepContinues: false, sleepCountedMinutes: sleepMinutes }];
           return [];
         }
         return [{ ...record, date, time: hhmm(from - offset), durationMinutes: to - from,
           ...(isSleep ? { sleepWakeDate: wakeDate, sleepContinues: date !== wakeDate,
-            sleepCountedMinutes: date === wakeDate ? record.durationMinutes : 0,
+            sleepCountedMinutes: date === wakeDate ? sleepMinutes : 0,
             title: date === wakeDate ? record.title : 'Шёл сон' } : {}),
           continuesBefore: start < offset, continuesAfter: end > offset + 1440,
           displayEnd: to - offset === 1440 ? '24:00' : hhmm(to - offset) }];
@@ -67,6 +68,7 @@ import { renderDayStartMarker } from './calendar-day-start.js';
     node.setAttribute('aria-label', `${record.title}, ${record.date ? label(record.date) : 'Без даты'}, ${time}, ${record.status || 'Запланировано'}. Открыть подробности`);
     if (record.sleepWakeDate) {
       const summary = record.sleepContinues ? `Учтён в дне пробуждения: ${label(record.sleepWakeDate)}`
+        : record.sleepCountedMinutes === null ? 'Время сна по стадиям не передано источником'
         : `За ночь: ${Math.floor(record.sleepCountedMinutes / 60)} ч ${record.sleepCountedMinutes % 60} мин`;
       node.querySelector('.calv-record-meta').textContent = summary;
       node.setAttribute('aria-label', `${node.getAttribute('aria-label')}. ${summary}`);
@@ -412,7 +414,8 @@ import { renderDayStartMarker } from './calendar-day-start.js';
           const endLabel = fold.end === 1440 ? '24:00' : hhmm(fold.end);
           node.setAttribute('aria-label', `Сжатый интервал ${hhmm(fold.start)}–${endLabel}: ${fold.record.title}. Развернуть.`);
           const hours = Math.round((fold.record.sleepCountedMinutes ?? (fold.end - fold.start)) / 60 * 10) / 10;
-          node.textContent = fold.record.sleepContinues ? `Шёл сон · Учтён ${label(fold.record.sleepWakeDate)} · Развернуть` : `${hhmm(fold.start)}–${endLabel} · ${fold.record.title} · ${String(hours).replace('.0', '')} ч · Развернуть`;
+          const durationLabel = fold.record.sleepCountedMinutes === null ? 'стадии сна не переданы' : `${String(hours).replace('.0', '')} ч`;
+          node.textContent = fold.record.sleepContinues ? `Шёл сон · Учтён ${label(fold.record.sleepWakeDate)} · Развернуть` : `${hhmm(fold.start)}–${endLabel} · ${fold.record.title} · ${durationLabel} · Развернуть`;
           column.append(node);
         }
         for (const marker of startsOn(date)) {

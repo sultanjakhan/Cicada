@@ -70,6 +70,16 @@ pub struct AutoInstallScheduleResponse {
 pub struct AndroidInstaller<R: Runtime>(Option<PluginHandle<R>>);
 
 impl<R: Runtime> AndroidInstaller<R> {
+    pub fn sleep_command(&self, command: &str) -> Result<serde_json::Value, String> {
+        #[cfg(not(target_os = "android"))]
+        { let _ = command; Ok(serde_json::json!({"status":"unsupported"})) }
+        #[cfg(target_os = "android")]
+        {
+            let Some(handle) = &self.0 else { return Ok(serde_json::json!({"status":"unsupported"})); };
+            handle.run_mobile_plugin(command, ()).map_err(|_| "health_sleep_bridge_failed".into())
+        }
+    }
+
     /// Opens Android's system confirmation UI only after the native Android
     /// bridge has checked cache location, hash, package id, version and signer.
     /// `Launched` means Android received the request; it never means installed.

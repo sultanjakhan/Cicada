@@ -365,6 +365,42 @@
           "type": "string",
           "const": "deny-schedule-content-sync",
           "markdownDescription": "Denies the schedule_content_sync command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the sleep_connect command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-sleep-connect",
+          "markdownDescription": "Enables the sleep_connect command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the sleep_connect command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-sleep-connect",
+          "markdownDescription": "Denies the sleep_connect command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the sleep_import command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-sleep-import",
+          "markdownDescription": "Enables the sleep_import command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the sleep_import command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-sleep-import",
+          "markdownDescription": "Denies the sleep_import command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the sleep_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-sleep-status",
+          "markdownDescription": "Enables the sleep_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the sleep_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-sleep-status",
+          "markdownDescription": "Denies the sleep_status command without any pre-configured scope."
         }
       ]
     }

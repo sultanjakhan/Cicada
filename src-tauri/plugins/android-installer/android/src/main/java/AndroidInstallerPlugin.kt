@@ -155,6 +155,12 @@ class AndroidInstallerPlugin(private val activity: Activity) : Plugin(activity) 
     init {
         UpdateActivityGuard.install(activity.application, activity)
     }
+    @get:androidx.annotation.RequiresApi(28)
+    private val sleepBridge by lazy { if (Build.VERSION.SDK_INT >= 28) SleepBridge(activity) else null }
+    override fun load(webView: android.webkit.WebView) { if (Build.VERSION.SDK_INT >= 28) sleepBridge?.register() }
+    @Command fun sleepStatus(invoke: Invoke) { if (Build.VERSION.SDK_INT >= 28) sleepBridge?.status(invoke) else invoke.resolve(status("provider_unavailable")) }
+    @Command fun sleepConnect(invoke: Invoke) { if (Build.VERSION.SDK_INT >= 28) sleepBridge?.connect(invoke) else invoke.resolve(status("provider_unavailable")) }
+    @Command fun sleepImport(invoke: Invoke) { if (Build.VERSION.SDK_INT >= 28) sleepBridge?.import(invoke) else invoke.resolve(status("provider_unavailable")) }
     @Command
     fun installVerified(invoke: Invoke) {
         try {

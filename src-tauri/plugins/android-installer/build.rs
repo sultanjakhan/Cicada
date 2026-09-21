@@ -8,6 +8,9 @@ const COMMANDS: &[&str] = &[
     "open_pending_user_action",
     "schedule_auto_install",
     "schedule_content_sync",
+    "sleep_status",
+    "sleep_connect",
+    "sleep_import",
 ];
 
 fn main() {

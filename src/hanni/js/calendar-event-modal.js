@@ -5,6 +5,7 @@ import { S, invoke } from './state.js';
 import { escapeHtml } from './utils.js';
 import { loadCategories } from './calendar-categories.js';
 import { showCategoryManager, showAddCategory } from './calendar-category-manager.js';
+import { createCalendarDialog } from './calendar-dialog.js';
 // Default time is the exact current local minute. Rounding made a modal opened
 // at 08:09 misleadingly show 08:10 even though "Создать и начать" starts now.
 function currentLocalTime() {
@@ -97,6 +98,15 @@ export async function showEventModal(eventId = null, initialDate = null, options
     if (options.isCurrent?.() === false) return;
     event = (all || []).find(e => e.id === String(eventId));
     if (!event) { alert('Событие не найдено'); options.returnFocus?.(); return; }
+  }
+
+  if (event?.readonly) {
+    const details = createCalendarDialog({ document, title: event.title,
+      hint: event.description || 'Изменения и удаление — в приложении-источнике.', returnFocus: options.returnFocus });
+    const time = document.createElement('p');
+    time.textContent = `${event.date || ''} · ${event.time || ''}`;
+    details.body.append(time); details.open();
+    return;
   }
 
   const initDate = taskId != null ? task?.date || '' : event?.date || initialDate || S.selectedCalendarDate || localNowParts().date;

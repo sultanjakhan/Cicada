@@ -47,6 +47,14 @@ def prepare(root):
                 for node in tree.findall('uses-permission')),
             'Expected the generated INTERNET permission')
     application = applications[0]
+    gradle = root / 'src-tauri/gen/android/app/build.gradle.kts'
+    gradle_source = gradle.read_text(encoding='utf-8')
+    # Health Connect and the updater bring distinct OSGi descriptors. Android
+    # does not use OSGi; this is not a license or a runtime service descriptor.
+    osgi_rule = '    packaging.resources.excludes.add("META-INF/versions/9/OSGI-INF/MANIFEST.MF")'
+    if osgi_rule not in gradle_source:
+        require(gradle_source.count('android {') == 1, 'Ambiguous Android Gradle block.')
+        gradle_source = gradle_source.replace('android {', 'android {\n' + osgi_rule, 1)
     missing = {}
     for key, value in ATTRIBUTES.items():
         current = application.get(ANDROID + key)
@@ -87,6 +95,8 @@ def prepare(root):
             path.write_text('<?xml version="1.0" encoding="utf-8"?>\n' + expected, encoding='utf-8')
     if missing:
         manifest.write_text(source, encoding='utf-8')
+    if gradle.read_text(encoding='utf-8') != gradle_source:
+        gradle.write_text(gradle_source, encoding='utf-8')
     require(structure(parse(manifest.read_text(encoding='utf-8'))) == structure(tree),
             'Android manifest verification failed')
     for name, expected in resources.items():

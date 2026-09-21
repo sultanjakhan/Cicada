@@ -1,3 +1,4 @@
+mod health_sleep;
 use chrono::{NaiveDate, NaiveTime, Utc};
 use rusqlite::{
     backup::{Backup, StepResult},
@@ -235,6 +236,7 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
     conn.execute("INSERT OR IGNORE INTO event_categories(id,name,color,icon,sort_order,created_at) VALUES('general','general','#9B9B9B','',0,?1)", [Utc::now().to_rfc3339()])
         .map_err(|e| fail(format!("seed generic category: {e}")))?;
     mvp_sync_db::initialize(conn)?;
+    health_sleep::initialize(conn)?;
     Ok(())
 }
 
@@ -273,6 +275,7 @@ fn list(conn: &Connection) -> Result<Vec<Item>, String> {
 
 fn save(conn: &mut Connection, input: ItemInput) -> Result<Item, String> {
     validate(&input)?;
+    if let Some(id) = input.id.as_deref() { health_sleep::editable(id)?; }
     let title = input.title.trim().to_string();
     let now = Utc::now().to_rfc3339();
     let transaction = conn
@@ -346,6 +349,7 @@ fn complete(
 }
 
 fn remove(conn: &mut Connection, id: &str, expected_version: i64) -> Result<(), String> {
+    health_sleep::editable(id)?;
     let transaction = conn
         .transaction()
         .map_err(|e| fail(format!("begin delete: {e}")))?;
@@ -551,6 +555,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            health_sleep::health_sleep_status,
+            health_sleep::health_sleep_connect,
+            health_sleep::health_sleep_import,
             list_items,
             save_item,
             set_completed,

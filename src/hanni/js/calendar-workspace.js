@@ -177,7 +177,14 @@ async function showRecord(record, returnFocus = null, initialFocus = null) {
   const modal = dialog(record.title, returnFocus);
   modal.querySelector('.cm-fields').innerHTML = `<p>${escapeHtml(record.kind)} · ${escapeHtml(record.status)}</p><p>${escapeHtml(record.date ? views.label(record.date) : 'Без даты')} · ${escapeHtml(record.time || 'Без времени')}</p><p role="status">Загружаем цель…</p>`;
   modal.showModal(); modal.querySelector('[type=submit]').disabled = true;
-  if (record.readonly) { modal.querySelector('[type=submit]').hidden = true; modal.querySelector('[role=status]').textContent = 'Исходная запись здоровья доступна только для просмотра.'; return; }
+  if (record.readonly) { modal.querySelector('[type=submit]').hidden = true; modal.querySelector('[role=status]').textContent = 'Изменения и удаление — в приложении-источнике. Начало дня отмечается отдельно.';
+    if (record.health_kind === 'sleep') {
+      const details = document.createElement('p');
+      const origin = record.health_origin === 'com.sec.android.app.shealth' ? 'Samsung Health' : record.health_origin || 'Health Connect';
+      details.textContent = `Источник: ${origin}. Период сна: ${record.durationMinutes} мин. Во сне: ${record.sleep_minutes == null ? 'нет данных о стадиях' : `${record.sleep_minutes} мин`}.`;
+      modal.querySelector('.cm-fields').append(details);
+    }
+    return; }
   if (canChangeOccurrence(record)) {
     const cancel = document.createElement('button'); cancel.type = 'button'; cancel.dataset.occurrenceAction = '';
     cancel.textContent = record.status_extra === 'skipped' ? 'Восстановить повторение' : 'Отменить повторение';

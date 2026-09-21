@@ -7,6 +7,7 @@ import { requestHealthViewRefresh } from './hanni/js/health-view-refresh.js';
 import { renderTabBar, openDrawer } from './hanni/js/tabs.js';
 import { toast } from './hanni/js/utils.js';
 import { loadCalendarWorkspace } from './hanni/js/calendar-workspace.js';
+import { startSleepImport } from './hanni/js/health-sleep.js';
 import { startAppUpdates } from './hanni/js/app-updates.js';
 import { hasUnsavedCalendarNoteDrafts } from './hanni/js/calendar-notes.js';
 
@@ -22,6 +23,7 @@ renderTabBar();
 if (window.__TAURI__?.core?.invoke) {
   tabLoaders.calendar().catch(showError);
   startMvpSyncRefresh({ window, invoke, listen, requestSync: requestMvpSync, requestRefresh: requestHealthViewRefresh });
+  startSleepImport({ window, invoke, requestSync: requestMvpSync, requestRefresh: requestHealthViewRefresh });
   startAppUpdates({ window, invoke, listen, getPendingOperations: getPendingMvpOperations,
     hasUnsavedDrafts: hasUnsavedCalendarNoteDrafts, notify: message => toast(message) });
 } else {

@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-sleep-import"
+description = "Enables the sleep_import command without any pre-configured scope."
+commands.allow = ["sleep_import"]
+
+[[permission]]
+identifier = "deny-sleep-import"
+description = "Denies the sleep_import command without any pre-configured scope."
+commands.deny = ["sleep_import"]

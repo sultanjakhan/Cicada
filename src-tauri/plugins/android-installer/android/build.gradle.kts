@@ -48,6 +48,7 @@ android {
 }
 
 dependencies {
+    implementation("androidx.health.connect:connect-client:1.1.0")
     implementation("androidx.core:core:1.13.1")
     implementation("androidx.work:work-runtime-ktx:2.10.5")
     implementation("org.bouncycastle:bcprov-jdk18on:1.86")

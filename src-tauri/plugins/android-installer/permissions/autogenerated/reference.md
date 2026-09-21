@@ -162,4 +162,82 @@ Denies the schedule_content_sync command without any pre-configured scope.
 
 </td>
 </tr>
+
+<tr>
+<td>
+
+`hanni-mvp-android-installer:allow-sleep-connect`
+
+</td>
+<td>
+
+Enables the sleep_connect command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`hanni-mvp-android-installer:deny-sleep-connect`
+
+</td>
+<td>
+
+Denies the sleep_connect command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`hanni-mvp-android-installer:allow-sleep-import`
+
+</td>
+<td>
+
+Enables the sleep_import command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`hanni-mvp-android-installer:deny-sleep-import`
+
+</td>
+<td>
+
+Denies the sleep_import command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`hanni-mvp-android-installer:allow-sleep-status`
+
+</td>
+<td>
+
+Enables the sleep_status command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`hanni-mvp-android-installer:deny-sleep-status`
+
+</td>
+<td>
+
+Denies the sleep_status command without any pre-configured scope.
+
+</td>
+</tr>
 </table>
