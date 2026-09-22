@@ -184,6 +184,17 @@ async function showRecord(record, returnFocus = null, initialFocus = null) {
       details.textContent = `Источник: ${origin}. Период сна: ${record.durationMinutes} мин. Во сне: ${record.sleep_minutes == null ? 'нет данных о стадиях' : `${record.sleep_minutes} мин`}.`;
       modal.querySelector('.cm-fields').append(details);
     }
+    if (record.health_kind === 'walking') {
+      const details = document.createElement('p');
+      const origin = record.health_origin === 'com.sec.android.app.shealth' ? 'Samsung Health' : record.health_origin || 'Health Connect';
+      details.textContent = `Источник: ${origin}. Период прогулки: ${record.durationMinutes || 0} мин.`;
+      modal.querySelector('.cm-fields').append(details);
+    }
+    if (record.health_kind === 'steps') {
+      const details = document.createElement('p');
+      details.textContent = `Источник: Health Connect (все доступные источники). Шагов за день: ${record.steps_count == null ? 'нет данных' : record.steps_count}. Итог не имеет времени начала.`;
+      modal.querySelector('.cm-fields').append(details);
+    }
     return; }
   if (canChangeOccurrence(record)) {
     const cancel = document.createElement('button'); cancel.type = 'button'; cancel.dataset.occurrenceAction = '';

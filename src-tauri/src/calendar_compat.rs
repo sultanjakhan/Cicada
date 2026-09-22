@@ -263,6 +263,7 @@ fn item_value(
     };
     let mut value = json!({"id":item.id,"title":item.title,"content":item.notes,"description":item.notes,"date":item.date,"time":item.time,"duration_minutes":duration_minutes,"category":category,"color":color,"priority":priority,"completed":item.completed,"version":item.version,"created_at":item.created_at,"updated_at":item.updated_at,"source":"manual","linked_tab":"","tags":tags,"archived":archived,"tab_name":if item.kind=="task" {"calendar"} else {""},"status":if item.completed && status=="task" {"done"} else {&status},"due_date":if item.kind=="task" {item.date.clone()} else {None},"content_blocks":blocks});
     crate::health_sleep::decorate(&mut value, &item.id, &tags);
+    crate::health_activity::decorate(&mut value, &item.id, &tags);
     value
 }
 fn load(conn: &Connection, id: &str) -> Result<Value, String> {
@@ -633,6 +634,7 @@ fn calendar_list(
                 value["color"] = json!(row.get::<_, String>(7)?);
             }
             crate::health_sleep::decorate(&mut value, &row.get::<_,String>(0)?, &row.get::<_,String>(14)?);
+            crate::health_activity::decorate(&mut value, &row.get::<_,String>(0)?, &row.get::<_,String>(14)?);
             Ok(value)
         })
         .map_err(|e| fail(e.to_string()))?;
