@@ -12,10 +12,11 @@
 используется или есть несохранённая работа. Автоматическая установка оставляет
 приложение закрытым; ручная кнопка обновления перезапускает его.
 
-Переходная версия 0.3.22 может скачать архив `Cicada.app.tar.gz` внутрь старого
-`~/Applications/Hanni MVP.app`. При запуске 0.3.23 native startup переносит bundle
-в `~/Applications/Cicada.app`, оставляет legacy symlink для уже загруженного
-LaunchAgent, переоткрывает новый executable и обновляет plist на новый путь.
+Переходная версия 0.3.22 распаковывает содержимое архива в старый bundle
+`~/Applications/Hanni MVP.app`. При первом запуске 0.3.23 native startup
+переименовывает bundle в `~/Applications/Cicada.app`, запускает новый executable,
+оставляет legacy symlink для уже загруженного LaunchAgent и обновляет plist на
+новый путь.
 
 Обычная локальная сборка ниже не содержит ключ доступа к каналу. Для доставки
 используйте `python3 scripts/package-update.py macos` в CI с существующими

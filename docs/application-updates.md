@@ -51,10 +51,10 @@ replace the installed app. LaunchAgent errors appear in update settings; a
 private `updates/background.json` receipt records closed-app checks/installations.
 macOS may delay scheduled jobs during sleep or restrict background items.
 
-The 0.3.22 transition may place `Cicada.app.tar.gz` inside the old
-`~/Applications/Hanni MVP.app`. On startup, 0.3.23 moves the bundle to
-`~/Applications/Cicada.app`, keeps a legacy symlink for the existing LaunchAgent,
-reopens the new executable and updates the plist to the new path.
+The 0.3.22 updater extracts the archive contents into the old
+`~/Applications/Hanni MVP.app` bundle. On its first startup, 0.3.23 renames that
+bundle to `~/Applications/Cicada.app`, executes the new binary, keeps a legacy
+symlink for the existing LaunchAgent, and updates the plist to the new path.
 
 The macOS archive uses the existing pinned Minisign update key. Its application
 bundle retains the local ad-hoc code signature; Developer ID/notarization are

@@ -16,8 +16,9 @@ Tauri 2 · Rust · SQLite · JavaScript.
 
 - Windows x64: файл `.exe`.
 - Android ARM64: файл `.apk`; разреши установку из выбранного источника.
-- macOS Apple Silicon: архив `Cicada-macos.zip` с `Cicada.app`; подписанный
-  канал обновлений использует `Cicada.app.tar.gz`. Подробности — в
+- macOS Apple Silicon: подписанный архив
+  `Cicada-<version>-darwin-aarch64.app.tar.gz`, содержащий `Cicada.app`.
+  Подробности — в
   [инструкции сборки macOS](docs/macos-build.md).
 
 Новый профиль пустой. Для локального использования аккаунт не нужен.
