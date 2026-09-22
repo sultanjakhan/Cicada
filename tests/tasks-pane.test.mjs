@@ -35,6 +35,10 @@ test('important badge is shown for priority five note tasks only', async t=>{
   x.dom.window.dispatchEvent(new x.dom.window.Event('task-state-changed')); await settle(); await settle();
   assert.ok(x.host.querySelectorAll('[data-important-badge]').length >= 1);
   assert.match(x.host.textContent,/Важная/);
+  assert.equal(x.host.querySelector('.ct-row.task-important [data-important-badge]').textContent,'Важная задача');
+  rows[0].priority=0;
+  x.dom.window.dispatchEvent(new x.dom.window.Event('task-state-changed')); await settle(); await settle();
+  assert.equal(x.host.querySelectorAll('.ct-row.task-important').length,0,'removing importance clears the row emphasis');
 });
 
 test('completion updates the same task and count, while a failed refresh preserves visible records', async t=>{

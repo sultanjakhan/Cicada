@@ -19,7 +19,7 @@ const{
 = require('jsdom');
 const toData = source => 'data:text/javascript;base64,' + Buffer.from(source).toString('base64');
 const source = fs.readFileSync(path.join(root, 'src/hanni/js/calendar-now.js'), 'utf8') .replace(/^import .*state\.js';$/m, 'const defaultInvoke = () => { throw new Error("Inject invoke in tests"); };') .replace(/^import .*task-picker-sort\.js';$/m, 'const defaultRankTasks = items => items;') .replace(/^import .*task-picker-view\.js';$/m, 'const loadCategoryWeights = async () => ({});') .replace("'./icons.js'", JSON.stringify(toData(fs.readFileSync(path.join(root, 'src/hanni/js/icons.js'), 'utf8')))) .replace("'./calendar-dialog.js'", JSON.stringify(toData(fs.readFileSync(path.join(root, 'src/hanni/js/calendar-dialog.js'), 'utf8'))));
-const modulePromise = import(toData(source.replace("'./calendar-execution.js'", JSON.stringify(new URL('../src/hanni/js/calendar-execution.js', import.meta.url).href)).replace("'./calendar-context-menu.js'", JSON.stringify(new URL('../src/hanni/js/calendar-context-menu.js', import.meta.url).href))));
+const modulePromise = import(toData(source.replace("'./calendar-execution.js'", JSON.stringify(new URL('../src/hanni/js/calendar-execution.js', import.meta.url).href)).replace("'./calendar-context-menu.js'", JSON.stringify(new URL('../src/hanni/js/calendar-context-menu.js', import.meta.url).href)).replace("'./task-importance.js'", JSON.stringify(new URL('../src/hanni/js/task-importance.js', import.meta.url).href))));
 const rankPromise = import(toData(fs.readFileSync(path.join(root, 'src/hanni/js/task-picker-sort.js'), 'utf8')));
 const clone = value => structuredClone(value);
 const blank = () => ({
@@ -441,7 +441,7 @@ test('a failed dashboard task overview does not disable or restart the current t
    const{
      mountCalendarDashboardTasks
       }
-   = await import(toData(fs.readFileSync(path.join(root, 'src/hanni/js/calendar-dashboard-tasks.js'), 'utf8')));
+   = await import('../src/hanni/js/calendar-dashboard-tasks.js');
    const list = x.dom.window.document.createElement('div');
    x.host.after(list);
    const dispose = mountCalendarDashboardTasks(list,{
@@ -1174,6 +1174,11 @@ for (const sourceType of ['note', 'event']) test(`running and paused ${sourceTyp
    assert.equal(x.host.dataset.state,'active');
    assert.equal(x.ui('title').textContent,'Новое название');
    assert.equal(x.host.querySelectorAll('[data-important-badge]').length,sourceType==='note'?1:0);
+   assert.equal(x.ui('card').classList.contains('task-important'),sourceType==='note');
+   if(sourceType==='note') {
+     assert.equal(x.ui('card').firstElementChild.textContent,'Важная задача');
+     assert.equal(x.ui('title').parentElement.querySelector('[data-important-badge]'),null,'importance is separate from the task title');
+   }
    assert.match(x.ui('meta').textContent,/из 45 мин/);
    assert.equal(JSON.parse(data.stored).execution.task.date,'2026-09-06');
    assert.equal(JSON.parse(data.stored).execution.task.completion_date,execution.task.completion_date);
@@ -1185,6 +1190,7 @@ for (const sourceType of ['note', 'event']) test(`running and paused ${sourceTyp
    assert.equal(x.host.dataset.state,'paused');
    assert.equal(x.ui('title').textContent,'Изменено на паузе');
    assert.equal(x.host.querySelectorAll('[data-important-badge]').length,0);
+   assert.equal(x.ui('card').classList.contains('task-important'),false,'clearing importance also clears the card emphasis');
    assert.match(x.ui('meta').textContent,/из 60 мин/);
    assert.equal(JSON.parse(data.stored).execution.blockId,execution.blockId);
    assert.deepEqual(data.blocks,paused);

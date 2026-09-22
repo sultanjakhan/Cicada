@@ -1,0 +1,88 @@
+/* One importance marker, shared by the current task and task lists. */
+:root {
+  --task-important-text: #a53627;
+  --task-important-rail: #c44732;
+  --task-important-tint: #fff7f4;
+  --task-important-band: #fbe8e1;
+  --task-important-border: #e6beb2;
+}
+[data-theme="dark"] {
+  --task-important-text: #ffb6a7;
+  --task-important-rail: #e57c67;
+  --task-important-tint: #302622;
+  --task-important-band: #432e27;
+  --task-important-border: #865345;
+}
+.task-importance-label {
+  display: block;
+  color: var(--task-important-text);
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 700;
+  letter-spacing: .6px;
+  text-transform: uppercase;
+}
+
+.calendar-now .calendar-now__card.task-important {
+  --task-card-pad-x: 28px;
+  --task-card-pad-y: 28px;
+  border-color: var(--task-important-border);
+  border-left: 4px solid var(--task-important-rail);
+}
+.calendar-now__card.task-important > .task-importance-label {
+  margin: calc(-1 * var(--task-card-pad-y)) calc(-1 * var(--task-card-pad-x)) 24px;
+  padding: 12px var(--task-card-pad-x);
+  background: var(--task-important-band);
+  border-radius: 12px 15px 0 0;
+}
+.calendar-now.calendar-now--compact .calendar-now__card.task-important {
+  --task-card-pad-x: 18px;
+  --task-card-pad-y: 18px;
+  padding: var(--task-card-pad-y) var(--task-card-pad-x);
+  border: 1px solid var(--task-important-border);
+  border-left: 4px solid var(--task-important-rail);
+  border-radius: 12px;
+  background: var(--cn-surface);
+}
+.calendar-now--compact .calendar-now__card.task-important > .task-importance-label {
+  margin-bottom: 16px;
+  border-radius: 8px 11px 0 0;
+}
+.calendar-task-overview .cto-list li.task-important {
+  margin: 6px 0;
+  padding-left: 12px;
+  border: 0;
+  border-left: 4px solid var(--task-important-rail);
+  border-radius: 6px;
+  background: var(--task-important-tint);
+}
+.calendar-task-overview .task-important .cto-task-title-wrap,
+.calendar-tasks .task-important .ct-title-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+}
+.calendar-task-overview .task-important .cto-task { padding-right: 12px; }
+.calendar-tasks .ct-row.task-important {
+  margin: 6px 0;
+  padding-left: 10px;
+  padding-right: 8px;
+  border: 0;
+  border-left: 4px solid var(--task-important-rail);
+  border-radius: 6px;
+  background: var(--task-important-tint);
+}
+.evm-modal .evm-important input { accent-color: var(--task-important-text); }
+@media (max-width: 600px) {
+  .calendar-now .calendar-now__card.task-important {
+    --task-card-pad-x: 16px;
+    --task-card-pad-y: 20px;
+  }
+  .calendar-now__card.task-important > .task-importance-label { border-radius: 8px 11px 0 0; }
+  .calendar-now.calendar-now--compact .calendar-now__card.task-important {
+    --task-card-pad-x: 14px;
+    --task-card-pad-y: 14px;
+  }
+  .calendar-tasks .ct-row.task-important { padding-left: 6px; padding-right: 4px; }
+}

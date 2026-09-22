@@ -5,6 +5,7 @@ import { ICONS } from './icons.js';
 import { createCalendarDialog } from './calendar-dialog.js';
 import { startCalendarExecution } from './calendar-execution.js';
 import { mountCalendarContextMenu } from './calendar-context-menu.js';
+import { renderTaskImportance } from './task-importance.js';
 
 const buttonContent = (icon, label) => `<span class="calendar-now__button-icon" aria-hidden="true">${ICONS[icon]}</span><span data-action-label>${label}</span>`;
 
@@ -13,13 +14,6 @@ let nextInstance = 0;
 // Serialize this device-local KV key across remounts, including an in-flight old save.
 let stateWriteQueue = Promise.resolve();
 const keyOf = task => task ? `${task.source_type}:${String(task.source_id)}` : '';
-const setImportantBadge = (document, host, task) => {
-  host?.querySelectorAll('[data-important-badge]').forEach(node => node.remove());
-  if (!host || task?.source_type !== 'note' || !Number.isFinite(Number(task?.priority)) || Number(task.priority) < 5) return;
-  const badge = document.createElement('span'); badge.className = 'task-importance-badge'; badge.dataset.importantBadge = ''; badge.title = 'Важная задача';
-  const flag = document.createElement('span'); flag.setAttribute('aria-hidden', 'true'); flag.textContent = '⚑';
-  const label = document.createElement('span'); label.textContent = 'Важная'; badge.append(flag, label); host.append(badge);
-};
 const dateOf = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const validDate = value => {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
@@ -473,7 +467,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     const status = { active: 'В работе', paused: 'На паузе', completed: 'Завершено' }[currentState];
     ui.status.textContent = status || ''; ui.status.hidden = !status;
     ui.title.textContent = task?.title || (!snapshot ? 'Загружаем текущую задачу…' : !selectedGoal() ? 'Начни задачу из списка или выбери цель.' : 'Для этой цели пока нет подходящей задачи.');
-    setImportantBadge(document, ui.title.parentElement, task);
+    renderTaskImportance(document, ui.card, task);
     const canOpenTask = !!task && !!dependencies.openTaskDetails;
     actions['task-details'].hidden = !canOpenTask;
     actions['task-details'].disabled = busy || reading || !!failure;

@@ -36,6 +36,8 @@ test('important badge is limited to native note tasks and appears in Today and A
   const x = await mount(t, rows);
   assert.equal(x.q('today').querySelectorAll('[data-important-badge]').length, 1);
   assert.equal(x.q('today').textContent.includes('Важная'), true);
+  assert.equal(x.q('today').querySelector('li.task-important [data-important-badge]').textContent,'Важная задача');
+  assert.equal(x.q('today').querySelectorAll('li.task-important').length,1);
   x.q('toggle').click();
   assert.equal(x.q('all').querySelectorAll('[data-important-badge]').length, 2);
   assert.match(x.q('all').textContent, /later/);

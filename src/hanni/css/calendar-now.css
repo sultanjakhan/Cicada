@@ -23,8 +23,6 @@
 .calendar-now button:disabled { cursor: default; opacity: .55; }
 .calendar-now button.calendar-now__task-link { display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap; width:fit-content; max-width:100%; min-height:44px; padding:0; border:0; border-radius:4px; color:inherit; background:transparent; text-align:left; font:inherit; line-height:inherit; }
 .calendar-now .calendar-now__task-link > [data-ui="title"] { min-width:0; }
-.calendar-now .task-importance-badge { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; color: #a52f28; font-size: 12px; font-weight: 650; white-space: nowrap; }
-.calendar-now .task-importance-badge > span:first-child { font-size: 15px; line-height: 1; }
 .calendar-now .calendar-now__task-link:not(:disabled):is(:hover,:focus-visible) > [data-ui="title"],
 .calendar-now .calendar-now__goal-link:not(:disabled):is(:hover,:focus-visible) > [data-ui="goal-title"] { text-decoration:underline; text-decoration-thickness:1px; text-underline-offset:4px; }
 .calendar-now .calendar-now__primary { background: var(--cn-green); color: #fff; }

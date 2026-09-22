@@ -1,10 +1,5 @@
 // Existing task records; all execution actions use the shared Calendar commands.
-const setImportantBadge = (document, host, task) => {
-  if (task?.source_type !== 'note' || !Number.isFinite(Number(task?.priority)) || Number(task.priority) < 5) return;
-  const badge = document.createElement('span'); badge.className = 'task-importance-badge'; badge.dataset.importantBadge = ''; badge.title = 'Важная задача';
-  const flag = document.createElement('span'); flag.setAttribute('aria-hidden', 'true'); flag.textContent = '⚑';
-  const label = document.createElement('span'); label.textContent = 'Важная'; badge.append(flag, label); host.append(badge);
-};
+import { renderTaskImportance } from './task-importance.js';
 
 const taskKey = row => `${row.source_type}:${String(row.source_id)}`;
 const localDate = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -63,7 +58,7 @@ export function mountCalendarDashboardTasks(element, dependencies) {
       const button = document.createElement('button'); button.type = 'button'; button.className = 'cto-task';
       button.dataset.overviewTask = taskKey(row); button.dataset.overviewScope = scope;
       const name = document.createElement('span'); name.className = 'cto-task-title'; name.textContent = row.title;
-      const titleWrap = document.createElement('span'); titleWrap.className = 'cto-task-title-wrap'; titleWrap.append(name); setImportantBadge(document, titleWrap, row);
+      const titleWrap = document.createElement('span'); titleWrap.className = 'cto-task-title-wrap'; titleWrap.append(name); renderTaskImportance(document, titleWrap, row, item);
       const meta = document.createElement('span'); meta.className = 'cto-task-meta';
       const minutes = Number(row.duration_minutes || row.target_minutes);
       const parts = [];

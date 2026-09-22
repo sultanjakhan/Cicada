@@ -22,6 +22,7 @@
 @import url('./hanni/css/calendar-development.css');
 @import url('./hanni/css/calendar-recurring.css');
 @import url('./hanni/css/calendar-tasks.css');
+@import url('./hanni/css/task-importance.css');
 
 /* Approved Hanni mark: keep branding separate from Calendar navigation. */
 .hanni-brand { display:flex; align-items:center; justify-content:center; flex-shrink:0; padding:19px 0 10px; }

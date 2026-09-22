@@ -171,7 +171,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
       <p class="evm-goal-path" id="evm-goal-path" aria-live="polite" hidden></p>
       <p class="evm-error" id="evm-goal-error" role="alert" hidden></p>
       <button type="button" class="btn-secondary" id="evm-goal-retry" hidden>Повторить загрузку целей</button>
-      <label class="evm-important" data-editor-task for="evm-important"><input type="checkbox" id="evm-important"${taskId != null && Number(task?.priority) >= 5 ? ' checked' : ''}> <span>Важная</span></label>
+      <label class="evm-important" data-editor-task for="evm-important"><input type="checkbox" id="evm-important"${taskId != null && Number(task?.priority) >= 5 ? ' checked' : ''}> <span>Важная задача</span></label>
       <details class="evm-advanced">
         <summary>Детали <span>необязательно</span></summary>
         <div class="evm-advanced-content">
