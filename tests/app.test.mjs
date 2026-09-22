@@ -52,7 +52,7 @@ async function launch(t, { mobile = false, initialSettings = [], width, userAgen
 
 test('bundled shell boots the five workspace panes with only Calendar in the sidebar', async t => {
   const { w, click, calls, errors } = await launch(t);
-  assert.equal(w.document.title, 'Hanni MVP');
+  assert.equal(w.document.title, 'Cicada');
   assert.ok(w.document.documentElement.classList.contains('desktop'));
   assert.deepEqual([...w.document.querySelectorAll('#tab-list [data-tab-id]')].map(el => el.dataset.tabId), ['calendar']);
   assert.deepEqual([...w.document.querySelectorAll('.uni-tab')].map(el => el.textContent), ['Дашборд','Календарь','Задачи','Заметки','Цели']);

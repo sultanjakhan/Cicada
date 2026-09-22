@@ -75,7 +75,7 @@ jobs:
             --target "$GITHUB_SHA" \
             --draft \
             --latest=false \
-            --title "Hanni MVP Android debug candidate ${GITHUB_RUN_ID}" \
+            --title "Cicada Android debug candidate ${GITHUB_RUN_ID}" \
             --notes "CI delivery fallback. Debug-signed candidate only; it is not an authorised update."
           test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = true
           test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq '.targetCommitish')" = "$GITHUB_SHA"

@@ -36,7 +36,7 @@ fn acquire_instance_lock(data_dir: &std::path::Path) -> Result<AppInstanceLock, 
     let file = std::fs::OpenOptions::new().read(true).write(true).create(true)
         .open(data_dir.join("hanni-mvp.instance.lock"))
         .map_err(|_| fail("open application instance lock"))?;
-    file.try_lock().map_err(|_| fail("Hanni MVP is already open for this profile"))?;
+    file.try_lock().map_err(|_| fail("Cicada is already open for this profile"))?;
     Ok(AppInstanceLock(file))
 }
 
@@ -126,7 +126,7 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(|e| fail(format!("read database version: {e}")))?;
     if version > SCHEMA_VERSION {
-        return Err(fail("database was created by a newer Hanni MVP version"));
+        return Err(fail("database was created by a newer Cicada version"));
     }
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS items (
@@ -517,6 +517,8 @@ fn create_backup(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<St
 pub fn run() {
     let options =
         desktop_launch::Options::from_env().unwrap_or_else(|_| desktop_launch::fail_and_exit());
+    #[cfg(target_os = "macos")]
+    update_macos::relaunch_from_legacy_bundle();
     let mut context = tauri::generate_context!();
     options.apply_context(&mut context);
     let startup_options = options.clone();
@@ -631,7 +633,7 @@ pub fn run() {
         if options != desktop_launch::Options::Interactive {
             desktop_launch::fail_and_exit();
         }
-        panic!("run Hanni MVP: {error:?}");
+        panic!("run Cicada: {error:?}");
     });
     options.before_run(&mut app);
     #[cfg(any(target_os = "macos", target_os = "windows"))]

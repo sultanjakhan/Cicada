@@ -33,7 +33,7 @@ async function candidate(root, kind, keys, source = 'a'.repeat(40)) {
     : kind === 'macos' ? { platform: 'darwin-aarch64', extension: '.app.tar.gz' }
       : { platform: 'android-aarch64', extension: '.apk' };
   const version = '0.3.4';
-  const asset = `Hanni-MVP-${version}-${spec.platform}${spec.extension}`;
+  const asset = `Cicada-${version}-${spec.platform}${spec.extension}`;
   const directory = path.join(root, kind);
   const bytes = Buffer.from(`fictional ${kind} update`);
   const signature = tauriSignature(bytes, keys);
@@ -79,7 +79,7 @@ test('stages matching candidates and rejects traversal, source mismatch and tamp
     await writeFile(path.join(windows, 'manifest.json'), JSON.stringify(manifest));
     await assert.rejects(stageUpdates({ windows, android, macos, root: temporary, publicKeyText: keys.publicText }));
 
-    manifest.asset = 'Hanni-MVP-0.3.4-windows-x86_64.exe';
+    manifest.asset = 'Cicada-0.3.4-windows-x86_64.exe';
     manifest.source = 'b'.repeat(40);
     await writeFile(path.join(windows, 'manifest.json'), JSON.stringify(manifest));
     await assert.rejects(stageUpdates({ windows, android, macos, root: temporary, publicKeyText: keys.publicText }));

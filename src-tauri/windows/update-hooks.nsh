@@ -34,12 +34,12 @@
 
   hanni_update_backup_exists_${HANNI_UPDATE_HOOK_ID}:
     IfSilent hanni_update_abort_${HANNI_UPDATE_HOOK_ID} 0
-    MessageBox MB_OK|MB_ICONEXCLAMATION "Hanni MVP cannot safely update because its rollback file for version ${VERSION} already exists. Remove it only after checking the previous update, then retry."
+    MessageBox MB_OK|MB_ICONEXCLAMATION "Cicada cannot safely update because its rollback file for version ${VERSION} already exists. Remove it only after checking the previous update, then retry."
     Goto hanni_update_abort_${HANNI_UPDATE_HOOK_ID}
 
   hanni_update_rename_failed_${HANNI_UPDATE_HOOK_ID}:
     IfSilent hanni_update_abort_${HANNI_UPDATE_HOOK_ID} 0
-    MessageBox MB_OK|MB_ICONEXCLAMATION "Hanni MVP cannot safely replace its installed executable. Close only the Hanni MVP window being updated and retry. Other Hanni MVP copies were not closed."
+    MessageBox MB_OK|MB_ICONEXCLAMATION "Cicada cannot safely replace its installed executable. Close only the Cicada window being updated and retry. Other copies were not closed."
 
   hanni_update_abort_${HANNI_UPDATE_HOOK_ID}:
     Abort
@@ -47,4 +47,49 @@
   hanni_update_done_${HANNI_UPDATE_HOOK_ID}:
   !undef HANNI_UPDATE_HOOK_ID
   !endif
+!macroend
+
+; A quiet updater skips the stock shortcut helper. Rename only shortcuts that
+; still point to this installer's exact destination; leave other copies alone.
+!macro NSIS_HOOK_POSTINSTALL
+  !insertmacro IsShortcutTarget "$SMPROGRAMS\Hanni MVP\Hanni MVP.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+  Pop $0
+  ${If} $0 = 1
+    StrCpy $1 0
+    ${If} ${FileExists} "$SMPROGRAMS\Cicada\Cicada.lnk"
+      !insertmacro IsShortcutTarget "$SMPROGRAMS\Cicada\Cicada.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+      Pop $1
+    ${Else}
+      CreateDirectory "$SMPROGRAMS\Cicada"
+      ClearErrors
+      CreateShortcut "$SMPROGRAMS\Cicada\Cicada.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+      ${IfNot} ${Errors}
+        !insertmacro SetLnkAppUserModelId "$SMPROGRAMS\Cicada\Cicada.lnk"
+        StrCpy $1 1
+      ${EndIf}
+    ${EndIf}
+    ${If} $1 = 1
+      Delete "$SMPROGRAMS\Hanni MVP\Hanni MVP.lnk"
+      RMDir "$SMPROGRAMS\Hanni MVP"
+    ${EndIf}
+  ${EndIf}
+  !insertmacro IsShortcutTarget "$DESKTOP\Hanni MVP.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+  Pop $0
+  ${If} $0 = 1
+    StrCpy $1 0
+    ${If} ${FileExists} "$DESKTOP\Cicada.lnk"
+      !insertmacro IsShortcutTarget "$DESKTOP\Cicada.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+      Pop $1
+    ${Else}
+      ClearErrors
+      CreateShortcut "$DESKTOP\Cicada.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+      ${IfNot} ${Errors}
+        !insertmacro SetLnkAppUserModelId "$DESKTOP\Cicada.lnk"
+        StrCpy $1 1
+      ${EndIf}
+    ${EndIf}
+    ${If} $1 = 1
+      Delete "$DESKTOP\Hanni MVP.lnk"
+    ${EndIf}
+  ${EndIf}
 !macroend

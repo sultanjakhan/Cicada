@@ -52,7 +52,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: hanni-mvp-update-windows-${{ github.sha }}
+          name: cicada-update-windows-${{ github.sha }}
           path: .local/update-candidate/windows/*
           include-hidden-files: true
           if-no-files-found: error
@@ -69,7 +69,7 @@ jobs:
           assets=(.local/update-candidate/windows/*)
           test "${#assets[@]}" -eq 3
           tag="windows-update-candidate-${GITHUB_RUN_ID}"
-          gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --latest=false --title "Hanni MVP Windows update candidate ${GITHUB_RUN_ID}" --notes "CI delivery fallback; not published."
+          gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --latest=false --title "Cicada Windows update candidate ${GITHUB_RUN_ID}" --notes "CI delivery fallback; not published."
           test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = true
           test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq '.targetCommitish')" = "$GITHUB_SHA"
           test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')" -eq 3
@@ -147,7 +147,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: hanni-mvp-update-android-${{ github.sha }}
+          name: cicada-update-android-${{ github.sha }}
           path: .local/update-candidate/android/*
           include-hidden-files: true
           if-no-files-found: error
@@ -164,7 +164,7 @@ jobs:
           assets=(.local/update-candidate/android/*)
           test "${#assets[@]}" -eq 3
           tag="android-update-candidate-${GITHUB_RUN_ID}"
-          gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --latest=false --title "Hanni MVP Android update candidate ${GITHUB_RUN_ID}" --notes "CI delivery fallback; not published."
+          gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --latest=false --title "Cicada Android update candidate ${GITHUB_RUN_ID}" --notes "CI delivery fallback; not published."
           test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = true
           test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq '.targetCommitish')" = "$GITHUB_SHA"
           test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')" -eq 3
@@ -208,13 +208,14 @@ jobs:
       - run: npm run check:privacy
       - run: npm run build
       - run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+      - run: python3 -m unittest discover -s tests -p 'test_mac_archive.py'
       - name: Build and sign macOS candidate
         run: python3 scripts/package-update.py macos
       - id: artifact
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: hanni-mvp-update-macos-${{ github.sha }}
+          name: cicada-update-macos-${{ github.sha }}
           path: .local/update-candidate/macos/*
           include-hidden-files: true
           if-no-files-found: error
@@ -231,7 +232,7 @@ jobs:
           assets=(.local/update-candidate/macos/*)
           test "${#assets[@]}" -eq 3
           tag="macos-update-candidate-${GITHUB_RUN_ID}"
-          gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --latest=false --title "Hanni MVP macOS update candidate ${GITHUB_RUN_ID}" --notes "CI delivery fallback; not published."
+          gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --latest=false --title "Cicada macOS update candidate ${GITHUB_RUN_ID}" --notes "CI delivery fallback; not published."
           test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = true
           test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq '.targetCommitish')" = "$GITHUB_SHA"
           test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')" -eq 3

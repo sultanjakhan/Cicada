@@ -1,6 +1,6 @@
 {
-  "name": "hanni-mvp",
-  "version": "0.3.22",
+  "name": "cicada",
+  "version": "0.3.23",
   "private": true,
   "type": "module",
   "scripts": {
