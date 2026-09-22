@@ -14,6 +14,29 @@ contain only SHA-256 token hashes. Generation requires a new explicitly selected
 directory outside Git and works on Mac/Linux; the files are portable to clients
 on Windows and mobile. It never deploys or accesses Keychain/live data.
 
+## Device settings and permissions
+
+Health Connect owns the Android grants for sleep, exercise, steps and background
+reading. Cicada checks the grants at runtime; its SQLite import cursors and
+record links are not a copy of permission state. The device's content-sync
+switch is `content_sync_enabled` in SQLite `app_settings`. Calendar display
+preferences, when saved, use `calendar_preferences_v1` in SQLite `ui_state`;
+they are local to that device and are not among the relayed UI keys. None of
+these settings selects which health records the relay sends: imported health
+events use the ordinary `items` record channel.
+
+On macOS, the relay configuration is a generic-password Keychain item with
+service `app.hanni.mvp.relay` and an account derived from the canonical
+database path. A signed app update can change the code hash used by a legacy
+file-based Keychain item's decrypt and partition access lists, even when the
+bundle ID, database and item identity stay the same. An access-list repair must
+verify both lists: `SecKeychainItemSetAccess` can report failure after a partial
+change. Runtime reads are noninteractive; failed access pauses sync with
+`mvp_sync_credentials_unavailable`, without deleting or resetting the key or
+retrying a system prompt automatically. Preservation across regular updates
+requires a real installed-version upgrade check that reads the existing item
+without a prompt and resumes sync. Synthetic broker tests alone do not prove it.
+
 For provisioning, route contracts, limits and local test commands see
 [sync-relay/README.md](../sync-relay/README.md) and
 [sync-relay/CONTRACT.md](../sync-relay/CONTRACT.md).
