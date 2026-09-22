@@ -11,7 +11,7 @@ export const requestMvpSync = () => { if (window.__TAURI__?.core?.invoke) syncTr
 let pendingOperations = 0;
 export const getPendingMvpOperations = () => pendingOperations;
 export async function invoke(command, args) {
-  if (!window.__TAURI__?.core?.invoke) return Promise.reject(new Error('Требуется установленная Hanni MVP.'));
+  if (!window.__TAURI__?.core?.invoke) return Promise.reject(new Error('Требуется установленная Cicada.'));
   const track = !command.startsWith('mvp_update_') && !command.startsWith('mvp_sync_');
   const activity = () => window.dispatchEvent(new window.Event('hanni:update-activity-probe'));
   if (track) { pendingOperations++; activity(); }

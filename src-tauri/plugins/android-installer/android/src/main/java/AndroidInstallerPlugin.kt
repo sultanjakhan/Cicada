@@ -288,7 +288,7 @@ class AndroidInstallerPlugin(private val activity: Activity) : Plugin(activity) 
         val packageManager = activity.packageManager
         val archive = packageManager.getPackageArchiveInfo(apk.path, signingFlags())
             ?: throw IllegalArgumentException("APK archive metadata is unreadable")
-        require(archive.packageName == InstallPolicy.expectedPackageId) { "APK package id is not Hanni MVP" }
+        require(archive.packageName == InstallPolicy.expectedPackageId) { "APK package id is not Cicada" }
 
         val archiveVersionCode = versionCode(archive)
         require(archiveVersionCode == args.expectedVersionCode) {
@@ -297,9 +297,9 @@ class AndroidInstallerPlugin(private val activity: Activity) : Plugin(activity) 
 
         val installed = packageManager.getPackageInfo(InstallPolicy.expectedPackageId, signingFlags())
         val installedVersionCode = versionCode(installed)
-        require(archiveVersionCode > installedVersionCode) { "APK is not newer than the installed Hanni MVP" }
+        require(archiveVersionCode > installedVersionCode) { "APK is not newer than the installed Cicada" }
         require(certificateDigests(archive) == certificateDigests(installed)) {
-            "APK signing certificate does not match the installed Hanni MVP"
+            "APK signing certificate does not match the installed Cicada"
         }
         return apk
     }

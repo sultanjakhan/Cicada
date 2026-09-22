@@ -19,7 +19,7 @@ export function startAppUpdates({ window, invoke, listen, notify = () => {}, get
     window.dispatchEvent(new window.CustomEvent('hanni:update-status', { detail: status }));
     if (['permission_required', 'confirmation_required'].includes(status.phase) && status.version !== announced) {
       announced = status.version;
-      notify('Android просит подтвердить обновление Hanni. Открой настройки приложения.');
+      notify('Android просит подтвердить обновление Cicada. Открой настройки приложения.');
     }
   };
   async function report() {
@@ -84,17 +84,17 @@ export function mountAppUpdates(element, { invoke }) {
       prepared:'Обновление загружено. Установится автоматически, когда ты закончишь работу.',
       deferred:'Обновление ждёт окончания работы. Сохрани изменения и сверни или закрой приложение.',
       installing:'Устанавливаем обновление…',
-      permission_required:'Разреши Hanni устанавливать обновления в настройках Android.',
+      permission_required:'Разреши Cicada устанавливать обновления в настройках Android.',
       confirmation_required:'Android просит подтвердить установку обновления.',
       manual_required:'Эта версия Android требует подтверждения установки.',
       installer_opened:android ? 'Подтверди обновление в системном окне Android. Если закрыл его, можно повторить.' : 'Установщик запущен. Приложение будет перезапущено.',
       error:'Проверка или установка не завершена. Повторим позже.', idle:'Автоматические обновления включены.',
     };
-    q('status').textContent = status ? `Hanni MVP ${status.installed_version}. ${!status.configured ? 'Канал обновлений недоступен в этой сборке.' : messages[phase] || ''}` : 'Не удалось прочитать состояние обновлений.';
+    q('status').textContent = status ? `Cicada ${status.installed_version}. ${!status.configured ? 'Канал обновлений недоступен в этой сборке.' : messages[phase] || ''}` : 'Не удалось прочитать состояние обновлений.';
     q('notes').textContent = status?.notes || '';
     q('error').textContent = [status?.error, status?.background_error].filter(Boolean).join(' ');
     q('error').hidden = !q('error').textContent;
-    q('hint').textContent = android ? 'Hanni сама загружает и устанавливает новые версии. Если Android потребует подтверждение, здесь появится кнопка. Данные сохраняются.' : 'Hanni сама загружает и устанавливает новые версии, когда ты не работаешь в приложении. Данные сохраняются.';
+    q('hint').textContent = android ? 'Cicada сама загружает и устанавливает новые версии. Если Android потребует подтверждение, здесь появится кнопка. Данные сохраняются.' : 'Cicada сама загружает и устанавливает новые версии, когда ты не работаешь в приложении. Данные сохраняются.';
     const blocked = busy || busyPhases.has(phase);
     q('check').disabled = blocked || (status && !status.configured);
     q('install').hidden = !status?.version || !['available', 'prepared', 'deferred', 'permission_required', 'confirmation_required', 'manual_required', 'installer_opened'].includes(phase);

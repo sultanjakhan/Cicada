@@ -253,8 +253,8 @@ class HealthSleepRationaleActivity : Activity() {
         super.onCreate(savedInstanceState)
         val text = android.widget.TextView(this)
         text.setPadding(32, 48, 32, 32)
-        text.text = "Сон в Hanni MVP\n\nПриложение читает только записи сна из Health Connect и сохраняет их в календаре. " +
-            "Сон передаётся на другие устройства только при включённой синхронизации Hanni MVP. " +
+        text.text = "Сон в Cicada\n\nПриложение читает только записи сна из Health Connect и сохраняет их в календаре. " +
+            "Сон передаётся на другие устройства только при включённой синхронизации Cicada. " +
             "Записи в Health Connect не изменяются. Разрешение можно отозвать в настройках Health Connect. " +
             "Уже импортированные записи при отзыве разрешения сохраняются."
         setContentView(text)

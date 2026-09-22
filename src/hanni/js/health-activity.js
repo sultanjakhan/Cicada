@@ -3,17 +3,17 @@ function kindStatus(status, kind) {
   if (status.status === 'unsupported') return 'Прогулки и шаги импортируются из Health Connect на телефоне Android и приходят сюда через синхронизацию.';
   if (status.status === 'provider_unavailable') return 'Health Connect недоступен. Установи или обнови его на телефоне.';
   if (status.status === 'permission_requested') return 'Заверши системный запрос Health Connect, затем проверь импорт. Разрешение ещё не подтверждено.';
-  if (status.status === 'foreground_required') return `Для чтения ${kind === 'walking' ? 'прогулок' : 'шагов'} открой Hanni MVP на телефоне.`;
+  if (status.status === 'foreground_required') return `Для чтения ${kind === 'walking' ? 'прогулок' : 'шагов'} открой Cicada на телефоне.`;
   if (status.status === 'error' || status.lastError) return `Последний импорт ${kind === 'walking' ? 'прогулок' : 'шагов'} не завершён. Сохранённые записи не потеряны; повтори попытку.`;
   const granted = kind === 'walking' ? status.walkingPermissionGranted : status.stepsPermissionGranted;
   const label = kind === 'walking' ? 'прогулки' : 'шаги';
-  if (!granted) return `Разреши Hanni MVP читать ${label} в Health Connect. Ранее импортированные записи сохранены.`;
+  if (!granted) return `Разреши Cicada читать ${label} в Health Connect. Ранее импортированные записи сохранены.`;
   if (status.status !== 'ready') return `Последний импорт ${label} не завершён. Сохранённые записи не потеряны; повтори попытку.`;
   const count = kind === 'walking' ? status.walkingRecords : status.stepsRecords;
   const lastSuccess = kind === 'walking' ? status.walkingLastSuccess : status.stepsLastSuccess;
   if (!lastSuccess) return `Доступ к ${label} разрешён. Первый импорт ещё не подтверждён.`;
   if (!count) return kind === 'walking'
-    ? 'В Health Connect не найдено прогулок с типом walking. Hanni MVP не выводит прогулки из одних шагов.'
+    ? 'В Health Connect не найдено прогулок с типом walking. Cicada не выводит прогулки из одних шагов.'
     : 'В Health Connect не найдено дневных итогов шагов. Пустой день не считается нулевым итогом.';
   return kind === 'walking' ? `Импортировано прогулок: ${count}.` : `Импортировано дневных итогов шагов: ${count}.`;
 }
@@ -50,7 +50,7 @@ export function mountHealthActivitySettings(element, { invoke, setPending = () =
     q('background').textContent = !ready ? '' : status.backgroundGranted
       ? 'Фоновое чтение разрешено. Android определяет время запуска; обновление может задерживаться.'
       : status.backgroundAvailable ? 'Фоновое чтение не разрешено. Пока данные проверяются при открытом приложении.'
-      : 'На этом телефоне Health Connect не поддерживает чтение в фоне. Данные проверяются при открытом Hanni MVP.';
+      : 'На этом телефоне Health Connect не поддерживает чтение в фоне. Данные проверяются при открытом Cicada.';
     const date = status?.lastSuccess ? new Date(status.lastSuccess) : null;
     q('success').textContent = date && Number.isFinite(date.getTime()) ? `Последняя проверка прогулок и шагов: ${date.toLocaleString('ru-RU')}` : '';
     q('history').hidden = !status?.historyLimited;

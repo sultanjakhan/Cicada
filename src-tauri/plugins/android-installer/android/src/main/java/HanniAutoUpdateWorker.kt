@@ -110,9 +110,9 @@ private fun sha256(file: File): String = MessageDigest.getInstance("SHA-256").di
 private fun backupDatabase(context: Context) {
     val dataDir = context.dataDir.canonicalFile
     val source = File(dataDir, "calendar.db").canonicalFile
-    require(source.parentFile == dataDir && source.isFile) { "Hanni calendar database is unavailable" }
+    require(source.parentFile == dataDir && source.isFile) { "Cicada calendar database is unavailable" }
     val directory = File(dataDir, "backups").canonicalFile.apply { mkdirs() }
-    require(directory.parentFile == dataDir) { "Hanni backup path is invalid" }
+    require(directory.parentFile == dataDir) { "Cicada backup path is invalid" }
     val destination = File(directory, "calendar-before-auto-update-${System.currentTimeMillis()}.db")
     SQLiteDatabase.openDatabase(source.path, null, SQLiteDatabase.OPEN_READWRITE).use { database ->
         database.execSQL("VACUUM INTO '${destination.path.replace("'", "''")}'")

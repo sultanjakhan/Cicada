@@ -12,5 +12,5 @@ export async function createStore() {
     const { previewStore } = await import('./preview-store.js');
     return previewStore();
   }
-  throw new Error('Открой Hanni MVP как приложение. Предпросмотр доступен только в режиме разработки.');
+  throw new Error('Открой Cicada как приложение. Предпросмотр доступен только в режиме разработки.');
 }

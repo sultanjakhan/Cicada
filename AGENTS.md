@@ -1,4 +1,8 @@
-# Hanni MVP
+# Cicada
+
+Текущее display name независимого продукта — `Cicada`, канонический репозиторий —
+`https://github.com/sultanjakhan/Cicada`. Остальной интерфейс остаётся на русском;
+технические идентификаторы, ключи, package/bundle IDs и лицензии не переименовывать.
 
 Перед новой постановкой прочитай [подтверждённый контекст продукта](docs/product-context.md), затем проверь исходный код и относящиеся к задаче Issues. Не повторяй вопросы, на которые уже есть ответ в этом контексте; уточняй только новые отсутствующие факты.
 
@@ -34,7 +38,7 @@ that a candidate has been integrated, installed, or verified on every device.
 Owner authorization, 2026-09-16 (open source): publish this independent MVP
 under MIT, retaining third-party licenses and attribution. Keep the previous
 GitHub repository, build logs and artifacts in a private archive. Publish only
-the sanitized history and reviewed release assets at the canonical hanni-mvp URL.
+the sanitized history and reviewed release assets at the canonical Cicada URL.
 Do not merge or push old branches from before this cleanup; transfer reviewed
 diffs onto a fresh main. Personal data and sync credentials remain outside Git.
 
@@ -120,6 +124,6 @@ Do not modify the legacy application, its repositories, data, locks or releases.
 - Validate relevant behavior with `npm test`, `npm run check:privacy`, `npm run build` and Rust tests. UI, native persistence, builds and hosted checks are different evidence levels; report them separately.
 - No automatic import from legacy Hanni, remote sync, telemetry, updater, additional projects, Routine or AI in this MVP. Goals and Notes belong to the authorized Calendar workspace. Preserve records entered in earlier MVP versions through tested migrations.
 - Public source is MIT for Hanni-owned code; third-party terms remain unchanged. Run `npm run check:history` before publishing refs. Enable `.githooks` locally. Never republish pre-cleanup history.
-- Build and install this MVP from this repository only. The Windows identity is `Hanni MVP` / `app.hanni.mvp` / `hanni-mvp.exe`; preserve it across updates. `npm run package:windows` emits an installer and source/hash manifest from a clean commit. Install it beside legacy Hanni, with its own shortcuts and data directory.
+- Build and install Cicada from this repository only. The Windows technical identity remains `app.hanni.mvp` / `hanni-mvp.exe`; preserve it across updates. The visible product name and public artifact are `Cicada`. `npm run package:windows` emits an installer and source/hash manifest from a clean commit. Install it beside legacy Hanni, with its own shortcuts and data directory.
 - While the owner uses the computer, run UI checks through the `hanni-mvp-ui` Playwright MCP on the isolated inactive desktop described in `docs/background-ui-qa.md`. Do not activate, restart or operate the owner's open window. Use the real installed EXE with separate QA data and WebView2 profile; never substitute a browser preview as native UI evidence.
 - On 2026-09-12 the owner chose native DEV as the current design surface. Run Tauri with Vite and separate `HANNI_MVP_DATA_DIR` / `WEBVIEW2_USER_DATA_FOLDER`; the current machine-local launcher and evidence are under ignored `.local/dev/`. DEV checks may attach to its real WebView2; label this as DEV, not installed-release proof. Create is one labelled action directly below the static 28px Calendar title/icon, aligned left in its own fixed row above the pane tabs; there is no second sidebar Create action. It opens the shared Task/Event form; goal creation stays in Goals. Repeated active navigation must preserve the current pane and scroll. Settings use the two-line sliders icon and open in a native modal over the workspace, close through X/Escape/Done and acknowledge saves before changing the selection. First day applies on close; default view applies at the next app start. The homepage opens task and goal details from their titles, shows the linked task's subgoal path, and switches Today/All below the heading within one task list. Today excludes the task already shown in Now; All includes it and excludes completed tasks. Parent goal summaries include linked records from their subgoals. Keep Now's execution identity and occurrence intact while refreshing edited record fields.

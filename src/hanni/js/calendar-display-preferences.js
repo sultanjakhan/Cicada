@@ -1,8 +1,7 @@
 ﻿const KEY='calendar_preferences_v1';
 export const DEFAULT_CALENDAR_PREFERENCES=Object.freeze({version:1,first_day:'mon',default_view:'Месяц',density:'comfortable',showCompleted:false});
 export function normalizeCalendarPreferences(value={}){if(!value||typeof value!=='object'||Array.isArray(value))throw Error('Повреждённые настройки календаря не были применены.');const p={...DEFAULT_CALENDAR_PREFERENCES,...value};if(!['mon','sun'].includes(p.first_day)||!['Месяц','Неделя','День','Список'].includes(p.default_view)||!['comfortable','compact'].includes(p.density)||typeof p.showCompleted!=='boolean')throw Error('Повреждённые настройки календаря не были применены.');return {...p,version:1};}
-const nativeTransport=(command,args)=>window.__TAURI__?.core?.invoke(command,args)||Promise.reject(new Error('Требуется установленная Hanni MVP.'));
+const nativeTransport=(command,args)=>window.__TAURI__?.core?.invoke(command,args)||Promise.reject(new Error('Требуется установленная Cicada.'));
 export async function loadCalendarPreferences(transport=nativeTransport){const raw=await transport('get_ui_state',{key:KEY});if(raw!==null&&raw!==undefined&&raw!==''){try{return normalizeCalendarPreferences(JSON.parse(raw));}catch(error){throw error;}}const [first_day,default_view]=await Promise.all([transport('get_app_setting',{key:'tab_calendar_first_day'}),transport('get_app_setting',{key:'tab_calendar_default_view'})]);return normalizeCalendarPreferences({...DEFAULT_CALENDAR_PREFERENCES,first_day:first_day??'mon',default_view:default_view??'Месяц'});}
 export async function saveCalendarPreferences(value,transport=nativeTransport){const preferences=normalizeCalendarPreferences(value);await transport('set_ui_state',{key:KEY,value:JSON.stringify(preferences)});return preferences;}
-
 

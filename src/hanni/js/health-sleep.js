@@ -2,9 +2,9 @@ export function sleepStatusText(status) {
   if (!status) return 'Не удалось проверить импорт сна. Повтори попытку.';
   if (status.status === 'unsupported') return 'Сон импортируется из Health Connect на телефоне Android и приходит сюда через синхронизацию.';
   if (status.status === 'provider_unavailable') return 'Health Connect недоступен. Установи или обнови его на телефоне.';
-  if (status.status === 'permission_required') return 'Разреши Hanni MVP читать сон в Health Connect. Импортированные ранее записи сохранены.';
+  if (status.status === 'permission_required') return 'Разреши Cicada читать сон в Health Connect. Импортированные ранее записи сохранены.';
   if (status.status === 'permission_requested') return 'Заверши системный запрос Health Connect, затем проверь сон. Разрешение ещё не подтверждено.';
-  if (status.status === 'foreground_required') return 'Для чтения сна открой Hanni MVP на телефоне.';
+  if (status.status === 'foreground_required') return 'Для чтения сна открой Cicada на телефоне.';
   if (status.status !== 'ready' || status.lastError) return 'Последний импорт сна не завершён. Сохранённые записи не потеряны; повтори попытку.';
   if (!status.lastSuccess) return 'Доступ разрешён. Первый импорт сна ещё не подтверждён.';
   if (!status.records) return 'В Health Connect не найдено записей сна. Проверь, что Samsung Health или другое приложение передаёт туда сон.';
@@ -36,7 +36,7 @@ export function mountSleepSettings(element, { invoke, setPending = () => {} }) {
     q('background').textContent = !ready ? '' : status.backgroundGranted
       ? 'Фоновое чтение разрешено. Android определяет время запуска; обновление может задерживаться.'
       : status.backgroundAvailable ? 'Фоновое чтение не разрешено. Пока сон проверяется при открытом приложении.'
-      : 'На этом телефоне Health Connect не поддерживает чтение в фоне. Сон проверяется при открытом Hanni MVP.';
+      : 'На этом телефоне Health Connect не поддерживает чтение в фоне. Сон проверяется при открытом Cicada.';
     const date = status?.lastSuccess ? new Date(status.lastSuccess) : null;
     q('success').textContent = date && Number.isFinite(date.getTime()) ? `Последняя проверка сна: ${date.toLocaleString('ru-RU')}` : '';
     q('history').hidden = !status?.historyLimited;

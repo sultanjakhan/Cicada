@@ -33,7 +33,7 @@ Preparation also generates the standard and adaptive Android launcher icons from
 `src-tauri/icons/icon.png`. Run it for DEV builds too; skipping it leaves Tauri's
 default launcher icon in the generated project.
 
-The guard disables Android-managed backup and transfer of the MVP private
+The guard disables Android-managed backup and transfer of the Cicada private
 profile, including synchronization credentials, temporary credential files and
 the database's device identity. It preserves the existing INTERNET permission and
 unrelated manifest settings. Both legacy backup XML and Android 12+ cloud/transfer
@@ -42,8 +42,8 @@ available. See [Android backup rules](https://developer.android.com/identity/dat
 
 Output: `src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`.
 The current artifact is debug signed, contains only `arm64-v8a`, uses Android 7+
-(minSdk 24), targets SDK 36 and retains `Hanni MVP` / `app.hanni.mvp`. Its debug
-signature is a build check; compatibility with an existing installation requires
+(minSdk 24), targets SDK 36, displays `Cicada` and retains the technical
+application ID `app.hanni.mvp`. Its debug signature is a build check; compatibility with an existing installation requires
 the same application ID and signing certificate. Release signing is a separate
 step described in the [Tauri Android signing guide](https://v2.tauri.app/distribute/sign/android/).
 
@@ -53,5 +53,5 @@ step described in the [Tauri Android signing guide](https://v2.tauri.app/distrib
 Rust 1.98, JDK 17, SDK 36, Build Tools 35.0.0 and NDK 28.2.13676358, then uploads
 one ARM64 APK and `manifest.json`. The manifest records the source commit, SHA-256,
 version code and CI debug certificate. It is a review candidate only: its fresh CI
-debug certificate is not authorised to update an installed Hanni MVP. Compare the
+debug certificate is not authorised to update an installed Cicada. Compare the
 certificate before any installation; never solve a mismatch by uninstalling the app.

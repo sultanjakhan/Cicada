@@ -29,7 +29,7 @@ if (window.__TAURI__?.core?.invoke) {
   startAppUpdates({ window, invoke, listen, getPendingOperations: getPendingMvpOperations,
     hasUnsavedDrafts: hasUnsavedCalendarNoteDrafts, notify: message => toast(message) });
 } else {
-  showError('Открой установленную Hanni MVP: этот экран работает с локальной базой приложения.');
+  showError('Открой установленную Cicada: этот экран работает с локальной базой приложения.');
 }
 queueMicrotask(() => {
   const splash = document.getElementById('boot-splash');

@@ -3,7 +3,7 @@
 ## Public distribution
 
 The first public release is 0.3.16. Its Windows x64 installer and Android ARM64
-APK are published in [GitHub Releases](https://github.com/sultanjakhan/hanni-mvp/releases).
+APK are published in [GitHub Releases](https://github.com/sultanjakhan/Cicada/releases).
 Each platform includes a source/hash manifest and detached update signature.
 The application contains the license inventory under `vendor/licenses/`.
 
@@ -13,7 +13,8 @@ Do not reuse old candidate assets under a new source SHA or overwrite a released
 version: increment the version and build from the reviewed public commit.
 
 The black cicada/hourglass mark on white is shared by the app and Android launcher.
-Product names, application identity and both signing keys remain stable.
+The product display name is Cicada. Technical application identity and both
+signing keys remain stable.
 
 ## Installation behavior
 
@@ -35,12 +36,12 @@ open. Automatic installation leaves the app closed and does not take focus.
 Android 12+ uses PackageInstaller sessions requesting no user action. A six-hour
 WorkManager task also checks while no Activity exists, subject to network, battery
 and storage constraints. Both paths recheck package, version and existing signer.
-Android may require a one-time install permission or system confirmation; Hanni
+Android may require a one-time install permission or system confirmation; Cicada
 reports that state and opens the system UI only through an explicit user action.
 Android 7–11 retain manual installation. OS scheduling is not an exact deadline.
 
 macOS Apple Silicon support starts with 0.3.18. Install this bootstrap once in
-`~/Applications/Hanni MVP.app`; later signed releases use the same channel.
+`~/Applications/Cicada.app`; later signed releases use the same channel.
 The per-user `app.hanni.mvp.updates` LaunchAgent checks at login and every six
 hours without a window. The profile lock prevents it from interrupting an open
 instance; that instance uses the existing hidden/idle checks instead. Automatic
@@ -49,6 +50,11 @@ DEV, relocated bundles, nonstandard profiles and non-writable bundles cannot
 replace the installed app. LaunchAgent errors appear in update settings; a
 private `updates/background.json` receipt records closed-app checks/installations.
 macOS may delay scheduled jobs during sleep or restrict background items.
+
+The 0.3.22 transition may place `Cicada.app.tar.gz` inside the old
+`~/Applications/Hanni MVP.app`. On startup, 0.3.23 moves the bundle to
+`~/Applications/Cicada.app`, keeps a legacy symlink for the existing LaunchAgent,
+reopens the new executable and updates the plist to the new path.
 
 The macOS archive uses the existing pinned Minisign update key. Its application
 bundle retains the local ad-hoc code signature; Developer ID/notarization are
