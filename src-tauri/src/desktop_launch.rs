@@ -71,7 +71,7 @@ impl Options {
         if self.is_one_shot() {
             // Clearing before build avoids creating a WebView and running frontend startup code.
             context.config_mut().app.windows.clear();
-        } else if matches!(self, Self::Background | Self::Minimized) {
+        } else if cfg!(target_os = "macos") || matches!(self, Self::Background | Self::Minimized) {
             for window in &mut context.config_mut().app.windows {
                 window.visible = false;
                 window.focus = false;

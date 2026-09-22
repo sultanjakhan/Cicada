@@ -21,6 +21,8 @@ mod update_macos;
 mod update_journal;
 mod calendar_compat;
 mod desktop_launch;
+#[cfg(target_os = "macos")]
+mod window_placement_macos;
 mod mvp_sync;
 mod mvp_sync_crypto;
 mod mvp_sync_db;
@@ -539,6 +541,14 @@ pub fn run() {
                 init_schema(&connection)?;
                 app.manage(AppState(Mutex::new(connection)));
                 app.manage(instance_lock);
+                #[cfg(target_os = "macos")]
+                if !startup_options.is_one_shot() {
+                    window_placement_macos::restore(
+                        app.handle(),
+                        &data_dir,
+                        startup_options == desktop_launch::Options::Interactive,
+                    );
+                }
                 if !startup_options.is_update_background() {
                     mvp_sync::start(app.handle(), data_dir.join("calendar.db"));
                     app_updates::start(app.handle().clone());

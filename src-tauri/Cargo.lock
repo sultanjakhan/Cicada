@@ -1393,7 +1393,7 @@ dependencies = [
 
 [[package]]
 name = "hanni-mvp"
-version = "0.3.23"
+version = "0.3.24"
 dependencies = [
  "base64 0.22.1",
  "chacha20poly1305",
@@ -1405,6 +1405,8 @@ dependencies = [
  "hmac",
  "jni 0.21.1",
  "minisign-verify",
+ "objc2-app-kit",
+ "objc2-foundation",
  "rand 0.9.5",
  "reqwest 0.12.28",
  "rusqlite",
