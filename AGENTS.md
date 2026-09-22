@@ -1,5 +1,7 @@
 # Hanni MVP
 
+Перед новой постановкой прочитай [подтверждённый контекст продукта](docs/product-context.md), затем проверь исходный код и относящиеся к задаче Issues. Не повторяй вопросы, на которые уже есть ответ в этом контексте; уточняй только новые отсутствующие факты.
+
 Owner authorization, 2026-09-21: make automatic updates work for the installed
 macOS MVP too. Extend the existing signed channel and idle/hidden installation
 rules, preserve the profile, and verify a real installed version upgrade. Keep
