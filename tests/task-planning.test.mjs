@@ -29,28 +29,17 @@ test('leaving Calendar while the fresh task is loading cancels planning before m
   assert.equal(writes,0);
 });
 
-test('planning panel shows only undated tasks, supports a day button and drops on dates, and preserves List', t => {
+test('calendar grid no longer renders the planning panel or List mode', t => {
   const dom=new JSDOM('<main></main>',{url:'https://fixture.invalid'});t.after(()=>dom.window.close());
   globalThis.document=dom.window.document;
-  const host=document.querySelector('main'), plans=[];
+  const host=document.querySelector('main');
   const task=(id,date,extra={})=>({id:`note:${id}:${date||'undated'}`,source_type:'note',source_id:id,title:id,date,status_extra:'task',...extra});
   const rows=[task('undated',null),task('dated','2026-09-16'),task('done',null,{completed:true}),task('archived',null,{archived:true})];
-  const options={period:'month',mode:'grid',date:'2026-09-16',records:rows,taskRecords:rows,onScheduleTask:(row,date)=>plans.push([row.source_id,date]),onOpenTasks:()=>{}};
+  const options={period:'month',mode:'grid',date:'2026-09-16',records:rows,taskRecords:rows};
   CalendarViews.render(host,options);
-  assert.equal(host.querySelector('[data-tasks-panel]').hidden,true);
-  host.querySelector('[data-tasks-toggle]').click();
-  assert.equal(host.querySelector('[data-tasks-panel]').hidden,false);
-  assert.deepEqual([...host.querySelectorAll('[data-plan-task]')].map(el=>el.dataset.planTask),['undated']);
-  assert.equal(host.querySelectorAll('[data-task-filter]').length,0);
-  host.querySelector('[data-plan-task]').click();assert.deepEqual(plans.shift(),['undated','2026-09-16']);
-  const card=host.querySelector('[draggable="true"]');const dataTransfer={setData(){},effectAllowed:'',dropEffect:''};
-  const start=new dom.window.Event('dragstart',{bubbles:true,cancelable:true});Object.defineProperty(start,'dataTransfer',{value:dataTransfer});card.dispatchEvent(start);
-  const target=host.querySelector('[data-calendar-date="2026-09-20"]');
-  const drop=new dom.window.Event('drop',{bubbles:true,cancelable:true});Object.defineProperty(drop,'dataTransfer',{value:dataTransfer});target.dispatchEvent(drop);
-  assert.deepEqual(plans.shift(),['undated','2026-09-20']);
-  const escape=new dom.window.KeyboardEvent('keydown',{key:'Escape',bubbles:true});host.querySelector('[data-tasks-panel]').dispatchEvent(escape);
-  assert.equal(host.querySelector('[data-tasks-panel]').hidden,true);
+  assert.equal(host.querySelector('[data-tasks-panel]'),null);
+  assert.equal(host.querySelector('[data-plan-task]'),null);
   CalendarViews.render(host,{...options,mode:'list'});
-  assert.ok(host.querySelector('.calv-agenda'));
-  assert.equal(host.querySelector('[data-tasks-panel]').hidden,true);
+  assert.equal(host.dataset.mode,'grid');
+  assert.ok(host.querySelector('.calv-month'));
 });

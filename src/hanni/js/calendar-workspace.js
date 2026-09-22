@@ -11,7 +11,6 @@ import { mountCalendarGoals } from './calendar-goals.js';
 import { mountCalendarNotes } from './calendar-notes.js';
 import { mountCalendarDashboardTasks } from './calendar-dashboard-tasks.js';
 import { mountCalendarTasks } from './calendar-tasks.js';
-import { planCalendarTaskForDay } from './calendar-task-planning.js';
 import { mountCalendarContextMenu } from './calendar-context-menu.js';
 import { createCalendarDialog } from './calendar-dialog.js';
 import { mountCalendarRecurring } from './calendar-recurring.js';
@@ -250,12 +249,12 @@ function mountRecordMenu(element, options) {
   } });
 }
 
-export async function mountCalendarTable(el, { openTasks } = {}) {
+export async function mountCalendarTable(el) {
   disposeTable?.();
   let revision = 0, disposed = false, menuRecords = [], actionBusy = false;
   el.classList.add('calendar-mvp');
-  el.innerHTML = `<div class="cm-toolbar"><div class="cm-segment" role="group" aria-label="Период календаря">${[['day','День'],['week','Неделя'],['month','Месяц']].map(([id,title]) => `<button data-period="${id}" aria-pressed="${view.period === id}">${title}</button>`).join('')}</div><div class="cm-segment" role="group" aria-label="Вид календаря"><button data-mode="grid"><span class="cm-icon" aria-hidden="true">${ICONS.calendar}</span>Календарь</button><button data-mode="list"><span class="cm-icon" aria-hidden="true">${ICONS.list}</span>Список</button></div></div>
-    <div class="cm-controls"><div class="cm-date"><button data-prev aria-label="Предыдущий период"><span class="cm-icon" aria-hidden="true">${ICONS.chevronLeft}</span></button><div class="cm-date-roller" data-date-roller><span data-date-before aria-hidden="true" hidden></span><h2 data-range></h2><span data-date-after aria-hidden="true" hidden></span></div><button data-next aria-label="Следующий период"><span class="cm-icon" aria-hidden="true">${ICONS.chevronRight}</span></button><button data-today>Сегодня</button></div>
+  el.innerHTML = `<div class="cm-toolbar"><div class="cm-segment" role="group" aria-label="Период календаря">${[['day','День'],['week','Неделя'],['month','Месяц']].map(([id,title]) => `<button data-period="${id}" aria-pressed="${view.period === id}">${title}</button>`).join('')}</div></div>
+    <div class="cm-controls"><div class="cm-date"><button data-prev aria-label="Предыдущий период"><span class="cm-icon" aria-hidden="true">${ICONS.chevronLeft}</span></button><div class="cm-date-roller" data-date-roller><h2 data-range></h2></div><button data-next aria-label="Следующий период"><span class="cm-icon" aria-hidden="true">${ICONS.chevronRight}</span></button><button data-today>Сегодня</button></div>
     </div><p data-notice role="status"></p><button data-retry hidden>Повторить загрузку</button><div data-calendar-records></div>`;
   const host = el.querySelector('[data-calendar-records]');
   host.tabIndex = -1;
@@ -263,38 +262,11 @@ export async function mountCalendarTable(el, { openTasks } = {}) {
   actionStatus.className = 'calv-action-status'; actionStatus.setAttribute('role', 'status'); actionStatus.tabIndex = -1;
   host.before(actionStatus);
   const gridViewport = mountCalendarGridViewport(host);
-  const closePlanningOnEscape = event => {
-    if (event.key !== 'Escape' || event.defaultPrevented || disposed || !el.isConnected || document.querySelector('dialog[open], [aria-modal="true"]')) return;
-    const panel = host.querySelector('[data-tasks-panel]:not([hidden])');
-    if (panel) { event.preventDefault(); panel.querySelector('.calv-panel-close')?.click(); }
-  };
-  document.addEventListener('keydown', closePlanningOnEscape);
-  async function scheduleTask(record, date) {
-    if (actionBusy || disposed) return;
-    actionBusy = true; actionStatus.textContent = 'Сохраняем дату…'; actionStatus.classList.remove('is-error');
-    host.querySelectorAll('[data-plan-task]').forEach(button => { button.disabled = true; });
-    try {
-      const saved = await planCalendarTaskForDay(invoke, record.source_id, date, () => !disposed && el.isConnected);
-      if (!saved) return;
-      changed();
-      if (!disposed) {
-        await refresh();
-        actionStatus.textContent = `Задача запланирована на ${views.label(date)} · без времени.`;
-        (host.querySelector('[data-plan-task]') || host.querySelector('[data-tasks-toggle]') || host).focus({preventScroll:true});
-      }
-    } catch (error) {
-      if (!disposed) {
-        await refresh(); actionStatus.textContent = error?.message || 'Не удалось назначить день. Обнови список и повтори.';
-        actionStatus.classList.add('is-error'); actionStatus.focus();
-      }
-    } finally { actionBusy = false; if (!disposed) host.querySelectorAll('[data-plan-task]').forEach(button => { button.disabled = false; }); }
-  }
   async function onTaskAction(record, action, trigger) {
     if (actionBusy || disposed) return;
-    const fromPanel = !!trigger?.closest('[data-tasks-panel]');
     const restore = () => {
       if (disposed) return;
-      const scope = fromPanel ? host.querySelector('[data-tasks-panel]') : host.querySelector('.calv-main');
+      const scope = host.querySelector('.calv-main');
       const current = menuRecords.find(item => key(item) === key(record));
       const row = [...(scope?.querySelectorAll('[data-context-record]') || [])].find(node => node.dataset.contextRecord === current?.id);
       (row?.querySelector('[data-record-action], .calv-record') || scope?.querySelector('h3') || host).focus({ preventScroll: true });
@@ -321,7 +293,7 @@ export async function mountCalendarTable(el, { openTasks } = {}) {
   const menu = mountRecordMenu(host, {
     getRecord: item => menuRecords.find(record => record.id === item.dataset.contextRecord),
     restoreFocus: (item, trigger) => {
-      const scope = item.closest('[data-tasks-panel]') ? host.querySelector('[data-tasks-panel]') : host.querySelector('.calv-main');
+      const scope = host.querySelector('.calv-main');
       const current = menuRecords.find(record => key(record) === item.dataset.recordSource);
       const candidates = [...(scope?.querySelectorAll('[data-context-record]') || [])].filter(value => value.dataset.contextRecord === (current?.id || item.dataset.contextRecord));
       const row = candidates.find(value => value.dataset.recordDate === item.dataset.recordDate) || candidates[0];
@@ -339,7 +311,6 @@ export async function mountCalendarTable(el, { openTasks } = {}) {
     el.querySelector('[data-range]').textContent = period === 'month' ? views.label(day,{month:'long',year:'numeric'}) : period === 'week' ? `${views.label(visibleRange[0])} — ${views.label(visibleRange.at(-1))}` : views.label(day,{weekday:'long',day:'numeric',month:'long'});
     updateDateRoller(period, day);
     el.querySelectorAll('[data-period]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.period === period)));
-    el.querySelectorAll('[data-mode]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === mode)));
     el.querySelector('[data-notice]').textContent = 'Загружаем расписание…';
     el.querySelector('[data-retry]').hidden = true; host.setAttribute('aria-busy','true');
     }
@@ -363,10 +334,8 @@ export async function mountCalendarTable(el, { openTasks } = {}) {
       const focusKey = host.contains(focused) ? focused.closest('[data-context-record]')?.dataset.contextRecord : null;
       const focusDate = host.contains(focused) ? focused.closest('[data-context-record]')?.dataset.recordDate : null;
       const focusSource = host.contains(focused) ? focused.closest('[data-context-record]')?.dataset.recordSource : null;
-      const focusInPanel = !!focused.closest('[data-tasks-panel]');
       menuRecords = [...new Map([...records, ...taskRecords].map(record => [record.id, record])).values()];
       views.render(host, { period, mode, date: day, firstDay, records, taskRecords, taskError, dayStarts, onTaskAction, actionBusy,
-        onScheduleTask: scheduleTask, onOpenTasks: openTasks,
         fitViewport: gridViewport.fit,
         onRetryTasks: () => refresh(),
         onCreateTask: date => openEvent(date, null, 'task', true),
@@ -378,7 +347,7 @@ export async function mountCalendarTable(el, { openTasks } = {}) {
         },
         onChooseRecord: (id) => { const record = menuRecords.find(r => r.id === id); if (record) showRecord(record); } });
       if (focusKey && !focused.isConnected) {
-        const scope = focusInPanel ? host.querySelector('[data-tasks-panel]') : host.querySelector('.calv-main');
+        const scope = host.querySelector('.calv-main');
         const candidates = [...(scope?.querySelectorAll('[data-context-record]') || [])].filter(value => value.dataset.contextRecord === focusKey || value.dataset.recordSource === focusSource);
         const row = candidates.find(value => value.dataset.recordDate === focusDate) || candidates[0];
         (row?.querySelector('recordMenu' in focused.dataset ? '[data-record-menu]' : '.calv-record') || scope?.querySelector('h3') || host).focus({ preventScroll: true });
@@ -405,10 +374,6 @@ export async function mountCalendarTable(el, { openTasks } = {}) {
     const enabled = period === 'day';
     roller.dataset.enabled = String(enabled);
     roller.tabIndex = enabled ? 0 : -1;
-    for (const [selector, delta] of [['[data-date-before]', -1], ['[data-date-after]', 1]]) {
-      const neighbor = roller.querySelector(selector);
-      neighbor.hidden = !enabled; neighbor.textContent = enabled ? views.label(views.add(day, delta)) : '';
-    }
     if (enabled) {
       roller.setAttribute('role', 'spinbutton'); roller.setAttribute('aria-label', 'Дата календаря');
       roller.setAttribute('aria-valuenow', String(Date.parse(`${day}T00:00:00Z`) / 86400000));
@@ -440,7 +405,6 @@ export async function mountCalendarTable(el, { openTasks } = {}) {
   roller.addEventListener('wheel', wheelDate, { passive: false });
   roller.addEventListener('keydown', keyDate);
   el.querySelectorAll('[data-period]').forEach(b => b.addEventListener('click', () => { view.period = b.dataset.period; refresh(); }));
-  el.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => { view.mode = b.dataset.mode; refresh(); }));
   el.querySelector('[data-prev]').onclick = () => move(-1); el.querySelector('[data-next]').onclick = () => move(1);
   el.querySelector('[data-today]').onclick = () => { view.date = views.iso(new Date()); refresh(); };
   el.querySelector('[data-retry]').onclick = () => refresh();
@@ -468,7 +432,7 @@ export async function mountCalendarTable(el, { openTasks } = {}) {
   };
   window.addEventListener('hanni:calendar-refresh', onChange);
   window.addEventListener('task-state-changed', onChange);
-  disposeTable = () => { disposed = true; revision++; gridViewport.dispose(); menu(); document.removeEventListener('keydown', closePlanningOnEscape); roller.removeEventListener('wheel', wheelDate); roller.removeEventListener('keydown', keyDate); window.removeEventListener('hanni:calendar-refresh', onChange); window.removeEventListener('task-state-changed', onChange); };
+  disposeTable = () => { disposed = true; revision++; gridViewport.dispose(); menu(); roller.removeEventListener('wheel', wheelDate); roller.removeEventListener('keydown', keyDate); window.removeEventListener('hanni:calendar-refresh', onChange); window.removeEventListener('task-state-changed', onChange); };
   await refresh();
 }
 
@@ -496,7 +460,7 @@ export async function loadCalendarWorkspace(el) {
       if (loadRevision !== workspaceRevision || S.activeTab !== 'calendar') return;
       view.firstDay = firstDay === 'sun' ? 'sun' : 'mon';
       view.period = ({ 'День':'day', 'Неделя':'week', 'Месяц':'month', 'Список':'month' })[defaultView] || 'month';
-      view.mode = defaultView === 'Список' ? 'list' : 'grid';
+      view.mode = 'grid';
       initialViewLoaded = true;
     } catch { /* Keep the usable current view if preferences cannot be read. */ }
   }
@@ -618,7 +582,7 @@ export async function loadCalendarWorkspace(el) {
         mountTasks:host=>mountCalendarDashboardTasks(host,{...taskOptions,embedded:true,onShowAll:showAllTasks}),
       });
     },
-    renderTable: pane => mountCalendarTable(pane, { openTasks: () => openPane('tasks') }),
+    renderTable: pane => mountCalendarTable(pane),
     renderTasks: pane => {
       const revision = workspaceRevision;
       disposePanel = mountCalendarTasks(pane, {

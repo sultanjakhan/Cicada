@@ -60,7 +60,7 @@ export const TAB_SETTINGS_DEFS = { calendar: [
   ], default: 'mon' },
   { key: 'default_view', label: 'Вид по умолчанию', type: 'select', options: [
     { value: 'Месяц', label: 'Месяц' }, { value: 'Неделя', label: 'Неделя' },
-    { value: 'День', label: 'День' }, { value: 'Список', label: 'Список' },
+    { value: 'День', label: 'День' },
   ], default: 'Месяц' },
 ] };
 export const tabLoaders = {};

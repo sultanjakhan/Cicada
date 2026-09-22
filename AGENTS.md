@@ -6,6 +6,18 @@
 
 Перед новой постановкой прочитай [подтверждённый контекст продукта](docs/product-context.md), затем проверь исходный код и относящиеся к задаче Issues. Не повторяй вопросы, на которые уже есть ответ в этом контексте; уточняй только новые отсутствующие факты.
 
+Owner iteration, 2026-09-21 (Calendar), integrated 2026-09-22: remove Calendar
+List mode, its adjacent planning task panel and the neighboring date labels;
+retain day/week/month navigation and existing records. Interpret a saved List
+preference as Month without rewriting it on read. Use a calm white/graphite grid
+and keep header/date controls usable in narrow windows. This supersedes the
+earlier instruction to retain Calendar List mode. The header launcher and brand
+size follow the later 2026-09-22 decision in the product context; there is no
+Routines header action (routines stay in the dashboard/settings manager).
+Important tasks use a text label without a flag icon. Missing routines must be
+diagnosed at their source; do not ship or invent user routine data. Local UI
+checks do not establish installed native acceptance.
+
 Owner authorization, 2026-09-21: make automatic updates work for the installed
 macOS MVP too. Extend the existing signed channel and idle/hidden installation
 rules, preserve the profile, and verify a real installed version upgrade. Keep

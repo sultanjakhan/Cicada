@@ -97,6 +97,9 @@ test('bundled shell boots the five workspace panes with only Calendar in the sid
   }
   assert.ok(calls.some(call => call.command === 'get_calendar_records'));
   assert.ok(calls.some(call => call.command === 'get_notes'));
+  await click('[data-pane="table"]');
+  assert.deepEqual([...w.document.querySelectorAll('.calendar-workspace .uni-header-action')].map(el => el.textContent.trim()), ['Новая задача', 'Запустить задачу']);
+  assert.equal(w.document.querySelector('[data-mode="list"]'), null);
   assert.deepEqual(errors, []);
 });
 
@@ -284,14 +287,10 @@ test('unknown current work stays hidden on read failure and launcher keeps error
   assert.deepEqual(errors, []);
 });
 
-test('planning closes with Escape outside the panel and Tasks creation starts without a date', async t => {
+test('Calendar has no adjacent planning panel and Tasks creation starts without a date', async t => {
   const { w, click } = await launch(t);
   await click('[data-pane="table"]');
-  await click('[data-tasks-toggle]');
-  assert.equal(w.document.querySelector('[data-tasks-panel]').hidden, false);
-  w.document.querySelector('[data-period="month"]').focus();
-  w.document.activeElement.dispatchEvent(new w.KeyboardEvent('keydown', { key:'Escape', bubbles:true, cancelable:true }));
-  assert.equal(w.document.querySelector('[data-tasks-panel]').hidden, true);
+  assert.equal(w.document.querySelector('[data-tasks-panel]'), null);
   await click('[data-pane="tasks"]');
   await click('[data-calendar-create]');
   const noDate = w.document.querySelector('#evm-no-date');
