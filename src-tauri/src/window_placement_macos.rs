@@ -83,9 +83,6 @@ fn native_window(window: &tauri::WebviewWindow) -> Option<(&NSWindow, MainThread
 }
 
 fn current_frame(window: &tauri::WebviewWindow) -> Option<Frame> {
-    if window.is_minimized().ok()? {
-        return None;
-    }
     let (native, main_thread) = native_window(window)?;
     let frame = Frame::from(native.frame());
     (frame.sane() && on_available_screen(frame.rect(), main_thread)).then_some(frame)
