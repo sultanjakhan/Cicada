@@ -8,6 +8,43 @@ import org.junit.Test
 import java.time.Instant
 
 class HealthSleepTest {
+    @Test fun permissionRequestIncludesOnlyMissingAccess() = runBlocking {
+        val sleep = "android.permission.health.READ_SLEEP"
+        val exercise = "android.permission.health.READ_EXERCISE"
+        val steps = "android.permission.health.READ_STEPS"
+        val background = "android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND"
+        val launched = mutableListOf<Set<String>>()
+        val launch: (Set<String>) -> Unit = { launched.add(it) }
+
+        assertTrue(requestMissingHealthPermissions(setOf(sleep, background), { emptySet() }, launch))
+        assertEquals(setOf(sleep, background), launched.single())
+        launched.clear()
+
+        assertTrue(requestMissingHealthPermissions(setOf(sleep, background), { setOf(sleep) }, launch))
+        assertEquals(setOf(background), launched.single())
+        launched.clear()
+
+        assertTrue(requestMissingHealthPermissions(setOf(exercise, steps, background), { setOf(exercise, background) }, launch))
+        assertEquals(setOf(steps), launched.single())
+        launched.clear()
+
+        assertFalse(requestMissingHealthPermissions(setOf(sleep, background), { setOf(sleep, background) }, launch))
+        assertTrue(launched.isEmpty())
+    }
+
+    @Test fun failedPermissionLookupOrLaunchNeverReportsACompletedRequest() = runBlocking {
+        var launches = 0
+        val launch: (Set<String>) -> Unit = { launches++ }
+        try {
+            requestMissingHealthPermissions(setOf("sleep"), { throw SecurityException("synthetic lookup failure") }, launch)
+            fail("Permission lookup failure must propagate")
+        } catch (_: SecurityException) { assertEquals(0, launches) }
+        try {
+            requestMissingHealthPermissions(setOf("sleep"), { emptySet() }) { throw IllegalStateException("synthetic launch failure") }
+            fail("Permission launch failure must propagate")
+        } catch (_: IllegalStateException) { assertEquals(0, launches) }
+    }
+
     @Test fun stagesDoNotCountAwakeOrUnknownTimeAsSleep() {
         fun stage(start: Long, end: Long, type: Int) = SleepSessionRecord.Stage(
             Instant.ofEpochSecond(start), Instant.ofEpochSecond(end), type)

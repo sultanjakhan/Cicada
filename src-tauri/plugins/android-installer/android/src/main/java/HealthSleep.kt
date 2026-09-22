@@ -40,6 +40,17 @@ import java.time.Instant
 import java.time.ZoneId
 import java.util.concurrent.TimeUnit
 
+internal suspend fun requestMissingHealthPermissions(
+    desired: Set<String>,
+    granted: suspend () -> Set<String>,
+    request: (Set<String>) -> Unit
+): Boolean {
+    val missing = desired - granted()
+    if (missing.isEmpty()) return false
+    request(missing)
+    return true
+}
+
 @RequiresApi(28)
 internal fun sleepStageTotals(stages: List<SleepSessionRecord.Stage>): Pair<Long?, Long?> {
     val sleepTypes = setOf(SleepSessionRecord.STAGE_TYPE_SLEEPING, SleepSessionRecord.STAGE_TYPE_LIGHT,
@@ -211,15 +222,22 @@ internal class SleepBridge(private val activity: Activity) {
         } else SleepImporter.sync(activity.applicationContext, false)
     }
     fun connect(invoke: Invoke) {
-        activity.runOnUiThread {
-            if (launcher == null || !UpdateActivityGuard.hasStartedActivity()) { invoke.reject("health_sleep_foreground_required"); return@runOnUiThread }
+        scope.launch {
+            if (launcher == null || !UpdateActivityGuard.hasStartedActivity()) { invoke.reject("health_sleep_foreground_required"); return@launch }
             try {
-                if (!SleepImporter.available(activity)) { invoke.resolve(JSObject().apply { put("status", "provider_unavailable") }); return@runOnUiThread }
+                if (!SleepImporter.available(activity)) { invoke.resolve(JSObject().apply { put("status", "provider_unavailable") }); return@launch }
                 val client = HealthConnectClient.getOrCreate(activity)
                 val permissions = mutableSetOf(SleepImporter.readPermission)
                 if (SleepImporter.backgroundAvailable(client)) permissions.add(SleepImporter.backgroundPermission)
-                launcher!!.launch(permissions)
-                invoke.resolve(JSObject().apply { put("status", "permission_requested") })
+                val requested = requestMissingHealthPermissions(
+                    permissions,
+                    { withContext(Dispatchers.IO) { client.permissionController.getGrantedPermissions() } },
+                    { missing ->
+                        if (!UpdateActivityGuard.hasStartedActivity()) throw IllegalStateException("activity_not_started")
+                        launcher!!.launch(missing)
+                    })
+                if (requested) invoke.resolve(JSObject().apply { put("status", "permission_requested") })
+                else invoke.resolve(JSObject(withContext(Dispatchers.IO) { SleepImporter.status(activity).toString() }))
             } catch (_: Exception) { invoke.reject("health_sleep_permission_failed") }
         }
     }

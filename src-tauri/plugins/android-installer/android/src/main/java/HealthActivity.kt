@@ -191,15 +191,22 @@ internal class ActivityBridge(private val activity: Activity) {
         else ActivityImporter.sync(activity.applicationContext, false)
     }
     fun connect(invoke: Invoke) {
-        activity.runOnUiThread {
-            if (launcher == null || !UpdateActivityGuard.hasStartedActivity()) { invoke.reject("health_activity_foreground_required"); return@runOnUiThread }
+        scope.launch {
+            if (launcher == null || !UpdateActivityGuard.hasStartedActivity()) { invoke.reject("health_activity_foreground_required"); return@launch }
             try {
-                if (!ActivityImporter.available(activity)) { invoke.resolve(JSObject().apply { put("status", "provider_unavailable") }); return@runOnUiThread }
+                if (!ActivityImporter.available(activity)) { invoke.resolve(JSObject().apply { put("status", "provider_unavailable") }); return@launch }
                 val client = HealthConnectClient.getOrCreate(activity)
                 val permissions = mutableSetOf(ActivityImporter.walkingPermission, ActivityImporter.stepsPermission)
                 if (ActivityImporter.backgroundAvailable(client)) permissions.add(ActivityImporter.backgroundPermission)
-                launcher!!.launch(permissions)
-                invoke.resolve(JSObject().apply { put("status", "permission_requested") })
+                val requested = requestMissingHealthPermissions(
+                    permissions,
+                    { withContext(Dispatchers.IO) { client.permissionController.getGrantedPermissions() } },
+                    { missing ->
+                        if (!UpdateActivityGuard.hasStartedActivity()) throw IllegalStateException("activity_not_started")
+                        launcher!!.launch(missing)
+                    })
+                if (requested) invoke.resolve(JSObject().apply { put("status", "permission_requested") })
+                else invoke.resolve(JSObject(withContext(Dispatchers.IO) { ActivityImporter.status(activity).toString() }))
             } catch (_: Exception) { invoke.reject("health_activity_permission_failed") }
         }
     }
