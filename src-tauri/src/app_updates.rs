@@ -534,7 +534,7 @@ pub fn enroll_desktop_task(app: AppHandle) {
         }
         let Some(expected) = installed_windows_binary() else {
             return;
-        }
+        };
         let Some(system_root) = std::env::var_os("SystemRoot") else {
             return;
         };
