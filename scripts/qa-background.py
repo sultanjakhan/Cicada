@@ -158,7 +158,7 @@ def main():
             raise RuntimeError('CDP ownership or loopback-only binding could not be verified')
         app_windows = [int(hwnd) for hwnd in desktop.EnumDesktopWindows()
                        if win32process.GetWindowThreadProcessId(int(hwnd))[1] == pid
-                       and win32gui.GetWindowText(int(hwnd)) == 'Hanni MVP']
+                       and win32gui.GetWindowText(int(hwnd)) == 'Cicada']
         if len(app_windows) != 1 or input_desktop() == desktop_name:
             raise RuntimeError('Background desktop isolation failed')
         database = data / 'calendar.db'
@@ -171,7 +171,7 @@ def main():
                         webview_pids=sorted(descendants), database=str(database),
                         url=pages[0]['url'], title=pages[0].get('title'))
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding='utf-8')
-        print(f'Hanni MVP background QA ready: {manifest_path}', file=sys.stderr, flush=True)
+        print(f'Cicada background QA ready: {manifest_path}', file=sys.stderr, flush=True)
         if args.probe:
             print(json.dumps(manifest))
             return 0

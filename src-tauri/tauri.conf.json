@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Hanni MVP",
+  "productName": "Cicada",
   "mainBinaryName": "hanni-mvp",
-  "version": "0.3.22",
+  "version": "0.3.23",
   "identifier": "app.hanni.mvp",
   "build": {
     "frontendDist": "../dist",
@@ -14,7 +14,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Hanni MVP",
+        "title": "Cicada",
         "width": 760,
         "height": 720,
         "minWidth": 640,
@@ -44,8 +44,9 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "startMenuFolder": "Hanni MVP",
+        "startMenuFolder": "Cicada",
         "installerIcon": "icons/icon.ico",
+        "template": "windows/installer.nsi",
         "languages": [
           "Russian",
           "English"

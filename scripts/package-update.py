@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build one signed, size-bounded Hanni MVP update candidate in CI.
+"""Build one signed, size-bounded Cicada update candidate in CI.
 
 The caller supplies the updater signing key through environment variables. This
 script never publishes a release or contacts the update service: it only emits
@@ -49,11 +49,12 @@ def source_metadata() -> tuple[str, str, dict, str]:
     require(not dirty, 'Commit source changes before packaging:\n' + dirty)
     commit = output('git', 'rev-parse', 'HEAD')
     origin = output('git', 'remote', 'get-url', 'origin')
-    require(origin.removesuffix('.git').endswith('/hanni-mvp'),
-            'Expected the independent hanni-mvp repository.')
+    require(origin.removesuffix('.git').endswith('/Cicada'),
+            'Expected the independent Cicada repository.')
     config = json.loads((ROOT / 'src-tauri/tauri.conf.json').read_text(encoding='utf-8'))
-    require(config.get('identifier') == 'app.hanni.mvp' and config.get('productName') == 'Hanni MVP',
-            'Unexpected Hanni MVP application identity.')
+    require(config.get('identifier') == 'app.hanni.mvp' and config.get('productName') == 'Cicada'
+            and config.get('mainBinaryName') == 'hanni-mvp',
+            'Unexpected Cicada application identity.')
     version = config.get('version')
     require(isinstance(version, str) and version.count('.') == 2, 'Expected a three-part version.')
     return commit, origin, config, version
@@ -95,7 +96,7 @@ def build_windows(commit: str, version: str) -> Path:
     require(sys.platform == 'win32', 'Windows update candidates must be built on Windows.')
     subprocess.run([shutil.which('pwsh') or 'powershell', '-NoProfile', '-File', 'scripts/package-windows.ps1'],
                    cwd=ROOT, check=True)
-    source = ROOT / '.local/windows-package' / commit[:12] / f'Hanni-MVP-{version}-windows-x64-setup.exe'
+    source = ROOT / '.local/windows-package' / commit[:12] / f'Cicada-{version}-windows-x64-setup.exe'
     require(source.is_file(), 'The Windows packager did not produce its expected NSIS installer.')
     return source
 
@@ -137,7 +138,7 @@ def build_macos(commit: str, version: str, environment: dict[str, str]) -> Path:
     manifest = json.loads((directory / 'manifest.json').read_text(encoding='utf-8'))
     require(manifest['version'] == version and manifest['source_commit'] == commit,
             'macOS candidate differs from the checked-out source.')
-    return directory / 'Hanni MVP.app.tar.gz'
+    return directory / 'Cicada.app.tar.gz'
 
 
 def main() -> None:
@@ -158,7 +159,7 @@ def main() -> None:
 
     destination_dir = ROOT / '.local/update-candidate' / args.platform
     destination_dir.mkdir(parents=True, exist_ok=True)
-    payload = destination_dir / f'Hanni-MVP-{version}-{platform["name"]}{platform["suffix"]}'
+    payload = destination_dir / f'Cicada-{version}-{platform["name"]}{platform["suffix"]}'
     require(not payload.exists(), 'A candidate for this platform/version already exists; inspect it first.')
     shutil.copyfile(built, payload)
     signature = sign(payload, environment)

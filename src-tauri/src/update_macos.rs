@@ -1,20 +1,26 @@
 //! User-scoped scheduling for the installed macOS bundle, never a DEV copy.
 use std::{
+    os::unix::fs::symlink,
     os::unix::fs::MetadataExt,
+    os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::Command,
 };
 use tauri::{AppHandle, Manager};
 
 const LABEL: &str = "app.hanni.mvp.updates";
+const EXECUTABLE: &str = "Contents/MacOS/hanni-mvp";
 
 fn bundle_in(home: &Path) -> PathBuf {
+    home.join("Applications/Cicada.app")
+}
+
+fn legacy_bundle_in(home: &Path) -> PathBuf {
     home.join("Applications/Hanni MVP.app")
 }
 
-fn writable_bundle(home: &Path, executable: &Path) -> bool {
-    let bundle = bundle_in(home);
-    if executable != bundle.join("Contents/MacOS/hanni-mvp")
+fn writable_bundle(home: &Path, bundle: &Path, executable: &Path) -> bool {
+    if executable != bundle.join(EXECUTABLE)
         || executable.canonicalize().ok().as_deref() != Some(executable)
     {
         return false;
@@ -30,6 +36,67 @@ fn writable_bundle(home: &Path, executable: &Path) -> bool {
         })
 }
 
+fn relocate_legacy_bundle(home: &Path, executable: &Path) -> Result<Option<PathBuf>, String> {
+    let legacy = legacy_bundle_in(home);
+    if executable != legacy.join(EXECUTABLE) {
+        return Ok(None);
+    }
+    let current = bundle_in(home);
+    if legacy
+        .symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_symlink())
+    {
+        if legacy.canonicalize().ok().as_deref() == Some(current.as_path()) {
+            return Ok(Some(current.join(EXECUTABLE)));
+        }
+        return Err("Legacy application alias has changed.".into());
+    }
+    if !writable_bundle(home, &legacy, executable) {
+        return Ok(None);
+    }
+    if current.symlink_metadata().is_ok() {
+        return Err("Cicada.app already exists; the installed application was not moved.".into());
+    }
+    std::fs::rename(&legacy, &current).map_err(|e| e.to_string())?;
+    if let Err(error) = symlink("Cicada.app", &legacy) {
+        let _ = std::fs::rename(&current, &legacy);
+        return Err(error.to_string());
+    }
+    // The already loaded LaunchAgent still invokes the old path until login.
+    // Hide this alias in Finder; the next enrolment writes the new path to disk.
+    let hidden = Command::new("/usr/bin/chflags")
+        .arg("-h")
+        .arg("hidden")
+        .arg(&legacy)
+        .status()
+        .is_ok_and(|status| status.success());
+    if !hidden {
+        let _ = std::fs::remove_file(&legacy);
+        let _ = std::fs::rename(&current, &legacy);
+        return Err("Could not hide the legacy LaunchAgent alias.".into());
+    }
+    Ok(Some(current.join(EXECUTABLE)))
+}
+
+pub(crate) fn relaunch_from_legacy_bundle() {
+    if cfg!(debug_assertions) {
+        return;
+    }
+    let (Some(home), Ok(executable)) = (std::env::var_os("HOME"), std::env::current_exe()) else {
+        return;
+    };
+    let Ok(home) = PathBuf::from(home).canonicalize() else {
+        return;
+    };
+    let Ok(Some(replacement)) = relocate_legacy_bundle(&home, &executable) else {
+        return;
+    };
+    let error = Command::new(&replacement)
+        .args(std::env::args_os().skip(1))
+        .exec();
+    eprintln!("Cicada could not relaunch from its new bundle: {error}");
+}
+
 pub(crate) fn installed_bundle(app: &AppHandle) -> Result<PathBuf, String> {
     let home = app
         .path()
@@ -42,9 +109,9 @@ pub(crate) fn installed_bundle(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|_| "Не удалось проверить профиль.")?;
     if cfg!(debug_assertions)
         || crate::app_data_dir(app)? != standard
-        || !writable_bundle(&home, &executable)
+        || !writable_bundle(&home, &bundle_in(&home), &executable)
     {
-        return Err("Обновления Mac доступны для установленной Hanni MVP в ~/Applications. DEV и отдельные копии не обновляются.".into());
+        return Err("Обновления Mac доступны для установленной Cicada в ~/Applications. DEV и отдельные копии не обновляются.".into());
     }
     Ok(bundle_in(&home))
 }
@@ -85,12 +152,15 @@ pub(crate) fn enroll(app: &AppHandle) -> Result<(), String> {
     let path = home
         .join("Library/LaunchAgents")
         .join(format!("{LABEL}.plist"));
-    let contents = launch_agent(&bundle.join("Contents/MacOS/hanni-mvp"));
+    let contents = launch_agent(&bundle.join(EXECUTABLE));
     if path.exists() {
-        if std::fs::read(&path).ok().as_deref() != Some(contents.as_bytes()) {
+        let old = launch_agent(&legacy_bundle_in(&home).join(EXECUTABLE));
+        let existing = std::fs::read(&path).ok();
+        if existing.as_deref() == Some(old.as_bytes()) {
+            crate::update_journal::atomic_write(&path, contents.as_bytes())?;
+        } else if existing.as_deref() != Some(contents.as_bytes()) {
             return Err(
-                "Настройки фонового обновления Mac отличаются. Проверь LaunchAgent Hanni MVP."
-                    .into(),
+                "Настройки фонового обновления Mac отличаются. Проверь LaunchAgent Cicada.".into(),
             );
         }
     } else {
@@ -153,29 +223,66 @@ mod tests {
     fn only_the_owned_writable_standard_bundle_can_update() {
         let home = tempfile::tempdir().unwrap();
         let bundle = bundle_in(home.path());
-        let executable = bundle.join("Contents/MacOS/hanni-mvp");
+        let executable = bundle.join(EXECUTABLE);
         std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
         std::fs::write(&executable, b"synthetic").unwrap();
         let home = home.path().canonicalize().unwrap();
         let executable = executable.canonicalize().unwrap();
-        assert!(writable_bundle(&home, &executable));
+        assert!(writable_bundle(&home, &bundle, &executable));
         assert!(!writable_bundle(
             &home,
-            &home.join("Downloads/Hanni MVP.app/Contents/MacOS/hanni-mvp")
+            &bundle,
+            &home.join("Downloads/Cicada.app/Contents/MacOS/hanni-mvp")
         ));
         std::fs::set_permissions(&bundle, std::fs::Permissions::from_mode(0o500)).unwrap();
-        assert!(!writable_bundle(&home, &executable));
+        assert!(!writable_bundle(&home, &bundle, &executable));
         std::fs::set_permissions(&bundle, std::fs::Permissions::from_mode(0o700)).unwrap();
         let real = executable.with_extension("real");
         std::fs::rename(&executable, &real).unwrap();
         symlink(&real, &executable).unwrap();
-        assert!(!writable_bundle(&home, &executable));
+        assert!(!writable_bundle(&home, &bundle, &executable));
+    }
+
+    #[test]
+    fn installed_legacy_bundle_moves_without_replacing_an_existing_cicada() {
+        let home = tempfile::tempdir().unwrap();
+        let home = home.path().canonicalize().unwrap();
+        let legacy = legacy_bundle_in(&home);
+        let executable = legacy.join(EXECUTABLE);
+        std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        std::fs::write(&executable, b"signed bridge fixture").unwrap();
+        let destination = bundle_in(&home);
+        let collision = destination.clone();
+        std::fs::write(&collision, b"another application").unwrap();
+        assert!(relocate_legacy_bundle(&home, &executable).is_err());
+        assert_eq!(std::fs::read(&collision).unwrap(), b"another application");
+        std::fs::remove_file(&collision).unwrap();
+        symlink("missing-app", &collision).unwrap();
+        assert!(relocate_legacy_bundle(&home, &executable).is_err());
+        assert!(collision
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        std::fs::remove_file(&collision).unwrap();
+        assert_eq!(
+            relocate_legacy_bundle(&home, &home.join("Downloads/hanni-mvp")).unwrap(),
+            None
+        );
+        let relocated = relocate_legacy_bundle(&home, &executable).unwrap().unwrap();
+        assert_eq!(relocated, destination.join(EXECUTABLE));
+        assert_eq!(std::fs::read(&relocated).unwrap(), b"signed bridge fixture");
+        assert_eq!(legacy.canonicalize().unwrap(), destination);
+        assert_eq!(
+            relocate_legacy_bundle(&home, &executable).unwrap(),
+            Some(relocated)
+        );
     }
 
     #[test]
     fn launch_agent_runs_windowless_every_six_hours_without_a_shell() {
         let xml = launch_agent(Path::new(
-            "/Users/Example & Test/Applications/Hanni MVP.app/Contents/MacOS/hanni-mvp",
+            "/Users/Example & Test/Applications/Cicada.app/Contents/MacOS/hanni-mvp",
         ));
         let mut child = Command::new("/usr/bin/plutil")
             .args(["-convert", "json", "-o", "-", "-"])

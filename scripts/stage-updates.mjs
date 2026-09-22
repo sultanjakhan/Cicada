@@ -80,7 +80,7 @@ function sha256(bytes) {
 }
 
 function expectedAsset(version, config) {
-  return `Hanni-MVP-${version}-${config.platform}${config.extension}`;
+  return `Cicada-${version}-${config.platform}${config.extension}`;
 }
 
 function expectedVersionCode(version) {

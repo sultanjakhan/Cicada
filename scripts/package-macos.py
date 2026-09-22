@@ -7,8 +7,10 @@ import os
 from pathlib import Path
 import platform
 import plistlib
+from pathlib import PurePosixPath
 import subprocess
 import sys
+import tarfile
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -22,6 +24,18 @@ def require(condition, message):
         raise SystemExit(message)
 
 
+def verify_updater_archive(archive):
+    # Tauri 2.11 strips the top-level member and writes Contents to the
+    # currently installed bundle, including 0.3.22's Hanni MVP.app path.
+    with tarfile.open(archive, 'r:gz') as members:
+        names = [member.name for member in members.getmembers()]
+    require(names and all((name == 'Cicada.app' or name.startswith('Cicada.app/'))
+                          and '..' not in PurePosixPath(name).parts for name in names),
+            'The macOS updater archive must contain exactly one Cicada.app root.')
+    require('Cicada.app/Contents/MacOS/hanni-mvp' in names,
+            'The macOS updater archive is missing the compatible executable.')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--updater', action='store_true')
@@ -30,9 +44,10 @@ def main():
     commit = output('git', 'rev-parse', 'HEAD')
     require(not output('git', 'status', '--porcelain'), 'Commit source changes before packaging.')
     origin = output('git', 'remote', 'get-url', 'origin')
-    require(origin.removesuffix('.git').endswith('/hanni-mvp'), 'Expected the independent MVP repository.')
+    require(origin.removesuffix('.git').endswith('/Cicada'), 'Expected the independent Cicada repository.')
     config = json.loads((ROOT / 'src-tauri/tauri.conf.json').read_text())
-    require(config['identifier'] == 'app.hanni.mvp' and config['productName'] == 'Hanni MVP',
+    require(config['identifier'] == 'app.hanni.mvp' and config['productName'] == 'Cicada'
+            and config['mainBinaryName'] == 'hanni-mvp',
             'Unexpected application identity.')
     metadata = json.loads(output('cargo', 'metadata', '--manifest-path', 'src-tauri/Cargo.toml',
                                  '--no-deps', '--format-version', '1', '--locked'))
@@ -48,28 +63,31 @@ def main():
     subprocess.run(command, cwd=ROOT, env=environment, check=True)
     require(not output('git', 'status', '--porcelain'), 'Build changed tracked source; inspect it before packaging again.')
     require(output('git', 'rev-parse', 'HEAD') == commit, 'Source commit changed during the build.')
-    bundle = Path(metadata['target_directory']) / 'release/bundle/macos/Hanni MVP.app'
+    bundle = Path(metadata['target_directory']) / 'release/bundle/macos/Cicada.app'
     with (bundle / 'Contents/Info.plist').open('rb') as file:
         info = plistlib.load(file)
     require(info['CFBundleIdentifier'] == config['identifier'] and
-            info['CFBundleShortVersionString'] == config['version'], 'Bundle identity or version differs.')
+            info['CFBundleShortVersionString'] == config['version'] and
+            info['CFBundleExecutable'] == config['mainBinaryName'] and
+            info.get('CFBundleName') == 'Cicada', 'Bundle identity, name or version differs.')
     subprocess.run(['codesign', '--verify', '--deep', '--strict', str(bundle)], check=True)
     directory = ROOT / '.local/mac-package' / commit[:12]
     directory.mkdir(parents=True, exist_ok=True)
-    destination = directory / 'Hanni MVP.app'
+    destination = directory / 'Cicada.app'
     require(not destination.exists(), 'This commit already has a package; inspect the existing artifact.')
     subprocess.run(['ditto', str(bundle), str(destination)], check=True)
     hashes = {}
     for path in sorted(destination.rglob('*')):
         if path.is_file() and not path.is_symlink():
             hashes[path.relative_to(destination).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
-    archive = directory / 'Hanni MVP-macos.zip'
+    archive = directory / 'Cicada-macos.zip'
     subprocess.run(['ditto', '-c', '-k', '--sequesterRsrc', '--keepParent',
                     str(destination), str(archive)], check=True)
     if args.updater:
         import shutil
         updater = bundle.with_name(bundle.name + '.tar.gz')
         require(updater.is_file(), 'Tauri did not create the macOS updater archive.')
+        verify_updater_archive(updater)
         shutil.copyfile(updater, directory / updater.name)
     manifest = {
         'schema_version': 1, 'application': config['productName'], 'identifier': config['identifier'],

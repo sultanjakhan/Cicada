@@ -9,9 +9,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Cannot identify the source commit.' }
     if (& git status --porcelain) { throw 'Commit source changes before packaging.' }
     $origin = (& git remote get-url origin).Trim()
-    if ($origin -notmatch '/hanni-mvp(?:\.git)?$') { throw 'Build this package from the independent hanni-mvp repository.' }
+    if ($origin -cnotmatch '/Cicada(?:\.git)?$') { throw 'Build this package from the independent Cicada repository.' }
     $config = Get-Content -LiteralPath 'src-tauri/tauri.conf.json' -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($config.identifier -ne 'app.hanni.mvp' -or $config.productName -ne 'Hanni MVP') { throw 'Unexpected application identity.' }
+    if ($config.identifier -ne 'app.hanni.mvp' -or $config.productName -ne 'Cicada' -or $config.mainBinaryName -ne 'hanni-mvp') { throw 'Unexpected application identity.' }
     $metadata = & cargo metadata --manifest-path src-tauri/Cargo.toml --no-deps --format-version 1 --locked | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0) { throw 'Cannot identify the Cargo output directory.' }
     & .\node_modules\.bin\tauri.cmd build --debug --bundles nsis --ci
@@ -24,7 +24,7 @@ try {
     if ($installers.Count -ne 1) { throw 'Expected exactly one Windows x64 installer for this version.' }
     $packageDirectory = Join-Path $repository ('.local/windows-package/' + $sourceCommit.Substring(0, 12))
     New-Item -ItemType Directory -Path $packageDirectory -Force | Out-Null
-    $installerName = "Hanni-MVP-$($config.version)-windows-x64-setup.exe"
+    $installerName = "Cicada-$($config.version)-windows-x64-setup.exe"
     $installerPath = Join-Path $packageDirectory $installerName
     Copy-Item -LiteralPath $installers[0].FullName -Destination $installerPath
     $manifest = [ordered]@{

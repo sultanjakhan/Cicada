@@ -244,7 +244,7 @@ async fn fetch(
     mut progress: impl FnMut(u64),
 ) -> Result<Vec<u8>, String> {
     let client = reqwest::Client::builder()
-        .user_agent(concat!("Hanni-MVP-Updater/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("Cicada-Updater/", env!("CARGO_PKG_VERSION")))
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(15))
         .timeout(Duration::from_secs(180))
@@ -493,6 +493,18 @@ pub fn start(app: AppHandle) {
     });
 }
 
+#[cfg(windows)]
+fn installed_windows_binary() -> Option<std::path::PathBuf> {
+    let local = std::path::PathBuf::from(std::env::var_os("LOCALAPPDATA")?);
+    let executable = std::env::current_exe().ok()?;
+    // Tauri's older current-user installer used the first path. Existing
+    // installations can also have the Programs path; both retain the profile.
+    [local.join("Hanni MVP"), local.join("Programs").join("Hanni MVP")]
+        .into_iter()
+        .map(|folder| folder.join("hanni-mvp.exe"))
+        .find(|expected| expected == &executable && expected.is_file())
+}
+
 /// Enrol only the installed current-user binary.  Debug/QA profiles and a
 /// nonstandard data directory never create persistent OS tasks.
 pub fn enroll_desktop_task(app: AppHandle) {
@@ -520,17 +532,7 @@ pub fn enroll_desktop_task(app: AppHandle) {
         {
             return;
         }
-        let Ok(local) = std::env::var("LOCALAPPDATA") else {
-            return;
-        };
-        let expected = std::path::PathBuf::from(local)
-            .join("Programs")
-            .join("Hanni MVP")
-            .join("hanni-mvp.exe");
-        let Ok(exe) = std::env::current_exe() else {
-            return;
-        };
-        if exe != expected || !expected.is_file() {
+        let Some(expected) = installed_windows_binary() else {
             return;
         }
         let Some(system_root) = std::env::var_os("SystemRoot") else {
@@ -659,10 +661,7 @@ fn auto_install_allowed(app: &AppHandle, state: &UpdateState) -> Result<(), Stri
             .path()
             .app_data_dir()
             .map_err(|_| "Не удалось проверить профиль.")?;
-        let expected = std::env::var_os("LOCALAPPDATA")
-            .map(std::path::PathBuf::from)
-            .map(|p| p.join("Programs").join("Hanni MVP").join("hanni-mvp.exe"));
-        if crate::app_data_dir(app)? != standard || std::env::current_exe().ok() != expected {
+        if crate::app_data_dir(app)? != standard || installed_windows_binary().is_none() {
             return Err(
                 "Автообновление отложено: используется отдельная копия или профиль проверки."
                     .into(),

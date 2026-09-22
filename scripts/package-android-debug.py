@@ -110,10 +110,10 @@ def main():
     commit = output('git', 'rev-parse', 'HEAD')
     require(not output('git', 'status', '--porcelain'), 'Commit source changes before packaging.')
     origin = output('git', 'remote', 'get-url', 'origin')
-    require(origin.removesuffix('.git').endswith('/hanni-mvp'),
-            'Expected the independent hanni-mvp repository.')
+    require(origin.removesuffix('.git').endswith('/Cicada'),
+            'Expected the independent Cicada repository.')
     config = json.loads((ROOT / 'src-tauri/tauri.conf.json').read_text(encoding='utf-8'))
-    require(config.get('identifier') == 'app.hanni.mvp' and config.get('productName') == 'Hanni MVP',
+    require(config.get('identifier') == 'app.hanni.mvp' and config.get('productName') == 'Cicada',
             'Unexpected application identity.')
     version = config.get('version')
     version_match = re.fullmatch(r'(\d+)\.(\d+)\.(\d+)', version or '')
@@ -186,7 +186,7 @@ def main():
 
     directory = ROOT / '.local/android-package' / commit[:12]
     directory.mkdir(parents=True, exist_ok=True)
-    destination = directory / f'Hanni-MVP-{version}-android-arm64-debug-candidate.apk'
+    destination = directory / f'Cicada-{version}-android-arm64-debug-candidate.apk'
     require(not destination.exists(), 'This commit already has an Android candidate; inspect the existing artifact.')
     shutil.copyfile(apk, destination)
     manifest = {

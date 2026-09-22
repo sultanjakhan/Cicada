@@ -33,7 +33,7 @@ jobs:
           from pathlib import Path
           config = json.loads(Path('src-tauri/tauri.conf.json').read_text())
           window = config['app']['windows'][0]
-          window.update(title='Hanni MVP Execution QA')
+          window.update(title='Cicada Execution QA')
           override = {'identifier': 'app.hanni.mvp.qa.exec' + os.environ['GITHUB_SHA'][:8],
                       'build': {'devUrl': 'http://127.0.0.1:1447'},
                       'app': {'windows': [window]}}
@@ -52,14 +52,14 @@ jobs:
           root = Path('.local/macos-qa')
           config = json.loads(Path('src-tauri/tauri.conf.json').read_text())
           override = json.loads(os.environ['TAURI_CONFIG'])
-          bundle = root / 'Hanni MVP Execution QA.app'
+          bundle = root / 'Cicada Execution QA.app'
           binary = bundle / 'Contents/MacOS/hanni-mvp'
           binary.parent.mkdir(parents=True)
           shutil.copy2('src-tauri/target/debug/hanni-mvp', binary)
           with (bundle / 'Contents/Info.plist').open('wb') as stream:
               plistlib.dump({'CFBundleExecutable': 'hanni-mvp',
                             'CFBundleIdentifier': override['identifier'],
-                            'CFBundleName': 'Hanni MVP Execution QA',
+                            'CFBundleName': 'Cicada Execution QA',
                             'CFBundlePackageType': 'APPL',
                             'CFBundleShortVersionString': config['version'],
                             'CFBundleVersion': config['version'],
