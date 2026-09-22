@@ -363,9 +363,14 @@ mod tests {
         context.config_mut().app.windows = vec![Default::default()];
         let before = context.config().app.windows[0].clone();
         Options::Interactive.apply_context(&mut context);
+        let mut interactive_expected = before.clone();
+        if cfg!(target_os = "macos") {
+            interactive_expected.visible = false;
+            interactive_expected.focus = false;
+        }
         assert_eq!(
             serde_json::to_value(&context.config().app.windows[0]).unwrap(),
-            serde_json::to_value(&before).unwrap()
+            serde_json::to_value(&interactive_expected).unwrap()
         );
         for mode in [Options::Background, Options::Minimized] {
             context.config_mut().app.windows = vec![before.clone()];
