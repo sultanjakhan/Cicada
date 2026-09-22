@@ -179,9 +179,7 @@ impl Options {
             let status = crate::mvp_sync::mvp_sync_status(app.clone())
                 .await
                 .map_err(|_| "mvp_sync_check_failed")?;
-            if status["configured"] != true || status["enabled"] != true {
-                return Err("mvp_sync_not_enabled");
-            }
+            require_sync_enabled(&status)?;
             if status["running"] == false {
                 break status;
             }
@@ -191,9 +189,7 @@ impl Options {
             .await
             .map_err(|_| "mvp_sync_check_failed")?;
         loop {
-            if status["configured"] != true || status["enabled"] != true {
-                return Err("mvp_sync_not_enabled");
-            }
+            require_sync_enabled(&status)?;
             if fresh_and_drained(&status, &initial) {
                 return Ok(status);
             }
@@ -259,6 +255,22 @@ fn fresh_and_drained(status: &Value, initial: &Value) -> bool {
         && status["pull_more"] == false
         && status["running"] == false
         && status["last_error"].is_null()
+}
+
+fn require_sync_enabled(status: &Value) -> Result<(), &'static str> {
+    match status["last_error"].as_str() {
+        Some("mvp_sync_credentials_unavailable") => return Err("mvp_sync_credentials_unavailable"),
+        Some("mvp_sync_credentials_invalid") => return Err("mvp_sync_credentials_invalid"),
+        Some("mvp_sync_credentials_path_invalid") => {
+            return Err("mvp_sync_credentials_path_invalid")
+        }
+        Some("mvp_sync_platform_unsupported") => return Err("mvp_sync_platform_unsupported"),
+        _ => {}
+    }
+    if status["configured"] != true || status["enabled"] != true {
+        return Err("mvp_sync_not_enabled");
+    }
+    Ok(())
 }
 
 fn safe_status(status: &Value) -> Value {
@@ -392,6 +404,50 @@ mod tests {
             .unwrap()
             .remove("pull_more");
         assert!(!fresh_and_drained(&missing_page_state, &initial));
+    }
+
+    #[test]
+    fn sync_check_preserves_known_credential_errors_without_echoing_unknown_values() {
+        for (error, expected) in [
+            (
+                "mvp_sync_credentials_unavailable",
+                "mvp_sync_credentials_unavailable",
+            ),
+            (
+                "mvp_sync_credentials_invalid",
+                "mvp_sync_credentials_invalid",
+            ),
+            (
+                "mvp_sync_credentials_path_invalid",
+                "mvp_sync_credentials_path_invalid",
+            ),
+            (
+                "mvp_sync_platform_unsupported",
+                "mvp_sync_platform_unsupported",
+            ),
+        ] {
+            let status = json!({"configured": false, "enabled": true, "last_error": error});
+            assert_eq!(require_sync_enabled(&status), Err(expected));
+        }
+
+        let disabled = json!({"configured": true, "enabled": false, "last_error": null});
+        assert_eq!(require_sync_enabled(&disabled), Err("mvp_sync_not_enabled"));
+
+        let unconfigured = json!({"configured": false, "enabled": false, "last_error": null});
+        assert_eq!(
+            require_sync_enabled(&unconfigured),
+            Err("mvp_sync_not_enabled")
+        );
+
+        let unknown = json!({
+            "configured": false,
+            "enabled": true,
+            "last_error": "private-transport-value"
+        });
+        assert_eq!(require_sync_enabled(&unknown), Err("mvp_sync_not_enabled"));
+
+        let ready = json!({"configured": true, "enabled": true, "last_error": null});
+        assert_eq!(require_sync_enabled(&ready), Ok(()));
     }
 
     #[test]
