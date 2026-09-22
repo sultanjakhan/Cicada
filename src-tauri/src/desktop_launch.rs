@@ -141,6 +141,7 @@ impl Options {
         #[cfg(target_os = "macos")]
         if matches!(event, tauri::RunEvent::Exit) {
             use tauri::Manager;
+            crate::window_placement_macos::persist_for_exit(app);
             // Tauri starts the replacement before process exit and retains managed
             // state. Release the file lock only at the final, non-cancellable exit.
             if let Some(lock) = app.try_state::<crate::AppInstanceLock>() {

@@ -39,7 +39,7 @@ hanni-mvp-android-installer = { path = "plugins/android-installer" }
 security-framework = "3.7"
 core-foundation = "0.10"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSWindow", "NSResponder", "NSScreen"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSString", "NSGeometry", "NSArray", "NSEnumerator"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSGeometry", "NSArray", "NSEnumerator"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "=0.61.3", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
