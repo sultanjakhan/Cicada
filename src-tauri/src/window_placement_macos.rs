@@ -52,24 +52,27 @@ fn state_path(data_dir: &Path, debug: bool) -> PathBuf {
     })
 }
 
-fn title_bar_visible(frame: NSRect, content: NSRect, visible: NSRect) -> bool {
+fn title_bar_visible(frame: NSRect, title_height: f64, visible: NSRect) -> bool {
     let left = frame.origin.x.max(visible.origin.x);
     let right = (frame.origin.x + frame.size.width).min(visible.origin.x + visible.size.width);
     let top = frame.origin.y + frame.size.height;
-    let title_bottom = content.origin.y + content.size.height;
+    let title_bottom = top - title_height;
     let visible_title_height =
         top.min(visible.origin.y + visible.size.height) - title_bottom.max(visible.origin.y);
     right - left >= 120.0
-        && top > title_bottom
-        && visible_title_height >= (top - title_bottom) / 2.0
+        && title_height > 0.0
+        && visible_title_height >= title_height / 2.0
         && top >= visible.origin.y + 40.0
 }
 
 fn on_available_screen(window: &NSWindow, frame: NSRect, main_thread: MainThreadMarker) -> bool {
-    let content = window.contentRectForFrameRect(frame);
+    // Tauri uses FullSizeContentView; contentRectForFrameRect then spans the
+    // title bar, while contentLayoutRect excludes its obscured area.
+    let layout = window.contentLayoutRect();
+    let title_height = window.frame().size.height - layout.origin.y - layout.size.height;
     NSScreen::screens(main_thread)
         .iter()
-        .any(|screen| title_bar_visible(frame, content, screen.visibleFrame()))
+        .any(|screen| title_bar_visible(frame, title_height, screen.visibleFrame()))
 }
 
 fn read_frame(path: &Path) -> Option<Frame> {
@@ -285,24 +288,23 @@ mod tests {
         let left = NSRect::new(NSPoint::new(-1920.0, 0.0), NSSize::new(1920.0, 1040.0));
         let right = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1920.0, 1040.0));
         let on_left = NSRect::new(NSPoint::new(-1800.0, 100.0), NSSize::new(760.0, 720.0));
-        let content = NSRect::new(NSPoint::new(-1800.0, 100.0), NSSize::new(760.0, 692.0));
-        assert!(title_bar_visible(on_left, content, left));
-        assert!(!title_bar_visible(on_left, content, right));
+        assert!(title_bar_visible(on_left, 28.0, left));
+        assert!(!title_bar_visible(on_left, 28.0, right));
     }
 
     #[test]
     fn title_bar_near_menu_edge_is_visible_but_detached_window_is_not() {
         let visible = NSRect::new(NSPoint::new(70.0, 0.0), NSSize::new(1658.0, 1084.0));
+        let baseline = NSRect::new(NSPoint::new(484.0, 198.0), NSSize::new(760.0, 720.0));
+        assert!(title_bar_visible(baseline, 28.0, visible));
+
         let near_menu = NSRect::new(NSPoint::new(962.0, 367.0), NSSize::new(760.0, 720.0));
-        let content = NSRect::new(NSPoint::new(962.0, 367.0), NSSize::new(760.0, 692.0));
-        assert!(title_bar_visible(near_menu, content, visible));
+        assert!(title_bar_visible(near_menu, 28.0, visible));
 
         let hidden_title = NSRect::new(NSPoint::new(962.0, 400.0), NSSize::new(760.0, 720.0));
-        let hidden_content = NSRect::new(NSPoint::new(962.0, 400.0), NSSize::new(760.0, 692.0));
-        assert!(!title_bar_visible(hidden_title, hidden_content, visible));
+        assert!(!title_bar_visible(hidden_title, 28.0, visible));
 
         let detached = NSRect::new(NSPoint::new(4000.0, 367.0), NSSize::new(760.0, 720.0));
-        let detached_content = NSRect::new(NSPoint::new(4000.0, 367.0), NSSize::new(760.0, 692.0));
-        assert!(!title_bar_visible(detached, detached_content, visible));
+        assert!(!title_bar_visible(detached, 28.0, visible));
     }
 }
