@@ -68,8 +68,8 @@
   background: var(--accent-blue);
 }
 
-.tab-item-icon { flex-shrink: 0; width: 21px; height: 21px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 19px; }
-.tab-item-icon svg { width: 21px; height: 21px; }
+.tab-item-icon { flex-shrink: 0; width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 19px; }
+.tab-item-icon svg { width: 32px; height: 32px; }
 .tab-item-icon-emoji { font-size: 18px; }
 .tab-item.active .tab-item-icon { color: var(--text-primary); }
 .tab-item-label { display: none; }

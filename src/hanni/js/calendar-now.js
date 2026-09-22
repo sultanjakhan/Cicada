@@ -4,6 +4,7 @@ import { loadCategoryWeights } from './task-picker-view.js';
 import { ICONS } from './icons.js';
 import { createCalendarDialog } from './calendar-dialog.js';
 import { startCalendarExecution } from './calendar-execution.js';
+import { mountCalendarContextMenu } from './calendar-context-menu.js';
 
 const buttonContent = (icon, label) => `<span class="calendar-now__button-icon" aria-hidden="true">${ICONS[icon]}</span><span data-action-label>${label}</span>`;
 
@@ -71,6 +72,17 @@ export function mountCalendarNow(element, dependencies = {}) {
   let taskListExpanded = false;
   let secondsCommandAvailable = true;
   let summaryGoalId = undefined, summary = null, summaryRevision = 0;
+  const header = dependencies.headerElement;
+  if (header) {
+    header.classList.add('calendar-current-task');
+    header.hidden = true;
+    header.innerHTML = `<div class="calendar-current-task__copy"><span data-header-status>Текущая задача</span><button type="button" data-header-action="details" aria-haspopup="dialog"></button><span data-header-time hidden></span></div><button type="button" data-header-action="toggle"></button><button type="button" data-record-menu aria-label="Действия с текущей задачей" aria-haspopup="menu" aria-expanded="false">⋯</button><div class="calendar-current-task__error" hidden><p role="alert" data-header-error></p><button type="button" data-header-action="retry">Повторить</button></div>`;
+  }
+  const headerTitle = header?.querySelector('[data-header-action="details"]');
+  const headerToggle = header?.querySelector('[data-header-action="toggle"]');
+  const headerRetry = header?.querySelector('[data-header-action="retry"]');
+  const headerMore = header?.querySelector('[data-record-menu]');
+  const hideTaskCard = dependencies.hideTaskCard === true;
 
   element.classList.add('calendar-now');
   element.classList.toggle('calendar-now--compact', dependencies.compact === true);
@@ -117,6 +129,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     <div data-ui="error" class="calendar-now__error" role="alert" hidden><p data-ui="error-text"></p><button type="button" data-action="retry" class="calendar-now__secondary">Повторить</button></div>
     <span data-ui="live" class="calendar-now__sr" role="status" aria-live="polite"></span>`;
   const ui = Object.fromEntries([...element.querySelectorAll('[data-ui]')].map(node => [node.dataset.ui, node]));
+  ui.card.hidden = hideTaskCard;
   const actions = Object.fromEntries([...element.querySelectorAll('[data-action]')].map(node => [node.dataset.action, node]));
   const announce = text => { if (!disposed) ui.live.textContent = text; };
   const localDate = () => dateOf(clock());
@@ -247,6 +260,36 @@ export function mountCalendarNow(element, dependencies = {}) {
       const actual = `${elapsedMinutes()} мин`;
       ui.meta.textContent = currentState === 'completed' ? `Учтено ${actual}` : task?.duration_minutes ? `${actual} из ${task.duration_minutes} мин` : `Учтено ${actual}`;
     } else ui.meta.textContent = task?.duration_minutes ? `${task.duration_minutes} мин` : '';
+    renderHeader();
+  }
+  function headerTask() {
+    if (!snapshot || saved.completed) return null;
+    return saved.execution?.task || (saved.selectionMode === 'manual' ? chosenTask() : null);
+  }
+  function renderHeader() {
+    if (!header || disposed) return;
+    const task = headerTask();
+    header.hidden = !task;
+    header.dataset.contextRecord = keyOf(task);
+    header.dataset.state = currentState;
+    header.setAttribute('aria-busy', String(busy || reading));
+    header.querySelector('[data-header-status]').textContent = 'Текущая задача' + ({ active:' · В работе', paused:' · На паузе' }[currentState] || '');
+    headerTitle.hidden = !task;
+    headerTitle.textContent = task?.title || '';
+    headerTitle.title = task?.title || '';
+    headerTitle.disabled = busy || reading || !!failure;
+    headerToggle.hidden = !task;
+    headerToggle.textContent = currentState === 'active' ? 'Пауза' : saved.execution ? 'Продолжить' : 'Начать';
+    headerToggle.disabled = busy || reading || !!failure;
+    headerMore.hidden = !task || !saved.execution;
+    headerMore.disabled = busy || reading || !!failure;
+    const time = header.querySelector('[data-header-time]');
+    time.hidden = !task || !saved.execution;
+    time.textContent = saved.execution ? `${elapsedMinutes()} мин` : '';
+    const error = header.querySelector('[data-header-error]');
+    error.parentElement.hidden = !failure;
+    error.textContent = failure?.message || '';
+    headerRetry.disabled = busy || reading;
   }
   function options(select, values, selected) {
     select.replaceChildren(...values.map(([value, label]) => {
@@ -255,7 +298,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     select.value = selected;
   }
   function openGoalPicker(trigger) {
-    if (goalPicker || busy || reading || failure || !snapshot || snapshot.active || saved.completed) return;
+    if (goalPicker || busy || reading || failure || !snapshot || snapshot.active || (!hideTaskCard && saved.completed)) return;
     closePicker();
     const editor = createCalendarDialog({ document, title: 'Главная цель', hint: 'Выбери то, на чём хочешь сосредоточиться.',
       isCurrent: () => !disposed && element.isConnected,
@@ -308,7 +351,7 @@ export function mountCalendarNow(element, dependencies = {}) {
       empty.hidden = goals.length > 0;
       empty.textContent = filter ? 'По этому названию целей не найдено.' : 'Сохранённых целей пока нет. Добавь цель в разделе «Цели».';
     }
-    list.querySelectorAll('button').forEach(button => { button.disabled = !!snapshot.active || !!saved.completed || !!failure; });
+    list.querySelectorAll('button').forEach(button => { button.disabled = !!snapshot.active || (!hideTaskCard && !!saved.completed) || !!failure; });
     editor.setPending(picker.working || busy || reading);
     if (restoreChoice !== undefined && !editor.pending) [...list.children].find(button => button.dataset.goalChoice === restoreChoice)?.focus();
     if (!picker.working && failure && picker.reportedFailure !== failure) {
@@ -425,7 +468,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     actions['browse-goals'].parentElement.hidden = !!goal || !snapshot;
     actions['open-goal'].classList.toggle('calendar-now__primary', !goal);
     actions['open-goal'].classList.toggle('calendar-now__quiet', !!goal);
-    actions['open-goal'].disabled = !!active || busy || reading || !!failure || !snapshot || !!saved.completed;
+    actions['open-goal'].disabled = !!active || busy || reading || !!failure || !snapshot || (!hideTaskCard && !!saved.completed);
     actions['open-goal'].title = active ? 'Для смены цели поставь задачу на паузу' : '';
     const status = { active: 'В работе', paused: 'На паузе', completed: 'Завершено' }[currentState];
     ui.status.textContent = status || ''; ui.status.hidden = !status;
@@ -455,7 +498,8 @@ export function mountCalendarNow(element, dependencies = {}) {
     actions.retry.disabled = busy || reading;
     renderGoalPicker();
     renderTime();
-    dependencies.onCurrentTaskChange?.({ key: keyOf(task), state: currentState });
+    dependencies.onCurrentTaskChange?.({ key: keyOf(hideTaskCard ? headerTask() : task), state: currentState });
+    dependencies.onLauncherStateChange?.(launcherState());
   }
   async function persist() {
     needsSave = true;
@@ -605,6 +649,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     if (disposed) return;
     if (busy || readFlight) { readAgain = true; return readFlight; }
     if (remotePending && !canApplyRemote()) return;
+    const headerFocus = header?.contains(document.activeElement) ? document.activeElement : null;
     reading = true; render();
     readFlight = (async () => {
       try { await fetchSnapshot(); if (failure?.operation.kind === 'refresh') failure = null; }
@@ -613,13 +658,19 @@ export function mountCalendarNow(element, dependencies = {}) {
         if (stale) { remotePending = true; needsSave = false; }
         if (!failure) failure = { operation: { kind: 'refresh', phase: 'refresh' }, message: stale ? 'Выбор изменён на другом устройстве. Повтори загрузку актуального состояния.' : 'Не удалось обновить текущую задачу. Последний выбор сохранён.' };
       }
-      finally { reading = false; readFlight = null; render(); if (readAgain && !busy && !disposed) { readAgain = false; void refresh(); } }
+      finally {
+        reading = false; readFlight = null; render();
+        // Native WebViews can blur a focused button when a refresh disables it.
+        if (!disposed && headerFocus?.isConnected && !headerFocus.disabled && !headerFocus.closest('[hidden]') && document.activeElement === document.body) headerFocus.focus({ preventScroll:true });
+        if (readAgain && !busy && !disposed) { readAgain = false; void refresh(); }
+      }
     })();
     return readFlight;
   }
   async function perform(operation) {
     if (operation.kind === 'goal') {
       if (snapshot.active || await api('get_active_block', {})) throw new Error('active');
+      if (hideTaskCard) saved.completed = null;
       if (operation.goalId !== saved.goalId) {
         saved.goalId = operation.goalId;
         if (!saved.execution) { saved.selection = null; saved.selectionMode = 'auto'; }
@@ -698,11 +749,22 @@ export function mountCalendarNow(element, dependencies = {}) {
         window.dispatchEvent(new window.CustomEvent('hanni:calendar-refresh'));
       }
       if (!disposed) {
-        if (!goalPicker) {
+        if (operation.origin === 'header') {
+          const focused = document.activeElement;
+          const restore = focused === document.body || header?.contains(focused) || (element.contains(focused) && focused.closest('[hidden]'));
+          if (restore) {
+            if (!header?.hidden) (failure ? headerRetry : headerToggle).focus({ preventScroll:true });
+            else dependencies.returnHeaderFocus?.();
+          }
+        } else if (operation.origin !== 'launcher' && !goalPicker && !element.closest('[hidden]')) {
           if (failure) actions.retry.focus();
+          else if (hideTaskCard) actions['open-goal'].focus({ preventScroll:true });
           else (ui.card.querySelector('.calendar-now__actions button:not([hidden])') || ui.card).focus();
         }
-        if (!failure && operation.kind === 'switch-task' && selectedGoal()) openPicker('task', actions['open-task']);
+        if (!failure && operation.kind === 'switch-task') {
+          if (hideTaskCard) dependencies.openTaskLauncher?.();
+          else if (selectedGoal()) openPicker('task', actions['open-task']);
+        }
         if (['start', 'return', 'pause', 'finish', 'switch-task'].includes(operation.kind) && operation.phase === 'refresh') {
           window.dispatchEvent(new window.Event('task-state-changed'));
           window.dispatchEvent(new window.CustomEvent('hanni:calendar-refresh'));
@@ -711,6 +773,23 @@ export function mountCalendarNow(element, dependencies = {}) {
       }
     }
   }
+  function openTaskDetails(returnFocus) {
+    const task = chosenTask();
+    if (task) dependencies.openTaskDetails?.({ ...task, completed: !!saved.completed, is_active: currentState === 'active', status_extra: saved.completed ? 'done' : 'task', actual_minutes: elapsedMinutes() }, returnFocus);
+  }
+  const onHeaderClick = event => {
+    const button = event.target.closest('[data-header-action]');
+    if (!button || !header.contains(button) || button.disabled || disposed || busy || reading) return;
+    if (button === headerRetry) { if (failure) void run({ ...failure.operation, origin:'header' }); return; }
+    const task = headerTask();
+    if (!task || failure) return;
+    if (button === headerTitle) {
+      openTaskDetails(() => { if (!disposed && header.isConnected && !header.hidden) headerTitle.focus({ preventScroll:true }); });
+    } else if (button === headerToggle) {
+      if (currentState === 'active' && saved.execution) void run({ kind:'pause', execution:structuredClone(saved.execution), origin:'header' });
+      else void run({ kind:'start', task:taskOf(task), origin:'header' });
+    }
+  };
   const onClick = event => {
     const button = event.target.closest('[data-action]'); if (!button || !element.contains(button) || button.disabled) return;
     const action = button.dataset.action;
@@ -718,8 +797,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     if (action === 'open-goal' || action === 'choose-goal') { openPicker('goal', button); return; }
     if (action === 'open-task') { openPicker('task', button); return; }
     if (action === 'task-details') {
-      const task = chosenTask();
-      if (task) dependencies.openTaskDetails?.({ ...task, completed: !!saved.completed, is_active: currentState === 'active', status_extra: saved.completed ? 'done' : 'task', actual_minutes: elapsedMinutes() }, () => {
+      openTaskDetails(() => {
         if (!disposed && element.isConnected) (actions['task-details'].hidden ? ui.card : actions['task-details']).focus();
       });
       return;
@@ -768,17 +846,40 @@ export function mountCalendarNow(element, dependencies = {}) {
     void refresh();
   };
   const onStarted = async event => {
-    // A direct start from Today should bring its live controls into view.
-    // A routine dialog keeps its own controls and must retain focus.
-    event.preventDefault();
+    // A dialog retains its own controls; inline starts can hand focus to the header.
+    const focused = document.activeElement;
+    const handoff = (hideTaskCard ? header?.isConnected : !element.closest('[hidden]')) && !document.querySelector('dialog[open]');
+    if (handoff) event.preventDefault();
     await refresh();
     while(readFlight&&!disposed)await readFlight;
-    if(!disposed&&!busy&&!document.querySelector('dialog[open]')){
-      ui.card.scrollIntoView?.({block:'nearest'});
-      actions.pause.focus({preventScroll:true});
+    if(handoff&&!disposed&&!busy&&!document.querySelector('dialog[open]')){
+      if (hideTaskCard) {
+        if (!header.hidden && (document.activeElement === focused || document.activeElement === document.body || header.contains(document.activeElement))) headerToggle.focus({ preventScroll:true });
+      } else {
+        ui.card.scrollIntoView?.({block:'nearest'});
+        actions.pause.focus({preventScroll:true});
+      }
     }
   };
   element.addEventListener('click', onClick); element.addEventListener('submit', onSubmit); element.addEventListener('keydown', onKeydown);
+  header?.addEventListener('click', onHeaderClick);
+  const disposeHeaderMenu = header && mountCalendarContextMenu(header, {
+    getRecord:() => !busy && !reading && !failure ? headerTask() : null,
+    getActions:() => {
+      const execution = saved.execution && structuredClone(saved.execution);
+      const previous = saved.returnTo && taskOf(saved.returnTo);
+      const items = execution ? [
+        { id:'finish', label:'Завершить задачу', run:() => run({ kind:'finish', execution, origin:'header' }) },
+        { id:'switch-task', label:'Сменить задачу', dialog:true, run:() => run({ kind:'switch-task', execution, origin:'header' }) },
+      ] : [];
+      if (previous && keyOf(previous) !== keyOf(headerTask())) items.push({ id:'return', label:`Вернуться: ${previous.title}`, dialog:true, run:() => run({ kind:'return', task:previous, origin:'header' }) });
+      return items;
+    },
+    restoreFocus:() => {
+      if (header.hidden) dependencies.returnHeaderFocus?.();
+      else (failure ? headerRetry : headerMore.hidden ? headerToggle : headerMore).focus({ preventScroll:true });
+    },
+  });
   window.addEventListener('task-state-changed', onExternal);
   window.addEventListener('hanni:execution-started', onStarted);
   window.addEventListener('focus', onExternal);
@@ -788,6 +889,8 @@ export function mountCalendarNow(element, dependencies = {}) {
     summaryRevision++; summary?.dispose();
     disposed = true; stateVersion++; goalDialog?.dispose(); goalPicker?.editor.dispose(); window.clearInterval(timer);
     element.removeEventListener('click', onClick); element.removeEventListener('submit', onSubmit); element.removeEventListener('keydown', onKeydown);
+    header?.removeEventListener('click', onHeaderClick);
+    disposeHeaderMenu?.();
     window.removeEventListener('task-state-changed', onExternal); window.removeEventListener('focus', onExternal);
     window.removeEventListener('hanni:execution-started', onStarted);
   };
@@ -799,12 +902,26 @@ export function mountCalendarNow(element, dependencies = {}) {
     const goalId = value == null ? null : String(value);
     if (disposed || busy || reading || failure || !snapshot) throw new Error('Не удалось обновить текущую задачу. Повтори выбор.');
     if (snapshot.active) throw new Error('Для смены цели поставь текущую задачу на паузу.');
-    if (saved.completed) throw new Error('Нажми «Следующая задача» перед сменой цели.');
+    if (saved.completed && !hideTaskCard) throw new Error('Нажми «Следующая задача» перед сменой цели.');
     if (goalId && !snapshot.goals.some(goal => String(goal.id) === goalId)) throw new Error('Эта цель больше недоступна.');
     if (goalId === saved.goalId) return;
     await run({ kind: 'goal', goalId });
     if (failure) throw new Error(failure.message);
   }
   dispose.selectGoal = selectGoal;
+  function launcherState() {
+    return { returnTask:saved.returnTo ? taskOf(saved.returnTo) : null, error:failure?.message || '', busy:busy || reading };
+  }
+  async function runFromLauncher(kind) {
+    if (disposed || busy || reading) throw new Error('Дождись завершения текущего действия.');
+    if (kind === 'return') {
+      if (failure || !saved.returnTo) throw new Error('Предыдущая задача сейчас недоступна. Повтори загрузку.');
+      await run({ kind:'return', task:taskOf(saved.returnTo), origin:'launcher' });
+    } else if (failure) await run({ ...failure.operation, origin:'launcher' });
+    if (failure) throw new Error(failure.message);
+  }
+  dispose.getLauncherState = launcherState;
+  dispose.returnTo = () => runFromLauncher('return');
+  dispose.retry = () => runFromLauncher('retry');
   return dispose;
 }

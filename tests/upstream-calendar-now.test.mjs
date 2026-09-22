@@ -19,7 +19,7 @@ const{
 = require('jsdom');
 const toData = source => 'data:text/javascript;base64,' + Buffer.from(source).toString('base64');
 const source = fs.readFileSync(path.join(root, 'src/hanni/js/calendar-now.js'), 'utf8') .replace(/^import .*state\.js';$/m, 'const defaultInvoke = () => { throw new Error("Inject invoke in tests"); };') .replace(/^import .*task-picker-sort\.js';$/m, 'const defaultRankTasks = items => items;') .replace(/^import .*task-picker-view\.js';$/m, 'const loadCategoryWeights = async () => ({});') .replace("'./icons.js'", JSON.stringify(toData(fs.readFileSync(path.join(root, 'src/hanni/js/icons.js'), 'utf8')))) .replace("'./calendar-dialog.js'", JSON.stringify(toData(fs.readFileSync(path.join(root, 'src/hanni/js/calendar-dialog.js'), 'utf8'))));
-const modulePromise = import(toData(source.replace("'./calendar-execution.js'", JSON.stringify(new URL('../src/hanni/js/calendar-execution.js', import.meta.url).href))));
+const modulePromise = import(toData(source.replace("'./calendar-execution.js'", JSON.stringify(new URL('../src/hanni/js/calendar-execution.js', import.meta.url).href)).replace("'./calendar-context-menu.js'", JSON.stringify(new URL('../src/hanni/js/calendar-context-menu.js', import.meta.url).href))));
 const rankPromise = import(toData(fs.readFileSync(path.join(root, 'src/hanni/js/task-picker-sort.js'), 'utf8')));
 const clone = value => structuredClone(value);
 const blank = () => ({
@@ -194,9 +194,11 @@ async function mount(t, data = backend(), dependencies ={
    const errors = [];
    dom.window.addEventListener('error', event => errors.push(event.error));
    const host = dom.window.document.getElementById('host');
+   const header = dependencies.header ? dom.window.document.createElement('div') : null;
+   if (header) host.before(header);
    const currentTasks = [];
    const cleanup = mountCalendarNow(host,{
-     invoke: data.invoke, now: () => new Date(data.now), loadWeights: async () => ({
+     invoke: data.invoke, headerElement:header, now: () => new Date(data.now), loadWeights: async () => ({
        work: 1
           }), rankTasks, onCurrentTaskChange: value => currentTasks.push(value), ...dependencies
       });
@@ -247,10 +249,162 @@ async function mount(t, data = backend(), dependencies ={
       };
    await settle();
    return{
-     dom, host, data, ui, action, settle, click, choose, refresh, cleanup, currentTasks
+     dom, host, header, data, ui, action, settle, click, choose, refresh, cleanup, currentTasks
       };
 
   }
+test('header hides empty, automatic and completed work while explicit selection opens the same details', async t => {
+  const opened = [], x = await mount(t, backend(), { header:true, openTaskDetails:(row,restore)=>opened.push({row,restore}) });
+  assert.equal(x.header.hidden, true, 'an automatic suggestion is not a selected task');
+  await x.choose('task', 'note:task-a');
+  const title = x.header.querySelector('[data-header-action="details"]');
+  assert.equal(x.header.hidden, false);
+  assert.equal(title.textContent, 'Заметки по API');
+  assert.equal(title.title, 'Заметки по API');
+  assert.equal(x.data.count('start_task_block'), 0);
+  title.focus(); title.click();
+  assert.equal(opened.at(-1).row.source_id, 'task-a');
+  assert.equal(opened.at(-1).row.is_active, false);
+  x.ui('card').focus(); opened.at(-1).restore();
+  assert.equal(x.dom.window.document.activeElement, title);
+  x.header.querySelector('[data-header-action="toggle"]').click(); await x.settle();
+  await x.click('finish');
+  assert.equal(x.header.hidden, true);
+  const empty = await mount(t, backend({ ...blank(), goalId:null }), { header:true });
+  assert.equal(empty.header.hidden, true);
+});
+
+test('hidden full surface shares header start, pause and retry without duplicate blocks or hidden focus', async t => {
+  const x = await mount(t, backend(), { header:true });
+  await x.choose('task', 'note:task-a');
+  x.host.hidden = true;
+  const toggle = x.header.querySelector('[data-header-action="toggle"]');
+  let release;
+  const pending = new Promise(resolve => { release = resolve; });
+  x.data.before.set('start_task_block', () => pending);
+  toggle.click(); toggle.click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(x.data.count('start_task_block'), 1);
+  assert.equal(toggle.disabled, true);
+  release(); await x.settle();
+  x.data.before.delete('start_task_block');
+  assert.equal(toggle.textContent, 'Пауза');
+  assert.equal(x.dom.window.document.activeElement, toggle);
+  x.data.now = new Date('2026-09-05T10:04:00');
+  toggle.click(); await x.settle();
+  assert.equal(toggle.textContent, 'Продолжить');
+  assert.equal(x.header.querySelector('[data-header-time]').textContent, '4 мин');
+  x.data.onceFail('set_ui_state');
+  toggle.click(); await x.settle();
+  const retry = x.header.querySelector('[data-header-action="retry"]');
+  assert.equal(x.header.querySelector('[data-header-error]').parentElement.hidden, false);
+  assert.equal(toggle.disabled, true);
+  assert.equal(x.dom.window.document.activeElement, retry);
+  const starts = x.data.count('start_task_block');
+  retry.click(); await x.settle();
+  assert.equal(x.data.count('start_task_block'), starts, 'save retry must not start another interval');
+  assert.equal(x.data.blocks.filter(block => block.is_active).length, 1);
+  assert.equal(x.dom.window.document.activeElement, toggle);
+  assert.equal(x.header.querySelector('[data-header-error]').parentElement.hidden, true);
+});
+
+test('unknown current work stays hidden on read failure while launcher exposes safe retry', async t => {
+  const data = backend(); data.onceFail('get_ui_state');
+  const x = await mount(t, data, { header:true });
+  x.host.hidden = true;
+  assert.equal(x.header.hidden, true);
+  assert.equal(x.header.querySelector('[data-header-action="toggle"]').hidden, true);
+  assert.match(x.cleanup.getLauncherState().error, /Не удалось обновить/);
+  await x.cleanup.retry(); await x.settle();
+  assert.equal(x.header.hidden, true, 'successful load has only an automatic suggestion');
+  assert.equal(data.count('start_task_block'), 0);
+});
+
+test('late header start preserves input focus chosen in the same pane while native execution is pending', async t => {
+  const x = await mount(t, backend(), { header:true });
+  await x.choose('task', 'note:task-a');
+  x.host.hidden = true;
+  const input = x.dom.window.document.createElement('textarea');
+  x.header.after(input);
+  let release;
+  x.data.before.set('start_task_block', () => new Promise(resolve => { release = resolve; }));
+  const toggle = x.header.querySelector('[data-header-action="toggle"]');
+  toggle.focus(); toggle.click();
+  await new Promise(resolve => setImmediate(resolve));
+  input.focus(); input.value = 'Новый текст заметки';
+  release(); await x.settle();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(x.data.count('start_task_block'), 1);
+  assert.equal(toggle.textContent, 'Пауза');
+  assert.equal(input.value, 'Новый текст заметки');
+  assert.equal(x.dom.window.document.activeElement, input);
+});
+
+test('header preserves routine step identity and occurrence across pause and resume', async t => {
+  const data = backend({ ...blank(), goalId:null });
+  const sourceId = JSON.stringify(['routine-a', '2026-09-04', 1]);
+  data.tasks.push({ source_type:'schedule', source_id:sourceId, title:'Второй шаг', completion_date:'2026-09-04', tracking_mode:'track' });
+  data.blocks.push({ id:80, source_type:'schedule', source_id:sourceId, date:'2026-09-04', completion_date:'2026-09-04', start_time:'23:59', is_active:true, duration_minutes:0 });
+  const opened = [], x = await mount(t, data, { header:true, openTaskDetails:row=>opened.push(row) });
+  x.host.hidden = true;
+  x.header.querySelector('[data-header-action="details"]').click();
+  assert.equal(opened[0].source_id, sourceId);
+  assert.equal(opened[0].completion_date, '2026-09-04');
+  const toggle = x.header.querySelector('[data-header-action="toggle"]');
+  toggle.click(); await x.settle();
+  assert.equal(toggle.textContent, 'Продолжить');
+  toggle.click(); await x.settle();
+  assert.equal(data.blocks.at(-1).source_id, sourceId);
+  assert.equal(data.blocks.at(-1).completion_date, '2026-09-04');
+  assert.equal(data.count('finish_task_block'), 0);
+});
+
+test('external execution notification never focuses a hidden full surface', async t => {
+  const x = await mount(t, backend(), { header:true });
+  await x.click('start');
+  x.host.hidden = true;
+  const toggle = x.header.querySelector('[data-header-action="toggle"]');
+  toggle.focus();
+  x.dom.window.dispatchEvent(new x.dom.window.Event('hanni:execution-started', { cancelable:true }));
+  await x.settle(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(x.dom.window.document.activeElement, toggle);
+});
+
+test('header presentation preserves goal details and allows goal selection after completed work without the removed Next button', async t => {
+  const data = backend({ ...blank(), completed:{ source_type:'event', source_id:'event-a', title:'Вопросы к интервью' } });
+  const x = await mount(t, data, { header:true, hideTaskCard:true });
+  assert.equal(x.ui('card').hidden, true);
+  assert.equal(x.host.querySelector('.calendar-now__goal').closest('[hidden]'), null);
+  assert.equal(x.ui('goal-title').textContent, 'Карьера');
+  assert.equal(x.action('open-goal').disabled, false);
+  await x.cleanup.selectGoal('goal-b');
+  assert.equal(x.ui('goal-title').textContent, 'Гардероб');
+  assert.equal(JSON.parse(data.stored).completed, null);
+  assert.equal(x.dom.window.document.activeElement, x.action('open-goal'));
+  assert.equal(data.count('start_task_block'), 0);
+});
+
+test('header menu switches and finishes an event without exposing the hidden task card', async t => {
+  let launchers = 0;
+  const x = await mount(t, backend(), { header:true, hideTaskCard:true, openTaskLauncher:()=>launchers++ });
+  await x.data.invoke('start_task_block', { sourceType:'event', sourceId:'event-a', failIfActive:true, completionDate:'2026-09-05' });
+  await x.refresh();
+  const more = x.header.querySelector('[data-record-menu]');
+  more.click();
+  assert.equal(x.data.count('start_task_block'), 1);
+  x.dom.window.document.querySelector('[data-menu-action="switch-task"]').click(); await x.settle();
+  assert.equal(launchers, 1);
+  assert.equal(x.data.count('pause_task_block'), 1);
+  assert.equal(x.cleanup.getLauncherState().returnTask.source_id, 'event-a');
+  assert.equal(x.header.hidden, true);
+  await x.cleanup.returnTo(); await x.settle();
+  more.click(); x.dom.window.document.querySelector('[data-menu-action="finish"]').click(); await x.settle();
+  assert.equal(x.data.count('finish_task_block'), 1);
+  assert.equal(x.data.tasks.find(task => task.source_id === 'event-a').completed, true);
+  assert.equal(x.header.hidden, true);
+  assert.equal(x.ui('card').hidden, true);
+});
+
 test('read-only current-task notifications track recommendation, active, paused and completed identity', async t =>{
    const x = await mount(t);
    assert.deepEqual(x.currentTasks.at(-1),{
