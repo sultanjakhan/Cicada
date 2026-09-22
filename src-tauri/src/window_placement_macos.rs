@@ -52,19 +52,24 @@ fn state_path(data_dir: &Path, debug: bool) -> PathBuf {
     })
 }
 
-fn title_bar_visible(frame: NSRect, visible: NSRect) -> bool {
+fn title_bar_visible(frame: NSRect, content: NSRect, visible: NSRect) -> bool {
     let left = frame.origin.x.max(visible.origin.x);
     let right = (frame.origin.x + frame.size.width).min(visible.origin.x + visible.size.width);
     let top = frame.origin.y + frame.size.height;
+    let title_bottom = content.origin.y + content.size.height;
+    let visible_title_height =
+        top.min(visible.origin.y + visible.size.height) - title_bottom.max(visible.origin.y);
     right - left >= 120.0
-        && top <= visible.origin.y + visible.size.height
+        && top > title_bottom
+        && visible_title_height >= (top - title_bottom) / 2.0
         && top >= visible.origin.y + 40.0
 }
 
-fn on_available_screen(frame: NSRect, main_thread: MainThreadMarker) -> bool {
+fn on_available_screen(window: &NSWindow, frame: NSRect, main_thread: MainThreadMarker) -> bool {
+    let content = window.contentRectForFrameRect(frame);
     NSScreen::screens(main_thread)
         .iter()
-        .any(|screen| title_bar_visible(frame, screen.visibleFrame()))
+        .any(|screen| title_bar_visible(frame, content, screen.visibleFrame()))
 }
 
 fn read_frame(path: &Path) -> Option<Frame> {
@@ -83,16 +88,16 @@ fn native_window(window: &tauri::WebviewWindow) -> Option<(&NSWindow, MainThread
 }
 
 fn current_frame(window: &tauri::WebviewWindow) -> Option<Frame> {
-    let (native, main_thread) = native_window(window)?;
+    let (native, _) = native_window(window)?;
     let frame = Frame::from(native.frame());
-    (frame.sane() && on_available_screen(frame.rect(), main_thread)).then_some(frame)
+    frame.sane().then_some(frame)
 }
 
 fn restore_native(window: &NSWindow, saved: Option<Frame>, main_thread: MainThreadMarker) {
     let Some(saved) = saved else {
         return;
     };
-    if on_available_screen(saved.rect(), main_thread) {
+    if on_available_screen(window, saved.rect(), main_thread) {
         window.setFrame_display(saved.rect(), false);
         return;
     }
@@ -280,7 +285,24 @@ mod tests {
         let left = NSRect::new(NSPoint::new(-1920.0, 0.0), NSSize::new(1920.0, 1040.0));
         let right = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1920.0, 1040.0));
         let on_left = NSRect::new(NSPoint::new(-1800.0, 100.0), NSSize::new(760.0, 720.0));
-        assert!(title_bar_visible(on_left, left));
-        assert!(!title_bar_visible(on_left, right));
+        let content = NSRect::new(NSPoint::new(-1800.0, 100.0), NSSize::new(760.0, 692.0));
+        assert!(title_bar_visible(on_left, content, left));
+        assert!(!title_bar_visible(on_left, content, right));
+    }
+
+    #[test]
+    fn title_bar_near_menu_edge_is_visible_but_detached_window_is_not() {
+        let visible = NSRect::new(NSPoint::new(70.0, 0.0), NSSize::new(1658.0, 1084.0));
+        let near_menu = NSRect::new(NSPoint::new(962.0, 367.0), NSSize::new(760.0, 720.0));
+        let content = NSRect::new(NSPoint::new(962.0, 367.0), NSSize::new(760.0, 692.0));
+        assert!(title_bar_visible(near_menu, content, visible));
+
+        let hidden_title = NSRect::new(NSPoint::new(962.0, 400.0), NSSize::new(760.0, 720.0));
+        let hidden_content = NSRect::new(NSPoint::new(962.0, 400.0), NSSize::new(760.0, 692.0));
+        assert!(!title_bar_visible(hidden_title, hidden_content, visible));
+
+        let detached = NSRect::new(NSPoint::new(4000.0, 367.0), NSSize::new(760.0, 720.0));
+        let detached_content = NSRect::new(NSPoint::new(4000.0, 367.0), NSSize::new(760.0, 692.0));
+        assert!(!title_bar_visible(detached, detached_content, visible));
     }
 }
