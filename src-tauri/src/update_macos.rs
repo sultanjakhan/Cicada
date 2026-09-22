@@ -28,12 +28,10 @@ fn writable_bundle(home: &Path, bundle: &Path, executable: &Path) -> bool {
     let Ok(owner) = home.metadata().map(|m| m.uid()) else {
         return false;
     };
-    [bundle.as_path(), bundle.parent().unwrap()]
-        .iter()
-        .all(|path| {
-            path.metadata()
-                .is_ok_and(|m| m.is_dir() && m.uid() == owner && m.mode() & 0o300 == 0o300)
-        })
+    [bundle, bundle.parent().unwrap()].iter().all(|path| {
+        path.metadata()
+            .is_ok_and(|m| m.is_dir() && m.uid() == owner && m.mode() & 0o300 == 0o300)
+    })
 }
 
 fn relocate_legacy_bundle(home: &Path, executable: &Path) -> Result<Option<PathBuf>, String> {
