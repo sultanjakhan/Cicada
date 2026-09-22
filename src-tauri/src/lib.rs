@@ -1,4 +1,5 @@
 mod health_sleep;
+mod health_activity;
 use chrono::{NaiveDate, NaiveTime, Utc};
 use rusqlite::{
     backup::{Backup, StepResult},
@@ -239,6 +240,7 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
         .map_err(|e| fail(format!("seed generic category: {e}")))?;
     mvp_sync_db::initialize(conn)?;
     health_sleep::initialize(conn)?;
+    health_activity::initialize(conn)?;
     Ok(())
 }
 
@@ -560,6 +562,9 @@ pub fn run() {
             health_sleep::health_sleep_status,
             health_sleep::health_sleep_connect,
             health_sleep::health_sleep_import,
+            health_activity::health_activity_status,
+            health_activity::health_activity_connect,
+            health_activity::health_activity_import,
             list_items,
             save_item,
             set_completed,

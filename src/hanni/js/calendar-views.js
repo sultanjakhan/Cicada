@@ -321,8 +321,10 @@ import { renderDayStartMarker } from './calendar-day-start.js';
       for (const date of dates) {
         const day = button('calv-day-heading', '', () => options.onChooseDate?.(date));
         day.append(el('span', 'calv-day-weekday', label(date, { weekday: 'short' })), el('span', 'calv-day-number', String(parse(date).getDate())));
+        const steps = records.find(record => record.date === date && record.health_kind === 'steps');
+        if (steps && steps.steps_count !== undefined && steps.steps_count !== null) day.append(el('span', 'calv-day-health', `Шаги: ${steps.steps_count}`));
         day.dataset.calendarDate = date;
-        day.setAttribute('aria-label', label(date, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }));
+        day.setAttribute('aria-label', `${label(date, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}${steps?.steps_count != null ? `. Шагов: ${steps.steps_count}` : ''}`);
         day.setAttribute('aria-pressed', String(date === options.date));
         if (date === today) day.setAttribute('aria-current', 'date');
         headings.append(day);
