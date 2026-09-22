@@ -259,12 +259,12 @@ fn fresh_and_drained(status: &Value, initial: &Value) -> bool {
 
 fn require_sync_enabled(status: &Value) -> Result<(), &'static str> {
     match status["last_error"].as_str() {
-        Some(
-            error @ ("mvp_sync_credentials_unavailable"
-            | "mvp_sync_credentials_invalid"
-            | "mvp_sync_credentials_path_invalid"
-            | "mvp_sync_platform_unsupported"),
-        ) => return Err(error),
+        Some("mvp_sync_credentials_unavailable") => return Err("mvp_sync_credentials_unavailable"),
+        Some("mvp_sync_credentials_invalid") => return Err("mvp_sync_credentials_invalid"),
+        Some("mvp_sync_credentials_path_invalid") => {
+            return Err("mvp_sync_credentials_path_invalid")
+        }
+        Some("mvp_sync_platform_unsupported") => return Err("mvp_sync_platform_unsupported"),
         _ => {}
     }
     if status["configured"] != true || status["enabled"] != true {
@@ -408,15 +408,27 @@ mod tests {
 
     #[test]
     fn sync_check_preserves_known_credential_errors_without_echoing_unknown_values() {
-        let credential_error = json!({
-            "configured": false,
-            "enabled": true,
-            "last_error": "mvp_sync_credentials_unavailable"
-        });
-        assert_eq!(
-            require_sync_enabled(&credential_error),
-            Err("mvp_sync_credentials_unavailable")
-        );
+        for (error, expected) in [
+            (
+                "mvp_sync_credentials_unavailable",
+                "mvp_sync_credentials_unavailable",
+            ),
+            (
+                "mvp_sync_credentials_invalid",
+                "mvp_sync_credentials_invalid",
+            ),
+            (
+                "mvp_sync_credentials_path_invalid",
+                "mvp_sync_credentials_path_invalid",
+            ),
+            (
+                "mvp_sync_platform_unsupported",
+                "mvp_sync_platform_unsupported",
+            ),
+        ] {
+            let status = json!({"configured": false, "enabled": true, "last_error": error});
+            assert_eq!(require_sync_enabled(&status), Err(expected));
+        }
 
         let disabled = json!({"configured": true, "enabled": false, "last_error": null});
         assert_eq!(require_sync_enabled(&disabled), Err("mvp_sync_not_enabled"));
