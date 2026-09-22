@@ -219,12 +219,12 @@ mod tests {
 
     #[test]
     fn only_the_owned_writable_standard_bundle_can_update() {
-        let home = tempfile::tempdir().unwrap();
-        let bundle = bundle_in(home.path());
+        let temporary_home = tempfile::tempdir().unwrap();
+        let home = temporary_home.path().canonicalize().unwrap();
+        let bundle = bundle_in(&home);
         let executable = bundle.join(EXECUTABLE);
         std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
         std::fs::write(&executable, b"synthetic").unwrap();
-        let home = home.path().canonicalize().unwrap();
         let executable = executable.canonicalize().unwrap();
         assert!(writable_bundle(&home, &bundle, &executable));
         assert!(!writable_bundle(
