@@ -9,6 +9,7 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.HealthConnectFeatures
 import androidx.health.connect.client.PermissionController
+import androidx.health.connect.client.aggregate.AggregationResultGroupedByPeriod
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.StepsRecord
@@ -37,6 +38,7 @@ import org.json.JSONObject
 import java.io.File
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.Period
 import java.time.ZoneId
 import java.util.concurrent.TimeUnit
@@ -44,10 +46,14 @@ import java.util.concurrent.TimeUnit
 @RequiresApi(28)
 internal fun shouldImportWalking(exerciseType: Int): Boolean = exerciseType == ExerciseSessionRecord.EXERCISE_TYPE_WALKING
 
-internal fun stepCountOrAbsent(count: Long?): Long? = count
-
 internal fun stepSnapshotDates(today: LocalDate): Pair<LocalDate, LocalDate> =
     today.minusDays(30L - 1L) to today.plusDays(1)
+
+internal fun encodeStepAggregate(row: AggregationResultGroupedByPeriod): JSONObject? {
+    val count = row.result[StepsRecord.COUNT_TOTAL] ?: return null
+    return JSONObject().put("date", row.startTime.toLocalDate().toString())
+        .put("count", count).put("originScope", "all")
+}
 
 @RequiresApi(28)
 internal suspend fun collectWalkingRecords(read: suspend (String?) -> ReadRecordsResponse<ExerciseSessionRecord>): List<ExerciseSessionRecord> {
@@ -108,16 +114,12 @@ internal object ActivityImporter {
         .put("startMs", record.startTime.toEpochMilli()).put("endMs", record.endTime.toEpochMilli())
         .put("offsetSeconds", (record.startZoneOffset ?: ZoneId.systemDefault().rules.getOffset(record.startTime)).totalSeconds)
 
-    private suspend fun encodeSteps(client: HealthConnectClient, start: java.time.LocalDateTime, end: java.time.LocalDateTime): JSONArray {
+    private suspend fun encodeSteps(client: HealthConnectClient, start: LocalDateTime, end: LocalDateTime): JSONArray {
         val rows = client.aggregateGroupByPeriod(AggregateGroupByPeriodRequest(
             metrics = setOf(StepsRecord.COUNT_TOTAL),
             timeRangeFilter = TimeRangeFilter.between(start, end),
             timeRangeSlicer = Period.ofDays(1)))
-        return JSONArray(rows.mapNotNull { row ->
-            val count = stepCountOrAbsent(row.result[StepsRecord.COUNT_TOTAL]) ?: return@mapNotNull null
-            JSONObject().put("date", row.startTime.toLocalDate().toString())
-                .put("count", count).put("originScope", "all")
-        })
+        return JSONArray(rows.mapNotNull(::encodeStepAggregate))
     }
 
     suspend fun sync(context: Context, background: Boolean): JSONObject = mutex.withLock {

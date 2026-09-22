@@ -229,11 +229,10 @@ internal class SleepBridge(private val activity: Activity) {
 class HanniSleepWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val result = SleepImporter.sync(applicationContext, true)
-        val activityResult = ActivityImporter.sync(applicationContext, true)
-        if (result.optString("status") == "error" && activityResult.optString("status") == "error") return@withContext if (runAttemptCount < 2) Result.retry() else Result.failure()
+        if (result.optString("status") == "error") return@withContext if (runAttemptCount < 2) Result.retry() else Result.failure()
         // Uses the content transport's persisted enabled flag and OS lease.
         // Reading sleep remains useful offline and without remote sync configured.
-        if (result.optString("status") == "ready" || activityResult.optString("status") == "ready") {
+        if (result.optString("status") == "ready") {
             try { ContentSyncNative.run(File(applicationContext.applicationInfo.dataDir, "calendar.db").path) }
             catch (_: Exception) { /* The independent content worker retries delivery. */ }
         }

@@ -26,11 +26,35 @@ pub fn initialize(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS health_activity_state (
         singleton INTEGER PRIMARY KEY CHECK(singleton=1), token TEXT, last_success TEXT,
+        walking_last_success TEXT, steps_last_success TEXT,
         history_limited INTEGER NOT NULL DEFAULT 0);
         INSERT OR IGNORE INTO health_activity_state(singleton) VALUES(1);
         CREATE TABLE IF NOT EXISTS health_activity_links (
         id TEXT PRIMARY KEY, kind TEXT NOT NULL, start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL);",
-    ).map_err(failure)
+    ).map_err(failure)?;
+    // Keep a locally-created candidate database usable if it predates the
+    // per-kind freshness fields.  These fields never alter imported records.
+    let mut columns = std::collections::HashSet::new();
+    let mut query = conn
+        .prepare("PRAGMA table_info(health_activity_state)")
+        .map_err(failure)?;
+    for row in query
+        .query_map([], |r| r.get::<_, String>(1))
+        .map_err(failure)?
+    {
+        columns.insert(row.map_err(failure)?);
+    }
+    drop(query);
+    for column in ["walking_last_success", "steps_last_success"] {
+        if !columns.contains(column) {
+            conn.execute(
+                &format!("ALTER TABLE health_activity_state ADD COLUMN {column} TEXT"),
+                [],
+            )
+            .map_err(failure)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn is_readonly(id: &str) -> bool {
@@ -104,7 +128,7 @@ struct Batch {
 #[cfg(any(target_os = "android", test))]
 fn read_state(conn: &Connection) -> Result<Value, String> {
     conn.query_row(
-        "SELECT token,last_success,history_limited,
+        "SELECT token,last_success,walking_last_success,steps_last_success,history_limited,
          (SELECT COUNT(*) FROM health_activity_links WHERE kind='walking'),
          (SELECT COUNT(*) FROM health_activity_links WHERE kind='steps')
          FROM health_activity_state WHERE singleton=1",
@@ -113,9 +137,11 @@ fn read_state(conn: &Connection) -> Result<Value, String> {
             Ok(json!({
                 "token": r.get::<_, Option<String>>(0)?,
                 "lastSuccess": r.get::<_, Option<String>>(1)?,
-                "historyLimited": r.get::<_, bool>(2)?,
-                "walkingRecords": r.get::<_, i64>(3)?,
-                "stepsRecords": r.get::<_, i64>(4)?,
+                "walkingLastSuccess": r.get::<_, Option<String>>(2)?,
+                "stepsLastSuccess": r.get::<_, Option<String>>(3)?,
+                "historyLimited": r.get::<_, bool>(4)?,
+                "walkingRecords": r.get::<_, i64>(5)?,
+                "stepsRecords": r.get::<_, i64>(6)?,
             }))
         },
     )
@@ -312,7 +338,21 @@ fn apply(conn: &mut Connection, batch: Batch) -> Result<Value, String> {
                 .map_err(failure)?;
         }
     }
-    tx.execute("UPDATE health_activity_state SET token=?1,last_success=CASE WHEN ?2 THEN ?3 ELSE last_success END WHERE singleton=1", params![batch.next_token, batch.complete, now]).map_err(failure)?;
+    tx.execute(
+        "UPDATE health_activity_state SET token=?1,
+         last_success=CASE WHEN ?2 THEN ?3 ELSE last_success END,
+         walking_last_success=CASE WHEN ?2 AND ?4 THEN ?3 ELSE walking_last_success END,
+         steps_last_success=CASE WHEN ?2 AND ?5 THEN ?3 ELSE steps_last_success END
+         WHERE singleton=1",
+        params![
+            batch.next_token,
+            batch.complete,
+            now,
+            batch.walking_granted,
+            batch.steps_granted
+        ],
+    )
+    .map_err(failure)?;
     let mut state = read_state(&tx)?;
     state["changed"] = json!(changed);
     tx.commit().map_err(failure)?;
@@ -427,6 +467,32 @@ mod tests {
     fn steps() -> Value {
         json!({"date":"2025-09-20","count":3210,"originScope":"all"})
     }
+    fn transfer(source: &Connection, target: &Connection, id: &str) {
+        let key = json!(["items", [id]]).to_string();
+        let mut fields = crate::mvp_sync_db::row_to_json(
+            source,
+            "mvp_records",
+            &rusqlite::types::Value::Text(key.clone()),
+        )
+        .unwrap()
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .clone();
+        let (stamp, writer): (String, String) = source.query_row(
+            "SELECT updated_at,device_id FROM sync_row_versions WHERE table_name='mvp_records' AND row_id=?1",
+            [&key], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        fields.insert("_updated_at".into(), json!(stamp));
+        fields.insert("_device_id".into(), json!(writer));
+        target
+            .execute("UPDATE content_sync_control SET applying=1", [])
+            .unwrap();
+        crate::mvp_sync_db::apply_record(target, &fields).unwrap();
+        target
+            .execute("UPDATE content_sync_control SET applying=0", [])
+            .unwrap();
+    }
     #[test]
     fn repeat_update_delete_and_cursor_are_atomic() {
         let mut c = db();
@@ -478,6 +544,26 @@ mod tests {
             .unwrap(),
             1
         );
+    }
+    #[test]
+    fn freshness_is_recorded_per_granted_kind() {
+        let mut c = db();
+        let mut walking_only = batch(None, "a", json!([walk()]), json!([]));
+        walking_only.steps_granted = false;
+        apply(&mut c, walking_only).unwrap();
+        let state = read_state(&c).unwrap();
+        assert!(state["walkingLastSuccess"].is_string());
+        assert!(state["stepsLastSuccess"].is_null());
+
+        let mut still_walking = batch(Some("a"), "b", json!([]), json!([]));
+        still_walking.steps_granted = false;
+        apply(&mut c, still_walking).unwrap();
+        assert!(read_state(&c).unwrap()["stepsLastSuccess"].is_null());
+
+        let mut steps_empty = batch(Some("b"), "c", json!([]), json!([]));
+        steps_empty.walking_granted = false;
+        apply(&mut c, steps_empty).unwrap();
+        assert!(read_state(&c).unwrap()["stepsLastSuccess"].is_string());
     }
     #[test]
     fn invalid_record_rolls_back_prior_record_and_cursor() {
@@ -542,5 +628,71 @@ mod tests {
             crate::health_sleep::editable("hc-steps:all:2025-09-20").unwrap_err(),
             "health_activity_readonly"
         );
+    }
+    #[test]
+    fn existing_items_protocol_delivers_activity_update_and_tombstone_to_replica() {
+        let mut phone = db();
+        let desktop = db();
+        desktop
+            .execute_batch("DROP TABLE health_activity_links; DROP TABLE health_activity_state;")
+            .unwrap();
+        let walk_key = walking_id("fictional-walk");
+        let steps_key = "hc-steps:all:2025-09-20";
+        apply(
+            &mut phone,
+            batch(None, "a", json!([walk()]), json!([steps()])),
+        )
+        .unwrap();
+        for key in [&walk_key, steps_key] {
+            transfer(&phone, &desktop, key);
+            transfer(&phone, &desktop, key);
+            assert_eq!(
+                desktop
+                    .query_row("SELECT COUNT(*) FROM items WHERE id=?1", [key], |r| r
+                        .get::<_, i64>(0))
+                    .unwrap(),
+                1
+            );
+        }
+        let changed_walk = json!({"id":"fictional-walk","origin":"com.example.walk","startMs":1758326400000i64,"endMs":1758333600000i64,"offsetSeconds":18000});
+        apply(
+            &mut phone,
+            batch(
+                Some("a"),
+                "b",
+                json!([changed_walk]),
+                json!([{"date":"2025-09-20","count":4321,"originScope":"all"}]),
+            ),
+        )
+        .unwrap();
+        transfer(&phone, &desktop, &walk_key);
+        transfer(&phone, &desktop, steps_key);
+        assert_eq!(
+            desktop
+                .query_row(
+                    "SELECT duration_minutes FROM items WHERE id=?1",
+                    [&walk_key],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+            120
+        );
+        assert!(desktop
+            .query_row("SELECT notes FROM items WHERE id=?1", [steps_key], |r| {
+                r.get::<_, String>(0)
+            })
+            .unwrap()
+            .contains("4321"));
+        apply(&mut phone, batch(Some("b"), "c", json!([]), json!([]))).unwrap();
+        for key in [&walk_key, steps_key] {
+            transfer(&phone, &desktop, key);
+            assert_eq!(
+                desktop
+                    .query_row("SELECT COUNT(*) FROM items WHERE id=?1", [key], |r| r
+                        .get::<_, i64>(0))
+                    .unwrap(),
+                0
+            );
+        }
     }
 }

@@ -10,7 +10,8 @@ function kindStatus(status, kind) {
   if (!granted) return `Разреши Hanni MVP читать ${label} в Health Connect. Ранее импортированные записи сохранены.`;
   if (status.status !== 'ready') return `Последний импорт ${label} не завершён. Сохранённые записи не потеряны; повтори попытку.`;
   const count = kind === 'walking' ? status.walkingRecords : status.stepsRecords;
-  if (!status.lastSuccess) return `Доступ к ${label} разрешён. Первый импорт ещё не подтверждён.`;
+  const lastSuccess = kind === 'walking' ? status.walkingLastSuccess : status.stepsLastSuccess;
+  if (!lastSuccess) return `Доступ к ${label} разрешён. Первый импорт ещё не подтверждён.`;
   if (!count) return kind === 'walking'
     ? 'В Health Connect не найдено прогулок с типом walking. Hanni MVP не выводит прогулки из одних шагов.'
     : 'В Health Connect не найдено дневных итогов шагов. Пустой день не считается нулевым итогом.';

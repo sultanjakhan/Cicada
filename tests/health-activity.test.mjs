@@ -7,8 +7,9 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 
 test('walking and steps status remain independent, including empty source', () => {
   assert.match(walkingStatusText({ status: 'permission_required', stepsPermissionGranted: true }), /прогулки/);
-  assert.match(stepsStatusText({ status: 'ready', stepsPermissionGranted: true, walkingPermissionGranted: false, stepsRecords: 0, lastSuccess: '2026-01-01T00:00:00Z' }), /не найдено/);
-  assert.match(walkingStatusText({ status: 'ready', walkingPermissionGranted: true, walkingRecords: 0, lastSuccess: '2026-01-01T00:00:00Z' }), /walking/);
+  assert.match(stepsStatusText({ status: 'ready', stepsPermissionGranted: true, walkingPermissionGranted: false, stepsRecords: 0, stepsLastSuccess: '2026-01-01T00:00:00Z' }), /не найдено/);
+  assert.match(walkingStatusText({ status: 'ready', walkingPermissionGranted: true, walkingRecords: 0, walkingLastSuccess: '2026-01-01T00:00:00Z' }), /walking/);
+  assert.match(stepsStatusText({ status: 'ready', stepsPermissionGranted: true, stepsRecords: 0, walkingLastSuccess: '2026-01-01T00:00:00Z' }), /Первый импорт/);
 });
 
 test('partial permission keeps separate sections and activity import events', async t => {
@@ -17,7 +18,7 @@ test('partial permission keeps separate sections and activity import events', as
   const calls = [], pending = [];
   const dispose = mountHealthActivitySettings(host, { setPending: value => pending.push(value), invoke: async command => {
     calls.push(command);
-    if (command === 'health_activity_status') return { status: 'ready', walkingPermissionGranted: true, stepsPermissionGranted: false, walkingRecords: 1, stepsRecords: 0 };
+    if (command === 'health_activity_status') return { status: 'ready', walkingPermissionGranted: true, stepsPermissionGranted: false, walkingRecords: 1, stepsRecords: 0, walkingLastSuccess: '2026-01-01T00:00:00Z' };
     if (command === 'health_activity_connect') return { status: 'permission_requested', walkingPermissionGranted: true, stepsPermissionGranted: false };
     return { status: 'ready', walkingPermissionGranted: true, stepsPermissionGranted: true, walkingRecords: 1, stepsRecords: 2, changed: 1 };
   } });
