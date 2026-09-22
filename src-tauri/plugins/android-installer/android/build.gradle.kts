@@ -54,4 +54,6 @@ dependencies {
     implementation("org.bouncycastle:bcprov-jdk18on:1.86")
     implementation(project(":tauri-android"))
     testImplementation("junit:junit:4.13.2")
+    // The Android framework's JVM test stub throws for org.json methods.
+    testImplementation("org.json:json:20250517")
 }

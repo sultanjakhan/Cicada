@@ -24,7 +24,10 @@ class HealthActivityTest {
 
     @Test fun absentAggregateMetricStaysAbsentButExplicitZeroIsKept() {
         fun row(count: Long?) = AggregationResultGroupedByPeriod(
-            AggregationResult(metrics = buildMap { if (count != null) put(StepsRecord.COUNT_TOTAL, count) }),
+            AggregationResult(
+                longValues = if (count == null) emptyMap() else mapOf("Steps_count_total" to count),
+                doubleValues = emptyMap(),
+                dataOrigins = emptySet()),
             LocalDate.of(2026, 9, 22).atStartOfDay(), LocalDate.of(2026, 9, 23).atStartOfDay())
         assertNull(encodeStepAggregate(row(null)))
         assertEquals(0L, encodeStepAggregate(row(0L))?.getLong("count"))
