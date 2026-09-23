@@ -6,6 +6,28 @@
 
 Перед новой постановкой прочитай [подтверждённый контекст продукта](docs/product-context.md), затем проверь исходный код и относящиеся к задаче Issues. Не повторяй вопросы, на которые уже есть ответ в этом контексте; уточняй только новые отсутствующие факты.
 
+Owner iteration, 2026-09-23 (mobile and Tasks; private issues #94, #95): on
+the phone the Calendar header and drawer show no Cicada logo and the section
+name appears once. «Сегодня», the date and the day-start state share one line.
+Create and Start stay above the scroll in one compact row. The Day/Week grid
+scrolls with the pane instead of a nested window; Week shows three days per
+screen. The Tasks pane groups Просрочено/Сегодня/Скоро/Без даты with one-line
+rows and icon actions. Desktop keeps its layout.
+
+Owner direction, 2026-09-23 (planned; each item needs its private issue and is
+not implemented by this note): task kinds instant/normal, sphere and time of day
+(#96); one Create for task, event, goal, note and wish (#97, supersedes goal
+creation only in Goals); goals in three display levels — dashboard title and
+current stage, list, full popup (#98, supersedes the 2026-09-14/20 rules that
+keep the full goal on the dashboard without an Open action); wishes kept apart
+from goals (#85); a day strip with sleep, steps, self-reported energy, focus
+minutes and a personal benchmark computed from own data (#99, lifts the
+quantitative-norm exclusion for this benchmark); routine unlock branches from
+legacy Hanni and household quick actions (#100); read-only Jira PL import with
+analyst stages (#101); LLM quick input and suggestions confirmed by the user
+(#102); an Android home-screen widget (#103). These supersede the matching
+exclusions in the scope list below.
+
 Owner iteration, 2026-09-21 (Calendar), integrated 2026-09-22: remove Calendar
 List mode, its adjacent planning task panel and the neighboring date labels;
 retain day/week/month navigation and existing records. Interpret a saved List
@@ -134,7 +156,7 @@ Do not modify the legacy application, its repositories, data, locks or releases.
 - Use a unique `HANNI_SESSION_ID`. Before Git mutations, inspect branch, HEAD, status and any unfinished Git operation. Keep commits scoped and preserve foreign WIP.
 - Issues are the operational source of truth. Existing Hanni planning remains in the owner's private issue repository; do not create a second backlog in Markdown.
 - Validate relevant behavior with `npm test`, `npm run check:privacy`, `npm run build` and Rust tests. UI, native persistence, builds and hosted checks are different evidence levels; report them separately.
-- No automatic import from legacy Hanni, remote sync, telemetry, updater, additional projects, Routine or AI in this MVP. Goals and Notes belong to the authorized Calendar workspace. Preserve records entered in earlier MVP versions through tested migrations.
+- No automatic import from legacy Hanni, remote sync, telemetry, updater, additional projects, Routine or AI in this MVP (later owner decisions above re-scope sync, updater, routines, Jira import and AI). Goals and Notes belong to the authorized Calendar workspace. Preserve records entered in earlier MVP versions through tested migrations.
 - Public source is MIT for Hanni-owned code; third-party terms remain unchanged. Run `npm run check:history` before publishing refs. Enable `.githooks` locally. Never republish pre-cleanup history.
 - Build and install Cicada from this repository only. The Windows technical identity remains `app.hanni.mvp` / `hanni-mvp.exe`; preserve it across updates. The visible product name and public artifact are `Cicada`. `npm run package:windows` emits an installer and source/hash manifest from a clean commit. Install it beside legacy Hanni, with its own shortcuts and data directory.
 - While the owner uses the computer, run UI checks through the `hanni-mvp-ui` Playwright MCP on the isolated inactive desktop described in `docs/background-ui-qa.md`. Do not activate, restart or operate the owner's open window. Use the real installed EXE with separate QA data and WebView2 profile; never substitute a browser preview as native UI evidence.
