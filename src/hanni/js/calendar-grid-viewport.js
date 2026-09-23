@@ -1,4 +1,6 @@
-export function mountCalendarGridViewport(host) {
+export function mountCalendarGridViewport(host, { pageScroll = false } = {}) {
+  // On the phone the grid scrolls with its pane, so it has no height of its own.
+  if (pageScroll) return { fit() {}, dispose() {} };
   const viewport = host.closest('.uni-content');
   const win = host.ownerDocument.defaultView;
   let frame = null;

@@ -66,7 +66,7 @@ export function renderTabBar() {
   gear.title = 'Настройки';
   gear.setAttribute('aria-label', gear.title);
   gear.setAttribute('aria-haspopup', 'dialog');
-  gear.innerHTML = `<span class="tab-item-icon">${TAB_ICONS.settings}</span>`;
+  gear.innerHTML = `<span class="tab-item-icon">${TAB_ICONS.settings}</span>${IS_MOBILE ? `<span class="tab-item-label">${gear.title}</span>` : ''}`;
   gear.addEventListener('click', () => { closeDrawer(); showCalendarSettings(gear); });
   const version = document.createElement('div');
   version.className = 'version-label-bar';

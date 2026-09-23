@@ -5,14 +5,15 @@ export function mountCalendarDayBanner(element, { invoke, now = () => new Date()
   const document = element.ownerDocument, window = document.defaultView;
   let disposed = false, busy = false, loaded = false, day = '', entries = [], revision = 0, pendingRefresh = false;
   element.className = 'calendar-day-banner';
-  element.innerHTML = '<div class="today-date"><small>Сегодня</small><h2><time></time><span data-weekday></span></h2></div><div><button type="button" data-start-day disabled>Начать день</button><p role="alert" hidden></p><button type="button" data-day-retry hidden>Повторить загрузку</button></div>';
+  // One row: the date may ellipsize, the start action keeps its full label.
+  element.innerHTML = '<div class="today-date"><h2><span class="today-date__label">Сегодня</span><span class="today-date__day"> · <time></time>, <span data-weekday></span></span></h2></div><button type="button" data-start-day disabled>Начать день</button><p role="alert" hidden></p><button type="button" data-day-retry hidden>Повторить загрузку</button>';
   const start = element.querySelector('[data-start-day]'), error = element.querySelector('[role=alert]'), retry = element.querySelector('[data-day-retry]');
   function render() {
     if (disposed) return;
     const current = now(); day = dateKey(current);
     element.querySelector('[data-weekday]').textContent = new Intl.DateTimeFormat('ru', { weekday: 'long' }).format(current);
     const time = element.querySelector('time'); time.dateTime = day;
-    time.textContent = new Intl.DateTimeFormat('ru', { day: 'numeric', month: 'long', year: 'numeric' }).format(current);
+    time.textContent = new Intl.DateTimeFormat('ru', { day: 'numeric', month: 'long' }).format(current);
     const started = entries.find(entry => entry.date === day);
     start.textContent = started ? '✓ День начат · ' + started.time : 'Начать день';
     start.disabled = busy || !loaded || !!started; start.classList.toggle('is-started', !!started);

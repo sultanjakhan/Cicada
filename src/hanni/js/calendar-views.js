@@ -186,13 +186,19 @@ import { renderDayStartMarker } from './calendar-day-start.js';
     root.querySelectorAll('[data-history-records]').forEach(panel => { state.historyOpen[panel.dataset.historyRecords] = panel.open; });
     const viewKey = `${options.period}:${options.mode}:${options.date}`;
     const outer = root.closest('.uni-content');
-    const outerScroll = state.viewKey === viewKey ? outer?.scrollTop || 0 : 0;
+    // Phone: the pane is the only vertical scroll, so moving between dates of
+    // the same period keeps the reading position (and the visible week days).
+    const keepPage = !!options.pageScroll && state.period === options.period;
+    const outerScroll = state.viewKey === viewKey || keepPage ? outer?.scrollTop || 0 : 0;
     const previousScroll = root.querySelector('.calv-time-scroll');
     const scrollPosition = state.viewKey === viewKey && previousScroll ? { top: previousScroll.scrollTop, left: previousScroll.scrollLeft } : null;
+    const previousLeft = keepPage && previousScroll ? previousScroll.scrollLeft : null, previousStart = state.rangeStart;
+    let pageTarget = null;
     state.viewKey = viewKey;
     root.replaceChildren();
     const shell = el('div', 'calv-layout'), container = el('div', 'calv-main'); shell.append(container); root.append(shell);
     const dates = range(options.period, options.date, options.firstDay);
+    state.period = options.period; state.rangeStart = dates[0];
     const projectionDates = options.period === 'month' ? Array.from({ length: 42 }, (_, i) => add(weekStart(`${options.date.slice(0, 7)}-01`, options.firstDay), i)) : dates;
     const today = options.today || iso(new Date());
     const set = new Set(dates);
@@ -240,7 +246,7 @@ import { renderDayStartMarker } from './calendar-day-start.js';
       // Every hour remains reachable, even when no task currently occupies it.
       const firstHour = 0;
       const lastHour = 24;
-      const scroll = el('div', 'calv-time-scroll');
+      const scroll = el('div', `calv-time-scroll${options.pageScroll ? ' calv-time-scroll--page' : ''}`);
       scroll.id = `${state.id}-time-grid`;
       scroll.tabIndex = 0;
       scroll.dataset.calendarControl = 'time-grid';
@@ -261,8 +267,17 @@ import { renderDayStartMarker } from './calendar-day-start.js';
         headings.append(day);
       }
       const sticky = el('div', 'calv-time-sticky'); sticky.append(headings);
-      if (untimed.length) sticky.append(untimedBand(dates, untimed, options, state));
-      board.append(sticky);
+      const band = untimed.length ? untimedBand(dates, untimed, options, state) : null;
+      // Phone: only the day headings form a sticky strip of the pane; it follows
+      // the grid sideways, while the untimed band scrolls away with the hours.
+      let frame = null, head = null;
+      if (options.pageScroll) {
+        frame = el('div', 'calv-time-frame'); head = el('div', 'calv-time-headscroll');
+        const headBoard = el('div', board.className); headBoard.style.setProperty('--calv-days', String(dates.length));
+        headBoard.append(sticky); head.append(headBoard); frame.append(head, scroll);
+        if (band) board.append(band);
+        scroll.addEventListener('scroll', () => { head.scrollLeft = scroll.scrollLeft; }, { passive: true });
+      } else { if (band) sticky.append(band); board.append(sticky); }
       const body = el('div', 'calv-time-body');
       const foldPlan = timeFoldPlan(timed, { date: options.date, period: options.period, today, now: options.now || new Date(), expanded: state.timeFoldsExpanded });
       body.style.height = `${foldPlan.height}px`;
@@ -364,9 +379,12 @@ import { renderDayStartMarker } from './calendar-day-start.js';
         }
         body.append(column);
       }
-      board.append(body); scroll.append(board); container.append(scroll);
+      board.append(body); scroll.append(board); container.append(frame || scroll);
       if (options.onCreateEvent) container.append(el('p', 'calv-scroll-hint', 'Нажми свободную ячейку, чтобы создать событие. С клавиатуры: ↑ ↓ выбирают час, Enter открывает форму.'));
-      if (options.period === 'week') container.append(el('p', 'calv-scroll-hint', 'На телефоне листай сетку вбок. Полные названия доступны в списке и по нажатию на пункт.'));
+      if (options.period === 'week' && !options.pageScroll) container.append(el('p', 'calv-scroll-hint', 'На телефоне листай сетку вбок. Полные названия доступны в списке и по нажатию на пункт.'));
+      // A grid minute inside the pane, placed just below the stuck day header.
+      const pageTop = minute => Math.max(0, Math.round(body.getBoundingClientRect().top - outer.getBoundingClientRect().top + outer.scrollTop
+        + foldPlan.map(minute) - head.getBoundingClientRect().height));
       // Start near useful daytime content; early/late records remain scrollable.
       const now = options.now || new Date();
       const selectedTimed = timed.filter(record => record.date === options.date);
@@ -374,7 +392,7 @@ import { renderDayStartMarker } from './calendar-day-start.js';
       const focusHour = options.date === today
         ? now.getHours() - 1 : daytime ? Math.floor(minutes(daytime.time) / 60) - 1 : 9;
       const gridTools = el('div', 'calv-grid-tools');
-      scroll.before(gridTools);
+      (frame || scroll).before(gridTools);
       const expandedFoldKeys = Object.keys(state.timeFoldsExpanded).filter(key => key.startsWith(`${options.date}:`) && state.timeFoldsExpanded[key]);
       if (expandedFoldKeys.length) {
         const collapse = button('calv-collapse-folds', 'Сжать длинные события', () => {
@@ -389,26 +407,31 @@ import { renderDayStartMarker } from './calendar-day-start.js';
       if (set.has(today)) {
         const jump = button('calv-jump-now', 'К текущему времени', () => {
           const current = options.now || new Date();
-          scroll.scrollTop = Math.max(0, foldPlan.map(Math.max(0, current.getHours() * 60 + current.getMinutes() - 60)));
+          const minute = Math.max(0, current.getHours() * 60 + current.getMinutes() - 60);
+          if (options.pageScroll) { if (outer) outer.scrollTop = pageTop(minute); }
+          else scroll.scrollTop = Math.max(0, foldPlan.map(minute));
           if (options.period === 'week') scroll.scrollLeft = dates.indexOf(today) * (board.getBoundingClientRect().width - 54) / 7;
-          scroll.focus();
+          scroll.focus({ preventScroll: !!options.pageScroll });
         });
         jump.dataset.jumpNow = ''; gridTools.prepend(jump);
         jump.dataset.calendarControl = 'jump-now';
       }
       options.fitViewport?.();
-      scroll.scrollTop = Math.max(0, foldPlan.map(focusHour * 60));
+      if (!options.pageScroll) scroll.scrollTop = Math.max(0, foldPlan.map(focusHour * 60));
+      else if (outer && !keepPage && !scrollPosition) pageTarget = pageTop(Math.max(0, focusHour) * 60);
       if (options.period === 'week') {
         const dayIndex = dates.indexOf(options.date);
-        scroll.scrollLeft = dayIndex * (board.getBoundingClientRect().width - 54) / 7;
+        // The selected day (today by default) opens as the first visible column.
+        scroll.scrollLeft = previousLeft !== null && previousStart === dates[0] ? previousLeft : dayIndex * (board.getBoundingClientRect().width - 54) / 7;
       }
       if (scrollPosition) { scroll.scrollTop = scrollPosition.top; scroll.scrollLeft = scrollPosition.left; }
+      if (head) head.scrollLeft = scroll.scrollLeft;
     }
     history(container, projected.filter(record => isClosed(record) && (!record.date || set.has(record.date))), options, state);
     if (controlFocus && !focused.isConnected) {
       const replacement = [...root.querySelectorAll('[data-calendar-control]')].find(node => node.dataset.calendarControl === controlFocus && !node.closest('[hidden]'));
       (replacement || root.querySelector('[data-calendar-records]') || root).focus({ preventScroll: true });
     }
-    if (outer) outer.scrollTop = outerScroll;
+    if (outer) outer.scrollTop = pageTarget ?? outerScroll;
   }
   export const CalendarViews = Object.freeze({ render, range, add, iso, monday, weekStart, label, daySegments, timeFoldPlan });

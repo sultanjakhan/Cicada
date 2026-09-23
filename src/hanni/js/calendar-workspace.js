@@ -1,5 +1,5 @@
 import { canRefreshHealthView, mayCommitHealthView, retryHealthViewRefresh, startHealthViewRefresh } from './health-view-refresh.js';
-import { S, invoke, tabLoaders, TAB_ICONS, loadTabSetting } from './state.js';
+import { S, invoke, tabLoaders, TAB_ICONS, loadTabSetting, IS_MOBILE } from './state.js';
 import { ICONS } from './icons.js';
 import { escapeHtml } from './utils.js';
 import { renderUnifiedLayout, savePaneState } from './unified-layout.js';
@@ -261,7 +261,7 @@ export async function mountCalendarTable(el) {
   const actionStatus = document.createElement('p');
   actionStatus.className = 'calv-action-status'; actionStatus.setAttribute('role', 'status'); actionStatus.tabIndex = -1;
   host.before(actionStatus);
-  const gridViewport = mountCalendarGridViewport(host);
+  const gridViewport = mountCalendarGridViewport(host, { pageScroll: IS_MOBILE });
   async function onTaskAction(record, action, trigger) {
     if (actionBusy || disposed) return;
     const restore = () => {
@@ -336,7 +336,7 @@ export async function mountCalendarTable(el) {
       const focusSource = host.contains(focused) ? focused.closest('[data-context-record]')?.dataset.recordSource : null;
       menuRecords = [...new Map([...records, ...taskRecords].map(record => [record.id, record])).values()];
       views.render(host, { period, mode, date: day, firstDay, records, taskRecords, taskError, dayStarts, onTaskAction, actionBusy,
-        fitViewport: gridViewport.fit,
+        fitViewport: gridViewport.fit, pageScroll: IS_MOBILE,
         onRetryTasks: () => refresh(),
         onCreateTask: date => openEvent(date, null, 'task', true),
         onCreateEvent: (date, time) => openEvent(date, time),

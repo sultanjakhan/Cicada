@@ -316,6 +316,21 @@ test('Android layout keeps its mobile navigation in a wide viewport', async t =>
   assert.ok(w.document.querySelector('#tab-bar').classList.contains('drawer-open'));
 });
 
+test('Android header names the section once and the drawer labels both rows', async t => {
+  const { w } = await launch(t, { mobile: true });
+  const title = w.document.querySelector('#mobile-title');
+  assert.equal(title.textContent, 'Календарь');
+  assert.equal(title.querySelector('img'), null);
+  assert.deepEqual([...w.document.querySelectorAll('#tab-bar .tab-item-label')].map(el => el.textContent), ['Календарь', 'Настройки']);
+  assert.ok(w.document.querySelector('[data-calendar-settings]').closest('#tab-bar-bottom').querySelector('.version-label-bar'));
+});
+
+test('desktop sidebar keeps icon-only items', async t => {
+  const { w } = await launch(t);
+  assert.equal(w.document.querySelectorAll('#tab-bar .tab-item-label').length, 0);
+  assert.ok(w.document.querySelector('.hanni-brand img'));
+});
+
 test('upstream mobile mode enables its CSS and closes the drawer through its backdrop', async t => {
   const { w, click } = await launch(t, { mobile: true });
   assert.ok(w.document.documentElement.classList.contains('mobile'));

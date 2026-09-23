@@ -41,3 +41,15 @@ test('an old in-flight read cannot erase an acknowledged atomic day start', asyn
   delayed=true;dom.window.dispatchEvent(new dom.window.Event('focus'));host.querySelector('[data-start-day]').click();await tick();
   release();await tick();assert.match(host.textContent,/День начат/);assert.equal(host.querySelector('[data-start-day]').disabled,true);
 });
+
+test('banner keeps today, the date and the start action on one row', async t => {
+  const dom = new JSDOM('<div id="host"></div>', { pretendToBeVisual:true });
+  const host = dom.window.document.querySelector('#host');
+  const dispose = mountCalendarDayBanner(host, { now:() => new Date(2026,8,23,9), invoke:async () => null });
+  t.after(() => { dispose(); dom.window.close(); });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(host.querySelector('.today-date h2').textContent, 'Сегодня · 23 сентября, среда');
+  assert.equal(host.querySelector('time').dateTime, '2026-09-23');
+  assert.equal(host.querySelector('[data-start-day]').parentElement, host);
+  assert.equal(host.querySelector('small'), null);
+});

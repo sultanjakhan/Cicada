@@ -24,7 +24,7 @@
 .calv-time-board--week { min-width: 910px; }
 .calv-time-head, .calv-time-body { display: grid; grid-template-columns: 54px repeat(var(--calv-days), minmax(0, 1fr)); }
 .calv-time-head { position: sticky; top: 0; z-index: 3; background: var(--bg-card); border-bottom: 1px solid var(--border-default); }
-.calv-time-corner { align-self: center; font-size: 12px; color: var(--text-secondary); padding-left: 5px; }
+.calv-time-corner { display: flex; align-items: center; align-self: stretch; font-size: 12px; color: var(--text-secondary); padding-left: 5px; }
 .calv-day-heading { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-height: 66px; padding: 6px 4px; border: 0; border-left: 1px solid var(--border-default); border-radius: 0; color: var(--text-primary); background: var(--bg-card); }
 .calv-day-weekday { font-size: 12px; line-height: 1.3; font-weight: 500; }
 .calv-day-number { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; min-height: 28px; font-size: 18px; line-height: 1; font-weight: 650; }
@@ -54,6 +54,14 @@
 .calv-time-jumps button { cursor: pointer; min-height: 32px; padding: 5px 9px; border: 0; border-radius: 6px; font: inherit; color: var(--text-secondary); background: transparent; }
 .calv-time-jumps button:hover { background: var(--bg-soft); color: var(--text-primary); }
 .calv-grid-record:hover { background: var(--accent-green-soft); box-shadow: inset 0 0 0 1px var(--accent-green); }
+/* Phone: the grid has no scroll box of its own and scrolls with the pane. The
+   day header is a sticky strip; the week shows three days per screen. */
+.calv-time-headscroll { position: sticky; top: 0; z-index: 5; overflow: hidden; box-sizing: border-box; border: 1px solid var(--border-default); border-bottom: 0; border-radius: 8px 8px 0 0; background: var(--bg-card); }
+.calv-time-scroll.calv-time-scroll--page { max-height: none; overflow: clip; border-top: 0; border-radius: 0 0 8px 8px; overscroll-behavior: auto; }
+[data-period="week"] .calv-time-scroll.calv-time-scroll--page { overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; scroll-padding-left: 54px; }
+[data-period="week"] .calv-time-scroll--page .calv-day-column { scroll-snap-align: start; }
+.calv-time-frame .calv-time-board--week { min-width: 0; width: calc(54px + (100% - 54px) * 7 / 3); }
+.calv-time-headscroll .calv-day-heading { min-height: 56px; padding: 4px 2px; }
 @media (max-width: 640px) {
   .calv-month-cell { min-height: 59px; padding: 5px 2px; align-items: center; }
   .calv-month-preview { display: none; }

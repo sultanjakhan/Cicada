@@ -31,6 +31,5 @@
 @media(max-width:680px) {
   .hanni-brand { padding-top:11px; }
 }
-#mobile-title { display:flex; align-items:center; gap:8px; }
-.hanni-mobile-mark { display:block; flex-shrink:0; width:28px; height:28px; }
-.mobile .hanni-brand { align-self:flex-start; padding:0 20px 12px; }
+/* Android: the header names the section and the drawer starts with its items. */
+.mobile .hanni-brand { display:none; }
