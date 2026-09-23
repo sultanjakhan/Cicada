@@ -1,8 +1,17 @@
 import { renderTaskImportance } from './task-importance.js';
+import { ICONS } from './icons.js';
 
 const taskKey = row => `${row.source_type}:${row.source_id}`;
 const closed = row => row.completed || ['done', 'skipped', 'missed'].includes(row.status_extra);
 const dayOf = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+const shiftDay = (day, delta) => { const date = new Date(`${day}T12:00:00`); date.setDate(date.getDate() + delta); return dayOf(date); };
+// Active tasks are grouped by how urgent their planned day is; closed tasks keep one group.
+const GROUPS = [['overdue','Просрочено'],['today','Сегодня'],['soon','Скоро'],['undated','Без даты'],['completed','Завершённые']];
+const groupOf = (row, today) => closed(row) ? 'completed' : !row.date ? 'undated' : row.date < today ? 'overdue' : row.date === today ? 'today' : 'soon';
+const groupIndex = (row, today) => GROUPS.findIndex(([id]) => id === groupOf(row, today));
+const EMPTY = { search:'Ничего не нашлось. Измени поиск или цель.', completed:'Завершённых задач пока нет.', undated:'Все задачи распределены по дням.', today:'На сегодня задач нет.', active:'Задач пока нет. Добавь первую через «Новая задача».' };
+const MORE_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></svg>';
+const SEARCH_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>';
 let sequence = 0;
 
 export function mountCalendarTasks(host, dependencies) {
@@ -14,8 +23,8 @@ export function mountCalendarTasks(host, dependencies) {
   let today = dayOf(new Date());
   host.classList.add('calendar-tasks');
   host.innerHTML = `<section aria-labelledby="${prefix}-title"><div class="ct-heading"><h2 id="${prefix}-title" tabindex="-1">Задачи <span data-tasks-count></span></h2></div>
-    <div class="ct-filters" role="group" aria-label="Какие задачи показать">${[['active','Активные'],['today','Сегодня'],['undated','Без даты'],['completed','Завершённые']].map(([id,label])=>`<button type="button" data-tasks-filter="${id}" aria-pressed="false">${label}</button>`).join('')}</div>
-    <div class="ct-search-row"><input type="search" data-tasks-search placeholder="Найти задачу" aria-label="Найти задачу"><select data-tasks-goal aria-label="Фильтр по цели"><option value="">Любая цель</option></select></div>
+    <div class="ct-toolbar"><div class="ct-filters" role="group" aria-label="Какие задачи показать">${[['active','Активные'],['today','Сегодня'],['undated','Без даты'],['completed','Завершённые']].map(([id,label])=>`<button type="button" data-tasks-filter="${id}" aria-pressed="false">${label}</button>`).join('')}</div>
+    <div class="ct-search-row"><label class="ct-search"><span class="ct-search-icon">${SEARCH_ICON}</span><input type="search" data-tasks-search placeholder="Найти задачу" aria-label="Найти задачу"></label><span class="ct-select"><select data-tasks-goal aria-label="Фильтр по цели"><option value="">Любая цель</option></select></span></div></div>
     <p data-tasks-message role="status" aria-live="polite"></p><button type="button" data-tasks-retry hidden>Повторить загрузку</button>
     <div data-tasks-list></div><div class="ct-pages" data-tasks-pages hidden><button type="button" data-tasks-prev>Назад</button><span data-tasks-page></span><button type="button" data-tasks-next>Далее</button></div></section>`;
   const q = name => host.querySelector(`[data-tasks-${name}]`);
@@ -26,45 +35,71 @@ export function mountCalendarTasks(host, dependencies) {
   const findButton = (id, action='open') => [...host.querySelectorAll('[data-task-control]')].find(el => el.dataset.taskId === id && el.dataset.taskControl === action);
   const restore = (id, action='open') => { if(!disposed && host.isConnected)(findButton(id,action)||heading).focus({preventScroll:true}); };
   const goalFor = row => links.find(link=>taskKey(link)===taskKey(row))?.goal_id;
-  const goalPath = id => { const parts=[], seen=new Set();let goal=goals.find(g=>String(g.id)===String(id));while(goal&&!seen.has(String(goal.id))){seen.add(String(goal.id));parts.unshift(goal.title);goal=goals.find(g=>String(g.id)===String(goal.parent_goal_id));}return parts.join(' / '); };
+  const goalParts = id => { const parts=[], seen=new Set();let goal=goals.find(g=>String(g.id)===String(id));while(goal&&!seen.has(String(goal.id))){seen.add(String(goal.id));parts.unshift(goal.title);goal=goals.find(g=>String(g.id)===String(goal.parent_goal_id));}return parts; };
+  const goalPath = id => goalParts(id).join(' / ');
   function matchesGoal(row) {
     const id=goalFor(row); if(!state.goal)return true;if(state.goal==='none')return id==null;
     const seen=new Set();let value=id;
     while(value!=null&&!seen.has(String(value))){if(String(value)===state.goal)return true;seen.add(String(value));value=goals.find(g=>String(g.id)===String(value))?.parent_goal_id;}
     return false;
   }
-  const group = row => closed(row)?5:row.is_active?0:!row.date?4:row.date<today?1:row.date===today?2:3;
-  const labels = ['В работе','Ранее','Сегодня','Позже','Без даты','Завершённые'];
+  const formatDate = (date, options) => new Intl.DateTimeFormat('ru',{...options,...(date.slice(0,4)!==today.slice(0,4)?{year:'numeric'}:{})}).format(new Date(`${date}T12:00:00`));
+  const dateLabel = date => !date?'Без даты':date===today?'Сегодня':date===shiftDay(today,1)?'Завтра':date===shiftDay(today,-1)?'Вчера':formatDate(date,{day:'numeric',month:'short'});
+  function effort(row) {
+    const planned=Number(row.duration_minutes)>0?Number(row.duration_minutes):0, actual=Number(row.actual_minutes)>0?Number(row.actual_minutes):0;
+    return { text: planned&&actual?`${planned} мин · факт ${actual}`:planned?`${planned} мин`:actual?`факт ${actual} мин`:'', hint:[planned&&`Оценка: ${planned} мин`,actual&&`Учтено: ${actual} мин`].filter(Boolean).join(', ') };
+  }
+  function renderRow(row) {
+    const id=taskKey(row), done=closed(row), overdue=!done&&!!row.date&&row.date<today, running=!done&&!!row.is_active;
+    const item=node('li','ct-row');item.dataset.contextRecord=id;item.classList.toggle('is-running',running);item.classList.toggle('is-overdue',overdue);item.classList.toggle('is-done',done);
+    const complete=control('ct-complete',done?'✓':'',()=>void finish(row));complete.disabled=busy||done;complete.setAttribute('aria-label',`${done?'Завершена':'Завершить'}: ${row.title}`);if(!done)complete.title='Завершить';
+    const title=control('ct-title',row.title,()=>openTask(row,()=>restore(id)));title.title=row.title;
+    const meta=node('span','ct-meta');
+    if(running)meta.append(node('span','ct-status ct-status--running','В работе'));else if(!done&&row.has_work)meta.append(node('span','ct-status','На паузе'));
+    const parts=goalParts(goalFor(row));
+    if(parts.length){const goal=node('span','ct-goal',parts.at(-1));goal.title=parts.join(' / ');meta.append(goal);}
+    const work=effort(row);if(work.text){const estimate=node('span','ct-estimate',work.text);estimate.title=work.hint;meta.append(estimate);}
+    const date=control('ct-date',dateLabel(row.date),()=>editDate(row,()=>restore(id,'date')));date.disabled=busy;date.classList.toggle('is-overdue',overdue);date.classList.toggle('is-empty',!row.date);
+    date.title=row.date?`${formatDate(row.date,{day:'numeric',month:'long',weekday:'short'})}${overdue?' · просрочено':''} — изменить дату`:'Назначить дату';
+    if(overdue)date.setAttribute('aria-label',`${date.textContent}, просрочено. Изменить дату`);
+    meta.append(date);renderTaskImportance(doc,meta,row,item);
+    const content=node('div','ct-content');content.append(title,meta);
+    const actions=node('div','ct-actions');
+    if(!done){
+      const label=row.is_active?'Пауза':row.has_work||row.actual_minutes>0?'Продолжить':'Начать';
+      const run=control('ct-run ct-icon-button',null,()=>void finish(row,row.is_active?'pause':'start'));
+      const glyph=node('span','ct-glyph');glyph.setAttribute('aria-hidden','true');glyph.innerHTML=ICONS[row.is_active?'pause':'play'];
+      run.append(glyph,node('span','ct-visually-hidden',label));run.classList.toggle('is-running',running);
+      run.disabled=busy;run.dataset.taskId=id;run.dataset.taskControl='execute';run.title=label;run.setAttribute('aria-label',`${label}: ${row.title}`);actions.append(run);
+    }
+    const more=control('ct-more ct-icon-button',null,()=>{});more.innerHTML=MORE_ICON;more.dataset.recordMenu='';more.title='Действия';more.setAttribute('aria-label',`Действия: ${row.title}`);more.setAttribute('aria-haspopup','menu');more.setAttribute('aria-expanded','false');more.disabled=busy;
+    actions.append(more);
+    for(const [button,action] of [[title,'open'],[date,'date'],[more,'menu'],[complete,'finish']]){button.dataset.taskId=id;button.dataset.taskControl=action;}
+    item.append(complete,content,actions);
+    return item;
+  }
   function render() {
     if(disposed||!ready)return;
     const focused=doc.activeElement, focusId=focused?.dataset.taskId, focusAction=focused?.dataset.taskControl;
     const query=state.search.trim().toLocaleLowerCase('ru');
     const eligible=rows.filter(row=>(state.filter==='completed'?closed(row):!closed(row))&&(state.filter!=='today'||row.date===today)&&(state.filter!=='undated'||!row.date));
-    const visible=eligible.filter(row=>matchesGoal(row)&&`${row.title} ${goalPath(goalFor(row))}`.toLocaleLowerCase('ru').includes(query)).sort((a,b)=>group(a)-group(b)||(Number(b.priority)||0)-(Number(a.priority)||0)||(a.date||'9999').localeCompare(b.date||'9999')||a.title.localeCompare(b.title,'ru')||taskKey(a).localeCompare(taskKey(b)));
+    const visible=eligible.filter(row=>matchesGoal(row)&&`${row.title} ${goalPath(goalFor(row))}`.toLocaleLowerCase('ru').includes(query)).sort((a,b)=>groupIndex(a,today)-groupIndex(b,today)||Number(!!b.is_active)-Number(!!a.is_active)||(Number(b.priority)||0)-(Number(a.priority)||0)||(a.date||'9999').localeCompare(b.date||'9999')||a.title.localeCompare(b.title,'ru')||taskKey(a).localeCompare(taskKey(b)));
     q('count').textContent=String(visible.length);
     host.querySelectorAll('[data-tasks-filter]').forEach(el=>el.setAttribute('aria-pressed',String(el.dataset.tasksFilter===state.filter)));
     state.page=Math.max(0,Math.min(state.page||0,Math.ceil(visible.length/50)-1));
-    list.replaceChildren();let lastGroup=-1, ul;
+    const totals=new Map();for(const row of visible){const id=groupOf(row,today);totals.set(id,(totals.get(id)||0)+1);}
+    // Only Active mixes several groups; the other filters already name their single group.
+    const grouped=state.filter==='active';
+    list.replaceChildren();let lastGroup=null, ul;
     for(const row of visible.slice(state.page*50,(state.page+1)*50)) {
-      const currentGroup=group(row);
-      if(currentGroup!==lastGroup){list.append(node('h3','ct-group',labels[currentGroup]));ul=node('ul','ct-list');list.append(ul);lastGroup=currentGroup;}
-      const id=taskKey(row), item=node('li','ct-row');item.dataset.contextRecord=id;
-      const complete=control('ct-complete',closed(row)?'✓':'',()=>void finish(row));complete.disabled=busy||closed(row);complete.setAttribute('aria-label',`${closed(row)?'Завершена':'Завершить'}: ${row.title}`);
-      const title=control('ct-title',row.title,()=>openTask(row,()=>restore(id)));const titleWrap=node('span','ct-title-wrap');titleWrap.append(title);renderTaskImportance(doc,titleWrap,row,item);const content=node('div','ct-content');content.append(titleWrap);
-      const parts=[goalPath(goalFor(row)),row.is_active?'В работе':row.has_work?'На паузе':''].filter(Boolean);
-      if(parts.length)content.append(node('span','ct-meta',parts.join(' · ')));
-      const date=control('ct-date',row.date?new Intl.DateTimeFormat('ru',{day:'numeric',month:'short',...(row.date.slice(0,4)!==today.slice(0,4)?{year:'numeric'}:{})}).format(new Date(`${row.date}T12:00:00`)):'Без даты',()=>editDate(row,()=>restore(id,'date')));date.disabled=busy;
-      const estimate=node('span','ct-estimate',row.duration_minutes>0?`${row.duration_minutes} мин`:'');
-      const more=control('ct-more','⋯',()=>{});more.dataset.recordMenu='';more.setAttribute('aria-label',`Действия: ${row.title}`);more.setAttribute('aria-haspopup','menu');more.setAttribute('aria-expanded','false');more.disabled=busy;
-      for(const [button,action] of [[title,'open'],[date,'date'],[more,'menu'],[complete,'finish']]){button.dataset.taskId=id;button.dataset.taskControl=action;}
-      const execution = node('span','ct-execution');
-      if (!closed(row)) {
-        const run = control('ct-run',row.is_active?'Пауза':row.has_work||row.actual_minutes>0?'Продолжить':'Начать',()=>void finish(row,row.is_active?'pause':'start'));
-        run.disabled=busy;run.dataset.taskId=id;run.dataset.taskControl='execute';run.setAttribute('aria-label',`${run.textContent}: ${row.title}`);execution.append(run);
+      const currentGroup=groupOf(row,today);
+      if(currentGroup!==lastGroup){
+        if(grouped){const [,label]=GROUPS.find(([id])=>id===currentGroup);const title=node('h3',`ct-group ct-group--${currentGroup}`);title.dataset.tasksGroup=currentGroup;title.setAttribute('aria-label',`${label}, ${totals.get(currentGroup)}`);title.append(node('span','ct-group-label',label),node('span','ct-group-count',String(totals.get(currentGroup))));list.append(title);}
+        ul=node('ul','ct-list');list.append(ul);lastGroup=currentGroup;
       }
-      item.append(complete,content,estimate,date,execution,more);ul.append(item);
+      ul.append(renderRow(row));
     }
-    if(!visible.length)list.append(node('p','ct-empty',query||state.goal?'Нет задач с такими условиями. Измени поиск или фильтры.':state.filter==='completed'?'Завершённых задач пока нет.':state.filter==='undated'?'Все задачи распределены по дням.':state.filter==='today'?'На сегодня задач нет.':'Задач пока нет. Добавь первую кнопкой «Новая задача» выше.'));
+    if(!visible.length)list.append(node('p','ct-empty',query||state.goal?EMPTY.search:EMPTY[state.filter]||EMPTY.active));
     q('pages').hidden=visible.length<=50;q('prev').disabled=state.page===0;q('next').disabled=(state.page+1)*50>=visible.length;
     q('page').textContent=`${state.page*50+1}–${Math.min((state.page+1)*50,visible.length)} из ${visible.length}`;
     if(focusId&&!focused.isConnected)restore(focusId,focusAction);

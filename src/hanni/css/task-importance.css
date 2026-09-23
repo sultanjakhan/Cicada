@@ -56,23 +56,14 @@
   border-radius: 6px;
   background: var(--task-important-tint);
 }
-.calendar-task-overview .task-important .cto-task-title-wrap,
-.calendar-tasks .task-important .ct-title-wrap {
+.calendar-task-overview .task-important .cto-task-title-wrap {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 5px;
 }
 .calendar-task-overview .task-important .cto-task { padding-right: 12px; }
-.calendar-tasks .ct-row.task-important {
-  margin: 6px 0;
-  padding-left: 10px;
-  padding-right: 8px;
-  border: 0;
-  border-left: 4px solid var(--task-important-rail);
-  border-radius: 6px;
-  background: var(--task-important-tint);
-}
+/* The Tasks pane styles its compact important row in calendar-tasks.css. */
 .evm-modal .evm-important input { accent-color: var(--task-important-text); }
 @media (max-width: 600px) {
   .calendar-now .calendar-now__card.task-important {
@@ -84,5 +75,4 @@
     --task-card-pad-x: 14px;
     --task-card-pad-y: 14px;
   }
-  .calendar-tasks .ct-row.task-important { padding-left: 6px; padding-right: 4px; }
 }

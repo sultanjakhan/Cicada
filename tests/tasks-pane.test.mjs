@@ -57,3 +57,34 @@ test('pane filter state survives remount and disposed async results cannot repla
   let release;const pending=new Promise(resolve=>release=resolve);
   const stop=mountCalendarTasks(x.host,{...x.dependencies,invoke:()=>pending});stop();x.host.textContent='another pane';release([]);await settle();assert.equal(x.host.textContent,'another pane');
 });
+
+test('active tasks are grouped as overdue, today, soon and undated, and overdue dates are marked', async t=>{
+  const shift=days=>{const d=new Date();d.setDate(d.getDate()+days);return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
+  const dom=new JSDOM('<main></main>',{url:'https://fixture.invalid',pretendToBeVisual:true}), host=dom.window.document.querySelector('main');
+  const rows=[row('Later',shift(5)),row('Free',null,{actual_minutes:10,has_work:true}),row('Old',shift(-3)),row('Now',today(),{duration_minutes:30,actual_minutes:42,has_work:true,is_active:true}),row('Late',shift(-1),{priority:5}),row('Plain',today()),row('Done',shift(-4),{completed:true})];
+  const goals=[{id:'parent',title:'Career'},{id:'child',parent_goal_id:'parent',title:'SQL'}];
+  const dispose=mountCalendarTasks(host,{state:{filter:'active',search:'',goal:'',page:0},invoke:async command=>command==='get_calendar_tasks'?rows:command==='get_goals'?goals:command==='get_calendar_task_goals'?[{source_type:'note',source_id:'Now',goal_id:'child'}]:[],openTask(){},editDate(){},executeAction:async()=>{},notifyChange(){}});
+  t.after(()=>{dispose();dom.window.close();});await settle();
+  const titles=()=>[...host.querySelectorAll('[data-task-control="open"]')].map(el=>el.textContent);
+  const groups=()=>[...host.querySelectorAll('[data-tasks-group]')].map(el=>[el.dataset.tasksGroup,el.querySelector('.ct-group-label').textContent,el.querySelector('.ct-group-count').textContent]);
+  const item=id=>host.querySelector(`[data-context-record="note:${id}"]`), date=id=>item(id).querySelector('[data-task-control="date"]');
+  assert.deepEqual(groups(),[['overdue','Просрочено','2'],['today','Сегодня','2'],['soon','Скоро','1'],['undated','Без даты','1']]);
+  assert.deepEqual(titles(),['Late','Old','Now','Plain','Later','Free'],'groups follow urgency; important and running tasks lead their group');
+  for(const id of ['Old','Late']){assert.equal(item(id).classList.contains('is-overdue'),true);assert.equal(date(id).classList.contains('is-overdue'),true);assert.match(date(id).getAttribute('aria-label'),/просрочено/);}
+  for(const id of ['Now','Plain','Later','Free']){assert.equal(item(id).classList.contains('is-overdue'),false);assert.equal(date(id).classList.contains('is-overdue'),false);}
+  assert.equal(date('Late').textContent,'Вчера');assert.equal(date('Plain').textContent,'Сегодня');assert.equal(date('Free').textContent,'Без даты');
+  assert.equal(item('Old').querySelector('[data-task-control="open"]').title,'Old','the full title stays available when it is truncated');
+  assert.equal(item('Now').classList.contains('is-running'),true);assert.equal(item('Plain').classList.contains('is-running'),false);
+  assert.equal(item('Now').querySelector('.ct-goal').textContent,'SQL');assert.equal(item('Now').querySelector('.ct-goal').title,'Career / SQL');
+  assert.equal(item('Now').querySelector('.ct-estimate').textContent,'30 мин · факт 42');assert.equal(item('Free').querySelector('.ct-estimate').textContent,'факт 10 мин');
+  const run=id=>item(id).querySelector('[data-task-control="execute"]');
+  assert.deepEqual(['Now','Free','Plain'].map(id=>[run(id).title,run(id).getAttribute('aria-label')]),[['Пауза','Пауза: Now'],['Продолжить','Продолжить: Free'],['Начать','Начать: Plain']]);
+  host.querySelector('[data-tasks-search]').value='Free';host.querySelector('[data-tasks-search]').dispatchEvent(new dom.window.Event('input'));
+  assert.deepEqual(groups(),[['undated','Без даты','1']],'empty groups are hidden');
+  host.querySelector('[data-tasks-search]').value='';host.querySelector('[data-tasks-search]').dispatchEvent(new dom.window.Event('input'));
+  host.querySelector('[data-tasks-filter="today"]').click();
+  assert.deepEqual(titles(),['Now','Plain']);assert.deepEqual(groups(),[],'a single-group filter needs no group headings');
+  host.querySelector('[data-tasks-filter="completed"]').click();
+  assert.deepEqual(titles(),['Done']);assert.equal(item('Done').classList.contains('is-overdue'),false,'completed tasks are never overdue');
+  assert.equal(run('Done'),null);
+});
