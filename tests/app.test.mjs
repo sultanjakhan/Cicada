@@ -507,8 +507,24 @@ test('saved calendar defaults determine the first Table view after startup', asy
   assert.equal(w.document.querySelector('[data-range]').textContent, range);
 });
 
+test('a dated task with a time of day sits at that time in the day grid', async t => {
+  const d = new Date(), today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const taskState = { goals:[], links:[], blocks:[], tasks:[
+    { source_type:'note', source_id:'timed', title:'Позвонить в сервис', date:today, planned_time:'09:30', duration_minutes:null, status_extra:'task', completed:false, priority:0, task_kind:'normal', sphere:'home' },
+    { source_type:'note', source_id:'plain', title:'Разобрать почту', date:today, planned_time:null, duration_minutes:null, status_extra:'task', completed:false, priority:0, task_kind:'instant', sphere:null },
+  ] };
+  const { w, click, errors } = await launch(t, { taskState, initialSettings:[['tab_calendar_default_view','День']] });
+  await click('[data-pane="table"]');
+  const timed = w.document.querySelector('.calv-day-column [data-record-source="note:timed"]');
+  assert.ok(timed, 'the timed task is placed in the hour grid');
+  assert.equal(timed.querySelector('.calv-record-time').textContent, '09:30');
+  assert.equal(w.document.querySelector('.calv-day-column [data-record-source="note:plain"]'), null, 'an untimed task stays in the untimed band');
+  assert.deepEqual(errors, []);
+});
+
 test('mobile creation returns to its visible action and settings return to the closed drawer opener', async t => {
   const { w, click } = await launch(t, { mobile:true });
+  assert.equal(w.document.querySelector('[data-calendar-create]').getAttribute('aria-label'), 'Создать задачу, событие, цель или заметку', 'the phone icon button keeps its name');
   const create = await click('[data-calendar-create]');
   assert.equal(w.document.querySelector('#tab-bar').classList.contains('drawer-open'), false);
   await click('#evm-close');

@@ -157,23 +157,22 @@ export async function showEventModal(eventId = null, initialDate = null, options
       <div class="evm-date-row">
         <label class="evm-field evm-date-field" for="evm-date"><span class="evm-field-label">Дата</span>
           <input class="form-input" id="evm-date" type="date" value="${escapeHtml(initDate)}" required></label>
-        <label class="evm-field evm-task-time" for="evm-task-time" data-editor-task><span class="evm-field-label">Время · необязательно</span>
+        <label class="evm-field evm-task-time" for="evm-task-time" data-editor-task><span class="evm-field-label">Время</span>
           <input class="form-input" id="evm-task-time" type="time" value="${escapeHtml(initTaskTime)}"></label>
         <label class="evm-untimed" data-editor-task><input type="checkbox" id="evm-no-date"${(taskId != null && !task?.date) || (!isEdit && kind === 'task' && options.initialNoDate) ? ' checked' : ''}> Без даты</label>
         <label class="evm-untimed" data-editor-event><input type="checkbox" id="evm-all-day"${isEdit && event && !event.time ? ' checked' : ''}> Без времени</label>
       </div>
       <div class="evm-task-kind" data-editor-task role="radiogroup" aria-labelledby="evm-task-kind-label" aria-describedby="evm-kind-hint">
         <span class="evm-field-label" id="evm-task-kind-label">Вид</span>
-        <div class="evm-kind-options">
+        <div class="evm-kind-line"><div class="evm-kind-options">
           <label class="evm-kind-option"><input type="radio" name="evm-task-kind" value="normal"${loadedTaskKind === 'normal' ? ' checked' : ''}><span>Обычная</span></label>
           <label class="evm-kind-option"><input type="radio" name="evm-task-kind" value="instant"${loadedTaskKind === 'instant' ? ' checked' : ''}><span>Моментальная</span></label>
-        </div>
-        <p class="evm-kind-hint" id="evm-kind-hint"></p>
+        </div><p class="evm-kind-hint" id="evm-kind-hint"></p></div>
       </div>
       <div class="evm-task-row" data-editor-task>
-        <label class="evm-field" for="evm-sphere"><span class="evm-field-label">Сфера · необязательно</span>
+        <label class="evm-field" for="evm-sphere"><span class="evm-field-label">Сфера</span>
           <select class="form-select" id="evm-sphere"><option value="">Без сферы</option>${TASK_SPHERES.map(([id, label]) => `<option value="${id}"${id === loadedSphere ? ' selected' : ''}>${label}</option>`).join('')}</select></label>
-        <label class="evm-field evm-estimate" for="evm-task-estimate"><span class="evm-field-label">Оценка, мин · необязательно</span><input class="form-input" id="evm-task-estimate" type="number" min="1" step="1" inputmode="numeric" placeholder="Не задана" value="${task?.duration_minutes ?? ''}"></label>
+        <label class="evm-field evm-estimate" for="evm-task-estimate"><span class="evm-field-label">Оценка, мин</span><input class="form-input" id="evm-task-estimate" type="number" min="1" step="1" inputmode="numeric" placeholder="Не задана" value="${task?.duration_minutes ?? ''}"></label>
       </div>
       <div class="evm-when-row" data-editor-event>
         <label class="evm-field" for="evm-time" data-evm-timing><span class="evm-field-label">Время начала</span>
@@ -235,6 +234,13 @@ export async function showEventModal(eventId = null, initialDate = null, options
   document.addEventListener('keydown', e => {
     if (!isTopModal()) return;
     if (e.key === 'Escape') { e.preventDefault(); close(); }
+    // Enter saves from any field; a text area keeps Enter for a new line and
+    // saves with Ctrl/Cmd+Enter. Handling it here also covers Enter in fields
+    // where browsers skip implicit submission.
+    if (e.key === 'Enter' && !e.isComposing && !e.defaultPrevented && overlay.contains(e.target)) {
+      const input = e.target.matches('input:not([type=button]):not([type=submit]):not([type=reset]):not([type=file])');
+      if (input || (e.target.matches('textarea') && (e.ctrlKey || e.metaKey))) { e.preventDefault(); overlay.querySelector('#evm-form').requestSubmit(); }
+    }
     if (e.key === 'Tab') {
       const focusable = [...overlay.querySelectorAll('button, input, select, textarea, summary, [tabindex="0"]')].filter(el => {
         if (el.matches(':disabled') || el.closest('[hidden]') || el.type === 'hidden') return false;
@@ -274,7 +280,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
   for (const id of offeredTypes) {
     const type = createType(id);
     if (!type?.panel) continue;
-    const panel = type.panel(document, { parentGoalId: options.goalId ?? null });
+    const panel = type.panel(document);
     panel.dataset.editorPanel = id; panel.hidden = true;
     overlay.querySelector('[data-editor-panels]').append(panel); panels.set(id, panel);
   }
@@ -348,7 +354,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
     const other = SCHEDULE_TYPES.includes(kind) ? null : createType(kind);
     overlay.querySelector('.calendar-editor-shell').dataset.editorKind = kind;
     overlay.querySelector('#evm-heading').textContent = other ? other.heading : isEdit ? (kind === 'task' ? 'Изменить задачу' : 'Редактировать событие') : (kind === 'task' ? 'Новая задача' : 'Новое событие');
-    overlay.querySelector('#evm-hint').textContent = other ? other.hint : kind === 'task' ? 'Дату, время, цель и оценку можно оставить пустыми.' : isEdit ? 'Измени детали в расписании.' : options.initialTime ? 'Выбраны дата и время ячейки. Их можно изменить.' : 'Выбраны дата календаря и текущее время. Их можно изменить.';
+    overlay.querySelector('#evm-hint').textContent = other ? other.hint : kind === 'task' ? 'Дату, время, сферу, цель и оценку можно оставить пустыми.' : isEdit ? 'Измени детали в расписании.' : options.initialTime ? 'Выбраны дата и время ячейки. Их можно изменить.' : 'Выбраны дата календаря и текущее время. Их можно изменить.';
     overlay.querySelector('#evm-title-label').textContent = other?.titleLabel || 'Название';
     titleInput.placeholder = other ? other.titlePlaceholder : kind === 'task' ? 'Например, описать пользовательский сценарий' : 'Например, встреча по проекту';
     if (kind !== 'event') titleInput.maxLength = 500; else titleInput.removeAttribute('maxlength');
@@ -406,11 +412,9 @@ export async function showEventModal(eventId = null, initialDate = null, options
       if (goalDraft && ![...goalSelect.options].some(option => option.value === goalDraft)) goalSelect.add(new Option('Выбранная цель недоступна', goalDraft));
       goalSelect.value = goalDraft ?? (persistedGoalId == null ? '' : String(persistedGoalId));
       updateGoalPath(); goalSelect.disabled = false; goalsReady = true;
-      panels.forEach((panel, id) => createType(id).goalsLoaded?.(panel, goals, { parentGoalId: options.goalId ?? null }));
       if (restoreSelectionFocus && isTopModal()) goalSelect.focus();
     } catch (err) {
       if (!overlay.isConnected) return;
-      panels.forEach((panel, id) => createType(id).goalsLoaded?.(panel, null, { parentGoalId: null }));
       goalSelect.replaceChildren(new Option('Связь с целью не загружена', ''));
       updateGoalPath();
       goalError.textContent = 'Не удалось загрузить цели. Повтори загрузку перед сохранением: ' + err;
@@ -535,14 +539,16 @@ export async function showEventModal(eventId = null, initialDate = null, options
       if (title.length > 500) { showError('Сократи название задачи до 500 символов.', titleInput); return; }
       const dueDate = noDate.checked ? null : dateInput.value;
       if (dueDate !== null && !Number.isFinite(civilMinute(dueDate, '00:00'))) { showError('Выбери дату или отметь «Без даты».', dateInput); return; }
-      const estimateMinutes = estimateInput.value.trim() === '' ? null : Number(estimateInput.value);
-      if (estimateInput.validity.badInput || (estimateMinutes !== null && (!Number.isSafeInteger(estimateMinutes) || estimateMinutes <= 0))) {
+      const taskKind = selectedTaskKind(), sphere = sphereSelect.value, instant = taskKind === 'instant';
+      // An instant task hides its estimate: a new one gets none and an edit keeps
+      // the stored value, so a hidden field is never validated or silently saved.
+      const estimateMinutes = instant ? (isEdit ? task?.duration_minutes ?? null : null) : estimateInput.value.trim() === '' ? null : Number(estimateInput.value);
+      if (!instant && (estimateInput.validity.badInput || (estimateMinutes !== null && (!Number.isSafeInteger(estimateMinutes) || estimateMinutes <= 0)))) {
         showError('Укажи оценку целым числом минут больше нуля или оставь поле пустым.', estimateInput); return;
       }
       if (desiredGoalId != null && !availableGoalIds.has(String(desiredGoalId))) { showError('Связанная цель недоступна. Выбери другую цель или «Без цели».', goalSelect); return; }
       const time = dueDate === null ? '' : taskTimeInput.value;
       if (taskTimeInput.validity.badInput || (time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time))) { showError('Укажи время в формате ЧЧ:ММ или оставь поле пустым.', taskTimeInput); return; }
-      const taskKind = selectedTaskKind(), sphere = sphereSelect.value;
       setPending(true);
       try {
         if (!acknowledgedTask) {

@@ -348,6 +348,11 @@ import { isInstantTask } from './task-model.js';
         for (const { record, lane, group: overlap } of layout) {
           if (date === options.date && foldPlan.folds.some(fold => fold.record === record)) continue;
           const node = recordButton(record, options, 'calv-grid-record');
+          // A timed task (#96) keeps inline actions only where one control row
+          // fits: a Day column and a block of at least 34px. Elsewhere it shows
+          // its time and title; Tasks, Today and the Day view keep the actions.
+          const blockHeight = foldPlan.map(Math.min(1440, minutes(record.time) + (record.durationMinutes || 30))) - foldPlan.map(minutes(record.time));
+          if (options.period !== 'day' || blockHeight < 34) { node.querySelector('.calv-record-actions')?.remove(); node.classList.remove('calv-record-shell--actions'); }
           if ((record.durationMinutes || 30) <= 30) {
             node.classList.add('calv-grid-record--short');
             if (!record.continuesBefore && !record.continuesAfter) node.querySelector('.calv-record-time').textContent = record.time;
