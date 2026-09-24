@@ -15,6 +15,9 @@ export function mountCalendarDashboardTasks(element, dependencies) {
   let rows = null, current = { key: '', state: '' }, date = localDate(now()), followToday = true;
   let disposed = false, revision = 0, loading = false, failed = false, expanded = false, page = 0;
   let actionBusy = false;
+  // Tasks listed in the dashboard «В работе» widget are not repeated in the embedded Today list.
+  let inProgress = new Set();
+  const listedToday = row => taskKey(row) !== current.key && !(embedded && inProgress.has(taskKey(row)));
   element.classList.add('calendar-task-overview');
   element.classList.toggle('calendar-task-overview--embedded', embedded);
   element.innerHTML = embedded ? `<div data-overview-embedded aria-live="polite"></div>` : `<section aria-labelledby="${prefix}-title">
@@ -143,7 +146,7 @@ export function mountCalendarDashboardTasks(element, dependencies) {
     if (rows === null) { embeddedHost.textContent = loading ? 'Загружаем задачи…' : ''; return; }
     const items = ordered();
     const todayAllItems = date === localDate(now()) ? items.filter(row => row.date === date) : [];
-    const todayItems = todayAllItems.filter(row => taskKey(row) !== current.key);
+    const todayItems = todayAllItems.filter(listedToday);
     notifyCount({ visible: todayItems.length, currentKey: current.key, currentState: current.state });
     embeddedHost.replaceChildren();
     if (failed) { empty(embeddedHost, 'Не удалось обновить список задач.'); return; }
@@ -226,12 +229,17 @@ export function mountCalendarDashboardTasks(element, dependencies) {
     if (disposed || (current.key === value.key && current.state === value.state)) return;
     current = { key: value.key, state: value.state }; render();
   };
+  dispose.setInProgress = keys => {
+    const next = new Set(keys || []);
+    if (disposed || (next.size === inProgress.size && [...next].every(key => inProgress.has(key)))) return;
+    inProgress = next; render();
+  };
   dispose.setDate = value => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value)) || date === value) return;
     date = value; followToday = value === localDate(now()); page = 0; render();
   };
   dispose.showAll = () => { if (embedded) dependencies.onShowAll?.(); else if (!expanded) { expanded = true; page = 0; render(); } };
   dispose.showToday = () => { if (embedded) dependencies.onShowToday?.(); else if (expanded) { expanded = false; page = 0; render(); } };
-  dispose.onCount = listener => { countListener = typeof listener === 'function' ? listener : null; if (countListener && rows) { const all = embedded && date !== localDate(now()) ? [] : ordered().filter(row => row.date === date); countListener({ visible: all.filter(row => taskKey(row) !== current.key).length, currentKey: current.key, currentState: current.state }); } return () => { if (countListener === listener) countListener = null; }; };
+  dispose.onCount = listener => { countListener = typeof listener === 'function' ? listener : null; if (countListener && rows) { const all = embedded && date !== localDate(now()) ? [] : ordered().filter(row => row.date === date); countListener({ visible: all.filter(listedToday).length, currentKey: current.key, currentState: current.state }); } return () => { if (countListener === listener) countListener = null; }; };
   return dispose;
 }

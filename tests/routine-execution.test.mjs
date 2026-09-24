@@ -4,7 +4,7 @@ import { JSDOM } from 'jsdom';
 import { openRecurringRun } from '../src/hanni/js/calendar-routine-execution.js';
 import { recurringSourceId } from '../src/hanni/js/calendar-recurring-store.js';
 const settle=async()=>{for(let i=0;i<8;i++)await new Promise(resolve=>setImmediate(resolve));};
-function setup(t){
+function setup(t,{other=null}={}){
   const dom=new JSDOM('<main></main>');t.after(()=>dom.window.close());
   dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};
   dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;this.dispatchEvent(new dom.window.Event('close'));};
@@ -18,9 +18,10 @@ function setup(t){
     if(name==='get_ui_state'){onRead?.();onRead=null;return JSON.stringify(state);}
     if(name==='get_schedules')return record.run.steps.map((step,index)=>({id:recurringSourceId(id,date,index),title:step.title,is_active:active?.source_id===recurringSourceId(id,date,index),has_work:hasWork&&index===0,block_id:hasWork&&index===0?1:null}));
     if(name==='get_active_block')return active;
+    if(name==='get_active_blocks')return [active,other].filter(Boolean);
     if(name==='start_task_block'){if(fail)throw Error('Проверочная ошибка');hasWork=true;active={id:1,source_type:'schedule',source_id:args.sourceId};return 1;}
     if(name==='get_timeline_blocks')return [];
-    if(name==='pause_task_block'){active=null;return;}
+    if(name==='pause_task_block'){assert.notEqual(args.blockId,other?.id,'unrelated work must keep running');active=null;return;}
     if(name==='finish_task_block'||name==='skip_recurring_step'){
       record.run.steps.find(step=>step.status==='pending').status=name==='finish_task_block'?'done':'skipped';active=null;return;
     }
@@ -56,4 +57,18 @@ test('opening details without an existing run creates no obligation',async t=>{
   const x=setup(t);x.clear();x.open();await settle();
   assert.match(x.document.querySelector('[role=alert]').textContent,/ещё не начато/);
   assert.equal(x.calls.some(call=>call.name==='set_ui_state'||call.name==='start_task_block'),false);
+});
+test('a routine step starts, pauses and finishes beside unrelated running work',async t=>{
+  const other={id:9,source_type:'note',source_id:'unrelated',is_active:true};
+  const x=setup(t,{other});x.open();await settle();
+  const click=async action=>{x.document.querySelector(`[data-run-action=${action}]`).click();await settle();};
+  await click('start');
+  assert.equal(x.document.querySelector('dialog').textContent.includes('Переключить'),false,'no switch confirmation');
+  assert.equal(x.calls.filter(call=>call.name==='start_task_block').length,1);
+  assert.equal(x.calls.some(call=>call.name==='pause_task_block'),false,'starting never pauses other work');
+  await click('pause');
+  assert.deepEqual(x.calls.filter(call=>call.name==='pause_task_block').map(call=>call.args.blockId),[1]);
+  await click('finish');
+  assert.deepEqual(x.record.run.steps.map(step=>step.status),['done','pending']);
+  assert.equal(other.is_active,true);
 });

@@ -627,6 +627,7 @@ pub fn run() {
             calendar_compat::get_timeline_blocks,
             calendar_compat::get_latest_task_block,
             calendar_compat::get_active_block,
+            calendar_compat::get_active_blocks,
             calendar_compat::start_task_block,
             calendar_compat::pause_task_block,
             calendar_compat::finish_task_block,

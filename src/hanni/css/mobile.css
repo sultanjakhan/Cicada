@@ -92,6 +92,14 @@
 .mobile .calendar-current-task [data-header-action="retry"] { flex: none; min-height: 36px; padding: 6px 10px; font-size: 13px; }
 .mobile .calendar-current-task [data-record-menu] { flex: none; width: 28px; min-height: 36px; padding: 0; font-size: 20px; }
 .mobile .calendar-current-task__error { flex-basis: 100%; }
+/* Several running tasks: «● В работе: N · последняя» in the same single row. */
+.mobile .calendar-current-task [data-header-action="in-progress"] {
+  flex: 1; display: flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 6px 0 10px;
+}
+.mobile .calendar-current-task [data-header-count] { flex: none; color: var(--text-primary); font-size: 13px; font-weight: 600; }
+.mobile .calendar-current-task [data-header-latest] { flex: 0 1 auto; font-size: 13px; font-weight: 400; line-height: 20px; color: var(--text-secondary); }
+.mobile .calendar-current-task [data-header-latest]::before { content: '· '; color: var(--text-faint); }
+.mobile .calendar-current-task [data-header-go] { margin-left: auto; }
 @media (max-width: 480px) { .mobile .calendar-current-task [data-header-time] { display: none; } }
 .mobile .calendar-workspace .uni-navigation { gap: 0; flex-wrap: nowrap; }
 .mobile #calendar-content .uni-tabs button.uni-tab { flex-shrink: 0; min-height: 40px; padding: 6px 10px; font-size: 13px; }

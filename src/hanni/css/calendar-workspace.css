@@ -1,5 +1,6 @@
 @import './calendar-context-menu.css';
 @import './calendar-planning-panels.css';
+@import './calendar-in-progress.css';
 /* Fixed heading/navigation; the workspace scrollbar stays at the window edge. */
 #calendar-content.calendar-workspace { --workspace-inset:24px; display:flex; flex-direction:column; min-height:0; overflow:hidden; padding:0; }
 #calendar-content.calendar-workspace > .uni-header,
@@ -40,6 +41,15 @@
 .calendar-current-task [data-header-action="details"]:hover { text-decoration:underline; text-underline-offset:3px; }
 .calendar-current-task [data-header-action="toggle"] { white-space:nowrap; }
 .calendar-current-task [data-record-menu] { width:36px; padding:4px; border-color:transparent; background:transparent; font-size:22px; }
+/* Two or more running tasks: one summary that leads to the dashboard widget. */
+.calendar-current-task[data-mode="several"] { grid-template-columns:minmax(0,1fr); }
+.calendar-current-task [data-header-action="in-progress"] { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; column-gap:10px; width:100%; min-width:0; padding:5px 8px 5px 12px; text-align:left; }
+.calendar-current-task [data-header-count] { display:flex; align-items:center; gap:6px; min-width:0; color:var(--text-secondary); font-size:12px; line-height:16px; font-variant-numeric:tabular-nums; }
+.calendar-current-task [data-header-count]::before { content:''; flex:none; width:7px; height:7px; border-radius:50%; background:var(--text-primary); }
+.calendar-current-task [data-header-latest] { grid-row:2; min-width:0; font-weight:600; line-height:20px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.calendar-current-task [data-header-latest]:empty { display:none; }
+.calendar-current-task [data-header-go] { grid-column:2; grid-row:1 / span 2; display:flex; color:var(--text-muted); }
+.calendar-current-task [data-header-action="in-progress"]:hover { background:var(--bg-hover); border-color:var(--border-hover); }
 .calendar-current-task button:focus-visible { outline:2px solid var(--text-primary); outline-offset:3px; }
 .calendar-current-task button:disabled { opacity:.6; cursor:default; }
 .calendar-current-task__error { grid-column:1 / -1; display:flex; align-items:center; gap:12px; }

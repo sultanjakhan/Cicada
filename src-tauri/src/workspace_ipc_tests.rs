@@ -46,6 +46,7 @@ fn fixture_with_connection(
             api::finish_task_block,
             api::skip_recurring_step,
             api::get_active_block,
+            api::get_active_blocks,
             api::get_timeline_blocks,
             api::get_latest_task_block,
             api::get_calendar_task_minutes,
@@ -1927,10 +1928,102 @@ fn skipping_a_routine_never_stops_unrelated_work() {
     call(&view,"set_ui_state",json!({"key":"calendar_recurring_v1","value":recurring.to_string()})).unwrap();
     let task=call(&view,"save_calendar_task",json!({"title":"Unrelated","id":null,"dueDate":null,"estimateMinutes":null,"goalId":null})).unwrap();
     let active=call(&view,"start_task_block",json!({"sourceType":"note","sourceId":task})).unwrap();
-    assert!(call(&view,"skip_recurring_step",json!({"sourceId":json!(["p","2026-09-20",0]).to_string()})).is_err());
+    // Parallel work (2026-09-24): the skip applies while unrelated work keeps running.
+    let first=json!(["p","2026-09-20",0]).to_string();
+    call(&view,"skip_recurring_step",json!({"sourceId":first})).unwrap();
     assert_eq!(call(&view,"get_active_block",json!({})).unwrap()["id"],active);
+    let running=call(&view,"get_active_blocks",json!({})).unwrap();
+    assert_eq!(running.as_array().unwrap().len(),1);
+    assert_eq!(running[0]["id"],active);
+    assert_eq!(running[0]["title"],"Unrelated");
     let rows=call(&view,"get_schedules",json!({})).unwrap();
-    assert!(rows.as_array().unwrap().iter().all(|row|row["status_extra"]=="pending"));
+    let step=|source:&str|rows.as_array().unwrap().iter().find(|row|row["source_id"]==source).unwrap()["status_extra"].clone();
+    assert_eq!(step(&first),"skipped");
+    assert_eq!(step(&json!(["p","2026-09-20",1]).to_string()),"pending");
+}
+
+#[test]
+fn several_tasks_run_at_once_but_one_source_never_gets_two_running_blocks() {
+    let (app, view) = fixture();
+    let first = call(&view, "save_calendar_task", json!({"id":null,"title":"First parallel","dueDate":null,"estimateMinutes":null,"goalId":null})).unwrap();
+    let second = call(&view, "save_calendar_task", json!({"id":null,"title":"Second parallel","dueDate":null,"estimateMinutes":null,"goalId":null})).unwrap();
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        conn.execute_batch("INSERT INTO items(id,kind,title,date,time,duration_minutes,completed,status,archived,version,created_at,updated_at) VALUES
+            ('parallel-event','event','Parallel event','2026-09-24','10:00',30,0,'event',0,1,'fixture','fixture');").unwrap();
+    }
+    let event = json!("parallel-event");
+    assert!(call(&view, "get_active_blocks", json!({})).unwrap().as_array().unwrap().is_empty());
+    let block1 = call(&view, "start_task_block", json!({"sourceType":"note","sourceId":first})).unwrap();
+    // A running task no longer blocks a different one, even for strict callers.
+    let block2 = call(&view, "start_task_block", json!({"sourceType":"note","sourceId":second,"failIfActive":true})).unwrap();
+    let block3 = call(&view, "start_task_block", json!({"sourceType":"event","sourceId":event,"failIfActive":true})).unwrap();
+    assert_ne!(block1, block2);
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        for (block, stamp) in [(&block1, "2026-09-24T08:00:00+00:00"), (&block2, "2026-09-24T08:05:00+00:00"), (&block3, "2026-09-24T08:10:00+00:00")] {
+            conn.execute("UPDATE timeline_blocks SET created_at=?1 WHERE id=?2", rusqlite::params![stamp, block.as_i64().unwrap()]).unwrap();
+        }
+    }
+    let active = call(&view, "get_active_blocks", json!({})).unwrap();
+    let ids: Vec<Value> = active.as_array().unwrap().iter().map(|row| row["id"].clone()).collect();
+    assert_eq!(ids, vec![block3.clone(), block2.clone(), block1.clone()], "newest first");
+    let titles: Vec<Value> = active.as_array().unwrap().iter().map(|row| row["title"].clone()).collect();
+    assert_eq!(titles, vec![json!("Parallel event"), json!("Second parallel"), json!("First parallel")]);
+    for row in active.as_array().unwrap() {
+        for field in ["id", "source_type", "source_id", "date", "start_time", "completion_date", "title"] {
+            assert!(row.get(field).is_some(), "{field} is part of the row");
+        }
+    }
+    // The single-row command stays available and still answers with one running block.
+    assert!(ids.contains(&call(&view, "get_active_block", json!({})).unwrap()["id"]));
+    // Starting the same source again adopts its running block; a strict caller is refused.
+    assert_eq!(call(&view, "start_task_block", json!({"sourceType":"note","sourceId":first})).unwrap(), block1);
+    assert!(call(&view, "start_task_block", json!({"sourceType":"note","sourceId":first,"failIfActive":true})).is_err());
+    assert_eq!(call(&view, "start_task_block", json!({"sourceType":"event","sourceId":event})).unwrap(), block3);
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM timeline_blocks", [], |r| r.get::<_, i64>(0)).unwrap(), 3);
+    }
+    // Pausing and finishing act on one block only.
+    call(&view, "pause_task_block", json!({"blockId":block2})).unwrap();
+    call(&view, "finish_task_block", json!({"blockId":block3})).unwrap();
+    let ids: Vec<Value> = call(&view, "get_active_blocks", json!({})).unwrap().as_array().unwrap().iter().map(|row| row["id"].clone()).collect();
+    assert_eq!(ids, vec![block1.clone()]);
+    let resumed = call(&view, "start_task_block", json!({"sourceType":"note","sourceId":second,"failIfActive":true})).unwrap();
+    assert_ne!(resumed, block2, "resume opens a new segment");
+    assert_eq!(call(&view, "get_active_blocks", json!({})).unwrap().as_array().unwrap().len(), 2);
+    let state = app.state::<AppState>();
+    let conn = state.0.lock().unwrap();
+    assert_eq!(conn.query_row("SELECT completed FROM items WHERE id='parallel-event'", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+}
+
+#[test]
+fn routine_step_starts_beside_running_work_but_never_twice() {
+    let (_app, view) = fixture();
+    let recurring: Value = serde_json::from_str(include_str!("../../tests/fixtures/recurring-chain.json")).unwrap();
+    call(&view, "set_ui_state", json!({"key":"calendar_recurring_v1","value":recurring.to_string()})).unwrap();
+    let task = call(&view, "save_calendar_task", json!({"id":null,"title":"Running task","dueDate":null,"estimateMinutes":null,"goalId":null})).unwrap();
+    let note = call(&view, "start_task_block", json!({"sourceType":"note","sourceId":task,"failIfActive":true})).unwrap();
+    let first = json!(["p","2026-09-20",0]).to_string();
+    let step = call(&view, "start_task_block", json!({"sourceType":"schedule","sourceId":first,"failIfActive":true})).unwrap();
+    assert_ne!(step, note);
+    assert_eq!(call(&view, "start_task_block", json!({"sourceType":"schedule","sourceId":first,"failIfActive":true})).unwrap(), step);
+    assert_eq!(call(&view, "start_task_block", json!({"sourceType":"schedule","sourceId":first})).unwrap(), step);
+    let active = call(&view, "get_active_blocks", json!({})).unwrap();
+    assert_eq!(active.as_array().unwrap().len(), 2);
+    let routine = active.as_array().unwrap().iter().find(|row| row["source_type"] == "schedule").unwrap();
+    assert_eq!(routine["id"], step);
+    assert_eq!(routine["title"], "Chain · First");
+    assert_eq!(routine["completion_date"], "2026-09-20");
+    // Only the current step starts; finishing it leaves the unrelated task running.
+    assert!(call(&view, "start_task_block", json!({"sourceType":"schedule","sourceId":json!(["p","2026-09-20",1]).to_string()})).is_err());
+    call(&view, "finish_task_block", json!({"blockId":step})).unwrap();
+    let ids: Vec<Value> = call(&view, "get_active_blocks", json!({})).unwrap().as_array().unwrap().iter().map(|row| row["id"].clone()).collect();
+    assert_eq!(ids, vec![note]);
 }
 
 #[test]

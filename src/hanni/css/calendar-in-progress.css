@@ -1,0 +1,76 @@
+/* «В работе»: calm white/graphite card; rows follow the Tasks pane (calendar-tasks.css). */
+.calendar-in-progress {
+  --cip-hover: color-mix(in srgb, var(--text-primary) 3.5%, var(--bg-card));
+  --cip-hover-strong: color-mix(in srgb, var(--text-primary) 8%, var(--bg-card));
+  --cip-running: color-mix(in srgb, var(--text-primary) 5%, var(--bg-card));
+  display: block; min-width: 0; margin: 0 0 18px; color: var(--text-primary);
+}
+.calendar-in-progress, .calendar-in-progress * { box-sizing: border-box; }
+.calendar-in-progress [hidden] { display: none !important; }
+.calendar-in-progress button { font: inherit; color: var(--text-primary); }
+.calendar-in-progress :focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
+
+.cip-card { min-width: 0; padding: 10px 8px 6px; border: 1px solid var(--border-default); border-radius: 14px; background: var(--bg-card); }
+.cip-heading { display: flex; align-items: baseline; gap: 10px; min-width: 0; padding: 0 8px 0 12px; margin-bottom: 4px; }
+.cip-heading h2 { flex: none; margin: 0; font-size: 15px; line-height: 24px; font-weight: 650; }
+.cip-heading h2:focus-visible { outline-offset: 4px; border-radius: 4px; }
+.cip-summary { min-width: 0; font-size: 12px; line-height: 16px; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.cip-list { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.cip-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 12px; min-height: 52px; padding: 6px 6px 6px 12px; border-radius: 9px; transition: background-color .12s; }
+.cip-row:hover, .cip-row:has(:focus-visible) { background: var(--cip-hover); }
+.cip-row::before { content: ''; position: absolute; left: 0; top: 11px; bottom: 11px; width: 3px; border-radius: 0 3px 3px 0; background: transparent; }
+.cip-row.is-running { background: var(--cip-running); }
+.cip-row.is-running:hover { background: var(--cip-hover-strong); }
+.cip-row.is-running::before { background: var(--text-primary); }
+
+.cip-content { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.cip-title { align-self: flex-start; display: block; max-width: 100%; min-width: 0; padding: 0; border: 0; border-radius: 3px; background: transparent; font-size: 14px !important; line-height: 20px; font-weight: 500; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.cip-title:hover { text-decoration: underline; text-decoration-color: var(--text-faint); text-underline-offset: 3px; }
+.cip-meta { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; line-height: 16px; color: var(--text-muted); white-space: nowrap; }
+.cip-state { color: var(--text-secondary); }
+.cip-row.is-running .cip-state { color: var(--text-primary); font-weight: 600; }
+.cip-time { font-variant-numeric: tabular-nums; }
+.cip-time::before { content: '·'; margin-right: 6px; color: var(--text-faint); }
+
+.cip-actions { display: flex; align-items: center; gap: 2px; }
+.cip-icon { position: relative; display: inline-grid; place-items: center; flex: none; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--text-muted) !important; cursor: pointer; transition: background-color .12s, color .12s, box-shadow .12s; }
+.cip-icon svg { display: block; }
+.cip-icon:hover:not(:disabled), .cip-icon[aria-expanded="true"] { background: var(--cip-hover-strong); color: var(--text-primary) !important; }
+.cip-icon:disabled { cursor: default; opacity: .4; }
+.cip-toggle:not(.is-running) svg path { fill: currentColor; }
+.cip-toggle.is-running { color: var(--text-primary) !important; background: var(--bg-card); box-shadow: inset 0 0 0 1px var(--border-default); }
+.cip-toggle.is-running:hover:not(:disabled) { box-shadow: inset 0 0 0 1px var(--border-hover); }
+
+.cip-footer { margin: 2px 0 0; padding-left: 2px; }
+.cip-launch { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text-secondary) !important; font-size: 13px !important; cursor: pointer; }
+.cip-launch:hover:not(:disabled) { background: var(--cip-hover); color: var(--text-primary) !important; }
+.cip-launch span { font-size: 15px; line-height: 1; }
+
+/* Nothing running: the widget folds into one line with a single action. */
+.cip-card.is-empty { display: flex; align-items: center; padding: 6px 6px 6px 16px; }
+.cip-empty { display: flex; flex: 1; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
+.cip-empty-text { min-width: 0; font-size: 13px; line-height: 20px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cip-start { display: inline-flex; flex: none; align-items: center; gap: 6px; min-height: 36px; padding: 0 12px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-card); font-size: 13px !important; font-weight: 500; cursor: pointer; }
+.cip-start:hover:not(:disabled) { background: var(--cip-hover); border-color: var(--border-hover); }
+.cip-start:disabled { opacity: .5; cursor: default; }
+.cip-glyph { display: flex; }
+.cip-message { margin: 4px 0 2px; padding: 0 12px; font-size: 12px; line-height: 16px; color: var(--text-secondary); }
+.cip-message:empty { display: none; }
+.cip-message[role="alert"] { color: var(--color-red, #b42318); }
+.cip-card.is-empty .cip-message { display: none; }
+
+[data-calendar-density=compact] .cip-row { min-height: 44px; padding-block: 3px; }
+
+@media (max-width: 600px) {
+  .calendar-in-progress { margin-bottom: 14px; }
+  .cip-card { padding: 8px 4px 4px; }
+  .cip-heading { padding-left: 10px; }
+  .cip-row { column-gap: 6px; min-height: 56px; padding: 6px 2px 6px 10px; }
+  .cip-actions { gap: 0; }
+  .cip-icon { width: 36px; height: 36px; }
+  /* The title stays one visual line but gets a 36px touch target. */
+  .cip-title { position: relative; }
+  .cip-title::after { content: ''; position: absolute; inset: -8px 0; }
+  .cip-card.is-empty { padding: 6px 6px 6px 12px; }
+}

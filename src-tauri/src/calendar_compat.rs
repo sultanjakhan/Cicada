@@ -1104,6 +1104,40 @@ pub fn get_active_block(state: State<'_, AppState>) -> Result<Option<Value>, Str
     let conn = lock(&state)?;
     conn.query_row("SELECT id,source_type,source_id,date,start_time,completion_date FROM timeline_blocks WHERE is_active=1 ORDER BY id DESC LIMIT 1",[],|r|Ok(json!({"id":r.get::<_,i64>(0)?,"source_type":r.get::<_,String>(1)?,"source_id":r.get::<_,String>(2)?,"date":r.get::<_,String>(3)?,"start_time":r.get::<_,String>(4)?,"completion_date":r.get::<_,Option<String>>(5)?}))).optional().map_err(|e|fail(e.to_string()))
 }
+/// Every running block, newest first. Since 2026-09-24 several tasks may run at
+/// once; `get_active_block` keeps its single-row answer for older callers.
+#[tauri::command]
+pub fn get_active_blocks(state: State<'_, AppState>) -> Result<Vec<Value>, String> {
+    let conn = lock(&state)?;
+    let mut statement = conn
+        .prepare("SELECT t.id,t.source_type,t.source_id,t.date,t.start_time,t.completion_date,i.title FROM timeline_blocks t LEFT JOIN items i ON t.source_type IN ('note','event') AND i.id=t.source_id WHERE t.is_active=1 ORDER BY t.created_at DESC,t.id DESC")
+        .map_err(|e| fail(e.to_string()))?;
+    let mut rows = statement
+        .query_map([], |r| Ok(json!({"id":r.get::<_,i64>(0)?,"source_type":r.get::<_,String>(1)?,"source_id":r.get::<_,String>(2)?,"date":r.get::<_,String>(3)?,"start_time":r.get::<_,String>(4)?,"completion_date":r.get::<_,Option<String>>(5)?,"title":r.get::<_,Option<String>>(6)?})))
+        .map_err(|e| fail(e.to_string()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| fail(e.to_string()))?;
+    drop(statement);
+    // Routine steps are titled by their saved run; an unreadable run keeps a null title.
+    if rows.iter().any(|row| row["source_type"] == "schedule") {
+        let titles: HashMap<String, Value> = schedule_projections(&conn, None, None)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|row| (row["source_id"].as_str().unwrap_or("").to_string(), row["title"].clone()))
+            .collect();
+        for row in rows.iter_mut().filter(|row| row["source_type"] == "schedule") {
+            if let Some(title) = titles.get(row["source_id"].as_str().unwrap_or("")) {
+                row["title"] = title.clone();
+            }
+        }
+    }
+    Ok(rows)
+}
+fn active_block_for(conn: &Connection, source_type: &str, source_id: &str) -> Result<Option<i64>, String> {
+    conn.query_row("SELECT id FROM timeline_blocks WHERE source_type=?1 AND source_id=?2 AND is_active=1 ORDER BY created_at DESC,id DESC LIMIT 1", params![source_type, source_id], |r| r.get(0))
+        .optional()
+        .map_err(|e| fail(e.to_string()))
+}
 #[tauri::command(rename_all = "camelCase")]
 pub fn start_task_block(
     source_type: String,
@@ -1116,16 +1150,9 @@ pub fn start_task_block(
     let conn = lock(&state)?;
     if source_type == "schedule" {
         let (_, origin, _, _, title) = schedule_context(&conn, &source_id)?;
-        if conn
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM timeline_blocks WHERE is_active=1)",
-                [],
-                |r| r.get::<_, bool>(0),
-            )
-            .map_err(|e| fail(e.to_string()))?
-        {
-            if let Some(id) = conn.query_row("SELECT id FROM timeline_blocks WHERE source_type='schedule' AND source_id=?1 AND is_active=1 ORDER BY id DESC LIMIT 1", [&source_id], |r| r.get(0)).optional().map_err(|e| fail(e.to_string()))? { return Ok(id); }
-            return Err(fail("another task is active"));
+        // A routine step may run beside other tasks, but never twice at once.
+        if let Some(id) = active_block_for(&conn, "schedule", &source_id)? {
+            return Ok(id);
         }
         let id = crate::mvp_sync_db::timeline_id(&conn)?;
         let timestamp = now();
@@ -1159,16 +1186,14 @@ pub fn start_task_block(
     if !exists {
         return Err(fail("source record not found"));
     }
-    if fail_if_active.unwrap_or(false)
-        && conn
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM timeline_blocks WHERE is_active=1)",
-                [],
-                |r| r.get::<_, bool>(0),
-            )
-            .map_err(|e| fail(e.to_string()))?
-    {
-        return Err(fail("another task is active"));
+    // Other running tasks no longer block a start (2026-09-24). The same source
+    // never gets a second running block: strict callers get an error, others
+    // adopt the running block.
+    if let Some(id) = active_block_for(&conn, &source_type, &source_id)? {
+        if fail_if_active.unwrap_or(false) {
+            return Err(fail("task is already active"));
+        }
+        return Ok(id);
     }
     let completion_date =
         completion_date.unwrap_or_else(|| Local::now().format("%Y-%m-%d").to_string());
@@ -1266,16 +1291,7 @@ pub fn skip_recurring_step(source_id: String, state: State<'_, AppState>) -> Res
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|e| fail(e.to_string()))?;
     let _ = schedule_context(&tx, &source_id)?;
-    let active_other: bool = tx
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM timeline_blocks WHERE is_active=1 AND (source_type<>'schedule' OR source_id<>?1))",
-            [&source_id],
-            |r| r.get(0),
-        )
-        .map_err(|e| fail(e.to_string()))?;
-    if active_other {
-        return Err(fail("another task is active"));
-    }
+    // Skipping touches only this step's own block; other running tasks stay as they are.
     let block: Option<i64> = tx
         .query_row("SELECT id FROM timeline_blocks WHERE source_type='schedule' AND source_id=?1 AND is_active=1 ORDER BY id DESC LIMIT 1", [&source_id], |r| r.get(0))
         .optional()

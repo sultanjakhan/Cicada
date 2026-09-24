@@ -94,3 +94,20 @@ test('Today paginates its own rows and a completion refresh updates both counter
   x.q('toggle').click();
   assert.equal(x.q('page').textContent,'1–50 из 51');
 });
+
+test('embedded Today leaves out tasks listed in the «В работе» widget and counts only the rest', async t => {
+  const dom = new JSDOM('<main></main>'), host = dom.window.document.querySelector('main');
+  const rows = [task('running', { is_active:true }), task('paused', { has_work:true }), task('fresh')];
+  const dispose = mountCalendarDashboardTasks(host, { invoke:async () => rows, now:() => new Date('2026-09-12T12:00:00'), embedded:true });
+  t.after(() => { dispose(); dom.window.close(); });
+  const counts = []; dispose.onCount(value => counts.push(value.visible));
+  await new Promise(resolve => setImmediate(resolve));
+  const listed = () => [...host.querySelectorAll('[data-overview-task]')].map(button => button.dataset.overviewTask);
+  assert.deepEqual(listed().sort(), ['note:fresh', 'note:paused', 'note:running']);
+  dispose.setInProgress(['note:running', 'note:paused']);
+  assert.deepEqual(listed(), ['note:fresh']);
+  assert.equal(counts.at(-1), 1);
+  dispose.setInProgress([]);
+  assert.equal(listed().length, 3);
+  assert.equal(counts.at(-1), 3);
+});

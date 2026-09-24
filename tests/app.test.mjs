@@ -39,12 +39,14 @@ async function launch(t, { mobile = false, initialSettings = [], width, userAgen
     })) || [];
     if (command === 'get_timeline_blocks') return taskState?.blocks.filter(block => block.date === args.date) || [];
     if (command === 'get_active_block') return taskState?.blocks.find(block => block.is_active) || null;
+    if (command === 'get_active_blocks') return (taskState?.blocks.filter(block => block.is_active) || []).reverse()
+      .map(block => ({ ...block, title:taskState.tasks.find(task => task.source_id === block.source_id)?.title ?? null }));
     if (command === 'get_latest_task_block') return taskState?.blocks.at(-1) || null;
     if (command === 'get_calendar_task_seconds') return taskState?.blocks.filter(block => !block.is_active && block.source_id === args.sourceId).reduce((sum,block) => sum + block.duration_seconds, 0) || 0;
     if (command === 'get_schedules') return [];
     if (command === 'start_task_block') {
-      assert.equal(args.failIfActive, true);
-      assert.equal(taskState.blocks.some(block => block.is_active), false);
+      // Several tasks may run at once; one source never gets a second running block.
+      assert.equal(taskState.blocks.some(block => block.is_active && block.source_id === args.sourceId), false);
       const id = taskState.blocks.length + 1;
       taskState.blocks.push({ id, source_type:args.sourceType, source_id:args.sourceId, date:args.completionDate, completion_date:args.completionDate, start_time:'10:00', is_active:true, duration_seconds:0 });
       return id;
@@ -514,4 +516,52 @@ test('mobile creation returns to its visible action and settings return to the c
   assert.equal(w.document.querySelector('#tab-bar').classList.contains('drawer-open'), false);
   await click('.calendar-settings-dialog .calendar-editor-close');
   assert.equal(w.document.activeElement.id, 'mobile-hamburger');
+});
+
+// Owner decision 2026-09-24: parallel work lives in the dashboard widget before the main goal.
+test('two tasks run at once from Tasks and the launcher; the header count leads to the dashboard widget', async t => {
+  const taskState = { tasks:[
+    { id:'first', source_type:'note', source_id:'first', title:'Первая задача', date:null, status_extra:'task' },
+    { id:'second', source_type:'note', source_id:'second', title:'Вторая задача', date:null, status_extra:'task' },
+  ], blocks:[] };
+  const { w, click, calls, errors } = await launch(t, { taskState });
+  const pane = w.document.querySelector('#uni-pane-calendar');
+  const widget = () => w.document.querySelector('[data-calendar-in-progress]');
+  assert.ok(widget().compareDocumentPosition(pane.querySelector('.calendar-now__goal')) & w.Node.DOCUMENT_POSITION_FOLLOWING, 'the widget stands before the main goal');
+  assert.ok(pane.querySelector('[data-calendar-day-banner]').compareDocumentPosition(widget()) & w.Node.DOCUMENT_POSITION_FOLLOWING);
+  assert.match(widget().textContent, /Ничего не запущено/);
+  await click('[data-pane="tasks"]');
+  await click('[data-task-control="execute"][data-task-id="note:first"]');
+  const header = w.document.querySelector('[data-calendar-current-task]');
+  assert.equal(header.dataset.mode, 'single');
+  assert.equal(header.querySelector('[data-header-action="details"]').textContent, 'Первая задача');
+  await click('[data-calendar-launch]');
+  await click('[data-task-launcher] [data-overview-execute="note:second"]');
+  await click('[data-task-launcher] footer [data-dialog-close]');
+  assert.equal(calls.filter(call => call.command === 'pause_task_block').length, 0, 'starting never pauses the other task');
+  assert.equal(taskState.blocks.filter(block => block.is_active).length, 2);
+  assert.equal(header.dataset.mode, 'several');
+  assert.equal(header.querySelector('[data-header-count]').textContent, 'В работе: 2');
+  assert.equal(header.querySelector('[data-header-latest]').textContent, 'Вторая задача');
+  await click('[data-header-action="in-progress"]');
+  await settle();
+  assert.equal(w.document.querySelector('.uni-tab.active').dataset.pane, 'dash');
+  const titles = () => [...widget().querySelectorAll('.cip-row')].map(row => [row.querySelector('.cip-title').textContent, row.querySelector('.cip-state').textContent]);
+  assert.deepEqual(titles(), [['Вторая задача', 'идёт'], ['Первая задача', 'идёт']]);
+  assert.equal(w.document.activeElement, widget().querySelector('[data-cip-title]'));
+  [...widget().querySelectorAll('[data-cip-control="toggle"]')].find(button => button.dataset.cipKey === 'note:second').click();
+  await settle();
+  assert.deepEqual(calls.filter(call => call.command === 'pause_task_block').map(call => call.args.blockId), [2], 'only the chosen task pauses');
+  assert.deepEqual(titles(), [['Первая задача', 'идёт'], ['Вторая задача', 'пауза']]);
+  const current = w.document.querySelector('[data-calendar-current-task]');
+  assert.equal(current.dataset.mode, 'single');
+  assert.equal(current.querySelector('[data-header-action="details"]').textContent, 'Первая задача');
+  assert.equal(current.querySelector('[data-header-action="toggle"]').textContent, 'Пауза');
+  // Resuming from the Tasks pane also runs beside the other task.
+  await click('[data-pane="tasks"]');
+  await click('[data-task-control="execute"][data-task-id="note:second"]');
+  assert.equal(calls.filter(call => call.command === 'pause_task_block').length, 1);
+  assert.deepEqual(taskState.blocks.filter(block => block.is_active).map(block => block.source_id).sort(), ['first', 'second']);
+  assert.equal(w.document.querySelector('[data-calendar-current-task]').dataset.mode, 'several');
+  assert.deepEqual(errors, []);
 });

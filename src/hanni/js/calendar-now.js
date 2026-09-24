@@ -3,7 +3,7 @@ import { rankTasks as defaultRankTasks } from './task-picker-sort.js';
 import { loadCategoryWeights } from './task-picker-view.js';
 import { ICONS } from './icons.js';
 import { createCalendarDialog } from './calendar-dialog.js';
-import { startCalendarExecution } from './calendar-execution.js';
+import { startCalendarExecution, readActiveBlocks } from './calendar-execution.js';
 import { mountCalendarContextMenu } from './calendar-context-menu.js';
 import { renderTaskImportance } from './task-importance.js';
 
@@ -29,6 +29,7 @@ const taskOf = row => ({
   date: validDate(row.date), completion_date: validDate(row.completion_date) || validDate(row.date),
 });
 const validTask = value => value && ['event', 'note', 'schedule'].includes(value.source_type) && value.source_id != null;
+const tasksWord = count => { const last = count % 10, teen = count % 100; return last === 1 && teen !== 11 ? 'задача' : last >= 2 && last <= 4 && (teen < 12 || teen > 14) ? 'задачи' : 'задач'; };
 function restoreState(raw) {
   if (!raw) return freshState();
   const value = JSON.parse(raw);
@@ -70,12 +71,17 @@ export function mountCalendarNow(element, dependencies = {}) {
   if (header) {
     header.classList.add('calendar-current-task');
     header.hidden = true;
-    header.innerHTML = `<div class="calendar-current-task__copy"><span data-header-status>Текущая задача</span><button type="button" data-header-action="details" aria-haspopup="dialog"></button><span data-header-time hidden></span></div><button type="button" data-header-action="toggle"></button><button type="button" data-record-menu aria-label="Действия с текущей задачей" aria-haspopup="menu" aria-expanded="false">⋯</button><div class="calendar-current-task__error" hidden><p role="alert" data-header-error></p><button type="button" data-header-action="retry">Повторить</button></div>`;
+    header.innerHTML = `<div class="calendar-current-task__copy"><span data-header-status>Текущая задача</span><button type="button" data-header-action="details" aria-haspopup="dialog"></button><span data-header-time hidden></span></div><button type="button" data-header-action="in-progress" hidden><span data-header-count></span><span data-header-latest></span><span data-header-go aria-hidden="true">${ICONS.chevronRight}</span></button><button type="button" data-header-action="toggle"></button><button type="button" data-record-menu aria-label="Действия с текущей задачей" aria-haspopup="menu" aria-expanded="false">⋯</button><div class="calendar-current-task__error" hidden><p role="alert" data-header-error></p><button type="button" data-header-action="retry">Повторить</button></div>`;
   }
   const headerTitle = header?.querySelector('[data-header-action="details"]');
   const headerToggle = header?.querySelector('[data-header-action="toggle"]');
   const headerRetry = header?.querySelector('[data-header-action="retry"]');
   const headerMore = header?.querySelector('[data-record-menu]');
+  const headerCopy = header?.querySelector('.calendar-current-task__copy');
+  const headerInProgress = header?.querySelector('[data-header-action="in-progress"]');
+  // With two or more running tasks the header only counts them; the dashboard lists each one.
+  const runningCount = () => snapshot?.activeBlocks?.length || 0;
+  const headerFocusTarget = () => failure ? headerRetry : runningCount() >= 2 ? headerInProgress : headerToggle;
   const hideTaskCard = dependencies.hideTaskCard === true;
 
   element.classList.add('calendar-now');
@@ -262,23 +268,31 @@ export function mountCalendarNow(element, dependencies = {}) {
   }
   function renderHeader() {
     if (!header || disposed) return;
-    const task = headerTask();
-    header.hidden = !task;
+    const task = headerTask(), count = runningCount(), several = count >= 2;
+    header.hidden = !task && !several;
     header.dataset.contextRecord = keyOf(task);
     header.dataset.state = currentState;
+    header.dataset.mode = several ? 'several' : 'single';
+    headerCopy.hidden = several;
+    headerInProgress.hidden = !several;
+    headerInProgress.querySelector('[data-header-count]').textContent = several ? `В работе: ${count}` : '';
+    headerInProgress.querySelector('[data-header-latest]').textContent = several ? task?.title || '' : '';
+    headerInProgress.title = several ? 'Показать все задачи в работе на дашборде' : '';
+    headerInProgress.setAttribute('aria-label', several ? `В работе: ${count} ${tasksWord(count)}${task?.title ? `, последняя — ${task.title}` : ''}. Показать на дашборде` : '');
+    headerInProgress.disabled = busy || reading;
     header.setAttribute('aria-busy', String(busy || reading));
     header.querySelector('[data-header-status]').textContent = 'Текущая задача' + ({ active:' · В работе', paused:' · На паузе' }[currentState] || '');
     headerTitle.hidden = !task;
     headerTitle.textContent = task?.title || '';
     headerTitle.title = task?.title || '';
     headerTitle.disabled = busy || reading || !!failure;
-    headerToggle.hidden = !task;
+    headerToggle.hidden = !task || several;
     headerToggle.textContent = currentState === 'active' ? 'Пауза' : saved.execution ? 'Продолжить' : 'Начать';
     headerToggle.disabled = busy || reading || !!failure;
-    headerMore.hidden = !task || !saved.execution;
+    headerMore.hidden = !task || !saved.execution || several;
     headerMore.disabled = busy || reading || !!failure;
     const time = header.querySelector('[data-header-time]');
-    time.hidden = !task || !saved.execution;
+    time.hidden = !task || !saved.execution || several;
     time.textContent = saved.execution ? `${elapsedMinutes()} мин` : '';
     const error = header.querySelector('[data-header-error]');
     error.parentElement.hidden = !failure;
@@ -543,13 +557,15 @@ export function mountCalendarNow(element, dependencies = {}) {
     if (reload && !canApplyRemote()) return;
     const raw = !initialized || reload ? await api('get_ui_state', { key: STATE_KEY }) : stateRaw;
     const state = initialized && !reload ? structuredClone(saved) : restoreState(raw);
-    const [goals, links, planned, active, todayBlocks, pins, weights, latest] = await Promise.all([
+    const [goals, links, planned, activeBlocks, todayBlocks, pins, weights, latest] = await Promise.all([
       api('get_goals', { tabName: null }), api('get_calendar_task_goals', {}),
-      api('get_calendar_records', { start: date, end: date }), api('get_active_block', {}), api('get_timeline_blocks', { date }),
+      api('get_calendar_records', { start: date, end: date }), readActiveBlocks(api), api('get_timeline_blocks', { date }),
       api('get_task_pins', {}).catch(() => []), loadWeights().catch(() => ({})),
       api('get_latest_task_block', {}),
     ]);
-    const extraDates = [...new Set([active?.date, latest?.date, state.execution?.date].filter(value => value && value !== date))];
+    // Several tasks may run at once; the newest one is the header's current task.
+    const active = activeBlocks[0] || null, runningKeys = new Set(activeBlocks.map(keyOf));
+    const extraDates = [...new Set([...activeBlocks.map(block => block.date), latest?.date, state.execution?.date].filter(value => value && value !== date))];
     const extraBlocks = await Promise.all(extraDates.map(value => api('get_timeline_blocks', { date: value })));
     const blocks = [...new Map([...todayBlocks, ...extraBlocks.flat()].map(block => [block.id, block])).values()];
     if (disposed || stateVersion !== version || (reload && (remoteReadVersion !== remoteVersion || !canApplyRemote()))) return;
@@ -567,7 +583,8 @@ export function mountCalendarNow(element, dependencies = {}) {
     }
     if (active) {
       const task = await resolveTask(active, planned, state);
-      if(state.execution && keyOf(state.execution.task)!==keyOf(task))state.returnTo=taskOf(state.execution.task);
+      // A task that keeps running beside the newest one is not something to return to.
+      if(state.execution && keyOf(state.execution.task)!==keyOf(task) && !runningKeys.has(keyOf(state.execution.task)))state.returnTo=taskOf(state.execution.task);
       state.execution = { blockId: Number(active.id), date: active.date, task }; state.completed = null;
       state.observedBlockId=Number(active.id);
     } else if (state.execution) {
@@ -596,6 +613,7 @@ export function mountCalendarNow(element, dependencies = {}) {
       if (!block) { state.execution = null; state.selection = null; state.selectionMode = 'auto'; }
       else if (task?.completed || ['done','skipped'].includes(task?.status_extra)) { state.completed = state.execution.task; state.execution = null; }
     }
+    if(state.returnTo && runningKeys.has(keyOf(state.returnTo)))state.returnTo=null;
     if(state.returnTo){
       const previous=state.returnTo;
       let row;
@@ -621,7 +639,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     if (disposed || stateVersion !== version || (reload && (remoteReadVersion !== remoteVersion || !canApplyRemote()))) return;
     stateRaw = raw ?? '';
     if (reload) { remotePending = false; remoteGuard = null; needsSave = false; }
-    saved = state; initialized = true; snapshot = { date, goals: goals.filter(goal => goal.goal_kind !== 'daily_norm'), links, planned, active, blocks, pins, weights, workTime };
+    saved = state; initialized = true; snapshot = { date, goals: goals.filter(goal => goal.goal_kind !== 'daily_norm'), links, planned, active, activeBlocks, blocks, pins, weights, workTime };
     if (saved.selectionMode === 'manual' && !saved.execution && !saved.completed && !candidates().some(task => keyOf(task) === keyOf(saved.selection))) {
       saved.selection = null; saved.selectionMode = 'auto';
     }
@@ -676,21 +694,24 @@ export function mountCalendarNow(element, dependencies = {}) {
     } else if (operation.kind === 'next') {
       saved.completed = null; saved.selection = null; saved.selectionMode = 'auto';
     } else {
-      const active = await api('get_active_block', {});
+      const running = await readActiveBlocks(api), active = running[0] || null;
       if (operation.kind === 'start' || operation.kind === 'return') {
-        if (operation.kind==='start' && active && keyOf(active) !== keyOf(operation.task)) throw new Error('different-active');
-        const blockId = operation.kind==='return' ? await startCalendarExecution(api,operation.task,document) : active?.id ?? await api('start_task_block', {
-          sourceType: operation.task.source_type, sourceId: String(operation.task.source_id), failIfActive: true,
+        // Other running tasks keep running; the same running task is adopted, not duplicated.
+        const same = running.find(block => keyOf(block) === keyOf(operation.task));
+        const blockId = operation.kind==='return' ? await startCalendarExecution(api,operation.task) : same?.id ?? await api('start_task_block', {
+          sourceType: operation.task.source_type, sourceId: String(operation.task.source_id),
           completionDate: operation.task.completion_date || operation.task.date || localDate(),
         });
         if(blockId===null){operation.cancelled=true;return;}
-        if(saved.execution && keyOf(saved.execution.task)!==keyOf(operation.task))saved.returnTo=taskOf(saved.execution.task);
+        if(saved.execution && keyOf(saved.execution.task)!==keyOf(operation.task) && !running.some(block => keyOf(block) === keyOf(saved.execution.task)))saved.returnTo=taskOf(saved.execution.task);
         else if(keyOf(saved.returnTo)===keyOf(operation.task))saved.returnTo=null;
-        saved.execution = { blockId: Number(blockId), date: operation.kind==='return'?localDate():active?.date || localDate(), task: taskOf(operation.task) }; saved.completed = null;
+        saved.execution = { blockId: Number(blockId), date: same?.date || localDate(), task: taskOf(operation.task) }; saved.completed = null;
       } else {
-        if (active && Number(active.id) !== operation.execution.blockId) throw new Error('different-active');
+        // A stale surface may still show a paused task while another one already runs.
+        const own = running.find(block => Number(block.id) === operation.execution.blockId);
+        if (!own && active) throw new Error('different-active');
         if (operation.kind === 'pause' || operation.kind === 'switch-task') {
-          if (active) await api('pause_task_block', { blockId: operation.execution.blockId });
+          if (own) await api('pause_task_block', { blockId: operation.execution.blockId });
           else {
             const blocks = await api('get_timeline_blocks', { date: operation.execution.date });
             if (!blocks.some(block => Number(block.id) === operation.execution.blockId && !block.is_active)) throw new Error('missing-block');
@@ -747,7 +768,7 @@ export function mountCalendarNow(element, dependencies = {}) {
           const focused = document.activeElement;
           const restore = focused === document.body || header?.contains(focused) || (element.contains(focused) && focused.closest('[hidden]'));
           if (restore) {
-            if (!header?.hidden) (failure ? headerRetry : headerToggle).focus({ preventScroll:true });
+            if (!header?.hidden) headerFocusTarget().focus({ preventScroll:true });
             else dependencies.returnHeaderFocus?.();
           }
         } else if (operation.origin !== 'launcher' && !goalPicker && !element.closest('[hidden]')) {
@@ -775,6 +796,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     const button = event.target.closest('[data-header-action]');
     if (!button || !header.contains(button) || button.disabled || disposed || busy || reading) return;
     if (button === headerRetry) { if (failure) void run({ ...failure.operation, origin:'header' }); return; }
+    if (button === headerInProgress) { dependencies.openInProgress?.(); return; }
     const task = headerTask();
     if (!task || failure) return;
     if (button === headerTitle) {
@@ -848,7 +870,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     while(readFlight&&!disposed)await readFlight;
     if(handoff&&!disposed&&!busy&&!document.querySelector('dialog[open]')){
       if (hideTaskCard) {
-        if (!header.hidden && (document.activeElement === focused || document.activeElement === document.body || header.contains(document.activeElement))) headerToggle.focus({ preventScroll:true });
+        if (!header.hidden && (document.activeElement === focused || document.activeElement === document.body || header.contains(document.activeElement))) headerFocusTarget().focus({ preventScroll:true });
       } else {
         ui.card.scrollIntoView?.({block:'nearest'});
         actions.pause.focus({preventScroll:true});
@@ -858,7 +880,7 @@ export function mountCalendarNow(element, dependencies = {}) {
   element.addEventListener('click', onClick); element.addEventListener('submit', onSubmit); element.addEventListener('keydown', onKeydown);
   header?.addEventListener('click', onHeaderClick);
   const disposeHeaderMenu = header && mountCalendarContextMenu(header, {
-    getRecord:() => !busy && !reading && !failure ? headerTask() : null,
+    getRecord:() => !busy && !reading && !failure && runningCount() < 2 ? headerTask() : null,
     getActions:() => {
       const execution = saved.execution && structuredClone(saved.execution);
       const previous = saved.returnTo && taskOf(saved.returnTo);
@@ -871,7 +893,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     },
     restoreFocus:() => {
       if (header.hidden) dependencies.returnHeaderFocus?.();
-      else (failure ? headerRetry : headerMore.hidden ? headerToggle : headerMore).focus({ preventScroll:true });
+      else (failure || headerMore.hidden ? headerFocusTarget() : headerMore).focus({ preventScroll:true });
     },
   });
   window.addEventListener('task-state-changed', onExternal);

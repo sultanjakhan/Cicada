@@ -1,6 +1,6 @@
 import { createCalendarDialog } from './calendar-dialog.js';
 import { createRecurringStore, recurringSourceId, unfinishedRun } from './calendar-recurring-store.js';
-import { startCalendarExecution } from './calendar-execution.js';
+import { startCalendarExecution, readActiveBlocks } from './calendar-execution.js';
 const openDialogs=new WeakMap();
 
 export function openRecurringRun({document,invoke,id,date,start=false}) {
@@ -61,12 +61,12 @@ export function openRecurringRun({document,invoke,id,date,start=false}) {
       if(current<0)throw Error('Это выполнение уже закончено.');
       const sourceId=recurringSourceId(id,origin,current),row=rows.find(item=>String(item.id)===sourceId);
       if(action==='start'){
-        const started=await startCalendarExecution(invoke,{source_type:'schedule',source_id:sourceId,title:row?.title||record.snapshot.title,completion_date:origin},document);
-        if(started===null)return;
+        await startCalendarExecution(invoke,{source_type:'schedule',source_id:sourceId,title:row?.title||record.snapshot.title,completion_date:origin});
       }
       else if(action==='skip')await invoke('skip_recurring_step',{sourceId});
       else{
-        const active=await invoke('get_active_block',{});
+        // Other tasks may run beside this step; act only on this step's own block.
+        const active=(await readActiveBlocks(invoke)).find(block=>block.source_type==='schedule'&&String(block.source_id)===sourceId);
         const blocks=await invoke('get_timeline_blocks',{date:origin});
         // A run can cross midnight; get_schedules exposes its latest block id/date.
         const blockId=row?.block_id ?? blocks.filter(block=>block.source_type==='schedule'&&String(block.source_id)===sourceId).at(-1)?.id;

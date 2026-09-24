@@ -15,19 +15,20 @@ import { mountCalendarContextMenu } from './calendar-context-menu.js';
 import { createCalendarDialog } from './calendar-dialog.js';
 import { mountCalendarRecurring } from './calendar-recurring.js';
 import { openRecurringRun } from './calendar-routine-execution.js';
-import { startCalendarExecution } from './calendar-execution.js';
+import { startCalendarExecution, readActiveBlocks } from './calendar-execution.js';
+import { mountCalendarInProgress } from './calendar-in-progress.js';
 import { mountCalendarDayBanner } from './calendar-day-banner.js';
 import { loadCalendarPreferences } from './calendar-display-preferences.js';
 import { mountGoalDevelopment, mountGoalDevelopmentSummary, attachDevelopmentTask } from './calendar-development.js';
 
 let disposeNow = null, disposeTable = null, disposePanel = null, disposeTasks = null;
 let disposeRecurring = null, developmentDialog = null, tasksDialog = null;
-let disposeDayBanner = null;
+let disposeDayBanner = null, disposeInProgress = null;
 let preferences = { density:'comfortable', showCompleted:false };
 let workspaceRevision = 0;
 let dialogSequence = 0;
 const tasksPaneState = { filter:'active', search:'', goal:'', page:0 };
-function cleanupWorkspace() { workspaceRevision++; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeRecurring?.(); disposeDayBanner?.(); developmentDialog?.dispose(); tasksDialog?.dispose(); disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; disposeRecurring = null; disposeDayBanner = null; developmentDialog = null; tasksDialog = null; }
+function cleanupWorkspace() { workspaceRevision++; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeRecurring?.(); disposeDayBanner?.(); disposeInProgress?.(); developmentDialog?.dispose(); tasksDialog?.dispose(); disposeInProgress = null; disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; disposeRecurring = null; disposeDayBanner = null; developmentDialog = null; tasksDialog = null; }
 const view = { period: 'day', mode: 'grid', date: views.iso(new Date()), firstDay:'mon' };
 let initialViewLoaded = false;
 window.addEventListener('hanni:calendar-settings-changed', event => {
@@ -70,15 +71,14 @@ function openGoalDevelopment(goal, selection = {}) {
 const key = (r) => `${r.source_type}:${r.source_id}`;
 const changed = () => { window.dispatchEvent(new Event('task-state-changed')); window.dispatchEvent(new Event('hanni:calendar-refresh')); };
 
-export async function executeCalendarTaskAction(record, action, { allowSwitch = false } = {}) {
+// Several tasks may run at once: starting one never pauses another (2026-09-24).
+export async function executeCalendarTaskAction(record, action) {
   if (record.source_type !== 'note' || record.readonly || record.completed || record.archived || ['done', 'skipped', 'missed'].includes(record.status_extra)) throw new Error('Эта задача уже недоступна для выполнения. Обнови календарь.');
-  const active = await invoke('get_active_block', {});
-  const sameTask = active?.source_type === 'note' && String(active.source_id) === String(record.source_id);
+  const active = (await readActiveBlocks(invoke)).find(block => block.source_type === 'note' && String(block.source_id) === String(record.source_id));
+  const sameTask = !!active;
   if (action === 'start') {
-    if (allowSwitch) return (await startCalendarExecution(invoke, record, document)) !== null;
-    if (active && !sameTask) throw new Error('Уже выполняется другая задача. Сначала поставь её на паузу.');
     if (sameTask) return;
-    await invoke('start_task_block', { sourceType: 'note', sourceId: String(record.source_id), failIfActive: true, completionDate: record.date || views.iso(new Date()) });
+    await startCalendarExecution(invoke, { ...record, completion_date: record.date || views.iso(new Date()) });
   } else if (action === 'pause') {
     if (!sameTask) throw new Error('Состояние задачи изменилось. Обнови календарь перед паузой.');
     await invoke('pause_task_block', { blockId: Number(active.id) });
@@ -479,7 +479,7 @@ export async function loadCalendarWorkspace(el) {
     if (tab) tab.focus();
     else if (heading) { heading.tabIndex = -1; heading.focus(); }
   };
-  const taskOptions = { invoke, mountMenu:mountRecordMenu, openTask:(row,returnFocus)=>showRecord(calendarRecord(row),returnFocus), executeAction:(row,action)=>executeCalendarTaskAction(calendarRecord(row),action,{allowSwitch:true}), notifyChange:changed };
+  const taskOptions = { invoke, mountMenu:mountRecordMenu, openTask:(row,returnFocus)=>showRecord(calendarRecord(row),returnFocus), executeAction:(row,action)=>executeCalendarTaskAction(calendarRecord(row),action), notifyChange:changed };
   let renderLauncherState = null;
   const showAllTasks = (button = null) => {
     if(tasksDialog)return;
@@ -568,19 +568,35 @@ export async function loadCalendarWorkspace(el) {
           if (id != null && S.activeTab === 'calendar' && S._unifiedPane.calendar === 'goals') el.querySelector(`[data-edit-goal="${id}"]`)?.focus();
         },
         openCalendar: () => openPane('table'),
+        // The header counts parallel work; the dashboard widget lists each task.
+        openInProgress: async () => {
+          if (S._unifiedPane.calendar !== 'dash') await openPane('dash');
+          if (S.activeTab === 'calendar' && S._unifiedPane.calendar === 'dash') disposeInProgress?.focus();
+        },
         onCurrentTaskChange: value => disposeRecurring?.setCurrentTask(value),
       });
     },
     panes: [{id:'dash',label:'Дашборд'}, {id:'table',label:'Календарь'}, {id:'tasks',label:'Задачи'}, {id:'notes',label:'Заметки'}, {id:'goals',label:'Цели'}],
     renderDash: (pane) => {
-      pane.innerHTML = '<div data-calendar-day-banner></div><div data-calendar-now-slot></div><div data-calendar-recurring></div>';
+      pane.innerHTML = '<div data-calendar-day-banner></div><div data-calendar-in-progress></div><div data-calendar-now-slot></div><div data-calendar-recurring></div>';
       pane.querySelector('[data-calendar-now-slot]').replaceWith(nowHost);
       nowHost.hidden = false;
       disposeDayBanner = mountCalendarDayBanner(pane.querySelector('[data-calendar-day-banner]'),{invoke});
+      // Parallel work sits before the main goal (owner decision 2026-09-24).
+      disposeInProgress = mountCalendarInProgress(pane.querySelector('[data-calendar-in-progress]'), {
+        invoke, mountMenu:mountRecordMenu, notifyChange:changed,
+        openLauncher:button => showAllTasks(button),
+        onRowsChange:keys => disposeRecurring?.setInProgress?.(keys),
+        openTask:(row, restore) => {
+          if (row.source_type === 'schedule') { const [id, date] = JSON.parse(row.source_id); openRecurringRun({ document, invoke, id, date }); }
+          else showRecord(calendarRecord({ ...row, date: row.date || null }), restore);
+        },
+      });
       disposeRecurring = mountCalendarRecurring(pane.querySelector('[data-calendar-recurring]'), {
         invoke, showCompleted:preferences.showCompleted,
         mountTasks:host=>mountCalendarDashboardTasks(host,{...taskOptions,embedded:true,onShowAll:showAllTasks}),
       });
+      disposeRecurring.setInProgress(disposeInProgress.keys());
     },
     renderTable: pane => mountCalendarTable(pane),
     renderTasks: pane => {
@@ -589,7 +605,7 @@ export async function loadCalendarWorkspace(el) {
         invoke, state:tasksPaneState, mountMenu:mountRecordMenu, notifyChange:changed,
         openTask:(row,restore) => showRecord(calendarRecord(row),restore),
         editDate:(row,restore) => taskEditor(calendarRecord(row),restore,'date',()=>revision===workspaceRevision && pane.isConnected),
-        executeAction:(row,action) => executeCalendarTaskAction(calendarRecord(row),action,{allowSwitch:true}),
+        executeAction:(row,action) => executeCalendarTaskAction(calendarRecord(row),action),
       });
     },
     renderGoals: async (pane) => {

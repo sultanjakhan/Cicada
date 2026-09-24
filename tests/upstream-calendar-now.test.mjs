@@ -108,6 +108,7 @@ function backend(initial = blank()){
           }
      else if (command === 'get_task_pins') result = [];
      else if (command === 'get_active_block') result = state.blocks.find(block => block.is_active) || null;
+     else if (command === 'get_active_blocks') result = state.blocks.filter(block => block.is_active).reverse();
      else if (command === 'get_latest_task_block') result = state.blocks.at(-1) || null;
      else if (command === 'get_timeline_blocks') result = state.blocks.filter(block => block.date === args.date);
      else if (command === 'get_all_events') result = state.tasks.filter(task => task.source_type === 'event').map(task => ({
@@ -116,9 +117,9 @@ function backend(initial = blank()){
      else if (command === 'get_note') result = state.tasks.find(task => task.source_type === 'note' && String(task.source_id) === String(args.id));
      else if (command === 'get_schedules') result = [];
      else if (command === 'start_task_block'){
-       assert.equal(args.failIfActive, true, 'backend must atomically guard concurrent starts');
-       const existing = state.blocks.find(block => block.is_active);
-       if (existing && (existing.source_type !== args.sourceType || existing.source_id !== args.sourceId)) throw new Error('different active');
+       // Several tasks may run at once; one source never gets a second running block.
+       const existing = state.blocks.find(block => block.is_active && block.source_type === args.sourceType && block.source_id === args.sourceId);
+       if (existing && args.failIfActive) throw new Error('task is already active');
        if (existing) result = existing.id;
        else{
          result = state.nextId++;
@@ -635,7 +636,7 @@ test('a deleted paused event clears stale execution and retains its closed histo
    await x.refresh();
    assert.equal(JSON.parse(data.stored).execution, null);
 
-  });test('global active task on another date blocks goal switching and a concurrent different task is never stopped', async t =>{
+  });test('global active task on another date blocks goal switching and a different task starts beside it without stopping it', async t =>{
    const data = backend();
    data.blocks.push({
      id: 90, date: '2026-09-04', start_time: '23:58', source_type: 'note', source_id: 'task-a', is_active: true, duration_minutes: 0
@@ -650,11 +651,14 @@ test('a deleted paused event clears stale execution and retains its closed histo
      id: 91, date: '2026-09-05', start_time: '10:00', source_type: 'note', source_id: 'task-a', is_active: true, duration_minutes: 0
       });
    await other.click('start');
-   assert.equal(other.data.count('start_task_block'), 0);
-   assert.equal(other.data.blocks[0].is_active, true);
-   assert.match(other.ui('error-text').textContent, /другая задача/);
-   await other.click('retry');
-   assert.equal(other.host.dataset.taskKey, 'note:task-a');
+   // Parallel work (2026-09-24): the stale recommendation starts beside the running task.
+   assert.equal(other.data.count('start_task_block'), 1);
+   assert.equal(other.data.count('pause_task_block'), 0);
+   assert.equal(other.data.blocks[0].is_active, true, 'the concurrent task keeps running');
+   assert.equal(other.data.blocks.filter(block => block.is_active).length, 2);
+   assert.equal(other.ui('error').hidden, true);
+   assert.equal(other.host.dataset.taskKey, 'event:event-a');
+   assert.equal(other.host.dataset.state, 'active');
 
   });
 test('read failures preserve the last task, retry recovers, and cleanup removes refresh listeners', async t =>{
@@ -959,12 +963,13 @@ test('goal selection save failure retries its phase inside popup without repeati
    assert.equal(x.dom.window.document.activeElement, modal.querySelector('[data-dialog-error]'));
    assert.equal(modal.querySelector('[data-dialog-retry]').hidden, false);
    assert.equal(x.ui('error').hidden, true);
-   const activeReads = x.data.count('get_active_block');
+   const activeReads = x.data.count('get_active_blocks'), goalChecks = x.data.count('get_active_block');
    modal.querySelector('[data-dialog-retry]').click();
    await x.settle();
    assert.equal(JSON.parse(x.data.stored).goalId, 'goal-b');
    assert.equal(modal.isConnected, false);
-   assert.equal(x.data.count('get_active_block'), activeReads + 1, 'only the final snapshot reads active work; goal action is not repeated');
+   assert.equal(x.data.count('get_active_blocks'), activeReads + 1, 'only the final snapshot reads active work');
+   assert.equal(x.data.count('get_active_block'), goalChecks, 'goal action is not repeated');
    assert.equal(x.data.count('start_task_block'), 0);
    assert.equal(x.dom.window.document.activeElement, x.action('open-goal'));
 
@@ -1620,4 +1625,43 @@ test('Now does not hide real seconds-command errors behind the legacy fallback',
    assert.equal(x.ui('error').hidden, false);
    assert.equal(data.count('get_calendar_task_seconds'), 1);
    assert.equal(data.count('get_calendar_task_minutes'), 0);
+});
+
+// Owner decision 2026-09-24: several tasks may run at once and the header only counts them.
+test('two running tasks turn the header into a count that leads to the dashboard list without pausing anything', async t => {
+  let opened = 0;
+  const x = await mount(t, backend({ ...blank(), goalId:null }), { header:true, hideTaskCard:true, openInProgress:() => opened++ });
+  const header = x.header, summary = header.querySelector('[data-header-action="in-progress"]');
+  await x.data.invoke('start_task_block', { sourceType:'note', sourceId:'task-a', completionDate:'2026-09-05' });
+  await x.refresh();
+  assert.equal(header.dataset.mode, 'single');
+  assert.equal(summary.hidden, true);
+  assert.equal(header.querySelector('[data-header-action="toggle"]').textContent, 'Пауза');
+  await x.data.invoke('start_task_block', { sourceType:'event', sourceId:'event-a', completionDate:'2026-09-05' });
+  await x.refresh();
+  assert.equal(header.hidden, false);
+  assert.equal(header.dataset.mode, 'several');
+  assert.equal(summary.hidden, false);
+  assert.equal(summary.querySelector('[data-header-count]').textContent, 'В работе: 2');
+  assert.equal(summary.querySelector('[data-header-latest]').textContent, 'Вопросы к интервью', 'the newest running task is named');
+  assert.match(summary.getAttribute('aria-label'), /^В работе: 2 задачи, последняя — Вопросы к интервью\. Показать на дашборде$/);
+  for (const hidden of ['.calendar-current-task__copy', '[data-header-action="toggle"]', '[data-record-menu]', '[data-header-time]']) assert.equal(header.querySelector(hidden).hidden, true, hidden);
+  summary.click();
+  assert.equal(opened, 1);
+  assert.equal(x.data.count('pause_task_block'), 0);
+  assert.equal(x.data.blocks.filter(block => block.is_active).length, 2);
+  assert.equal(JSON.parse(x.data.stored).returnTo, null, 'a task that keeps running is not a return target');
+  // Pausing the newest task leaves one running: the header is back to its single controls.
+  await x.data.invoke('pause_task_block', { blockId:x.data.blocks.find(block => block.source_id === 'event-a').id });
+  await x.refresh();
+  assert.equal(header.dataset.mode, 'single');
+  assert.equal(summary.hidden, true);
+  assert.equal(header.querySelector('[data-header-action="details"]').textContent, 'Заметки по API');
+  assert.equal(header.querySelector('[data-header-action="toggle"]').textContent, 'Пауза');
+  assert.equal(x.cleanup.getLauncherState().returnTask.source_id, 'event-a', 'the paused task can still be returned to');
+  await x.cleanup.returnTo(); await x.settle();
+  assert.equal(x.data.count('pause_task_block'), 1, 'return starts the paused task beside the running one');
+  assert.deepEqual(x.data.blocks.filter(block => block.is_active).map(block => block.source_id).sort(), ['event-a', 'task-a']);
+  assert.equal(header.dataset.mode, 'several');
+  assert.equal(x.cleanup.getLauncherState().returnTask, null);
 });
