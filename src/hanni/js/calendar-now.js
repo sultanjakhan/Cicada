@@ -4,7 +4,6 @@ import { loadCategoryWeights } from './task-picker-view.js';
 import { ICONS } from './icons.js';
 import { createCalendarDialog } from './calendar-dialog.js';
 import { startCalendarExecution, readActiveBlocks } from './calendar-execution.js';
-import { mountCalendarContextMenu } from './calendar-context-menu.js';
 import { renderTaskImportance } from './task-importance.js';
 
 const buttonContent = (icon, label) => `<span class="calendar-now__button-icon" aria-hidden="true">${ICONS[icon]}</span><span data-action-label>${label}</span>`;
@@ -29,7 +28,6 @@ const taskOf = row => ({
   date: validDate(row.date), completion_date: validDate(row.completion_date) || validDate(row.date),
 });
 const validTask = value => value && ['event', 'note', 'schedule'].includes(value.source_type) && value.source_id != null;
-const tasksWord = count => { const last = count % 10, teen = count % 100; return last === 1 && teen !== 11 ? 'задача' : last >= 2 && last <= 4 && (teen < 12 || teen > 14) ? 'задачи' : 'задач'; };
 function restoreState(raw) {
   if (!raw) return freshState();
   const value = JSON.parse(raw);
@@ -67,21 +65,16 @@ export function mountCalendarNow(element, dependencies = {}) {
   let taskListExpanded = false;
   let secondsCommandAvailable = true;
   let summaryGoalId = undefined, summary = null, summaryRevision = 0;
+  // The shared header shows only «● N» running tasks (owner decision 2026-09-24);
+  // the dashboard «В работе» widget lists and controls each one.
   const header = dependencies.headerElement;
   if (header) {
-    header.classList.add('calendar-current-task');
+    header.classList.add('calendar-running');
     header.hidden = true;
-    header.innerHTML = `<div class="calendar-current-task__copy"><span data-header-status>Текущая задача</span><button type="button" data-header-action="details" aria-haspopup="dialog"></button><span data-header-time hidden></span></div><button type="button" data-header-action="in-progress" hidden><span data-header-count></span><span data-header-latest></span><span data-header-go aria-hidden="true">${ICONS.chevronRight}</span></button><button type="button" data-header-action="toggle"></button><button type="button" data-record-menu aria-label="Действия с текущей задачей" aria-haspopup="menu" aria-expanded="false">⋯</button><div class="calendar-current-task__error" hidden><p role="alert" data-header-error></p><button type="button" data-header-action="retry">Повторить</button></div>`;
+    header.innerHTML = `<button type="button" class="calendar-running__button" data-header-action="in-progress"><span class="calendar-running__dot" aria-hidden="true"></span><span data-header-count></span></button>`;
   }
-  const headerTitle = header?.querySelector('[data-header-action="details"]');
-  const headerToggle = header?.querySelector('[data-header-action="toggle"]');
-  const headerRetry = header?.querySelector('[data-header-action="retry"]');
-  const headerMore = header?.querySelector('[data-record-menu]');
-  const headerCopy = header?.querySelector('.calendar-current-task__copy');
   const headerInProgress = header?.querySelector('[data-header-action="in-progress"]');
-  // With two or more running tasks the header only counts them; the dashboard lists each one.
   const runningCount = () => snapshot?.activeBlocks?.length || 0;
-  const headerFocusTarget = () => failure ? headerRetry : runningCount() >= 2 ? headerInProgress : headerToggle;
   const hideTaskCard = dependencies.hideTaskCard === true;
 
   element.classList.add('calendar-now');
@@ -277,42 +270,14 @@ export function mountCalendarNow(element, dependencies = {}) {
     } else ui.meta.textContent = task?.duration_minutes ? `${task.duration_minutes} мин` : '';
     renderHeader();
   }
-  function headerTask() {
-    if (!snapshot || saved.completed) return null;
-    return saved.execution?.task || (saved.selectionMode === 'manual' ? chosenTask() : null);
-  }
   function renderHeader() {
     if (!header || disposed) return;
-    const task = headerTask(), count = runningCount(), several = count >= 2;
-    header.hidden = !task && !several;
-    header.dataset.contextRecord = keyOf(task);
-    header.dataset.state = currentState;
-    header.dataset.mode = several ? 'several' : 'single';
-    headerCopy.hidden = several;
-    headerInProgress.hidden = !several;
-    headerInProgress.querySelector('[data-header-count]').textContent = several ? `В работе: ${count}` : '';
-    headerInProgress.querySelector('[data-header-latest]').textContent = several ? task?.title || '' : '';
-    headerInProgress.title = several ? 'Показать все задачи в работе на дашборде' : '';
-    headerInProgress.setAttribute('aria-label', several ? `В работе: ${count} ${tasksWord(count)}${task?.title ? `, последняя — ${task.title}` : ''}. Показать на дашборде` : '');
-    headerInProgress.disabled = busy || reading;
-    header.setAttribute('aria-busy', String(busy || reading));
-    header.querySelector('[data-header-status]').textContent = 'Текущая задача' + ({ active:' · В работе', paused:' · На паузе' }[currentState] || '');
-    headerTitle.hidden = !task;
-    headerTitle.textContent = task?.title || '';
-    headerTitle.title = task?.title || '';
-    headerTitle.disabled = busy || reading || !!failure;
-    headerToggle.hidden = !task || several;
-    headerToggle.textContent = currentState === 'active' ? 'Пауза' : saved.execution ? 'Продолжить' : 'Начать';
-    headerToggle.disabled = busy || reading || !!failure;
-    headerMore.hidden = !task || !saved.execution || several;
-    headerMore.disabled = busy || reading || !!failure;
-    const time = header.querySelector('[data-header-time]');
-    time.hidden = !task || !saved.execution || several;
-    time.textContent = saved.execution ? `${elapsedMinutes()} мин` : '';
-    const error = header.querySelector('[data-header-error]');
-    error.parentElement.hidden = !failure;
-    error.textContent = failure?.message || '';
-    headerRetry.disabled = busy || reading;
+    const count = runningCount(), label = count ? `В работе: ${count}` : '';
+    header.hidden = !count;
+    header.dataset.count = String(count);
+    headerInProgress.querySelector('[data-header-count]').textContent = count ? String(count) : '';
+    headerInProgress.title = label;
+    headerInProgress.setAttribute('aria-label', label);
   }
   function options(select, values, selected) {
     select.replaceChildren(...values.map(([value, label]) => {
@@ -534,7 +499,8 @@ export function mountCalendarNow(element, dependencies = {}) {
     actions.retry.disabled = busy || reading;
     renderGoalPicker();
     renderTime();
-    dependencies.onCurrentTaskChange?.({ key: keyOf(hideTaskCard ? headerTask() : task), state: currentState });
+    // Without a visible current-task card nothing is shown twice, so Today lists every task.
+    dependencies.onCurrentTaskChange?.({ key: hideTaskCard ? '' : keyOf(task), state: currentState });
     dependencies.onLauncherStateChange?.(launcherState());
   }
   async function persist() {
@@ -689,7 +655,6 @@ export function mountCalendarNow(element, dependencies = {}) {
     if (disposed) return;
     if (busy || readFlight) { readAgain = true; return readFlight; }
     if (remotePending && !canApplyRemote()) return;
-    const headerFocus = header?.contains(document.activeElement) ? document.activeElement : null;
     reading = true; render();
     readFlight = (async () => {
       try { await fetchSnapshot(); if (failure?.operation.kind === 'refresh') failure = null; }
@@ -700,8 +665,6 @@ export function mountCalendarNow(element, dependencies = {}) {
       }
       finally {
         reading = false; readFlight = null; render();
-        // Native WebViews can blur a focused button when a refresh disables it.
-        if (!disposed && headerFocus?.isConnected && !headerFocus.disabled && !headerFocus.closest('[hidden]') && document.activeElement === document.body) headerFocus.focus({ preventScroll:true });
         if (readAgain && !busy && !disposed) { readAgain = false; void refresh(); }
       }
     })();
@@ -792,14 +755,7 @@ export function mountCalendarNow(element, dependencies = {}) {
         window.dispatchEvent(new window.CustomEvent('hanni:calendar-refresh'));
       }
       if (!disposed) {
-        if (operation.origin === 'header') {
-          const focused = document.activeElement;
-          const restore = focused === document.body || header?.contains(focused) || (element.contains(focused) && focused.closest('[hidden]'));
-          if (restore) {
-            if (!header?.hidden) headerFocusTarget().focus({ preventScroll:true });
-            else dependencies.returnHeaderFocus?.();
-          }
-        } else if (operation.origin !== 'launcher' && !goalPicker && !element.closest('[hidden]')) {
+        if (operation.origin !== 'launcher' && !goalPicker && !element.closest('[hidden]')) {
           if (failure) actions.retry.focus();
           else if (hideTaskCard) actions['open-goal'].focus({ preventScroll:true });
           else (ui.card.querySelector('.calendar-now__actions button:not([hidden])') || ui.card).focus();
@@ -820,19 +776,9 @@ export function mountCalendarNow(element, dependencies = {}) {
     const task = chosenTask();
     if (task) dependencies.openTaskDetails?.({ ...task, completed: !!saved.completed, is_active: currentState === 'active', status_extra: saved.completed ? 'done' : 'task', actual_minutes: elapsedMinutes() }, returnFocus);
   }
+  // Navigation only: the indicator never starts, pauses or selects anything.
   const onHeaderClick = event => {
-    const button = event.target.closest('[data-header-action]');
-    if (!button || !header.contains(button) || button.disabled || disposed || busy || reading) return;
-    if (button === headerRetry) { if (failure) void run({ ...failure.operation, origin:'header' }); return; }
-    if (button === headerInProgress) { dependencies.openInProgress?.(); return; }
-    const task = headerTask();
-    if (!task || failure) return;
-    if (button === headerTitle) {
-      openTaskDetails(() => { if (!disposed && header.isConnected && !header.hidden) headerTitle.focus({ preventScroll:true }); });
-    } else if (button === headerToggle) {
-      if (currentState === 'active' && saved.execution) void run({ kind:'pause', execution:structuredClone(saved.execution), origin:'header' });
-      else void run({ kind:'start', task:taskOf(task), origin:'header' });
-    }
+    if (!disposed && event.target.closest('[data-header-action="in-progress"]')) dependencies.openInProgress?.();
   };
   const onClick = event => {
     const button = event.target.closest('[data-action]'); if (!button || !element.contains(button) || button.disabled) return;
@@ -898,40 +844,19 @@ export function mountCalendarNow(element, dependencies = {}) {
     void refresh();
   };
   const onStarted = async event => {
-    // A dialog retains its own controls; inline starts can hand focus to the header.
-    const focused = document.activeElement;
-    const handoff = (hideTaskCard ? header?.isConnected : !element.closest('[hidden]')) && !document.querySelector('dialog[open]');
+    // A dialog retains its own controls; an inline start hands focus to the visible card.
+    // Without the card (dashboard presentation) the list that started the task keeps focus.
+    const handoff = !hideTaskCard && !element.closest('[hidden]') && !document.querySelector('dialog[open]');
     if (handoff) event.preventDefault();
     await refresh();
     while(readFlight&&!disposed)await readFlight;
     if(handoff&&!disposed&&!busy&&!document.querySelector('dialog[open]')){
-      if (hideTaskCard) {
-        if (!header.hidden && (document.activeElement === focused || document.activeElement === document.body || header.contains(document.activeElement))) headerFocusTarget().focus({ preventScroll:true });
-      } else {
-        ui.card.scrollIntoView?.({block:'nearest'});
-        actions.pause.focus({preventScroll:true});
-      }
+      ui.card.scrollIntoView?.({block:'nearest'});
+      actions.pause.focus({preventScroll:true});
     }
   };
   element.addEventListener('click', onClick); element.addEventListener('submit', onSubmit); element.addEventListener('keydown', onKeydown);
   header?.addEventListener('click', onHeaderClick);
-  const disposeHeaderMenu = header && mountCalendarContextMenu(header, {
-    getRecord:() => !busy && !reading && !failure && runningCount() < 2 ? headerTask() : null,
-    getActions:() => {
-      const execution = saved.execution && structuredClone(saved.execution);
-      const previous = saved.returnTo && taskOf(saved.returnTo);
-      const items = execution ? [
-        { id:'finish', label:'Завершить задачу', run:() => run({ kind:'finish', execution, origin:'header' }) },
-        { id:'switch-task', label:'Сменить задачу', dialog:true, run:() => run({ kind:'switch-task', execution, origin:'header' }) },
-      ] : [];
-      if (previous && keyOf(previous) !== keyOf(headerTask())) items.push({ id:'return', label:`Вернуться: ${previous.title}`, dialog:true, run:() => run({ kind:'return', task:previous, origin:'header' }) });
-      return items;
-    },
-    restoreFocus:() => {
-      if (header.hidden) dependencies.returnHeaderFocus?.();
-      else (failure || headerMore.hidden ? headerFocusTarget() : headerMore).focus({ preventScroll:true });
-    },
-  });
   window.addEventListener('task-state-changed', onExternal);
   window.addEventListener('hanni:execution-started', onStarted);
   window.addEventListener('focus', onExternal);
@@ -942,7 +867,6 @@ export function mountCalendarNow(element, dependencies = {}) {
     disposed = true; stateVersion++; goalDialog?.dispose(); goalPicker?.editor.dispose(); window.clearInterval(timer);
     element.removeEventListener('click', onClick); element.removeEventListener('submit', onSubmit); element.removeEventListener('keydown', onKeydown);
     header?.removeEventListener('click', onHeaderClick);
-    disposeHeaderMenu?.();
     window.removeEventListener('task-state-changed', onExternal); window.removeEventListener('focus', onExternal);
     window.removeEventListener('hanni:execution-started', onStarted);
   };

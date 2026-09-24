@@ -32,8 +32,8 @@
 
 /* Calendar workspace on Android: #mobile-header already names the section,
    so the workspace title stays only for assistive technology. Create, the
-   launcher and the current task share one compact row above the pane tabs;
-   only .uni-content scrolls. The ID selectors outrank calendar-workspace.css. */
+   launcher and the «● N» running indicator share one compact row above the
+   pane tabs; only .uni-content scrolls. The ID selectors outrank calendar-workspace.css. */
 .mobile #calendar-content.calendar-workspace {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -52,18 +52,13 @@
   display: flex; align-items: center;
   margin: 0 var(--workspace-inset) 0 0; padding: 0;
 }
-.mobile #calendar-content.calendar-workspace > .uni-header:has(.calendar-current-task:not([hidden])) {
-  padding-left: 8px; border-left: 1px solid var(--border-default);
-}
 .mobile #calendar-content.calendar-workspace > .uni-navigation { grid-row: 2; }
 .mobile #calendar-content.calendar-workspace > .uni-content { grid-row: 3; align-self: stretch; padding: 0 var(--workspace-inset) 24px; }
 /* The top gap belongs to the pane so sticky rows meet the tabs without a seam. */
 .mobile #calendar-content.calendar-workspace .uni-pane { padding-top: 12px; }
 .mobile .calendar-workspace .uni-header-icon { display: none; }
 .mobile .calendar-workspace .uni-header-name,
-.mobile .calendar-current-task [data-header-status],
-.mobile .calendar-workspace [data-calendar-create] > span,
-.mobile #calendar-content.calendar-workspace:has(.calendar-current-task:not([hidden])) .uni-header-action > span {
+.mobile .calendar-workspace [data-calendar-create] > span {
   position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
   clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0;
 }
@@ -73,37 +68,9 @@
 .mobile .calendar-workspace .uni-header-action svg { width: 18px; height: 18px; }
 /* «＋ Создать» is an icon button on the phone; its aria-label names every type. */
 .mobile .calendar-workspace [data-calendar-create] { justify-content: center; width: 36px; padding: 0; }
-/* Beside a current task the two actions keep their icon, name and handlers. */
-.mobile #calendar-content.calendar-workspace:has(.calendar-current-task:not([hidden])) .uni-header-action {
-  justify-content: center; width: 36px; padding: 0;
-}
-.mobile .calendar-current-task {
-  flex: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0;
-}
-.mobile .calendar-current-task__copy { flex: 1; flex-direction: row; align-items: center; gap: 6px; min-width: 0; }
-.mobile .calendar-current-task[data-state="active"] .calendar-current-task__copy::before,
-.mobile .calendar-current-task[data-state="paused"] .calendar-current-task__copy::before {
-  content: ''; flex: none; width: 8px; height: 8px; border-radius: 50%;
-  background: var(--accent-green, #246b4c);
-}
-.mobile .calendar-current-task[data-state="paused"] .calendar-current-task__copy::before {
-  background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-secondary);
-}
-.mobile .calendar-current-task [data-header-action="details"] { flex: 0 1 auto; min-height: 36px; font-size: 14px; line-height: 36px; }
-.mobile .calendar-current-task [data-header-time] { flex: none; white-space: nowrap; }
-.mobile .calendar-current-task [data-header-action="toggle"],
-.mobile .calendar-current-task [data-header-action="retry"] { flex: none; min-height: 36px; padding: 6px 10px; font-size: 13px; }
-.mobile .calendar-current-task [data-record-menu] { flex: none; width: 28px; min-height: 36px; padding: 0; font-size: 20px; }
-.mobile .calendar-current-task__error { flex-basis: 100%; }
-/* Several running tasks: «● В работе: N · последняя» in the same single row. */
-.mobile .calendar-current-task [data-header-action="in-progress"] {
-  flex: 1; display: flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 6px 0 10px;
-}
-.mobile .calendar-current-task [data-header-count] { flex: none; color: var(--text-primary); font-size: 13px; font-weight: 600; }
-.mobile .calendar-current-task [data-header-latest] { flex: 0 1 auto; font-size: 13px; font-weight: 400; line-height: 20px; color: var(--text-secondary); }
-.mobile .calendar-current-task [data-header-latest]::before { content: '· '; color: var(--text-faint); }
-.mobile .calendar-current-task [data-header-go] { margin-left: auto; }
-@media (max-width: 480px) { .mobile .calendar-current-task [data-header-time] { display: none; } }
+/* The running indicator sits at the right end of the same row. */
+.mobile .calendar-running { flex: none; margin-left: auto; }
+.mobile .calendar-running__button { min-height: 36px; padding: 0 12px 0 10px; font-size: 13px; }
 .mobile .calendar-workspace .uni-navigation { gap: 0; flex-wrap: nowrap; }
 .mobile #calendar-content .uni-tabs button.uni-tab { flex-shrink: 0; min-height: 40px; padding: 6px 10px; font-size: 13px; }
 

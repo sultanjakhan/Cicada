@@ -31,33 +31,17 @@
 .calendar-workspace .uni-header-action svg { flex:none; width:18px; height:18px; }
 .calendar-workspace .calendar-now__card[hidden] + .calendar-now__goal { margin-top:0; }
 [data-task-launcher] .calendar-task-overview { margin:0; padding:0; border:0; border-radius:0; }
-.calendar-workspace .uni-header:has(.calendar-current-task:not([hidden])) { grid-template-columns:28px minmax(0,1fr) minmax(0,400px); align-items:start; }
-.calendar-current-task { grid-column:3; grid-row:1; display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:4px 8px; min-width:0; }
-.calendar-current-task[hidden], .calendar-current-task [hidden], .calendar-workspace [data-calendar-now][hidden] { display:none !important; }
-.calendar-current-task__copy { display:flex; flex-direction:column; min-width:0; }
-.calendar-current-task [data-header-status], .calendar-current-task [data-header-time] { color:var(--text-secondary); font-size:12px; line-height:16px; }
-.calendar-current-task button { min-height:44px; border:1px solid var(--border-default); border-radius:8px; padding:8px 12px; font:inherit; font-size:14px; color:var(--text-primary); background:var(--bg-card); cursor:pointer; }
-.calendar-current-task [data-header-action="details"] { display:block; min-width:0; min-height:24px; padding:0; border:0; border-radius:3px; background:transparent; text-align:left; font-weight:600; line-height:24px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.calendar-current-task [data-header-action="details"]:hover { text-decoration:underline; text-underline-offset:3px; }
-.calendar-current-task [data-header-action="toggle"] { white-space:nowrap; }
-.calendar-current-task [data-record-menu] { width:36px; padding:4px; border-color:transparent; background:transparent; font-size:22px; }
-/* Two or more running tasks: one summary that leads to the dashboard widget. */
-.calendar-current-task[data-mode="several"] { grid-template-columns:minmax(0,1fr); }
-.calendar-current-task [data-header-action="in-progress"] { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; column-gap:10px; width:100%; min-width:0; padding:5px 8px 5px 12px; text-align:left; }
-.calendar-current-task [data-header-count] { display:flex; align-items:center; gap:6px; min-width:0; color:var(--text-secondary); font-size:12px; line-height:16px; font-variant-numeric:tabular-nums; }
-.calendar-current-task [data-header-count]::before { content:''; flex:none; width:7px; height:7px; border-radius:50%; background:var(--text-primary); }
-.calendar-current-task [data-header-latest] { grid-row:2; min-width:0; font-weight:600; line-height:20px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.calendar-current-task [data-header-latest]:empty { display:none; }
-.calendar-current-task [data-header-go] { grid-column:2; grid-row:1 / span 2; display:flex; color:var(--text-muted); }
-.calendar-current-task [data-header-action="in-progress"]:hover { background:var(--bg-hover); border-color:var(--border-hover); }
-.calendar-current-task button:focus-visible { outline:2px solid var(--text-primary); outline-offset:3px; }
-.calendar-current-task button:disabled { opacity:.6; cursor:default; }
-.calendar-current-task__error { grid-column:1 / -1; display:flex; align-items:center; gap:12px; }
-.calendar-current-task__error p { min-width:0; margin:0; color:var(--color-red); font-size:12px; line-height:1.4; overflow-wrap:anywhere; }
-@media(max-width:720px) {
-  .calendar-workspace .uni-header:has(.calendar-current-task:not([hidden])) { grid-template-columns:28px minmax(0,1fr); row-gap:12px; }
-  .calendar-current-task { grid-column:1 / -1; grid-row:2; }
-}
+/* «● N»: running tasks on the right of the shared header (2026-09-24); it leads to the dashboard widget. */
+.calendar-workspace .uni-header:has(.calendar-running:not([hidden])) { grid-template-columns:28px minmax(0,1fr) auto; }
+.calendar-running { grid-column:3; grid-row:1; display:flex; justify-content:flex-end; min-width:0; }
+.calendar-running[hidden], .calendar-workspace [data-calendar-now][hidden] { display:none !important; }
+.calendar-running__button { display:inline-flex; align-items:center; gap:8px; min-height:36px; padding:0 14px 0 12px; border:1px solid var(--border-default); border-radius:18px; background:var(--bg-card); color:var(--text-primary); font:inherit; font-size:14px; font-weight:600; line-height:20px; font-variant-numeric:tabular-nums; cursor:pointer; }
+.calendar-running__button:hover { background:var(--bg-hover); border-color:var(--border-hover); }
+.calendar-running__button:focus-visible { outline:2px solid var(--text-primary); outline-offset:3px; }
+.calendar-running__dot { position:relative; flex:none; width:8px; height:8px; border-radius:50%; background:var(--color-green, #448361); }
+.calendar-running__dot::after { content:''; position:absolute; inset:0; border-radius:50%; background:inherit; animation:calendar-running-pulse 2.4s ease-out infinite; }
+@keyframes calendar-running-pulse { 0% { transform:scale(1); opacity:.5; } 70%, 100% { transform:scale(2.8); opacity:0; } }
+@media (prefers-reduced-motion: reduce) { .calendar-running__dot::after { animation:none; opacity:0; } }
 @media(max-width:420px) {
   .calendar-workspace .uni-header-action { flex:1 1 auto; justify-content:center; padding-inline:10px; }
 }

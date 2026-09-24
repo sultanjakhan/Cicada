@@ -582,8 +582,9 @@ export async function loadCalendarWorkspace(el) {
       const launch = host.querySelector('[data-action-idx="1"]');
       launch.dataset.calendarLaunch = '';
       launch.setAttribute('aria-haspopup', 'dialog');
+      // «● N» running tasks on the right of the shared header; it leads to the dashboard widget.
       const header = document.createElement('div');
-      header.dataset.calendarCurrentTask = '';
+      header.dataset.calendarRunning = '';
       host.querySelector('.uni-header').append(header);
       nowHost = document.createElement('div');
       nowHost.dataset.calendarNow = '';
@@ -595,7 +596,6 @@ export async function loadCalendarWorkspace(el) {
         hideTaskCard:true,
         openTaskLauncher:() => showAllTasks(host.querySelector('[data-calendar-launch]')),
         onLauncherStateChange:state => renderLauncherState?.(state),
-        returnHeaderFocus:() => host.querySelector('.uni-tab.active')?.focus({ preventScroll:true }),
         openGoalDetails:(goal, { returnFocus } = {}) => openGoalPopup(goal, { primaryGoalId:goal.id, returnFocus }),
         ...(S._unifiedPane.calendar === 'dash' ? {
           mountGoalSummary:(element, goal) => mountGoalGlance(element, { invoke, goal }),
@@ -610,7 +610,7 @@ export async function loadCalendarWorkspace(el) {
           if (id != null && S.activeTab === 'calendar' && S._unifiedPane.calendar === 'goals') el.querySelector(`[data-goal-open="${id}"]`)?.focus();
         },
         openCalendar: () => openPane('table'),
-        // The header counts parallel work; the dashboard widget lists each task.
+        // The header indicator counts running work; the dashboard widget lists each task.
         openInProgress: async () => {
           if (S._unifiedPane.calendar !== 'dash') await openPane('dash');
           if (S.activeTab === 'calendar' && S._unifiedPane.calendar === 'dash') disposeInProgress?.focus();
@@ -626,7 +626,7 @@ export async function loadCalendarWorkspace(el) {
       disposeDayBanner = mountCalendarDayBanner(pane.querySelector('[data-calendar-day-banner]'),{invoke});
       // Parallel work sits before the main goal (owner decision 2026-09-24).
       disposeInProgress = mountCalendarInProgress(pane.querySelector('[data-calendar-in-progress]'), {
-        invoke, mountMenu:mountRecordMenu, notifyChange:changed,
+        invoke, notifyChange:changed,
         openLauncher:button => showAllTasks(button),
         onRowsChange:keys => disposeRecurring?.setInProgress?.(keys),
         openTask:(row, restore) => {

@@ -3,6 +3,8 @@
   --cip-hover: color-mix(in srgb, var(--text-primary) 3.5%, var(--bg-card));
   --cip-hover-strong: color-mix(in srgb, var(--text-primary) 8%, var(--bg-card));
   --cip-running: color-mix(in srgb, var(--text-primary) 5%, var(--bg-card));
+  /* Over the estimate: the amber warning token, darkened (light) or lightened (dark) for text contrast. */
+  --cip-warn: color-mix(in srgb, var(--color-yellow, #cb8a05) 72%, var(--text-primary));
   display: block; min-width: 0; margin: 0 0 18px; color: var(--text-primary);
 }
 .calendar-in-progress, .calendar-in-progress * { box-sizing: border-box; }
@@ -17,21 +19,38 @@
 .cip-summary { min-width: 0; font-size: 12px; line-height: 16px; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .cip-list { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
-.cip-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 12px; min-height: 52px; padding: 6px 6px 6px 12px; border-radius: 9px; transition: background-color .12s; }
+.cip-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 12px; min-height: 52px; padding: 7px 6px 7px 12px; border-radius: 9px; transition: background-color .12s; }
 .cip-row:hover, .cip-row:has(:focus-visible) { background: var(--cip-hover); }
 .cip-row::before { content: ''; position: absolute; left: 0; top: 11px; bottom: 11px; width: 3px; border-radius: 0 3px 3px 0; background: transparent; }
 .cip-row.is-running { background: var(--cip-running); }
 .cip-row.is-running:hover { background: var(--cip-hover-strong); }
 .cip-row.is-running::before { background: var(--text-primary); }
 
-.cip-content { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.cip-title { align-self: flex-start; display: block; max-width: 100%; min-width: 0; padding: 0; border: 0; border-radius: 3px; background: transparent; font-size: 14px !important; line-height: 20px; font-weight: 500; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.cip-content { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.cip-line { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.cip-title { flex: 0 1 auto; display: block; min-width: 0; padding: 0; border: 0; border-radius: 3px; background: transparent; font-size: 14px !important; line-height: 20px; font-weight: 500; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .cip-title:hover { text-decoration: underline; text-decoration-color: var(--text-faint); text-underline-offset: 3px; }
-.cip-meta { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; line-height: 16px; color: var(--text-muted); white-space: nowrap; }
-.cip-state { color: var(--text-secondary); }
-.cip-row.is-running .cip-state { color: var(--text-primary); font-weight: 600; }
-.cip-time { font-variant-numeric: tabular-nums; }
-.cip-time::before { content: '·'; margin-right: 6px; color: var(--text-faint); }
+.cip-time { flex: none; margin-left: auto; font-size: 12px; line-height: 16px; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cip-row.is-running .cip-time { color: var(--text-secondary); }
+.cip-time.is-over, .cip-row.is-running .cip-time.is-over { color: var(--cip-warn); font-weight: 600; }
+
+/* Line 2: the stage chip, then the goal. */
+.cip-meta { gap: 8px; }
+.cip-stage { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 72%; height: 22px; padding: 0 6px 0 8px; border: 1px solid var(--border-default); border-radius: 11px; background: var(--bg-card); color: var(--text-secondary) !important; font-size: 12px !important; line-height: 20px; cursor: pointer; }
+.cip-stage-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cip-stage-caret { flex: none; color: var(--text-faint); }
+.cip-stage-mark { flex: none; color: var(--text-muted); }
+.cip-stage:hover:not(:disabled), .cip-stage[aria-expanded="true"] { border-color: var(--border-hover); color: var(--text-primary) !important; }
+.cip-stage.is-empty { border-style: dashed; color: var(--text-muted) !important; }
+.cip-stage.is-waiting { background: var(--bg-soft); border-color: var(--border-hover); }
+.cip-stage:disabled { cursor: default; opacity: .6; }
+.cip-goal { flex: 1 1 0; min-width: 0; font-size: 12px; line-height: 16px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Time against the estimate: a thin line, graphite until the estimate is passed. */
+.cip-progress { display: block; height: 3px; margin-top: 3px; border-radius: 2px; background: var(--border-subtle); overflow: hidden; }
+.cip-progress > span { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--text-faint); transition: width .4s ease; }
+.cip-row.is-running .cip-progress > span { background: var(--text-secondary); }
+.cip-progress.is-over > span, .cip-row.is-running .cip-progress.is-over > span { background: var(--cip-warn); }
 
 .cip-actions { display: flex; align-items: center; gap: 2px; }
 .cip-icon { position: relative; display: inline-grid; place-items: center; flex: none; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--text-muted) !important; cursor: pointer; transition: background-color .12s, color .12s, box-shadow .12s; }
@@ -41,6 +60,14 @@
 .cip-toggle:not(.is-running) svg path { fill: currentColor; }
 .cip-toggle.is-running { color: var(--text-primary) !important; background: var(--bg-card); box-shadow: inset 0 0 0 1px var(--border-default); }
 .cip-toggle.is-running:hover:not(:disabled) { box-shadow: inset 0 0 0 1px var(--border-hover); }
+
+/* «Отменить запуск»: one inline confirmation inside the row, no modal. */
+.cip-confirm { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 6px 0 0; padding: 8px 8px 8px 10px; border-radius: 8px; background: var(--bg-soft); border: 1px solid var(--border-subtle); }
+.cip-confirm-text { flex: 1 1 180px; min-width: 0; font-size: 12px; line-height: 16px; color: var(--text-secondary); }
+.cip-confirm button { flex: none; min-height: 32px; padding: 0 12px; border: 1px solid var(--border-default); border-radius: 7px; background: var(--bg-card); font-size: 12px !important; font-weight: 500; cursor: pointer; }
+.cip-confirm button:hover:not(:disabled) { border-color: var(--border-hover); background: var(--cip-hover); }
+.cip-confirm .cip-confirm-yes { border-color: var(--text-secondary); }
+.cip-confirm button:disabled { opacity: .5; cursor: default; }
 
 .cip-footer { margin: 2px 0 0; padding-left: 2px; }
 .cip-launch { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text-secondary) !important; font-size: 13px !important; cursor: pointer; }
@@ -60,15 +87,28 @@
 .cip-message[role="alert"] { color: var(--color-red, #b42318); }
 .cip-card.is-empty .cip-message { display: none; }
 
-[data-calendar-density=compact] .cip-row { min-height: 44px; padding-block: 3px; }
+/* Stage and ⋯ menus reuse .calendar-record-menu (calendar-context-menu.css). */
+.cip-menu { width: 232px; }
+.cip-menu .cip-menu-item { display: flex; flex-direction: column; justify-content: center; gap: 1px; min-height: 36px; padding: 6px 12px 6px 30px; position: relative; }
+.cip-menu .cip-menu-item[role="menuitem"] { padding-left: 12px; }
+.cip-menu .cip-menu-item.is-checked::before { content: ''; position: absolute; left: 12px; top: 50%; width: 9px; height: 5px; margin-top: -4px; border-left: 1.6px solid currentColor; border-bottom: 1.6px solid currentColor; transform: rotate(-45deg); }
+.cip-menu .cip-menu-item.is-checked { font-weight: 600; }
+.cip-menu-hint { font-size: 11px; line-height: 14px; color: var(--text-muted); font-weight: 400; }
+.cip-menu-separator { height: 1px; margin: 5px 6px; background: var(--border-subtle); }
+
+[data-calendar-density=compact] .cip-row { min-height: 44px; padding-block: 4px; }
 
 @media (max-width: 600px) {
   .calendar-in-progress { margin-bottom: 14px; }
   .cip-card { padding: 8px 4px 4px; }
   .cip-heading { padding-left: 10px; }
-  .cip-row { column-gap: 6px; min-height: 56px; padding: 6px 2px 6px 10px; }
+  .cip-row { column-gap: 6px; min-height: 56px; padding: 7px 2px 7px 10px; }
+  .cip-line { gap: 8px; }
   .cip-actions { gap: 0; }
   .cip-icon { width: 36px; height: 36px; }
+  .cip-stage { height: 26px; border-radius: 13px; }
+  /* The confirmation text takes its own line; both answers share the next one. */
+  .cip-confirm-text { flex-basis: 100%; }
   /* The title stays one visual line but gets a 36px touch target. */
   .cip-title { position: relative; }
   .cip-title::after { content: ''; position: absolute; inset: -8px 0; }
