@@ -6,6 +6,15 @@
 
 Перед новой постановкой прочитай [подтверждённый контекст продукта](docs/product-context.md), затем проверь исходный код и относящиеся к задаче Issues. Не повторяй вопросы, на которые уже есть ответ в этом контексте; уточняй только новые отсутствующие факты.
 
+Owner iteration, 2026-09-24 (private issue #104): the owner often works on
+several tasks at once. Starting a task never pauses other running work; the
+same source never gets a second running block. The Dashboard shows an «В работе»
+widget before the main goal with every running task and tasks paused today,
+each with its own time, pause/resume, «Готово» and menu. With two or more
+running tasks the header shows «В работе: N». This supersedes the 2026-09-20
+«no second dashboard widget» rule and the 2026-09-22 removal of the dashboard
+current-task card. Parallel blocks overlap, so time sums can exceed real time.
+
 Owner iteration, 2026-09-23 (mobile and Tasks; private issues #94, #95): on
 the phone the Calendar header and drawer show no Cicada logo and the section
 name appears once. «Сегодня», the date and the day-start state share one line.
