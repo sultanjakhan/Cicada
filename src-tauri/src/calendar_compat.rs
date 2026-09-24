@@ -731,7 +731,9 @@ pub(crate) fn save_task(
     if let Some(value) = fields.sphere.as_deref() {
         crate::task_attributes::validate_sphere(value)?;
     }
-    // Without a date the time of day is cleared; otherwise an omitted time keeps it.
+    // Without a date the time of day is cleared. An omitted time keeps the stored
+    // one only while the task already had a date: «Без даты» on 0.3.29 leaves a
+    // stale time behind, and assigning a day again must not revive it.
     let keep_time = due_date.is_some() && fields.time.is_none();
     let new_time = fields.time.filter(|value| !value.is_empty() && due_date.is_some());
     // Omitted importance preserves existing priorities for date-only edits and
@@ -768,7 +770,7 @@ pub(crate) fn save_task(
                 None
             };
             let next_tags = current_tags.as_deref().map(tags);
-            let changed=transaction.execute("UPDATE items SET title=?1,date=?2,duration_minutes=COALESCE(?3,0),updated_at=?4,version=version+1,priority=COALESCE(?7,priority),time=CASE WHEN ?8 THEN time ELSE ?9 END,tags=COALESCE(?10,tags) WHERE id=?5 AND kind='task' AND status IN ('task','done') AND (?6 IS NULL OR version=?6)",params![title.trim(),due_date,estimate_minutes,now(),id,expected_version,priority,keep_time,new_time,next_tags]).map_err(|e|fail(e.to_string()))?;
+            let changed=transaction.execute("UPDATE items SET title=?1,date=?2,duration_minutes=COALESCE(?3,0),updated_at=?4,version=version+1,priority=COALESCE(?7,priority),time=CASE WHEN ?8 AND date IS NOT NULL THEN time ELSE ?9 END,tags=COALESCE(?10,tags) WHERE id=?5 AND kind='task' AND status IN ('task','done') AND (?6 IS NULL OR version=?6)",params![title.trim(),due_date,estimate_minutes,now(),id,expected_version,priority,keep_time,new_time,next_tags]).map_err(|e|fail(e.to_string()))?;
             if changed != 1 {
                 return Err(fail("task changed elsewhere or was deleted"));
             }

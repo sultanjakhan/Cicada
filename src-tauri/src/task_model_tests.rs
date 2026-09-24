@@ -34,8 +34,8 @@ fn listed(conn: &Connection, id: &str, tasks_only: bool) -> Value {
 fn stored(conn: &Connection, id: &str) -> (Option<String>, String) {
     conn.query_row("SELECT time,tags FROM items WHERE id=?1", [id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap()
 }
-/// Delivers the current relay record of one item exactly as the receiver applies it.
-fn transfer(source: &Connection, target: &Connection, item: &str) -> Result<bool, String> {
+/// The current relay record of one item, as the sender uploads it.
+fn wire(source: &Connection, item: &str) -> serde_json::Map<String, Value> {
     let key = json!(["items", [item]]).to_string();
     let mut wire = crate::mvp_sync_db::row_to_json(source, "mvp_records", &rusqlite::types::Value::Text(key.clone()))
         .unwrap().unwrap().as_object().unwrap().clone();
@@ -44,10 +44,20 @@ fn transfer(source: &Connection, target: &Connection, item: &str) -> Result<bool
         .unwrap();
     wire.insert("_updated_at".into(), json!(stamp));
     wire.insert("_device_id".into(), json!(writer));
+    wire
+}
+/// Applies a relay record exactly as the receiver does.
+fn deliver(target: &Connection, wire: &serde_json::Map<String, Value>) -> Result<bool, String> {
     target.execute("UPDATE content_sync_control SET applying=1", []).unwrap();
-    let applied = crate::mvp_sync_db::apply_record(target, &wire);
+    let applied = crate::mvp_sync_db::apply_record(target, wire);
     target.execute("UPDATE content_sync_control SET applying=0", []).unwrap();
     applied
+}
+fn transfer(source: &Connection, target: &Connection, item: &str) -> Result<bool, String> {
+    deliver(target, &wire(source, item))
+}
+fn title(conn: &Connection, id: &str) -> String {
+    conn.query_row("SELECT title FROM items WHERE id=?1", [id], |r| r.get(0)).unwrap()
 }
 
 #[test]
@@ -158,6 +168,57 @@ fn a_0329_replica_accepts_carries_and_returns_the_new_fields() {
     assert!(transfer(&older, &newer, &id).unwrap());
     assert_eq!(load(&newer, &id).unwrap()["time"], Value::Null);
     assert_eq!(listed(&newer, &id, true)["planned_time"], Value::Null);
+    // Assigning a day again on the newer client does not revive that stale time,
+    // while kind and sphere stay.
+    edit(&mut newer, &id, Some("2026-09-27"), TaskFields::default()).unwrap();
+    assert_eq!(stored(&newer, &id), (None, "task-kind:instant,task-sphere:home".into()));
+    // The newer client's result travels back to the older replica unchanged.
+    assert!(transfer(&newer, &older, &id).unwrap());
+    assert_eq!(stored(&older, &id), (None, "task-kind:instant,task-sphere:home".into()));
+}
+
+#[test]
+fn a_date_only_edit_keeps_the_time_only_while_the_task_had_a_date() {
+    let mut conn = replica();
+    let id = create(&mut conn, "Fictional reminder", Some("2026-09-24"), fields(Some("16:10"), None, None));
+    // Rescheduling keeps the time of day.
+    edit(&mut conn, &id, Some("2026-09-26"), TaskFields::default()).unwrap();
+    assert_eq!(stored(&conn, &id).0.as_deref(), Some("16:10"));
+    // A time left without its date (older replica, first MVP) is dropped on the next dated save.
+    conn.execute("UPDATE items SET date=NULL WHERE id=?1", [&id]).unwrap();
+    edit(&mut conn, &id, Some("2026-09-28"), TaskFields::default()).unwrap();
+    assert_eq!(stored(&conn, &id).0, None);
+    // An explicit time is still accepted for a task that had no date.
+    conn.execute("UPDATE items SET date=NULL WHERE id=?1", [&id]).unwrap();
+    edit(&mut conn, &id, Some("2026-09-28"), fields(Some("07:00"), None, None)).unwrap();
+    assert_eq!(stored(&conn, &id).0.as_deref(), Some("07:00"));
+}
+
+#[test]
+fn concurrent_edits_on_a_0329_and_a_newer_replica_converge_and_keep_the_other_version() {
+    let mut newer = replica();
+    let older = replica();
+    let id = create(&mut newer, "Fictional errand", Some("2026-09-24"), fields(Some("10:00"), None, Some("home")));
+    assert!(transfer(&newer, &older, &id).unwrap());
+    // Both replicas change the same received version before hearing from each other.
+    edit(&mut newer, &id, Some("2026-09-24"), fields(None, Some("instant"), Some("work"))).unwrap();
+    let version: i64 = older.query_row("SELECT version FROM items WHERE id=?1", [&id], |r| r.get(0)).unwrap();
+    assert_eq!(older.execute(V0329_TASK_UPDATE, params!["Renamed offline", "2026-09-24", None::<i64>, "2026-09-24T09:00:00Z", &id, version, None::<i64>]).unwrap(), 1);
+    let (from_newer, from_older) = (wire(&newer, &id), wire(&older, &id));
+    deliver(&newer, &from_older).unwrap();
+    deliver(&older, &from_newer).unwrap();
+    // Row-level resolution: both replicas hold the same winning row ...
+    assert_eq!(stored(&newer, &id), stored(&older, &id));
+    assert_eq!(title(&newer, &id), title(&older, &id));
+    // ... and each keeps the other version for review, so neither edit is lost silently.
+    for conn in [&newer, &older] {
+        let kept: Vec<String> = conn.prepare("SELECT data FROM mvp_sync_conflicts").unwrap()
+            .query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
+        assert_eq!(kept.len(), 1);
+        let current = format!("{} {}", title(conn, &id), stored(conn, &id).1);
+        let both = format!("{current} {}", kept[0]);
+        assert!(both.contains("Renamed offline") && both.contains("task-sphere:work") && both.contains("task-kind:instant"), "{both}");
+    }
 }
 
 #[test]

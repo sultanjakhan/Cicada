@@ -359,6 +359,15 @@ fn preview(
             break;
         }
     }
+    // Task kind and sphere (#96) live in `tags`. Without them two versions that
+    // differ only there would look identical in the review.
+    if record.kind == "items" && value["kind"] == "task" && value["status"] != "note" {
+        let tags = value["tags"].as_str().unwrap_or("");
+        rows.push(json!({"label":"Вид","value":crate::task_attributes::kind_label(crate::task_attributes::kind(tags))}));
+        if let Some(sphere) = crate::task_attributes::sphere(tags) {
+            rows.push(json!({"label":"Сфера","value":crate::task_attributes::sphere_label(sphere)}));
+        }
+    }
     if matches!(
         record.kind.as_str(),
         "calendar_task_goals" | "timeline_blocks"
@@ -664,6 +673,22 @@ mod tests {
             entry["expected"].as_str().unwrap(),
             choice,
         )
+    }
+    #[test]
+    fn review_preview_names_task_kind_and_sphere_but_not_for_notes() {
+        let c = fixture();
+        c.execute("INSERT INTO items(id,kind,title,duration_minutes,version,created_at,updated_at,tags,status) VALUES('t','task','Fictional',0,1,'a','a','task-kind:instant,task-sphere:health','task'),('n','task','Note',30,1,'a','a','task-sphere:health','note'),('p','task','Plain',0,1,'a','a','','task')", []).unwrap();
+        let fields = |id: &str| {
+            let record = current(&c, &key("items", &[json!(id)])).unwrap().unwrap().record;
+            preview(&c, Some(&record), Some("2026-09-24T00:00:00.000Z"), true).unwrap()["fields"].as_array().unwrap().clone()
+        };
+        let task = fields("t");
+        assert!(task.contains(&json!({"label":"Вид","value":"Моментальная"})), "{task:?}");
+        assert!(task.contains(&json!({"label":"Сфера","value":"Здоровье"})), "{task:?}");
+        let plain = fields("p");
+        assert!(plain.contains(&json!({"label":"Вид","value":"Обычная"})));
+        assert!(!plain.iter().any(|row| row["label"] == "Сфера"));
+        assert!(!fields("n").iter().any(|row| row["label"] == "Вид" || row["label"] == "Сфера"));
     }
     #[test]
     fn selected_alternative_becomes_a_new_local_version_and_only_it_is_removed() {

@@ -7,8 +7,13 @@
 //! - time of day uses the existing `items.time` column (NULL for untimed tasks);
 //! - kind and sphere are reserved tokens in the existing comma-separated
 //!   `items.tags` column of a task.
-//! Clients that predate these fields never rewrite `time` or `tags` of a task,
-//! so they carry the values unchanged when they edit, complete or re-send it.
+//! The 0.3.29 interface never rewrites `time` or `tags` of a task: its task
+//! save, completion, archive and timer statements leave both columns alone, its
+//! note editor (the only `tags` writer) handles `status='note'` rows and re-sends
+//! the tags it has just read, and the v1 `save_item` command has no UI caller. Its full-row capture therefore carries the values unchanged
+//! when it edits, completes or re-sends a task. Concurrent edits of one task on
+//! two devices resolve per row, as for every other field: the newer row wins and
+//! the other version is kept for conflict review, where kind and sphere appear.
 
 pub const KIND_NORMAL: &str = "normal";
 pub const KIND_INSTANT: &str = "instant";
@@ -34,6 +39,21 @@ pub fn sphere(tags: &str) -> Option<&'static str> {
     tokens(tags)
         .filter_map(|token| token.strip_prefix(SPHERE_PREFIX))
         .find_map(|value| SPHERES.iter().copied().find(|known| *known == value))
+}
+
+/// Russian labels for the synchronization conflict review.
+pub fn kind_label(kind: &str) -> &'static str {
+    if kind == KIND_INSTANT { "Моментальная" } else { "Обычная" }
+}
+pub fn sphere_label(sphere: &str) -> &'static str {
+    match sphere {
+        "work" => "Работа",
+        "home" => "Дом",
+        "health" => "Здоровье",
+        "growth" => "Развитие",
+        "personal" => "Личное",
+        _ => "",
+    }
 }
 
 pub fn validate_kind(value: &str) -> Result<(), String> {
