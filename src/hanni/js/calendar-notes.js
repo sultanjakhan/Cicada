@@ -246,11 +246,15 @@ export async function mountCalendarNotes(element, dependencies = {}) {
   element.querySelector('[data-open-retry]').onclick = () => openNote(retryOpen);
   element.querySelector('[data-undo]').onclick = () => changeArchive();
   const onSync = event => { if (event.detail?.remoteSync) void refresh('', event.detail.canCommit); };
+  // A note saved from the shared «Создать» dialog.
+  const onCreated = () => { if (!disposed) void refresh(); };
   window.addEventListener('hanni:calendar-refresh', onSync);
+  window.addEventListener('hanni:calendar-notes-changed', onCreated);
   await refresh();
   return () => {
     disposed = true; revision++; opening++;
     window.removeEventListener('hanni:calendar-refresh', onSync);
+    window.removeEventListener('hanni:calendar-notes-changed', onCreated);
     if (session) { const old = session; old.detached = true; remember(old); old.dialog.dispose(); }
   };
 }

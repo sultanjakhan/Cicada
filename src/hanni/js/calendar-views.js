@@ -1,5 +1,6 @@
   'use strict';
 import { renderDayStartMarker } from './calendar-day-start.js';
+import { isInstantTask } from './task-model.js';
   const parse = (value) => new Date(`${value}T12:00:00`);
   const iso = (value) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
   const add = (value, days) => { const date = parse(value); date.setDate(date.getDate() + days); return iso(date); };
@@ -93,9 +94,13 @@ import { renderDayStartMarker } from './calendar-day-start.js';
         actions.append(control);
       };
       if (!record.date) addAction('date', 'Назначить дату');
-      if (record.is_active) addAction('pause', 'Пауза');
-      else addAction('start', record.has_work || record.actual_minutes > 0 ? 'Продолжить' : 'Начать');
-      if (record.is_active || record.has_work || record.actual_minutes > 0) addAction('finish', 'Завершить');
+      // An instant task is marked done with one tap and never starts a timer.
+      if (isInstantTask(record) && !record.is_active) addAction('finish', 'Готово');
+      else {
+        if (record.is_active) addAction('pause', 'Пауза');
+        else addAction('start', record.has_work || record.actual_minutes > 0 ? 'Продолжить' : 'Начать');
+        if (record.is_active || record.has_work || record.actual_minutes > 0) addAction('finish', 'Завершить');
+      }
       shell.append(actions);
     }
     return shell;
@@ -343,6 +348,11 @@ import { renderDayStartMarker } from './calendar-day-start.js';
         for (const { record, lane, group: overlap } of layout) {
           if (date === options.date && foldPlan.folds.some(fold => fold.record === record)) continue;
           const node = recordButton(record, options, 'calv-grid-record');
+          // A timed task (#96) keeps inline actions only where one control row
+          // fits: a Day column and a block of at least 34px. Elsewhere it shows
+          // its time and title; Tasks, Today and the Day view keep the actions.
+          const blockHeight = foldPlan.map(Math.min(1440, minutes(record.time) + (record.durationMinutes || 30))) - foldPlan.map(minutes(record.time));
+          if (options.period !== 'day' || blockHeight < 34) { node.querySelector('.calv-record-actions')?.remove(); node.classList.remove('calv-record-shell--actions'); }
           if ((record.durationMinutes || 30) <= 30) {
             node.classList.add('calv-grid-record--short');
             if (!record.continuesBefore && !record.continuesAfter) node.querySelector('.calv-record-time').textContent = record.time;

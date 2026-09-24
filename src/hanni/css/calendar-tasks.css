@@ -34,6 +34,7 @@
 .ct-search input:hover, .ct-select select:hover { border-color: var(--border-hover); }
 .ct-search input:focus-visible, .ct-select select:focus-visible { outline: 0; border-color: var(--border-focus); box-shadow: 0 0 0 3px var(--ct-segment); }
 .ct-select { position: relative; display: block; flex: 0 1 220px; min-width: 0; }
+.ct-select--sphere { flex-basis: 160px; }
 .ct-select select { padding: 0 30px 0 10px; appearance: none; -webkit-appearance: none; text-overflow: ellipsis; cursor: pointer; }
 .ct-select::after { content: ''; position: absolute; right: 13px; top: 50%; width: 6px; height: 6px; border-right: 1.5px solid var(--text-muted); border-bottom: 1.5px solid var(--text-muted); transform: translateY(-70%) rotate(45deg); pointer-events: none; }
 
@@ -78,6 +79,8 @@
 .ct-status--running { color: var(--text-primary); font-weight: 600; }
 .ct-goal { flex: 0 1 auto; min-width: 0; max-width: min(100%, 280px); overflow: hidden; text-overflow: ellipsis; }
 .ct-estimate { font-variant-numeric: tabular-nums; }
+.ct-kind { color: var(--text-secondary); }
+.ct-sphere { color: var(--text-secondary); }
 .ct-date { padding: 0 0 0 13px; border: 0; background: transparent; color: var(--text-muted) !important; font-size: 12px !important; line-height: 16px; cursor: pointer; }
 .ct-date:hover:not(:disabled) { color: var(--text-primary) !important; text-decoration: underline; text-underline-offset: 2px; }
 .ct-date.is-empty { color: var(--text-faint) !important; }
@@ -119,16 +122,18 @@
   .ct-toolbar { gap: 8px; }
   .ct-filters { display: flex; width: 100%; }
   .ct-filters button { flex: 1 1 auto; min-width: 0; padding: 0 6px; font-size: 12.5px; }
-  .ct-search-row { flex-basis: 100%; }
-  .ct-select { flex: 0 1 42%; }
+  .ct-search-row { flex-basis: 100%; flex-wrap: wrap; }
+  .ct-search { flex-basis: 100%; }
+  .ct-select, .ct-select--sphere { flex: 1 1 0; }
   .ct-group { padding-left: 10px; }
   .ct-row { column-gap: 10px; min-height: 56px; padding: 7px 0 7px 10px; }
   .ct-actions { gap: 0; }
   .ct-icon-button { width: 36px; height: 36px; }
   /* Keep the date on the first two lines: the goal goes last and shrinks before anything wraps. */
   .ct-meta .task-importance-label { order: 1; }
-  .ct-status { order: 2; }
+  .ct-status, .ct-kind { order: 2; }
   .ct-date { order: 3; }
-  .ct-estimate { order: 4; }
-  .ct-goal { order: 5; flex: 1 1 0; min-width: 56px; max-width: 100%; }
+  .ct-sphere { order: 4; }
+  .ct-estimate { order: 5; }
+  .ct-goal { order: 6; flex: 1 1 0; min-width: 56px; max-width: 100%; }
 }

@@ -20,6 +20,7 @@ import { mountCalendarInProgress } from './calendar-in-progress.js';
 import { mountCalendarDayBanner } from './calendar-day-banner.js';
 import { loadCalendarPreferences } from './calendar-display-preferences.js';
 import { mountGoalDevelopment, mountGoalDevelopmentSummary, attachDevelopmentTask } from './calendar-development.js';
+import { sphereLabel, isInstantTask } from './task-model.js';
 
 let disposeNow = null, disposeTable = null, disposePanel = null, disposeTasks = null;
 let disposeRecurring = null, developmentDialog = null, tasksDialog = null;
@@ -27,7 +28,7 @@ let disposeDayBanner = null, disposeInProgress = null;
 let preferences = { density:'comfortable', showCompleted:false };
 let workspaceRevision = 0;
 let dialogSequence = 0;
-const tasksPaneState = { filter:'active', search:'', goal:'', page:0 };
+const tasksPaneState = { filter:'active', search:'', goal:'', sphere:'', page:0 };
 function cleanupWorkspace() { workspaceRevision++; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeRecurring?.(); disposeDayBanner?.(); disposeInProgress?.(); developmentDialog?.dispose(); tasksDialog?.dispose(); disposeInProgress = null; disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; disposeRecurring = null; disposeDayBanner = null; developmentDialog = null; tasksDialog = null; }
 const view = { period: 'day', mode: 'grid', date: views.iso(new Date()), firstDay:'mon' };
 let initialViewLoaded = false;
@@ -174,7 +175,8 @@ function occurrenceDialog(record, returnFocus = null) {
 
 async function showRecord(record, returnFocus = null, initialFocus = null) {
   const modal = dialog(record.title, returnFocus);
-  modal.querySelector('.cm-fields').innerHTML = `<p>${escapeHtml(record.kind)} · ${escapeHtml(record.status)}</p><p>${escapeHtml(record.date ? views.label(record.date) : 'Без даты')} · ${escapeHtml(record.time || 'Без времени')}</p><p role="status">Загружаем цель…</p>`;
+  const summary = [record.kind, isInstantTask(record) && 'Моментальная', sphereLabel(record.sphere), record.status].filter(Boolean).join(' · ');
+  modal.querySelector('.cm-fields').innerHTML = `<p>${escapeHtml(summary)}</p><p>${escapeHtml(record.date ? views.label(record.date) : 'Без даты')} · ${escapeHtml(record.time || 'Без времени')}</p><p role="status">Загружаем цель…</p>`;
   modal.showModal(); modal.querySelector('[type=submit]').disabled = true;
   if (record.readonly) { modal.querySelector('[type=submit]').hidden = true; modal.querySelector('[role=status]').textContent = 'Изменения и удаление — в приложении-источнике. Начало дня отмечается отдельно.';
     if (record.health_kind === 'sleep') {
@@ -529,7 +531,7 @@ export async function loadCalendarWorkspace(el) {
   let nowHost = null;
   const config = { title:'Календарь', headerIcon:TAB_ICONS.calendar, editableHeader:false, subtitle:'События и расписание', hideDescription:true, hideMemory:true, accessibleTabs:true, beforeRender:cleanupWorkspace, isCurrent:() => S.activeTab === 'calendar',
     toolbarActions: [
-      { label:'Новая задача', title:'Новая задача. В форме также можно выбрать событие.', icon:TAB_ICONS.add, onClick:openCalendarCreate },
+      { label:'Создать', title:'Создать задачу, событие, цель или заметку', icon:TAB_ICONS.add, onClick:openCalendarCreate },
       { label:'Запустить задачу', title:'Выбрать существующую задачу для запуска', icon:ICONS.play, onClick:showAllTasks },
     ],
     renderHeaderExtra: host => {

@@ -1,0 +1,239 @@
+//! Task time of day, kind and sphere (#96): persistence, legacy records and
+//! mixed-version synchronization with 0.3.29 replicas.
+use super::*;
+
+// Exact statements that 0.3.29 executes for tasks (calendar_compat.rs at e4a71bd).
+const V0329_TASK_INSERT: &str = "INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,status) VALUES(?1,'task',?2,'',?3,NULL,COALESCE(?4,0),0,1,?5,?5,'task','#9B9B9B',COALESCE(?6,0),0,'','task')";
+const V0329_TASK_UPDATE: &str = "UPDATE items SET title=?1,date=?2,duration_minutes=COALESCE(?3,0),updated_at=?4,version=version+1,priority=COALESCE(?7,priority) WHERE id=?5 AND kind='task' AND status IN ('task','done') AND (?6 IS NULL OR version=?6)";
+const V0329_TASK_COMPLETE: &str = "UPDATE items SET completed=1,status='done',version=version+1,updated_at=?1 WHERE id=?2 AND kind='task' AND archived=0 AND status IN ('task','done') AND NOT EXISTS(SELECT 1 FROM timeline_blocks WHERE source_type='note' AND source_id=?2 AND is_active=1)";
+
+fn replica() -> Connection {
+    let conn = Connection::open_in_memory().unwrap();
+    crate::init_schema(&conn).unwrap();
+    conn
+}
+fn fields(time: Option<&str>, kind: Option<&str>, sphere: Option<&str>) -> TaskFields {
+    TaskFields { time: time.map(Into::into), task_kind: kind.map(Into::into), sphere: sphere.map(Into::into) }
+}
+fn create(conn: &mut Connection, title: &str, date: Option<&str>, extra: TaskFields) -> String {
+    save_task(conn, None, title.into(), date.map(Into::into), None, None, None, Some(false), extra).unwrap()
+}
+fn edit(conn: &mut Connection, id: &str, date: Option<&str>, extra: TaskFields) -> Result<String, String> {
+    let version = load(conn, id).unwrap()["version"].as_i64();
+    save_task(conn, Some(id.into()), "Edited".into(), date.map(Into::into), Some(20), None, version, None, extra)
+}
+fn listed(conn: &Connection, id: &str, tasks_only: bool) -> Value {
+    let rows = if tasks_only {
+        calendar_list(conn, "kind='task' AND archived=0 AND status IN ('task','done')", "s.date IS NULL,s.date,NULLIF(s.time,'') IS NULL,s.time,s.id", &[], true)
+    } else {
+        calendar_list(conn, "kind='task'", "s.date,s.time,s.id", &[], false)
+    }
+    .unwrap();
+    rows.into_iter().find(|row| row["source_id"] == id).unwrap()
+}
+fn stored(conn: &Connection, id: &str) -> (Option<String>, String) {
+    conn.query_row("SELECT time,tags FROM items WHERE id=?1", [id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap()
+}
+/// The current relay record of one item, as the sender uploads it.
+fn wire(source: &Connection, item: &str) -> serde_json::Map<String, Value> {
+    let key = json!(["items", [item]]).to_string();
+    let mut wire = crate::mvp_sync_db::row_to_json(source, "mvp_records", &rusqlite::types::Value::Text(key.clone()))
+        .unwrap().unwrap().as_object().unwrap().clone();
+    let (stamp, writer): (String, String) = source
+        .query_row("SELECT updated_at,device_id FROM sync_row_versions WHERE table_name='mvp_records' AND row_id=?1", [&key], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap();
+    wire.insert("_updated_at".into(), json!(stamp));
+    wire.insert("_device_id".into(), json!(writer));
+    wire
+}
+/// Applies a relay record exactly as the receiver does.
+fn deliver(target: &Connection, wire: &serde_json::Map<String, Value>) -> Result<bool, String> {
+    target.execute("UPDATE content_sync_control SET applying=1", []).unwrap();
+    let applied = crate::mvp_sync_db::apply_record(target, wire);
+    target.execute("UPDATE content_sync_control SET applying=0", []).unwrap();
+    applied
+}
+fn transfer(source: &Connection, target: &Connection, item: &str) -> Result<bool, String> {
+    deliver(target, &wire(source, item))
+}
+fn title(conn: &Connection, id: &str) -> String {
+    conn.query_row("SELECT title FROM items WHERE id=?1", [id], |r| r.get(0)).unwrap()
+}
+
+#[test]
+fn time_kind_and_sphere_round_trip_through_every_task_query() {
+    let mut conn = replica();
+    let id = create(&mut conn, "Call the fictional supplier", Some("2026-09-24"), fields(Some("14:30"), Some("instant"), Some("home")));
+    assert_eq!(stored(&conn, &id), (Some("14:30".into()), "task-kind:instant,task-sphere:home".into()));
+    let detail = load(&conn, &id).unwrap();
+    assert_eq!((detail["time"].clone(), detail["task_kind"].clone(), detail["sphere"].clone()), (json!("14:30"), json!("instant"), json!("home")));
+    for tasks_only in [true, false] {
+        let row = listed(&conn, &id, tasks_only);
+        assert_eq!((row["planned_time"].clone(), row["task_kind"].clone(), row["sphere"].clone()), (json!("14:30"), json!("instant"), json!("home")), "tasks_only={tasks_only}");
+    }
+    // A date-only edit (older caller) omits the new fields and keeps them.
+    edit(&mut conn, &id, Some("2026-09-25"), TaskFields::default()).unwrap();
+    assert_eq!(stored(&conn, &id), (Some("14:30".into()), "task-kind:instant,task-sphere:home".into()));
+    // Explicit values replace or clear each field independently.
+    edit(&mut conn, &id, Some("2026-09-25"), fields(Some("09:05"), Some("normal"), None)).unwrap();
+    assert_eq!(stored(&conn, &id), (Some("09:05".into()), "task-sphere:home".into()));
+    edit(&mut conn, &id, Some("2026-09-25"), fields(Some(""), None, Some(""))).unwrap();
+    let detail = load(&conn, &id).unwrap();
+    assert_eq!((detail["time"].clone(), detail["task_kind"].clone(), detail["sphere"].clone()), (Value::Null, json!("normal"), Value::Null));
+    // Moving a task to «Без даты» also clears its time of day.
+    edit(&mut conn, &id, Some("2026-09-25"), fields(Some("18:00"), None, None)).unwrap();
+    edit(&mut conn, &id, None, TaskFields::default()).unwrap();
+    assert_eq!(stored(&conn, &id).0, None);
+}
+
+#[test]
+fn invalid_task_fields_are_rejected_without_writing() {
+    let mut conn = replica();
+    let id = create(&mut conn, "Fictional task", Some("2026-09-24"), TaskFields::default());
+    let before = load(&conn, &id).unwrap();
+    for (date, extra, error) in [
+        (None, fields(Some("10:00"), None, None), "time requires a date"),
+        (Some("2026-09-24"), fields(Some("24:00"), None, None), "HH:MM"),
+        (Some("2026-09-24"), fields(Some("9:00"), None, None), "HH:MM"),
+        (Some("2026-09-24"), fields(None, Some("routine"), None), "task_kind"),
+        (Some("2026-09-24"), fields(None, None, Some("finance")), "sphere"),
+    ] {
+        assert!(edit(&mut conn, &id, date, extra).unwrap_err().contains(error), "{error}");
+    }
+    assert_eq!(load(&conn, &id).unwrap(), before);
+    assert!(save_task(&mut conn, None, "New".into(), None, None, None, None, None, fields(Some("10:00"), None, None)).unwrap_err().contains("time requires a date"));
+}
+
+#[test]
+fn timed_tasks_sort_by_time_within_their_day() {
+    let mut conn = replica();
+    for (title, date, time) in [("untimed", Some("2026-09-24"), None), ("late", Some("2026-09-24"), Some("18:00")), ("early", Some("2026-09-24"), Some("08:15")), ("next", Some("2026-09-25"), Some("07:00")), ("undated", None, None)] {
+        create(&mut conn, title, date, fields(time, None, None));
+    }
+    let titles: Vec<_> = calendar_list(&conn, "kind='task' AND archived=0 AND status IN ('task','done')", "s.date IS NULL,s.date,NULLIF(s.time,'') IS NULL,s.time,s.id", &[], true)
+        .unwrap().into_iter().map(|row| row["title"].as_str().unwrap().to_owned()).collect();
+    assert_eq!(titles, ["early", "late", "untimed", "next", "undated"]);
+}
+
+#[test]
+fn records_saved_before_the_task_model_load_unchanged_and_the_schema_stays_v5() {
+    let conn = replica();
+    let columns_before: Vec<String> = conn.prepare("PRAGMA table_info(items)").unwrap().query_map([], |r| r.get(1)).unwrap().collect::<Result<_, _>>().unwrap();
+    conn.execute(V0329_TASK_INSERT, params!["legacy", "Legacy task", "2026-09-20", 30, "2026-09-20T08:00:00Z", 5]).unwrap();
+    // A first-MVP (v1) task could carry date and time; a note keeps its own tags.
+    conn.execute("INSERT INTO items(id,kind,title,date,time,duration_minutes,version,created_at,updated_at) VALUES('v1-task','task','Early MVP task','2026-09-11','09:30',30,3,'a','a')", []).unwrap();
+    conn.execute("INSERT INTO items(id,kind,title,date,time,duration_minutes,version,created_at,updated_at) VALUES('v1-undated','task','Undated with time','2026-09-11','07:00',30,1,'a','a')", []).unwrap();
+    conn.execute("UPDATE items SET date=NULL WHERE id='v1-undated'", []).unwrap();
+    conn.execute("INSERT INTO items(id,kind,title,duration_minutes,version,created_at,updated_at,tags,status) VALUES('note','task','Note',30,1,'a','a','calendar','note')", []).unwrap();
+    crate::init_schema(&conn).unwrap();
+    crate::init_schema(&conn).unwrap();
+    let columns_after: Vec<String> = conn.prepare("PRAGMA table_info(items)").unwrap().query_map([], |r| r.get(1)).unwrap().collect::<Result<_, _>>().unwrap();
+    assert_eq!(columns_after, columns_before, "no items column is added, so 0.3.29 replicas keep accepting item records");
+    assert_eq!(conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)).unwrap(), crate::SCHEMA_VERSION);
+    assert_eq!(crate::SCHEMA_VERSION, 5, "0.3.29 can still open this profile after a downgrade");
+    let legacy = load(&conn, "legacy").unwrap();
+    assert_eq!((legacy["time"].clone(), legacy["task_kind"].clone(), legacy["sphere"].clone(), legacy["version"].clone(), legacy["priority"].clone()), (Value::Null, json!("normal"), Value::Null, json!(1), json!(5)));
+    assert_eq!(listed(&conn, "v1-task", true)["planned_time"], "09:30");
+    assert_eq!(load(&conn, "v1-undated").unwrap()["time"], Value::Null, "a time without its date is not shown");
+    assert_eq!(listed(&conn, "v1-undated", false)["planned_time"], Value::Null);
+    assert_eq!(load(&conn, "note").unwrap()["tags"], "calendar");
+}
+
+#[test]
+fn a_0329_replica_accepts_carries_and_returns_the_new_fields() {
+    let mut newer = replica();
+    let older = replica();
+    let id = create(&mut newer, "Water the fictional plants", Some("2026-09-24"), fields(Some("07:45"), Some("instant"), Some("home")));
+    assert!(transfer(&newer, &older, &id).unwrap(), "the record has the 0.3.29 column set");
+    assert_eq!(stored(&older, &id), (Some("07:45".into()), "task-kind:instant,task-sphere:home".into()));
+    // The older client renames, reschedules and completes with its own statements.
+    let version: i64 = older.query_row("SELECT version FROM items WHERE id=?1", [&id], |r| r.get(0)).unwrap();
+    assert_eq!(older.execute(V0329_TASK_UPDATE, params!["Renamed on the old phone", "2026-09-26", None::<i64>, "2026-09-24T09:00:00Z", &id, version, None::<i64>]).unwrap(), 1);
+    assert!(transfer(&older, &newer, &id).unwrap());
+    let back = load(&newer, &id).unwrap();
+    assert_eq!((back["title"].clone(), back["date"].clone(), back["time"].clone(), back["task_kind"].clone(), back["sphere"].clone()), (json!("Renamed on the old phone"), json!("2026-09-26"), json!("07:45"), json!("instant"), json!("home")));
+    assert_eq!(older.execute(V0329_TASK_COMPLETE, params!["2026-09-24T10:00:00Z", &id]).unwrap(), 1);
+    assert!(transfer(&older, &newer, &id).unwrap());
+    let done = load(&newer, &id).unwrap();
+    assert_eq!((done["status"].clone(), done["time"].clone(), done["task_kind"].clone(), done["sphere"].clone()), (json!("done"), json!("07:45"), json!("instant"), json!("home")));
+    assert_eq!(newer.query_row("SELECT count(*) FROM mvp_sync_conflicts", [], |r| r.get::<_, i64>(0)).unwrap(), 0, "sequential edits are not conflicts");
+    // A task created by the older client arrives as a normal untimed task.
+    older.execute(V0329_TASK_INSERT, params!["old-created", "Created on 0.3.29", "2026-09-24", None::<i64>, "2026-09-24T11:00:00Z", 0]).unwrap();
+    assert!(transfer(&older, &newer, "old-created").unwrap());
+    let created = load(&newer, "old-created").unwrap();
+    assert_eq!((created["time"].clone(), created["task_kind"].clone(), created["sphere"].clone()), (Value::Null, json!("normal"), Value::Null));
+    // «Без даты» on 0.3.29 leaves the time in place; the newer client hides it.
+    let version: i64 = older.query_row("SELECT version FROM items WHERE id=?1", [&id], |r| r.get(0)).unwrap();
+    older.execute(V0329_TASK_UPDATE, params!["Renamed on the old phone", None::<String>, None::<i64>, "2026-09-24T12:00:00Z", &id, version, None::<i64>]).unwrap();
+    assert!(transfer(&older, &newer, &id).unwrap());
+    assert_eq!(load(&newer, &id).unwrap()["time"], Value::Null);
+    assert_eq!(listed(&newer, &id, true)["planned_time"], Value::Null);
+    // Assigning a day again on the newer client does not revive that stale time,
+    // while kind and sphere stay.
+    edit(&mut newer, &id, Some("2026-09-27"), TaskFields::default()).unwrap();
+    assert_eq!(stored(&newer, &id), (None, "task-kind:instant,task-sphere:home".into()));
+    // The newer client's result travels back to the older replica unchanged.
+    assert!(transfer(&newer, &older, &id).unwrap());
+    assert_eq!(stored(&older, &id), (None, "task-kind:instant,task-sphere:home".into()));
+}
+
+#[test]
+fn a_date_only_edit_keeps_the_time_only_while_the_task_had_a_date() {
+    let mut conn = replica();
+    let id = create(&mut conn, "Fictional reminder", Some("2026-09-24"), fields(Some("16:10"), None, None));
+    // Rescheduling keeps the time of day.
+    edit(&mut conn, &id, Some("2026-09-26"), TaskFields::default()).unwrap();
+    assert_eq!(stored(&conn, &id).0.as_deref(), Some("16:10"));
+    // A time left without its date (older replica, first MVP) is dropped on the next dated save.
+    conn.execute("UPDATE items SET date=NULL WHERE id=?1", [&id]).unwrap();
+    edit(&mut conn, &id, Some("2026-09-28"), TaskFields::default()).unwrap();
+    assert_eq!(stored(&conn, &id).0, None);
+    // An explicit time is still accepted for a task that had no date.
+    conn.execute("UPDATE items SET date=NULL WHERE id=?1", [&id]).unwrap();
+    edit(&mut conn, &id, Some("2026-09-28"), fields(Some("07:00"), None, None)).unwrap();
+    assert_eq!(stored(&conn, &id).0.as_deref(), Some("07:00"));
+}
+
+#[test]
+fn concurrent_edits_on_a_0329_and_a_newer_replica_converge_and_keep_the_other_version() {
+    let mut newer = replica();
+    let older = replica();
+    let id = create(&mut newer, "Fictional errand", Some("2026-09-24"), fields(Some("10:00"), None, Some("home")));
+    assert!(transfer(&newer, &older, &id).unwrap());
+    // Both replicas change the same received version before hearing from each other.
+    edit(&mut newer, &id, Some("2026-09-24"), fields(None, Some("instant"), Some("work"))).unwrap();
+    let version: i64 = older.query_row("SELECT version FROM items WHERE id=?1", [&id], |r| r.get(0)).unwrap();
+    assert_eq!(older.execute(V0329_TASK_UPDATE, params!["Renamed offline", "2026-09-24", None::<i64>, "2026-09-24T09:00:00Z", &id, version, None::<i64>]).unwrap(), 1);
+    let (from_newer, from_older) = (wire(&newer, &id), wire(&older, &id));
+    deliver(&newer, &from_older).unwrap();
+    deliver(&older, &from_newer).unwrap();
+    // Row-level resolution: both replicas hold the same winning row ...
+    assert_eq!(stored(&newer, &id), stored(&older, &id));
+    assert_eq!(title(&newer, &id), title(&older, &id));
+    // ... and each keeps the other version for review, so neither edit is lost silently.
+    for conn in [&newer, &older] {
+        let kept: Vec<String> = conn.prepare("SELECT data FROM mvp_sync_conflicts").unwrap()
+            .query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
+        assert_eq!(kept.len(), 1);
+        let current = format!("{} {}", title(conn, &id), stored(conn, &id).1);
+        let both = format!("{current} {}", kept[0]);
+        assert!(both.contains("Renamed offline") && both.contains("task-sphere:work") && both.contains("task-kind:instant"), "{both}");
+    }
+}
+
+#[test]
+fn an_extra_items_column_would_stall_a_0329_receiver() {
+    // Why no column was added: the receiver requires the exact local column set.
+    let newer = replica();
+    let older = replica();
+    newer.execute(V0329_TASK_INSERT, params!["probe", "Probe", "2026-09-24", None::<i64>, "2026-09-24T08:00:00Z", 0]).unwrap();
+    let key = json!(["items", ["probe"]]).to_string();
+    let mut wire = crate::mvp_sync_db::row_to_json(&newer, "mvp_records", &rusqlite::types::Value::Text(key.clone())).unwrap().unwrap().as_object().unwrap().clone();
+    let mut data: Value = serde_json::from_str(wire["data"].as_str().unwrap()).unwrap();
+    data["value"]["sphere"] = json!("home");
+    wire.insert("data".into(), json!(data.to_string()));
+    let stamp = wire["updated_at"].clone();
+    wire.insert("_updated_at".into(), stamp);
+    wire.insert("_device_id".into(), json!("newer-device"));
+    assert_eq!(crate::mvp_sync_db::validate_record(&older, &wire).unwrap_err(), "content_sync_unknown_schema");
+}
