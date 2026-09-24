@@ -248,12 +248,12 @@ function mountTasksPane(t, rows) {
   t.after(() => { dispose(); dom.window.close(); });
   const item = id => host.querySelector(`[data-context-record="note:${id}"]`);
   const titles = () => [...host.querySelectorAll('[data-task-control="open"]')].map(el => el.textContent);
-  const filter = value => { const select = host.querySelector('[data-tasks-sphere]'); select.value = value; select.dispatchEvent(new dom.window.Event('change')); };
+  const filter = value => host.querySelector(`[data-tasks-sphere="${value}"]`).click();
   return { host, item, titles, filter, actions };
 }
 const note = (id, date, extra = {}) => ({ source_type: 'note', source_id: id, title: id, date, status_extra: 'task', ...extra });
 
-test('Tasks pane shows time, instant kind and sphere, sorts timed tasks and filters by sphere', async t => {
+test('Tasks pane shows time, instant kind and sphere, sorts timed tasks and switches between Work, Home and Other', async t => {
   const today = localDay();
   const x = mountTasksPane(t, [
     note('Late call', today, { planned_time: '18:00' }),
@@ -265,10 +265,10 @@ test('Tasks pane shows time, instant kind and sphere, sorts timed tasks and filt
   await settle();
   assert.deepEqual(x.titles(), ['Morning run', 'Late call', 'Untimed', 'Water plants', 'Stale undated'], 'within a day timed tasks come first, by time');
   const date = id => x.item(id).querySelector('[data-task-control="date"]');
-  assert.equal(date('Morning run').textContent, 'Сегодня, 08:30');
+  assert.equal(date('Morning run').textContent, '08:30', 'the Today group keeps the time without repeating «Сегодня»');
   assert.match(date('Morning run').title, /08:30/);
-  assert.equal(date('Untimed').textContent, 'Сегодня');
-  assert.equal(date('Stale undated').textContent, 'Без даты');
+  assert.equal(date('Untimed'), null);
+  assert.equal(date('Stale undated'), null, 'an undated task prints no «Без даты»');
   assert.equal(x.item('Morning run').querySelector('.ct-sphere').textContent, 'Здоровье');
   assert.equal(x.item('Untimed').querySelector('.ct-sphere'), null);
   const instant = x.item('Water plants');
@@ -280,8 +280,9 @@ test('Tasks pane shows time, instant kind and sphere, sorts timed tasks and filt
   assert.equal(x.item('Untimed').querySelector('.ct-kind'), null);
 
   x.filter('home'); assert.deepEqual(x.titles(), ['Water plants']);
-  x.filter('none'); assert.deepEqual(x.titles(), ['Late call', 'Untimed', 'Stale undated']);
-  x.filter('growth'); assert.deepEqual(x.titles(), []);
+  assert.equal(x.item('Water plants').querySelector('.ct-sphere'), null, 'the chosen sphere is not repeated in rows');
+  x.filter('other'); assert.deepEqual(x.titles(), ['Morning run', 'Late call', 'Untimed', 'Stale undated'], 'Other holds health, growth, personal and no sphere');
+  x.filter('work'); assert.deepEqual(x.titles(), []);
   assert.match(x.host.querySelector('.ct-empty').textContent, /сферу/);
   x.filter('');
   assert.equal(x.titles().length, 5);

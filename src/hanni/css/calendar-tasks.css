@@ -1,4 +1,4 @@
-/* Tasks pane: calm graphite list with one compact toolbar and two-line rows. */
+/* Tasks pane: calm graphite list with one compact toolbar, a sphere switch and two-line rows. */
 .calendar-tasks {
   --ct-danger: #b03a33;
   --ct-hover: color-mix(in srgb, var(--text-primary) 3.5%, var(--bg-page));
@@ -11,20 +11,26 @@
 }
 [data-theme="dark"] .calendar-tasks { --ct-danger: #f2a197; --ct-segment-active: color-mix(in srgb, var(--text-primary) 15%, var(--bg-page)); }
 .calendar-tasks, .calendar-tasks * { box-sizing: border-box; }
+.calendar-tasks [hidden] { display: none !important; }
 .calendar-tasks button, .calendar-tasks input, .calendar-tasks select { font: inherit; color: var(--text-primary); }
 .calendar-tasks :focus-visible { outline: 2px solid var(--ct-focus); outline-offset: 2px; }
 
-.ct-heading h2 { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; font-size: 20px; line-height: 28px; font-weight: 650; }
+.ct-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; margin: 0 0 14px; }
+.ct-heading h2 { display: flex; align-items: center; gap: 10px; min-width: 0; margin: 0; font-size: 20px; line-height: 28px; font-weight: 650; }
 .ct-heading h2:focus-visible { outline-offset: 4px; border-radius: 4px; }
 .ct-heading h2 span { min-width: 24px; padding: 1px 8px; border-radius: 999px; background: var(--ct-segment); font-size: 12px; line-height: 18px; font-weight: 500; color: var(--text-secondary); text-align: center; font-variant-numeric: tabular-nums; }
 .ct-heading h2 span:empty { display: none; }
 
-.ct-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 6px; }
-.ct-filters { display: inline-flex; flex: none; gap: 2px; padding: 3px; border-radius: 10px; background: var(--ct-segment); }
-.ct-filters button { height: 30px; padding: 0 12px; border: 0; border-radius: 7px; background: transparent; color: var(--text-secondary); font-size: 13px; font-weight: 500; white-space: nowrap; cursor: pointer; transition: background-color .12s, color .12s; }
-.ct-filters button:hover { color: var(--text-primary); }
-.ct-filters button[aria-pressed="true"] { background: var(--ct-segment-active); color: var(--text-primary); box-shadow: 0 1px 2px rgb(0 0 0 / 8%); }
-.ct-filters button:focus-visible { outline-offset: 0; }
+/* Segmented controls share one look; the grouping toggle is the smallest. */
+.ct-filters, .ct-grouping { display: inline-flex; flex: none; gap: 2px; padding: 3px; border-radius: 10px; background: var(--ct-segment); }
+.ct-filters button, .ct-grouping button { height: 30px; padding: 0 12px; border: 0; border-radius: 7px; background: transparent; color: var(--text-secondary); font-size: 13px; font-weight: 500; white-space: nowrap; cursor: pointer; transition: background-color .12s, color .12s; }
+.ct-grouping { padding: 2px; border-radius: 8px; }
+.ct-grouping button { height: 26px; padding: 0 10px; border-radius: 6px; font-size: 12.5px; }
+.ct-filters button:hover, .ct-grouping button:hover { color: var(--text-primary); }
+.ct-filters button[aria-pressed="true"], .ct-grouping button[aria-pressed="true"] { background: var(--ct-segment-active); color: var(--text-primary); box-shadow: 0 1px 2px rgb(0 0 0 / 8%); }
+.ct-filters button:focus-visible, .ct-grouping button:focus-visible { outline-offset: 0; }
+
+.ct-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .ct-search-row { display: flex; flex: 1 1 360px; gap: 8px; min-width: 0; }
 .ct-search { position: relative; display: block; flex: 1 1 200px; min-width: 0; margin: 0; }
 .ct-search-icon { position: absolute; left: 10px; top: 50%; display: flex; color: var(--text-faint); transform: translateY(-50%); pointer-events: none; }
@@ -34,19 +40,50 @@
 .ct-search input:hover, .ct-select select:hover { border-color: var(--border-hover); }
 .ct-search input:focus-visible, .ct-select select:focus-visible { outline: 0; border-color: var(--border-focus); box-shadow: 0 0 0 3px var(--ct-segment); }
 .ct-select { position: relative; display: block; flex: 0 1 220px; min-width: 0; }
-.ct-select--sphere { flex-basis: 160px; }
 .ct-select select { padding: 0 30px 0 10px; appearance: none; -webkit-appearance: none; text-overflow: ellipsis; cursor: pointer; }
 .ct-select::after { content: ''; position: absolute; right: 13px; top: 50%; width: 6px; height: 6px; border-right: 1.5px solid var(--text-muted); border-bottom: 1.5px solid var(--text-muted); transform: translateY(-70%) rotate(45deg); pointer-events: none; }
+
+/* Work / Home switch: quiet pills; the chosen one is filled. */
+.ct-spheres { display: flex; gap: 4px; min-width: 0; margin: 12px 0 0; overflow-x: auto; scrollbar-width: none; }
+.ct-spheres::-webkit-scrollbar { display: none; }
+.ct-spheres button { display: inline-flex; flex: none; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border: 0; border-radius: 999px; background: transparent; color: var(--text-secondary); font-size: 13px; font-weight: 500; white-space: nowrap; cursor: pointer; transition: background-color .12s, color .12s; }
+.ct-spheres button:hover { background: var(--ct-hover); color: var(--text-primary); }
+.ct-spheres button[aria-pressed="true"] { background: var(--ct-segment); color: var(--text-primary); }
+.ct-spheres button:focus-visible { outline-offset: -2px; }
+.ct-sphere-count { color: var(--text-faint); font-weight: 500; font-variant-numeric: tabular-nums; }
+.ct-spheres button[aria-pressed="true"] .ct-sphere-count { color: var(--text-muted); }
+
+/* Quick add reads as the first row of the list. */
+.ct-add { display: grid; grid-template-columns: 20px minmax(0,1fr); align-items: center; column-gap: 12px; margin: 8px 0 0; padding: 0 4px 0 12px; border-bottom: 1px solid var(--border-subtle); transition: border-color .12s; }
+.ct-add:focus-within { border-bottom-color: var(--border-focus); }
+.ct-add-icon { display: flex; justify-content: center; color: var(--text-faint); }
+.ct-add:focus-within .ct-add-icon { color: var(--text-secondary); }
+.ct-add input { width: 100%; min-width: 0; height: 44px; margin: 0; padding: 0; border: 0; background: transparent; font-size: 14px; }
+.ct-add input::placeholder { color: var(--text-faint); }
+.calendar-tasks .ct-add input:focus-visible { outline: 0; }
+.ct-add input:read-only { color: var(--text-muted); }
+.ct-add-status { grid-column: 2; margin: -6px 0 8px; font-size: 12px; line-height: 16px; color: var(--text-muted); }
+.ct-add-status.is-error { color: var(--ct-danger); }
 
 .calendar-tasks [data-tasks-message] { font-size: 13px; color: var(--text-secondary); margin: 12px 0; }
 .calendar-tasks [data-tasks-message]:empty { display: none; }
 
-.ct-group { display: flex; align-items: center; gap: 8px; margin: 22px 0 2px; padding: 0 8px 0 12px; font-size: 11.5px; line-height: 16px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); }
-.ct-group:first-child { margin-top: 12px; }
-.ct-group-count { font-weight: 500; letter-spacing: 0; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.ct-group { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-height: 26px; margin: 18px 0 0; padding: 0 4px 0 12px; font-size: 11.5px; line-height: 16px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); }
+.ct-group:first-child { margin-top: 10px; }
+.ct-group-title { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; margin: 0 auto 0 0; font: inherit; letter-spacing: inherit; color: inherit; }
+.ct-group-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ct-group-count { flex: none; font-weight: 500; letter-spacing: 0; color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .ct-group--overdue, .ct-group--overdue .ct-group-count { color: var(--ct-danger); }
+.ct-group--goal .ct-group-label { text-transform: none; letter-spacing: 0; font-size: 12.5px; color: var(--text-secondary); }
+.ct-group-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; min-width: 0; font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--text-secondary); }
+.ct-confirm-text { padding: 0 6px; color: var(--text-primary); }
+.ct-group-action { height: 26px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary) !important; font-size: 12px !important; font-weight: 500; white-space: nowrap; cursor: pointer; transition: background-color .12s, color .12s; }
+.ct-group-action:hover:not(:disabled) { background: var(--ct-hover-strong); color: var(--text-primary) !important; }
+.ct-group-action.is-primary { background: var(--text-primary); color: var(--bg-page) !important; }
+.ct-group-action.is-primary:hover:not(:disabled) { background: var(--text-primary); color: var(--bg-page) !important; opacity: .88; }
+.ct-group-action:disabled { opacity: .45; cursor: default; }
 .ct-list { padding: 0; margin: 0; list-style: none; }
-.ct-list:first-child { margin-top: 8px; }
+.ct-list:first-child { margin-top: 4px; }
 
 .ct-row { position: relative; display: grid; grid-template-columns: 20px minmax(0,1fr) auto; align-items: center; column-gap: 12px; min-height: 54px; padding: 6px 4px 6px 12px; border-bottom: 1px solid var(--border-subtle); transition: background-color .12s; }
 .ct-list .ct-row:last-child { border-bottom-color: transparent; }
@@ -72,21 +109,29 @@
 
 /* Every meta item carries its own separator; the one at a line start falls into the clipped gutter. */
 .ct-meta { display: flex; flex-wrap: wrap; align-items: center; min-width: 0; max-height: 38px; margin: -3px 0 -3px -13px; padding: 3px 4px 3px 0; overflow: hidden; clip-path: inset(0 0 0 13px); font-size: 12px; line-height: 16px; color: var(--text-muted); }
+.ct-meta:empty { display: none; }
 .ct-meta > * { position: relative; flex: none; padding-left: 13px; white-space: nowrap; }
 .ct-meta > *::before { content: '·'; position: absolute; left: 4px; top: 0; width: 5px; text-align: center; color: var(--text-faint); font-weight: 400; }
 .calendar-tasks .ct-meta .task-importance-label { display: block; font-size: 10.5px; line-height: 16px; font-weight: 700; letter-spacing: .04em; color: var(--task-important-text); }
 .ct-status { color: var(--text-secondary); }
-.ct-status--running { color: var(--text-primary); font-weight: 600; }
 .ct-goal { flex: 0 1 auto; min-width: 0; max-width: min(100%, 280px); overflow: hidden; text-overflow: ellipsis; }
 .ct-estimate { font-variant-numeric: tabular-nums; }
 .ct-kind { color: var(--text-secondary); }
 .ct-sphere { color: var(--text-secondary); }
-.ct-date { padding: 0 0 0 13px; border: 0; background: transparent; color: var(--text-muted) !important; font-size: 12px !important; line-height: 16px; cursor: pointer; }
-.ct-date:hover:not(:disabled) { color: var(--text-primary) !important; text-decoration: underline; text-underline-offset: 2px; }
-.ct-date.is-empty { color: var(--text-faint) !important; }
+.ct-date, .ct-stage { padding: 0 0 0 13px; border: 0; background: transparent; color: var(--text-muted) !important; font-size: 12px !important; line-height: 16px; cursor: pointer; }
+.ct-date { font-variant-numeric: tabular-nums; }
+/* The hit area fills the padding band of the meta line (it clips anything larger). */
+.ct-date::after, .ct-stage::after { content: ''; position: absolute; inset: -3px -3px -3px 9px; }
+.ct-date:hover:not(:disabled), .ct-stage:hover:not(:disabled) { color: var(--text-primary) !important; text-decoration: underline; text-underline-offset: 2px; }
 .ct-date.is-overdue { color: var(--ct-danger) !important; font-weight: 500; }
-.ct-date:disabled { cursor: default; }
-.calendar-tasks .ct-date:focus-visible { outline: 0; text-decoration: underline 2px; text-underline-offset: 3px; color: var(--text-primary) !important; }
+.ct-date:disabled, .ct-stage:disabled { cursor: default; }
+.calendar-tasks .ct-date:focus-visible, .calendar-tasks .ct-stage:focus-visible { outline: 0; text-decoration: underline 2px; text-underline-offset: 3px; color: var(--text-primary) !important; }
+/* Stage of a work task, with «жду ответа» as a small pill. */
+.ct-stage { display: inline-flex; align-items: center; gap: 5px; }
+.ct-stage-label { color: var(--text-secondary); }
+.ct-stage:hover .ct-stage-label { color: var(--text-primary); }
+.ct-stage.is-empty { color: var(--text-faint) !important; text-decoration: underline dotted 1px; text-underline-offset: 3px; }
+.ct-waiting { padding: 0 6px; border-radius: 999px; background: var(--ct-segment); color: var(--text-secondary); font-size: 11px; line-height: 16px; font-weight: 500; }
 
 .ct-actions { display: flex; align-items: center; gap: 2px; }
 .ct-icon-button { position: relative; display: inline-grid; place-items: center; flex: none; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--text-muted) !important; cursor: pointer; transition: opacity .12s, background-color .12s, color .12s; }
@@ -110,30 +155,45 @@
 
 .ct-empty { margin: 16px 0 0; padding: 36px 16px; border: 1px dashed var(--border-default); border-radius: 12px; font-size: 14px; line-height: 1.5; color: var(--text-muted); text-align: center; }
 .ct-pages { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; font-size: 13px; color: var(--text-secondary); }
-.ct-pages[hidden] { display: none; }
 .ct-pages button, .calendar-tasks [data-tasks-retry] { height: 34px; padding: 0 12px; background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 8px; font-size: 13px; cursor: pointer; }
 .ct-pages button:hover:not(:disabled), .calendar-tasks [data-tasks-retry]:hover { background: var(--ct-hover); border-color: var(--border-hover); }
 .ct-pages button:disabled { opacity: .45; cursor: default; }
-.calendar-tasks [data-tasks-retry][hidden] { display: none; }
+
+/* The stage menu lives in <body> like the record menu, so it uses global tokens only. */
+.ct-stage-menu { position: fixed; z-index: 12000; width: 216px; max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); overflow-y: auto; box-sizing: border-box; padding: 4px; border: 1px solid var(--border-default); border-radius: 10px; background: var(--bg-card); color: var(--text-primary); box-shadow: 0 8px 30px rgb(0 0 0 / 18%); font-size: 13px; }
+.ct-stage-menu * { box-sizing: border-box; }
+.ct-stage-menu-title { margin: 0; padding: 6px 10px 4px 32px; font-size: 11px; line-height: 16px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); }
+.ct-stage-option { position: relative; display: block; width: 100%; min-height: 32px; padding: 6px 10px 6px 32px; border: 0; border-radius: 6px; background: transparent; font: inherit; font-size: 13px; line-height: 20px; color: inherit; text-align: left; cursor: pointer; }
+.ct-stage-option:hover, .ct-stage-option:focus { outline: 0; background: color-mix(in srgb, var(--text-primary) 7%, var(--bg-card)); }
+.ct-stage-option:focus-visible { outline: 2px solid var(--text-secondary); outline-offset: -2px; }
+.ct-stage-option[aria-checked="true"] { font-weight: 600; }
+.ct-stage-option[aria-checked="true"]::before { content: ''; position: absolute; left: 13px; top: 50%; width: 8px; height: 4px; margin-top: -4px; border-left: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); }
+.ct-stage-option[role="menuitemcheckbox"]::after { content: ''; position: absolute; left: 9px; top: 50%; width: 14px; height: 14px; margin-top: -7px; border: 1.5px solid var(--text-faint); border-radius: 4px; }
+.ct-stage-option[role="menuitemcheckbox"][aria-checked="true"]::after { border-color: currentColor; }
+.ct-stage-option:disabled { opacity: .5; cursor: wait; }
+.ct-stage-separator { height: 1px; margin: 4px 6px; background: var(--border-subtle); }
+.ct-stage-error { margin: 4px 0; padding: 4px 10px; font-size: 12px; line-height: 1.5; color: var(--text-primary); }
 
 @media (max-width: 600px) {
   .calendar-tasks { padding-top: 4px; }
-  .ct-heading h2 { margin-bottom: 12px; font-size: 18px; }
+  .ct-heading { margin-bottom: 12px; }
+  .ct-heading h2 { font-size: 18px; }
+  .ct-grouping button { height: 36px; padding: 0 10px; }
   .ct-toolbar { gap: 8px; }
   .ct-filters { display: flex; width: 100%; }
-  .ct-filters button { flex: 1 1 auto; min-width: 0; padding: 0 6px; font-size: 12.5px; }
-  .ct-search-row { flex-basis: 100%; flex-wrap: wrap; }
-  .ct-search { flex-basis: 100%; }
-  .ct-select, .ct-select--sphere { flex: 1 1 0; }
-  .ct-group { padding-left: 10px; }
+  .ct-filters button { flex: 1 1 auto; min-width: 0; height: 36px; padding: 0 6px; font-size: 12.5px; }
+  .ct-search-row { flex-basis: 100%; }
+  .ct-search { flex: 1 1 55%; }
+  .ct-select { flex: 1 1 45%; }
+  .ct-spheres { margin-top: 10px; }
+  .ct-spheres button { height: 36px; padding: 0 12px; }
+  .ct-add { padding-left: 10px; column-gap: 10px; }
+  .ct-add input { height: 48px; font-size: 15px; }
+  .ct-group { padding-left: 10px; padding-right: 0; }
+  .ct-group-action { height: 36px; padding: 0 10px; }
   .ct-row { column-gap: 10px; min-height: 56px; padding: 7px 0 7px 10px; }
   .ct-actions { gap: 0; }
   .ct-icon-button { width: 36px; height: 36px; }
-  /* Keep the date on the first two lines: the goal goes last and shrinks before anything wraps. */
-  .ct-meta .task-importance-label { order: 1; }
-  .ct-status, .ct-kind { order: 2; }
-  .ct-date { order: 3; }
-  .ct-sphere { order: 4; }
-  .ct-estimate { order: 5; }
-  .ct-goal { order: 6; flex: 1 1 0; min-width: 56px; max-width: 100%; }
+  .ct-goal { flex: 1 1 0; min-width: 56px; max-width: 100%; }
+  .ct-stage-option { min-height: 40px; padding-top: 10px; padding-bottom: 10px; }
 }
