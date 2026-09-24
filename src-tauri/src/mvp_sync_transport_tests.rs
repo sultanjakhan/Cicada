@@ -324,6 +324,89 @@ fn concurrent_array_insertions_converge_and_removed_goal_leaves_no_meta() {
         json!({})
     );
 }
+fn wishes(conn: &Connection) -> Value {
+    serde_json::from_str::<Value>(
+        &crate::mvp_sync_db::read_ui(conn, "calendar_wishes_v1")
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap()
+}
+#[test]
+fn wishes_sync_per_record_so_edits_on_two_devices_merge() {
+    let (a, ac) = replica("mac");
+    let (b, bc) = replica("phone");
+    let wish = |id: &str, status: &str| json!({"id":id,"title":format!("Синтетическое желание {id}"),"category":"other","price":null,"currency":"KZT","url":"","note":"","status":status,"goalId":null});
+    for (conn, id) in [(&a, "wish-a"), (&b, "wish-b")] {
+        let state = json!({"version":1,"wishes":[wish(id, "want")]});
+        crate::mvp_sync_db::set_ui(conn, "calendar_wishes_v1", &state.to_string(), Some(""))
+            .unwrap();
+    }
+    assert_eq!(ui_rows(&a).len(), 1, "one record per wish");
+    let (left, right) = (ui_rows(&a), ui_rows(&b));
+    let (mut a, mut b) = (a, b);
+    apply(&mut a, &ac, stored(&bc, right, 1, 1)).unwrap();
+    apply(&mut b, &bc, stored(&ac, left, 1, 1)).unwrap();
+    assert_eq!(wishes(&a), wishes(&b));
+    assert_eq!(wishes(&a)["wishes"].as_array().unwrap().len(), 2);
+    // Mac marks its wish as saving while the phone deletes the other one.
+    let mut on_a = wishes(&a);
+    for row in on_a["wishes"].as_array_mut().unwrap() {
+        if row["id"] == "wish-a" {
+            row["status"] = json!("saving");
+        }
+    }
+    let before_a = crate::mvp_sync_db::read_ui(&a, "calendar_wishes_v1").unwrap();
+    crate::mvp_sync_db::set_ui(
+        &a,
+        "calendar_wishes_v1",
+        &on_a.to_string(),
+        before_a.as_deref(),
+    )
+    .unwrap();
+    let mut on_b = wishes(&b);
+    on_b["wishes"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|row| row["id"] != "wish-b");
+    let before_b = crate::mvp_sync_db::read_ui(&b, "calendar_wishes_v1").unwrap();
+    crate::mvp_sync_db::set_ui(
+        &b,
+        "calendar_wishes_v1",
+        &on_b.to_string(),
+        before_b.as_deref(),
+    )
+    .unwrap();
+    let (left, right) = (ui_rows(&a), ui_rows(&b));
+    apply(&mut a, &ac, stored(&bc, right, 2, 2)).unwrap();
+    apply(&mut b, &bc, stored(&ac, left, 2, 2)).unwrap();
+    assert_eq!(wishes(&a), wishes(&b));
+    assert_eq!(
+        wishes(&a)["wishes"],
+        json!([wish("wish-a", "saving")]),
+        "the status edit and the deletion both survive"
+    );
+}
+#[test]
+fn malformed_wish_snapshots_are_rejected_before_any_record() {
+    let (a, _) = replica("mac");
+    for state in [
+        json!({"version":1,"wishes":[{"id":"","title":"Без id"}]}),
+        json!({"version":1,"wishes":[{"id":"same","title":"A"},{"id":"same","title":"B"}]}),
+        json!({"version":2,"wishes":[]}),
+        json!({"version":1,"wishes":{}}),
+    ] {
+        assert_eq!(
+            crate::mvp_sync_db::set_ui(&a, "calendar_wishes_v1", &state.to_string(), Some(""))
+                .unwrap_err(),
+            "mvp_sync_invalid_snapshot"
+        );
+    }
+    assert!(ui_rows(&a).is_empty());
+    assert!(crate::mvp_sync_db::read_ui(&a, "calendar_wishes_v1")
+        .unwrap()
+        .is_none());
+}
 #[test]
 fn generic_seed_does_not_create_a_false_conflict() {
     let (mut a, ac) = replica("mac");

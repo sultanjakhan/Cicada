@@ -1215,7 +1215,10 @@ test('main goal shows the current task branch without repeating its title or inv
    const x = await mount(t,data);
    assert.equal(x.ui('goal-stage').textContent,'Текущий этап: Данные → SQL');
    assert.equal(x.ui('goal-stage').hidden,false);
-   assert.doesNotMatch(x.host.querySelector('.calendar-now__goal').textContent,/Вопросы к интервью|%/);
+   // #98: the block names the next task once, beside the stage, and invents no percentage.
+   assert.equal(x.ui('goal-next-text').textContent,'Вопросы к интервью');
+   assert.equal(x.host.querySelector('.calendar-now__goal').textContent.split('Вопросы к интервью').length,2);
+   assert.doesNotMatch(x.host.querySelector('.calendar-now__goal').textContent,/%/);
    assert.equal(data.count('start_task_block'),0);
    await x.choose('goal', 'stage-a');
    assert.equal(x.ui('goal-title').textContent, 'Данные');
@@ -1250,11 +1253,12 @@ test('main goal has its own result and named details without duplicating current
    assert.equal(x.ui('goal-status').hidden, true);
    assert.equal(x.ui('goal-title').textContent, data.goals[0].title);
    assert.equal(card.querySelector('script'), null);
-   assert.match(x.ui('goal-meta').textContent, /1 октября 2026/);
+   assert.equal(x.ui('goal-meta'), null, 'the deadline moved from the dashboard to the goal details');
+   assert.doesNotMatch(card.textContent, /1 октября 2026/);
    assert.equal(x.action('open-goal').getAttribute('aria-label'), 'Сменить главную цель');
    assert.equal(x.action('goal-details').querySelector('[data-ui="goal-title"]'), x.ui('goal-title'));
    assert.equal(card.querySelector('[data-action="start"]'), null);
-   assert.doesNotMatch(card.textContent, /Вопросы к интервью/);
+   assert.equal(x.ui('goal-next-text').textContent, 'Вопросы к интервью', 'the next task is named, not started');
    const writesBefore = data.count('set_ui_state');
    x.action('goal-details').focus();
    await x.click('goal-details');
@@ -1263,6 +1267,7 @@ test('main goal has its own result and named details without duplicating current
    assert.equal(x.dom.window.document.activeElement, modal.querySelector('h2'));
    assert.deepEqual([...modal.querySelectorAll('dd')].map(node => node.textContent), ['1', '1']);
    assert.doesNotMatch(modal.textContent, /%|0 из 1/);
+   assert.match(modal.textContent, /Срок: 1 октября 2026/);
    assert.equal(data.count('set_ui_state'), writesBefore);
    assert.equal(data.count('start_task_block'), 0);
    modal.querySelector('[data-goal-close]').click();
@@ -1664,4 +1669,70 @@ test('two running tasks turn the header into a count that leads to the dashboard
   assert.deepEqual(x.data.blocks.filter(block => block.is_active).map(block => block.source_id).sort(), ['event-a', 'task-a']);
   assert.equal(header.dataset.mode, 'several');
   assert.equal(x.cleanup.getLauncherState().returnTask, null);
+});
+
+test('compact goal block names the next goal task and opens it and the goal through existing handlers', async t => {
+  const opened = [], goalsOpened = [];
+  const x = await mount(t, backend(), { openTaskDetails:(row, restore) => opened.push({ row, restore }), openGoalDetails:(goal, options) => goalsOpened.push({ goal, options }) });
+  const next = x.action('goal-next-task');
+  assert.equal(next.hidden, false);
+  assert.equal(x.ui('goal-next-title').textContent, 'Вопросы к интервью', 'the highest ranked open goal task');
+  assert.equal(next.getAttribute('aria-label'), 'Следующая задача по цели: Вопросы к интервью');
+  assert.equal(x.ui('goal-next-text').hidden, true);
+  next.focus(); next.click();
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0].row.source_type, 'event'); assert.equal(opened[0].row.source_id, 'event-a');
+  assert.equal(x.data.count('start_task_block'), 0, 'opening the next task never starts it');
+  x.ui('card').focus(); opened[0].restore();
+  assert.equal(x.dom.window.document.activeElement, next);
+  const open = x.action('goal-open');
+  assert.equal(open.hidden, false); assert.equal(open.textContent, 'Открыть');
+  open.focus(); open.click();
+  assert.equal(goalsOpened.length, 1); assert.equal(goalsOpened[0].goal.id, 'goal-a');
+  x.ui('card').focus(); goalsOpened[0].options.returnFocus();
+  assert.equal(x.dom.window.document.activeElement, open);
+  await x.click('goal-details');
+  assert.equal(goalsOpened.length, 2, 'the title opens the same popup');
+  assert.equal(x.action('open-goal').querySelector('[data-action-label]').textContent, 'Сменить');
+});
+
+test('the next goal task skips running work and a goal without tasks says so', async t => {
+  const x = await mount(t, backend(), { openTaskDetails:() => {} });
+  await x.click('start');
+  assert.equal(x.ui('goal-next-title').textContent, 'Заметки по API', 'the running task is listed in «В работе», not as next');
+  const data = backend({ ...blank(), goalId:'goal-b' }), other = await mount(t, data, { openTaskDetails:() => {} });
+  assert.equal(other.action('goal-next-task').hidden, true);
+  assert.equal(other.ui('goal-next-text').textContent, 'Задач по цели пока нет');
+  assert.equal(other.ui('goal-next').classList.contains('is-empty'), true);
+});
+
+test('empty goal block is one short prompt with Выбрать цель', async t => {
+  const x = await mount(t, backend(null), { openTaskDetails:() => {} });
+  assert.equal(x.host.dataset.goal, 'none');
+  assert.equal(x.ui('goal-empty').textContent, 'Выбери, к чему хочешь прийти');
+  for (const name of ['goal-status', 'goal-hint', 'goal-next', 'goal-stage']) assert.equal(x.ui(name).hidden, true, name);
+  assert.equal(x.action('goal-open').hidden, true);
+  assert.equal(x.action('open-goal').querySelector('[data-action-label]').textContent, 'Выбрать цель');
+  assert.equal(x.action('open-goal').classList.contains('calendar-now__primary'), true);
+  assert.equal(x.host.querySelector('[data-goal-development]').hidden, true);
+});
+
+test('dashboard glance mounts once per goal, follows goal edits and is replaced when the main goal changes', async t => {
+  const mounted = [];
+  const mountGoalSummary = async (host, goal) => {
+    const entry = { goal, updates: [], disposed: false };
+    mounted.push(entry); host.textContent = `glance ${goal.id}`;
+    return { update: next => entry.updates.push(next), dispose: () => { entry.disposed = true; } };
+  };
+  const data = backend();
+  const x = await mount(t, data, { mountGoalSummary });
+  assert.equal(mounted.length, 1); assert.equal(mounted[0].goal.id, 'goal-a');
+  assert.equal(x.host.querySelector('[data-goal-development]').hidden, false);
+  assert.equal(x.ui('goal-stage').hidden, true, 'the glance, not the task branch, shows the stage');
+  data.goals[0] = { ...data.goals[0], current_value: 3, target_value: 10, unit: 'шт' };
+  await x.refresh();
+  assert.equal(mounted.length, 1, 'a goal edit does not remount the glance');
+  assert.equal(mounted[0].updates.at(-1).current_value, 3);
+  await x.choose('goal', 'goal-b');
+  assert.equal(mounted.length, 2); assert.equal(mounted[0].disposed, true); assert.equal(mounted[1].goal.id, 'goal-b');
 });

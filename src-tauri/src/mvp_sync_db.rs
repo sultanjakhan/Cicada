@@ -22,6 +22,7 @@ const UI_KEYS: &[&str] = &[
     "calendar_development_v1",
     "calendar_recurring_v1",
     "calendar_now_v1",
+    "calendar_wishes_v1",
 ];
 pub(crate) const DAY_KEY: &str = "calendar_day_start_v1";
 pub(crate) fn sql<T>(result: rusqlite::Result<T>) -> Result<T, String> {
@@ -783,6 +784,23 @@ fn split_ui(name: &str, value: &Value) -> Result<BTreeMap<String, Value>, String
                 }
             }
         }
+    } else if name == "calendar_wishes_v1" {
+        // One record per wish, so edits of different wishes on two devices merge.
+        for (position, row) in array(&value["wishes"])?.iter().enumerate() {
+            let id = row["id"]
+                .as_str()
+                .filter(|s| !s.is_empty() && s.len() <= 128)
+                .ok_or("mvp_sync_invalid_snapshot")?;
+            if out
+                .insert(
+                    json!([name, "wishes", id]).to_string(),
+                    json!({"position":position,"row":row}),
+                )
+                .is_some()
+            {
+                return Err("mvp_sync_invalid_snapshot".into());
+            }
+        }
     } else if name == "calendar_recurring_v1" {
         for (position, row) in array(&value["plans"])?.iter().enumerate() {
             let id = row["id"]
@@ -831,6 +849,12 @@ fn validate_ui_record(record: &Record) -> Result<(), String> {
                 && (record.deleted
                     || (record.value["row"]["id"] == *id && record.value["position"].is_u64()))
         }
+        ["calendar_wishes_v1", "wishes", id] => {
+            !id.is_empty()
+                && id.len() <= 128
+                && (record.deleted
+                    || (record.value["row"]["id"] == *id && record.value["position"].is_u64()))
+        }
         ["calendar_recurring_v1", "plans", id] => {
             !id.is_empty()
                 && (record.deleted
@@ -858,6 +882,8 @@ fn apply_ui_record(conn: &Connection, record: &Record) -> Result<(), String> {
     }
     let mut state = if name == "calendar_development_v1" {
         json!({"version":1,"goals":{}})
+    } else if name == "calendar_wishes_v1" {
+        json!({"version":1,"wishes":[]})
     } else {
         json!({"version":1,"plans":[],"days":{}})
     };
@@ -904,6 +930,11 @@ fn apply_ui_record(conn: &Connection, record: &Record) -> Result<(), String> {
                     .ok_or("mvp_sync_invalid_snapshot")?
                     .push(row.value["row"].clone());
             }
+        } else if name == "calendar_wishes_v1" {
+            state["wishes"]
+                .as_array_mut()
+                .ok_or("mvp_sync_invalid_snapshot")?
+                .push(row.value["row"].clone());
         } else if keys[1] == "plans" {
             state["plans"]
                 .as_array_mut()

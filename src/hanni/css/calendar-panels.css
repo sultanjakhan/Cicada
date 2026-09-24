@@ -1,3 +1,4 @@
+@import url('./calendar-goals-list.css');
 /* Calendar-only goals and notes. Controls intentionally do not inherit generic button rules. */
 .calendar-panels { --cp-accent: #246b4c; --cp-accent-soft: #eaf3ee; --cp-surface: var(--bg-card, #fff); --cp-line: var(--border-default, #d9e2dd); --cp-text: var(--text-primary, #23352b); --cp-muted: var(--text-secondary, #65726a); color: var(--cp-text); max-width: 1200px; margin: 0 auto; min-width: 0; }
 .calendar-panels, .calendar-panels * { box-sizing: border-box; }
@@ -22,17 +23,6 @@
 .calendar-panels .cp-message:empty { display: none; }
 .calendar-panels .cp-error { color: #b42318; margin-top: 12px; }
 .calendar-panels.calendar-goals { max-width: none; width: 100%; }
-.calendar-panels .cp-goal-list { display: grid; gap: 12px; }
-.calendar-panels .cp-goal-group { margin: 18px 0 2px; font-size: 15px; color: var(--cp-muted); }
-.calendar-panels .cp-goal-card { border: 1px solid var(--cp-line); border-radius: 14px; padding: 18px 22px; min-width: 0; display: block; background: var(--cp-surface); margin-left: min(calc(var(--goal-depth, 0) * 24px), 160px); }
-.calendar-panels .cp-goal-card.is-primary { border: 2px solid var(--cp-accent); padding: 21px; background: var(--cp-accent-soft); }
-.calendar-panels .cp-card-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
-.calendar-panels .cp-goal-card__header { display: grid; gap: 6px; }
-.calendar-panels .cp-goal-card__details { display: grid; gap: 10px; margin-top: 14px; }
-.calendar-panels .cp-goal-path { color: var(--cp-muted); font-size: 13px; }
-.calendar-panels .cp-badge { color: var(--cp-accent); border: 1px solid currentColor; padding: 3px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
-.calendar-panels .cp-goal-links { color: var(--cp-muted); font-size: 14px; }
-.calendar-panels .cp-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
 .calendar-panels .cp-empty { grid-column: 1 / -1; border: 1px dashed var(--cp-line); border-radius: 14px; padding: 32px; }
 .calendar-panels .cp-empty p { margin-top: 8px; color: var(--cp-muted); }
 .calendar-panels .cp-editor { border: 1px solid var(--cp-line); border-radius: 14px; padding: 24px; background: var(--cp-surface); min-width: 0; }
@@ -71,6 +61,4 @@
 @media (max-width: 420px) {
   .calendar-panels .cp-heading > button { width: 100%; }
   .calendar-panels .cp-actions button { flex: 1 1 130px; }
-  .calendar-panels .cp-goal-card { padding: 16px; margin-left: min(calc(var(--goal-depth, 0) * 12px), 120px); }
-  .calendar-panels .cp-goal-card.is-primary { padding: 17px; }
 }

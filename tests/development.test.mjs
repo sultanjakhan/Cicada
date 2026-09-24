@@ -8,7 +8,8 @@ globalThis.localStorage = dom.window.localStorage;
 globalThis.FormData = dom.window.FormData;
 if (!globalThis.crypto) Object.defineProperty(globalThis, 'crypto', { value:{ randomUUID: () => 'test-id' } });
 globalThis.marked = { Marked: class { use() {} parse(value) { return value; } } };
-const { DEVELOPMENT_STATE_KEY, normalizeDevelopmentState, validateDevelopmentImport, attachDevelopmentTask, mountGoalDevelopment, mountGoalDevelopmentSummary } = await import('../src/hanni/js/calendar-development.js');
+const { DEVELOPMENT_STATE_KEY, normalizeDevelopmentState, validateDevelopmentImport, attachDevelopmentTask, mountGoalDevelopment, mountGoalGlance } = await import('../src/hanni/js/calendar-development.js');
+const { goalGlance, goalNumericProgress } = await import('../src/hanni/js/calendar-development-state.js');
 
 async function settle() { for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve)); }
 function dialogPolyfill() { const p = dom.window.HTMLDialogElement.prototype; p.showModal = function () { this.open = true; }; p.close = function () { this.open = false; this.dispatchEvent(new dom.window.Event('close')); }; }
@@ -90,60 +91,84 @@ test('editing one skill merges an independent remote skill change in the same go
   assert.equal(modal.open,false);assert.equal(writes,1);assert.deepEqual(JSON.parse(stored).goals.g.skills.map(skill=>skill.title),['Local A','Remote B']);
 });
 
-test('summary shows whole-goal progress with scoped focus and keeps stage selection in goal details', async t => {
+const glanceText = host => ({ stage: host.querySelector('[data-glance-stage]')?.textContent.trim(), progress: host.querySelector('[data-glance-progress]')?.getAttribute('aria-label') || null, count: host.querySelector('.calendar-goal-glance__count')?.textContent || null });
+
+test('glance shows the active stage with its own skill progress and falls back to the whole goal', async t => {
   const host=document.createElement('div');document.body.append(host);
-  let stored=JSON.stringify({version:1,goals:{g:{skills:[{id:'sql',title:'JOIN',topic:'SQL',evidence:'checked'},{id:'api',title:'Contract',topic:'API'}],stages:[{id:'s',title:'SQL',skillIds:['sql'],focusId:'sql'}],activeStageId:'s',focusId:'api'}}}),writes=0;
+  let stored=JSON.stringify({version:1,goals:{g:{skills:[{id:'sql',title:'JOIN',topic:'SQL',evidence:'checked'},{id:'api',title:'Contract',topic:'API'}],stages:[{id:'s',title:'SQL <b>',skillIds:['sql'],focusId:'sql'}],activeStageId:'s',focusId:'api'}}}),writes=0;
   const invoke=async(command,args)=>{if(command==='get_ui_state')return stored;if(command==='set_ui_state'){stored=args.value;writes++;return;}throw Error(command);};
-  let opened=null;
-  const controller=await mountGoalDevelopmentSummary(host,{invoke,goalId:'g',onOpen:selection=>{opened=selection;}});t.after(()=>{controller.dispose();host.remove();});
-  assert.equal(host.querySelector('[data-development-open]'),null);
-  assert.match(host.querySelector('.focus-topic').textContent,/SQL/);
-  assert.equal(host.querySelector('.stage-panel, .stage-entry, [data-summary-action=choose-stage]'),null);
-  assert.match(host.textContent,/50%/,'whole goal is 1 of 2 even while the SQL stage is 1 of 1');
-  assert.match(host.textContent,/навыков всей цели подтверждено/);
-  host.querySelector('[data-summary-skill]').click();assert.deepEqual(opened,{goalId:'g',skillId:'sql'});
-  host.querySelector('[data-summary-action=focus]').click();await settle();
-  assert.equal(document.querySelectorAll('dialog[open]').length,1,'no goal-detail dialog behind the picker');
-  document.querySelector('dialog [data-dev-topic=SQL]').click();await settle();
-  document.querySelector('dialog footer [data-dialog-close]').click();await settle();assert.equal(writes,0);
-  assert.equal(document.activeElement,host.querySelector('[data-summary-action=focus]'));
+  const controller=await mountGoalGlance(host,{invoke,goal:{id:'g',title:'Goal',goal_kind:'goal'}});t.after(()=>{controller.dispose();host.remove();});
+  assert.deepEqual(glanceText(host),{stage:'Этап: SQL <b>',progress:'1 из 1 навыков этапа подтверждено',count:'1 / 1'});
+  assert.equal(host.querySelector('b'),null,'stage titles are text');
+  assert.equal(host.querySelector('[data-glance-progress]').getAttribute('aria-valuenow'),'100');
+  assert.equal(host.querySelector('button'),null,'the glance has no pickers; focus and stages live in the goal popup');
   const detail=document.createElement('div');document.body.append(detail);
   const goal=await mountGoalDevelopment(detail,{invoke,goal:{id:'g',title:'Goal'}});t.after(()=>{goal.dispose();detail.remove();});
   goal.openStagePicker();await settle();
   const dialog=document.querySelector('dialog[open]');dialog.querySelector('input[value=""]').checked=true;
   dialog.querySelector('form').dispatchEvent(new window.Event('submit',{bubbles:true,cancelable:true}));await settle();
   assert.equal(JSON.parse(stored).goals.g.activeStageId,null);
-  assert.match(host.textContent,/50%/);assert.match(host.querySelector('.focus-topic').textContent,/API/);
-  assert.equal(writes,1);assert.equal(host.querySelector('.stage-entry'),null);
+  assert.deepEqual(glanceText(host),{stage:'Этап не выбран',progress:'1 из 2 навыков цели подтверждено',count:'1 / 2'});
+  assert.equal(writes,1,'only the stage choice in details wrote');
 });
 
-test('summary refreshes remote focus and whole-goal progress without writing or inventing an empty score', async t => {
+test('glance refreshes on remote sync only when it may commit and never invents a score', async t => {
   const host=document.createElement('div');document.body.append(host);
   let stored=JSON.stringify({version:1,goals:{g:{skills:[],stages:[]}}}),writes=0;
   const invoke=async(command)=>{if(command==='get_ui_state')return stored;writes++;throw Error(command);};
-  const controller=await mountGoalDevelopmentSummary(host,{invoke,goalId:'g'});t.after(()=>{controller.dispose();host.remove();});
-  assert.match(host.textContent,/Без оценки/);assert.doesNotMatch(host.textContent,/0%|Текущий этап/);
+  const controller=await mountGoalGlance(host,{invoke,goal:{id:'g',title:'Goal',goal_kind:'goal',target_value:1,unit:''}});t.after(()=>{controller.dispose();host.remove();});
+  assert.deepEqual(glanceText(host),{stage:'Этап не выбран',progress:null,count:null});
+  assert.doesNotMatch(host.textContent,/0%|0 \//);
   stored=JSON.stringify({version:1,goals:{g:{skills:[{id:'a',title:'Skill A',topic:'SQL',evidence:'accepted'},{id:'b',title:'Skill B',topic:'API'}],stages:[{id:'s',title:'Stage',skillIds:['b'],focusId:'b'}],activeStageId:'s',focusId:'a'}}});
   window.dispatchEvent(new CustomEvent('hanni:calendar-refresh',{detail:{remoteSync:true,canCommit:()=>false}}));await settle();
-  assert.match(host.textContent,/Без оценки/);
+  assert.equal(glanceText(host).stage,'Этап не выбран');
   window.dispatchEvent(new CustomEvent('hanni:calendar-refresh',{detail:{remoteSync:true,canCommit:()=>true}}));await settle();
-  assert.match(host.querySelector('.focus-topic').textContent,/API/);assert.match(host.textContent,/50%/);
+  assert.deepEqual(glanceText(host),{stage:'Этап: Stage',progress:'0 из 1 навыков этапа подтверждено',count:'0 / 1'});
+  window.dispatchEvent(new CustomEvent('hanni:development-changed',{detail:{goalId:'other'}}));await settle();
   assert.equal(writes,0);
 });
 
-test('changing focus from the summary preserves goal focus and linked tasks', async t => {
+test('glance uses a real numeric result when there are no skills and follows goal edits without rereading', async t => {
+  const host=document.createElement('div');document.body.append(host);
+  let reads=0;
+  const invoke=async command=>{if(command==='get_ui_state'){reads++;return null;}throw Error(command);};
+  const goal={id:'run',title:'Полумарафон',goal_kind:'goal',target_value:21,current_value:12,unit:'км'};
+  const controller=await mountGoalGlance(host,{invoke,goal});t.after(()=>{controller.dispose();host.remove();});
+  assert.deepEqual(glanceText(host),{stage:'Этап не выбран',progress:'12 из 21 км',count:'12 / 21 км'});
+  controller.update({...goal,current_value:15});
+  assert.equal(glanceText(host).count,'15 / 21 км');
+  assert.equal(reads,1);
+  assert.equal(goalNumericProgress({goal_kind:'goal',target_value:1,current_value:null,unit:''}),null,'a qualitative goal has no numeric progress');
+  assert.equal(goalGlance({version:1,goals:{}},{id:'x',goal_kind:'daily_norm',target_value:2,unit:'л'}).progress,null,'daily norms are not goal progress');
+});
+
+test('focus picker in goal details preserves stage focus, goal focus and linked tasks', async t => {
   const host=document.createElement('div');document.body.append(host);
   let stored=JSON.stringify({version:1,goals:{g:{skills:[{id:'a',title:'JOIN',topic:'SQL',taskIds:['task-a']},{id:'b',title:'GROUP BY',topic:'SQL',taskIds:['task-b']}],stages:[{id:'s',title:'SQL',skillIds:['a','b'],focusId:'a'}],activeStageId:'s',focusId:'a'}}}),writes=0;
   const invoke=async(command,args)=>{if(command==='get_ui_state')return stored;if(command==='set_ui_state'){stored=args.value;writes++;return;}throw Error(command);};
-  const controller=await mountGoalDevelopmentSummary(host,{invoke,goalId:'g'});t.after(()=>{controller.dispose();host.remove();});
-  host.querySelector('[data-summary-action=focus]').click();await settle();
+  const controller=await mountGoalDevelopment(host,{invoke,goal:{id:'g',title:'Goal'},embedded:true});t.after(()=>{controller.dispose();host.remove();});
+  host.querySelector('[data-dev-focus]').click();await settle();
   document.querySelector('dialog [data-dev-topic=SQL]').click();await settle();
   const input=document.querySelector('dialog input[value=b]');input.checked=true;input.dispatchEvent(new window.Event('change',{bubbles:true}));
   document.querySelector('dialog form').dispatchEvent(new window.Event('submit',{bubbles:true,cancelable:true}));await settle();
   const saved=JSON.parse(stored).goals.g;
   assert.equal(saved.stages[0].focusId,'b');assert.equal(saved.focusId,'a');assert.equal(saved.activeStageId,'s');
   assert.deepEqual(saved.skills.map(skill=>skill.taskIds),[['task-a'],['task-b']]);
-  assert.equal(writes,1);assert.match(host.querySelector('[data-summary-skill]').textContent,/GROUP BY/);
+  assert.equal(writes,1);assert.match(host.querySelector('.dev-focus strong').textContent,/GROUP BY/);
+});
+
+test('embedded development keeps stages, skills and filters but leaves the title and intro to the popup', async t => {
+  const host=document.createElement('div');document.body.append(host);
+  const stored=JSON.stringify({version:1,goals:{g:{skills:[{id:'a',title:'API',topic:'API'},{id:'b',title:'SQL',topic:'SQL'}],stages:[{id:'s',title:'API stage',skillIds:['a']}],activeStageId:'s'}}});
+  const invoke=async command=>{if(command==='get_ui_state')return stored;throw Error(command);};
+  const controller=await mountGoalDevelopment(host,{invoke,goal:{id:'g',title:'Скрытое название',description:'Скрытое описание',criteria:'Скрытый критерий'},embedded:true});t.after(()=>{controller.dispose();host.remove();});
+  assert.equal(host.querySelector('h2'),null);
+  assert.equal(host.querySelector('.calendar-development-intro'),null);
+  assert.doesNotMatch(host.textContent,/Скрытое|Скрытый/);
+  assert.equal(host.querySelector('.dev-title').textContent,'Развитие цели');
+  assert.equal(host.querySelectorAll('[data-dev-skill]').length,1,'the active stage still filters the skills');
+  assert.ok(host.querySelector('[data-dev-stage-clear]'));
+  assert.ok(host.querySelector('[data-dev-stage-add]'));
 });
 
 test('mount persists only after acknowledgement and summary refreshes from event', async t => {
@@ -156,8 +181,8 @@ test('mount persists only after acknowledgement and summary refreshes from event
     throw Error(command);
   };
   const dev = await mountGoalDevelopment(root, { invoke, goal:{id:'g',title:'Goal'}, onCreateTask:value => { task = value; } });
-  const sum = await mountGoalDevelopmentSummary(summary, { invoke, goalId:'g', onOpen:() => {} });
-  assert.match(summary.textContent, /Выбери навык из текущего этапа/);
+  const sum = await mountGoalGlance(summary, { invoke, goal:{ id:'g', title:'Goal', goal_kind:'goal' } });
+  assert.deepEqual(glanceText(summary), { stage:'Этап: SQL', progress:'0 из 1 навыков этапа подтверждено', count:'0 / 1' });
   root.querySelector('[data-dev-focus]').click(); await settle();
   assert.equal(document.querySelectorAll('dialog input[name="development-picker"]').length, 0);
   const pickerSearch = document.querySelector('dialog [data-dev-picker-search]'); pickerSearch.focus(); pickerSearch.value = 's'; pickerSearch.dispatchEvent(new dom.window.Event('input', { bubbles:true })); await settle();
@@ -180,10 +205,10 @@ test('mount persists only after acknowledgement and summary refreshes from event
   assert.match(document.querySelector('dialog [data-dialog-error]').textContent, /offline/);
   document.querySelector('dialog')?.close(); fail = false; dev.dispose(); sum.dispose(); root.replaceChildren(); summary.replaceChildren();
   const dev2 = await mountGoalDevelopment(root, { invoke, goal:{id:'g',title:'Goal'}, onCreateTask:value => { task = value; } });
-  const sum2 = await mountGoalDevelopmentSummary(summary, { invoke, goalId:'g', onOpen:() => {} });
+  const sum2 = await mountGoalGlance(summary, { invoke, goal:{ id:'g', title:'Goal', goal_kind:'goal' } });
   root.querySelector('[data-dev-evidence="sql"]').click(); await settle(); document.querySelector('dialog[open] textarea[name="evidence"]').value = 'accepted query'; document.querySelector('dialog[open] form').dispatchEvent(new dom.window.Event('submit', { bubbles:true, cancelable:true })); await settle(); await settle();
   assert.equal(JSON.parse(stored).goals.g.skills[0].evidence, 'accepted query');
-  assert.match(summary.textContent, /100%/);
+  assert.equal(glanceText(summary).count, '1 / 1', 'the glance refreshes from the development event');
   root.querySelector('[data-dev-task="sql"]').click(); assert.deepEqual(task, { goalId:'g', skillId:'sql', skillTitle:'JOIN' });
   root.querySelector('[data-dev-remove="sql"]').click(); await settle(); document.querySelector('dialog[open] form').dispatchEvent(new dom.window.Event('submit', { bubbles:true, cancelable:true })); await settle();
   assert.equal(JSON.parse(stored).goals.g.skills.length, 0);

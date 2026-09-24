@@ -1,9 +1,13 @@
 import { invoke as defaultInvoke } from './state.js';
 import { escapeHtml } from './utils.js';
 import { createCalendarDialog } from './calendar-dialog.js';
+import { mountCalendarContextMenu } from './calendar-context-menu.js';
+import { DEVELOPMENT_STATE_KEY, readDevelopmentState, developmentOf, goalNumericProgress, formatNumber } from './calendar-development-state.js';
+import { mountCalendarWishes } from './calendar-wishes.js';
+import { wishGoalDraft } from './calendar-wishes-store.js';
 
 let nextInstance = 0;
-const dateLabel = value => {
+export const calendarGoalDateLabel = value => {
   if (!value) return '';
   const date = new Date(`${value}T12:00:00`);
   return Number.isFinite(date.getTime()) ? date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }) : value;
@@ -36,19 +40,179 @@ export function calendarGoalForest(goals) {
   for (const item of byId.values()) visit(item, 0, out);
   return out;
 }
+/** Goal ids of a goal and all its subgoals (cycle-safe). */
+export function calendarGoalDescendants(goals, goalId) {
+  const ids = new Set([String(goalId)]);
+  let expanded = true;
+  while (expanded) {
+    expanded = false;
+    goals.forEach(goal => { const id = String(goal.id); if (ids.has(String(goal.parent_goal_id)) && !ids.has(id)) { ids.add(id); expanded = true; } });
+  }
+  return ids;
+}
+export function calendarGoalPath(goals, goal) {
+  const path = [], seen = new Set(); let current = goal;
+  while (current && !seen.has(String(current.id))) { seen.add(String(current.id)); path.unshift(current.title || 'Без названия'); current = goals.find(candidate => String(candidate.id) === String(current.parent_goal_id)); }
+  return path;
+}
 
-/** Calendar goal catalog. Selection is delegated to Calendar Now's serialized state owner. */
+/** Shared goal editor (create, edit, subgoal, prefilled draft). Saving uses save_calendar_goal only. */
+export function openCalendarGoalEditor({ document, invoke, goal = null, parent = null, draft = null, goals = [], returnFocus, isCurrent = () => true, onSaved, onSavingChange, onClose } = {}) {
+  const window = document.defaultView, prefix = `calendar-goal-editor-${++nextInstance}`;
+  let creating = false;
+  const editor = createCalendarDialog({ document, title: goal ? 'Изменить цель' : parent ? 'Новая подцель' : 'Новая цель', hint: 'Сохрани то, к чему хочешь прийти. Срок можно добавить позже.', submitLabel: 'Сохранить цель',
+    isCurrent, returnFocus, onClose });
+  editor.modal.dataset.goalCreate = '';
+  editor.body.innerHTML = `<label class="calendar-editor-field" for="${prefix}-new-title">Что хочешь получить?<input id="${prefix}-new-title" name="title" required maxlength="500" placeholder="Например, подготовить учебный проект" autocomplete="off"></label>
+    <label class="calendar-editor-field" for="${prefix}-new-deadline">Срок · необязательно<input id="${prefix}-new-deadline" name="deadline" type="date"></label>`;
+  const extra = document.createElement('div');
+  extra.className = 'calendar-goal-fields';
+  extra.innerHTML = `<fieldset ${goal?.goal_kind === 'daily_norm' ? '' : 'hidden'}><legend>Как учитывать</legend><label><input type="radio" name="goal_kind" value="goal"> Долгосрочная цель</label><label><input type="radio" name="goal_kind" value="daily_norm"> Ежедневная норма</label></fieldset>
+    <label class="calendar-editor-field">Желаемый результат<textarea name="description" maxlength="10000" placeholder="Что должно измениться?"></textarea></label>
+    <label class="calendar-editor-field">Критерии — по одному на строку<textarea name="criteria" maxlength="10000" placeholder="Например: самостоятельно описываю API-контракт"></textarea></label>
+    <label class="calendar-editor-field calendar-goal-numeric-toggle" data-numeric-toggle><input type="checkbox" name="numeric_progress"> Числовой прогресс</label>
+    <div data-numeric-fields><label class="calendar-editor-field">Целевое значение<input type="number" name="target_value" min="0.001" step="any"></label>
+    <label class="calendar-editor-field">Единица измерения<input name="unit" maxlength="100" placeholder="Например, л"></label><label class="calendar-editor-field">Текущий прогресс · необязательно<input type="number" name="current_value" min="0" step="any"></label></div><label class="calendar-editor-field" data-parent>Родительская цель<select name="parent_goal_id"><option value="">Верхний уровень</option></select></label>`;
+  editor.body.append(extra);
+  const fields = editor.form.elements;
+  fields.title.value = goal?.title || draft?.title || ''; fields.deadline.value = goal?.deadline || '';
+  fields.goal_kind.value = goal ? goal.goal_kind || '' : 'goal';
+  fields.description.value = goal?.description || draft?.description || ''; fields.criteria.value = goal?.criteria || '';
+  fields.target_value.value = goal?.target_value > 0 ? goal.target_value : draft?.targetValue > 0 ? draft.targetValue : 1; fields.unit.value = goal?.unit || (!goal && draft?.unit) || '';
+  fields.current_value.value = goal?.current_value ?? '';
+  fields.numeric_progress.checked = fields.goal_kind.value === 'daily_norm' || !!(goal && (goal.unit || Number(goal.target_value) !== 1 || Number(goal.current_value) > 0)) || (!goal && draft?.targetValue > 0);
+  const parentSelect = fields.parent_goal_id; const blocked = new Set([String(goal?.id || '')]);
+  let changed = true; while (changed) { changed = false; goals.forEach(item => { if (blocked.has(String(item.parent_goal_id)) && !blocked.has(String(item.id))) { blocked.add(String(item.id)); changed = true; } }); }
+  goals.filter(item => item.goal_kind === 'goal' && !blocked.has(String(item.id))).forEach(item => parentSelect.add(new window.Option(calendarGoalPath(goals, item).join(' → '), String(item.id))));
+  parentSelect.value = String(goal?.parent_goal_id ?? parent?.id ?? '');
+  const updateFields = () => {
+    const isDaily = fields.goal_kind.value === 'daily_norm', numeric = isDaily || fields.numeric_progress.checked;
+    editor.body.querySelector('[data-parent]').hidden = !fields.goal_kind.value || isDaily; parentSelect.disabled = !fields.goal_kind.value || isDaily; if (isDaily) parentSelect.value = '';
+    editor.body.querySelector('[data-numeric-toggle]').hidden = isDaily; editor.body.querySelector('[data-numeric-fields]').hidden = !numeric;
+    fields.target_value.required = numeric;
+  };
+  editor.form.querySelectorAll('[name=goal_kind]').forEach(input => input.addEventListener('change', updateFields)); fields.numeric_progress.addEventListener('change', updateFields); updateFields();
+  editor.form.addEventListener('submit', async event => {
+    event.preventDefault(); if (creating) return;
+    editor.showError('');
+    const titleInput = fields.title, deadlineInput = fields.deadline;
+    const title = titleInput.value.trim(), deadlineValue = deadlineInput.value;
+    if (!title) { editor.showError('Напиши, к чему хочешь прийти.', titleInput); return; }
+    if (title.length > 500) { editor.showError('Сократи название цели до 500 символов.', titleInput); return; }
+    const deadlineDate = deadlineValue ? new Date(`${deadlineValue}T12:00:00Z`) : null;
+    if (deadlineInput.validity.badInput || !deadlineInput.validity.valid || (deadlineValue && (!/^\d{4}-\d{2}-\d{2}$/.test(deadlineValue) || !Number.isFinite(deadlineDate.getTime()) || deadlineDate.toISOString().slice(0, 10) !== deadlineValue))) {
+      editor.showError('Введи срок полностью или очисти поле даты.', deadlineInput); return;
+    }
+    const deadline = deadlineValue || null;
+    if (!fields.goal_kind.value && !goal) { editor.showError('Выбери долгосрочную цель или ежедневную норму.', editor.body.querySelector('[name=goal_kind]')); return; }
+    const numeric = fields.goal_kind.value === 'daily_norm' || fields.numeric_progress.checked;
+    const targetValue = numeric ? Number(fields.target_value.value) : (goal?.target_value > 0 ? goal.target_value : 1);
+    if (!Number.isFinite(targetValue) || targetValue <= 0) { editor.showError('Укажи положительное целевое значение.', fields.target_value); return; }
+    const currentValue = numeric ? (fields.current_value.value === '' ? null : Number(fields.current_value.value)) : (goal?.current_value ?? null);
+    if (currentValue != null && (!Number.isFinite(currentValue) || currentValue < 0)) { editor.showError('Укажи неотрицательный прогресс или очисти поле.', fields.current_value); return; }
+    creating = true; onSavingChange?.(true); editor.setPending(true);
+    try {
+      const id = await invoke('save_calendar_goal', { id: goal?.id || null, title, targetValue, unit: numeric ? fields.unit.value.trim() : (goal?.unit || ''), deadline, goalKind: fields.goal_kind.value || null, description: fields.description.value.trim(), criteria: fields.criteria.value.trim(), parentGoalId: parentSelect.value ? String(parentSelect.value) : null, clearParent: !!goal?.parent_goal_id && !parentSelect.value, currentValue });
+      // Saving succeeded. Close before rereading: a failed refresh must not offer Create again.
+      editor.setPending(false); editor.close();
+      window.dispatchEvent(new window.Event('task-state-changed'));
+      await onSaved?.(goal?.id ?? id);
+    } catch { if (editor.modal.isConnected) { editor.setPending(false); editor.showError('Не удалось сохранить цель. Текст остался в форме — попробуй ещё раз.'); } }
+    finally { creating = false; onSavingChange?.(false); }
+  });
+  editor.open(fields.title);
+  return editor;
+}
+
+export function openCalendarGoalDeletion({ document, invoke, goal, returnFocus, isCurrent = () => true, onDeleted, onSavingChange, onClose } = {}) {
+  const window = document.defaultView;
+  let deleting = false;
+  const editor = createCalendarDialog({ document, title: 'Удалить цель?', submitLabel: 'Удалить цель',
+    hint: 'Связанные задачи и события сохранятся без этой цели.', isCurrent, returnFocus, onClose });
+  editor.modal.dataset.goalDelete = ''; editor.body.textContent = goal.title;
+  editor.form.addEventListener('submit', async event => {
+    event.preventDefault(); if (deleting) return;
+    deleting = true; onSavingChange?.(true); editor.showError(''); editor.setPending(true);
+    try {
+      await invoke('delete_goal', { id: goal.id });
+      editor.setPending(false); editor.close();
+      window.dispatchEvent(new window.Event('task-state-changed'));
+      await onDeleted?.(goal.id);
+    } catch { if (editor.modal.isConnected) { editor.setPending(false); editor.showError('Не удалось удалить цель. Попробуй ещё раз.'); } }
+    finally { deleting = false; onSavingChange?.(false); }
+  });
+  editor.open(editor.modal.querySelector('[data-dialog-close]'));
+  return editor;
+}
+
+/**
+ * Calendar goal catalog: one compact row per goal (title, one-line description,
+ * current stage, deadline). The row opens the full goal popup; selection is
+ * delegated to Calendar Now's serialized state owner.
+ * `dependencies.state` keeps the Goals/Wishes choice across pane switches.
+ */
 export async function mountCalendarGoals(element, dependencies = {}) {
   const api = dependencies.invoke || defaultInvoke;
   const document = element.ownerDocument, window = document.defaultView;
-  const prefix = `calendar-goals-${++nextInstance}`;
+  const viewState = dependencies.state || { view: 'goals' };
   let disposed = false, revision = 0, busy = false, creating = false;
-  let goals = [], links = [], selectedId = null, active = null, creationDialog = null;
+  let goals = [], goalsLoaded = false, development = readDevelopmentState(null), selectedId = null, active = null, creationDialog = null, wishes = null;
   const collapsedGoalIds = new Set();
   element.classList.add('calendar-panels', 'calendar-goals');
-  element.innerHTML = `<header class="cp-heading"><div><h2>Цели</h2><p>Сохрани то, к чему хочешь прийти. Задачи можно добавить позже.</p></div><button type="button" class="cp-primary" data-new>Новая цель</button></header>
-    <p class="cp-message" data-message role="status" aria-live="polite"></p><button type="button" data-retry hidden>Повторить загрузку</button><div class="cp-goal-list" data-list aria-busy="true"></div>`;
+  element.innerHTML = `<header class="cp-heading"><div><h2>Цели</h2><p data-goals-hint></p></div><button type="button" class="cp-primary" data-new></button></header>
+    <div class="cp-goals-switch" role="group" aria-label="Что показать"><button type="button" data-goals-view="goals">Цели</button><button type="button" data-goals-view="wishes">Желания</button></div>
+    <div data-goals-panel><p class="cp-message" data-message role="status" aria-live="polite"></p><button type="button" data-retry hidden>Повторить загрузку</button><div class="cp-goal-list" data-list aria-busy="true"></div></div>
+    <div data-wishes-panel hidden></div>`;
   const list = element.querySelector('[data-list]'), message = element.querySelector('[data-message]');
+  const goalById = id => goals.find(goal => String(goal.id) === String(id));
+  const rowButton = (id, selector) => list.querySelector(`[data-goal-id="${String(id).replace(/["\\]/g, '\\$&')}"] ${selector}`);
+  const focusMenu = id => (rowButton(id, '[data-record-menu]') || element.querySelector('[data-new]'))?.focus();
+  function showView(view, focus = false) {
+    viewState.view = view === 'wishes' ? 'wishes' : 'goals';
+    const wishesView = viewState.view === 'wishes';
+    element.querySelectorAll('[data-goals-view]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.goalsView === viewState.view)));
+    element.querySelector('[data-goals-panel]').hidden = wishesView;
+    const panel = element.querySelector('[data-wishes-panel]'); panel.hidden = !wishesView;
+    element.querySelector('[data-goals-hint]').textContent = wishesView ? 'Покупки, поездки и впечатления без плана. Если нужно накопить — преврати желание в цель.' : 'Сохрани то, к чему хочешь прийти. Задачи можно добавить позже.';
+    element.querySelector('[data-new]').textContent = wishesView ? 'Новое желание' : 'Новая цель';
+    if (wishesView && !wishes) {
+      wishes = mountCalendarWishes(panel, { invoke: api, mountMenu: mountCalendarContextMenu, getGoals: () => goalsLoaded ? goals : null,
+        openGoal: dependencies.onOpenGoal ? (goal, returnFocus) => dependencies.onOpenGoal(goal, { primaryGoalId: selectedId, returnFocus }) : null, openUrl: dependencies.openUrl,
+        returnFocus: () => element.querySelector('[data-new]')?.focus(),
+        convertToGoal: (wish, done, restore) => openCreation(null, null, { draft: wishGoalDraft(wish), onSaved: done, returnFocus: restore }) });
+    }
+    if (focus) element.querySelector(`[data-goals-view="${viewState.view}"]`)?.focus();
+  }
+  function goalActions(goal, path) {
+    const actions = [];
+    if (goal.goal_kind === 'goal') {
+      actions.push({ id: 'task', label: 'Добавить задачу', dialog: true, run: () => dependencies.onCreateTask?.({ goalId: goal.id, title: goal.title, path: path.join(' → ') }) });
+      actions.push({ id: 'subgoal', label: 'Подцель', dialog: true, run: restore => openCreation(null, goal, { returnFocus: restore }) });
+    }
+    actions.push({ id: 'edit', label: 'Редактировать', dialog: true, run: restore => openCreation(goal, null, { returnFocus: restore }) });
+    actions.push({ id: 'delete', label: 'Удалить', dialog: true, run: restore => openDeletion(goal, restore) });
+    return actions;
+  }
+  const disposeMenu = mountCalendarContextMenu(list, {
+    getRecord: row => { const goal = goalById(row.dataset.contextRecord); return goal ? { ...goal, title: goal.title || 'Без названия' } : null; },
+    getActions: record => goalActions(goalById(record.id), calendarGoalPath(goals, goalById(record.id))),
+    restoreFocus: row => focusMenu(row.dataset.contextRecord),
+  });
+  function openGoal(goal) {
+    const id = String(goal.id), returnFocus = () => (rowButton(id, '[data-goal-open]') || element.querySelector('[data-new]'))?.focus();
+    if (dependencies.onOpenGoal) dependencies.onOpenGoal(goal, { primaryGoalId: selectedId, returnFocus });
+    else openCreation(goal, null, { returnFocus });
+  }
+  function rowMeta(goal, id) {
+    const meta = [], ext = developmentOf(development, id), stage = ext.stages.find(item => item.id === ext.activeStageId);
+    if (goal.goal_kind === 'daily_norm') meta.push(`Каждый день: ${formatNumber(goal.target_value)} ${goal.unit || ''}`.trim());
+    else if (goal.goal_kind !== 'goal') meta.push('Тип не выбран');
+    if (ext.stages.length) meta.push(stage ? `Этап: ${stage.title}` : 'Этап не выбран');
+    const numeric = goalNumericProgress(goal);
+    if (numeric) meta.push(numeric.label);
+    if (goal.deadline) meta.push(`до ${calendarGoalDateLabel(goal.deadline)}`);
+    return meta;
+  }
   function renderCards() {
     list.innerHTML = '';
     const longTerm = calendarGoalForest(goals.filter(goal => goal.goal_kind === 'goal'));
@@ -58,51 +222,39 @@ export async function mountCalendarGoals(element, dependencies = {}) {
     const renderGroup = (title, rows) => {
       const heading = document.createElement('h3'); heading.className = 'cp-goal-group'; heading.textContent = title; list.append(heading);
       rows.forEach(row => {
-      const goal = row.goal || row, depth = row.depth || 0;
-      if (row.ancestorIds?.some(id => collapsedGoalIds.has(id))) return;
-      const descendants = longTerm.filter(item => item.ancestorIds.includes(String(goal.id))).map(item => item.goal.id);
-      const selected = goal.goal_kind !== 'daily_norm' && String(goal.id) === selectedId, summary = calendarGoalLinks(links, goal.id, descendants);
-      const target = Number(goal.target_value), current = Number(goal.current_value);
-      const numeric = goal.goal_kind === 'daily_norm' || !!goal.unit || (Number.isFinite(target) && target !== 1) || (Number.isFinite(current) && current > 0);
-      const numericLine = numeric && Number.isFinite(target) ? (Number.isFinite(current) ? `Прогресс: ${current} из ${target} ${goal.unit || ''}` : `Цель: ${target} ${goal.unit || ''}`) : '';
-      const card = document.createElement('article'); card.className = `cp-goal-card${selected ? ' is-primary' : ''}`; card.style.setProperty('--goal-depth', String(depth));
-      card.dataset.goalId = String(goal.id);
-      const path = row.path || [goal.title || 'Без названия'];
-      card.innerHTML = `<header class="cp-goal-card__header"><div class="cp-card-top"><span class="cp-eyebrow">${selected ? 'Главная цель' : 'Сохранённая цель'}</span>${selected ? '<span class="cp-badge">На сейчас</span>' : ''}</div><h3>${escapeHtml(goal.title || 'Без названия')}</h3>${path.length > 1 ? `<p class="cp-goal-path">${escapeHtml(path.join(' → '))}</p>` : ''}</header>
-        <div class="cp-goal-card__details">${goal.description ? `<p>${escapeHtml(goal.description)}</p>` : ''}
-        ${goal.goal_kind === 'daily_norm' ? `<p>Каждый день: ${escapeHtml(String(goal.target_value))} ${escapeHtml(goal.unit || '')}</p>` : ''}
-        ${goal.goal_kind === 'goal' && numericLine ? `<p>${escapeHtml(numericLine.trim())}</p>` : ''}
-        ${goal.criteria ? `<p class="cp-muted">Критерии</p><ul>${goal.criteria.split('\n').filter(line => line.trim()).map(line => `<li>${escapeHtml(line)}</li>`).join('')}</ul>` : ''}
-        <p class="cp-goal-links">${summary ? `Связано${descendants.length ? ', включая подцели' : ''}: ${escapeHtml(summary)}` : 'Пока без задач — можно вернуться позже'}</p>
-        ${goal.deadline ? `<p class="cp-muted">Срок: ${escapeHtml(dateLabel(goal.deadline))}</p>` : ''}</div>`;
-      const actions = document.createElement('div'); actions.className = 'cp-card-actions';
-      if (goal.goal_kind === 'goal' && dependencies.onOpenGoal) {
-        const heading = card.querySelector('h3'), title = document.createElement('button');
-        title.type = 'button'; title.className = 'cp-goal-title-link'; title.textContent = goal.title || 'Без названия';
-        title.onclick = () => dependencies.onOpenGoal(goal); heading.replaceChildren(title);
-      }
-      if (row.children?.length) {
-        const collapse = document.createElement('button'); collapse.type = 'button'; collapse.dataset.goalCollapse = String(goal.id); collapse.setAttribute('aria-expanded', String(!collapsedGoalIds.has(String(goal.id))));
-        collapse.textContent = collapsedGoalIds.has(String(goal.id)) ? 'Показать подцели' : 'Свернуть подцели';
-        collapse.onclick = () => { const id = String(goal.id); if (collapsedGoalIds.has(id)) collapsedGoalIds.delete(id); else collapsedGoalIds.add(id); renderCards(); element.querySelector(`[data-goal-collapse="${id}"]`)?.focus(); };
-        actions.append(collapse);
-      }
-      if (!selected && goal.goal_kind !== 'daily_norm' && dependencies.onSelectGoal) {
-        const select = document.createElement('button'); select.type = 'button'; select.dataset.select = ''; select.textContent = 'Сделать главной'; select.disabled = busy || !!active;
-        select.onclick = () => selectGoal(String(goal.id)); actions.append(select);
-      }
-      const edit = document.createElement('button'); edit.type = 'button'; edit.dataset.editGoal = String(goal.id);
-      edit.textContent = 'Редактировать'; edit.onclick = () => openCreation(goal);
-      if (goal.goal_kind === 'goal') {
-        const task = document.createElement('button'); task.type = 'button'; task.className = 'cp-primary'; task.textContent = 'Добавить задачу'; task.onclick = () => dependencies.onCreateTask?.({ goalId: goal.id, title: goal.title, path: path.join(' → ') });
-        const child = document.createElement('button'); child.type = 'button'; child.textContent = 'Подцель'; child.onclick = () => openCreation(null, goal);
-        actions.append(task, child);
-      }
-      const remove = document.createElement('button'); remove.type = 'button'; remove.dataset.deleteGoal = String(goal.id);
-      remove.textContent = 'Удалить'; remove.onclick = () => openDeletion(goal);
-      actions.append(edit, remove);
-      card.append(actions); list.append(card);
-    }); };
+        const goal = row.goal || row, depth = row.depth || 0, id = String(goal.id);
+        if (row.ancestorIds?.some(ancestor => collapsedGoalIds.has(ancestor))) return;
+        const selected = goal.goal_kind === 'goal' && id === selectedId, meta = rowMeta(goal, id);
+        const description = String(goal.description || '').split('\n').find(line => line.trim())?.trim() || '';
+        const card = document.createElement('article');
+        card.className = `cp-goal-row${selected ? ' is-primary' : ''}${depth ? ' is-subgoal' : ''}`; card.style.setProperty('--goal-depth', String(depth));
+        card.dataset.goalId = id; card.dataset.contextRecord = id;
+        const lead = document.createElement('span'); lead.className = 'cp-goal-row__lead';
+        if (row.children?.length) {
+          const collapsed = collapsedGoalIds.has(id);
+          const collapse = document.createElement('button'); collapse.type = 'button'; collapse.className = 'cp-goal-row__collapse'; collapse.dataset.goalCollapse = id;
+          collapse.setAttribute('aria-expanded', String(!collapsed)); collapse.setAttribute('aria-label', `${collapsed ? 'Показать подцели' : 'Свернуть подцели'}: ${goal.title || 'Без названия'}`);
+          collapse.innerHTML = '<span aria-hidden="true">▾</span>';
+          collapse.onclick = () => { if (collapsedGoalIds.has(id)) collapsedGoalIds.delete(id); else collapsedGoalIds.add(id); renderCards(); element.querySelector(`[data-goal-collapse="${id}"]`)?.focus(); };
+          lead.append(collapse);
+        }
+        const open = document.createElement('button'); open.type = 'button'; open.className = 'cp-goal-row__open'; open.dataset.goalOpen = id; open.setAttribute('aria-haspopup', 'dialog');
+        open.innerHTML = `<span class="cp-goal-row__line"><span class="cp-goal-row__title">${escapeHtml(goal.title || 'Без названия')}</span>${selected ? '<span class="cp-goal-row__badge">Главная</span>' : ''}</span>${description ? `<span class="cp-goal-row__desc">${escapeHtml(description)}</span>` : ''}${meta.length ? `<span class="cp-goal-row__meta">${meta.map(escapeHtml).join(' · ')}</span>` : ''}`;
+        open.onclick = () => openGoal(goal);
+        const tools = document.createElement('span'); tools.className = 'cp-goal-row__tools';
+        if (!selected && goal.goal_kind === 'goal' && dependencies.onSelectGoal) {
+          const select = document.createElement('button'); select.type = 'button'; select.className = 'cp-goal-row__select'; select.dataset.select = id; select.textContent = 'Сделать главной'; select.disabled = busy || !!active;
+          select.setAttribute('aria-label', `Сделать главной: ${goal.title || 'Без названия'}`);
+          select.onclick = () => selectGoal(id); tools.append(select);
+        }
+        const more = document.createElement('button'); more.type = 'button'; more.className = 'cp-goal-row__more'; more.textContent = '⋯';
+        more.dataset.recordMenu = ''; more.dataset.goalMenu = id; more.setAttribute('aria-label', `Действия: ${goal.title || 'Без названия'}`); more.setAttribute('aria-haspopup', 'menu'); more.setAttribute('aria-expanded', 'false');
+        tools.append(more);
+        card.append(lead, open, tools);
+        card.addEventListener('click', event => { if (!event.target.closest('button, a, input, select, textarea')) open.click(); });
+        list.append(card);
+      });
+    };
     if (longTerm.length) renderGroup('Долгосрочные цели', longTerm);
     if (daily.length) renderGroup('Ежедневные нормы', daily);
     if (unknown.length) renderGroup('Без типа — выбери, как учитывать', unknown);
@@ -110,15 +262,16 @@ export async function mountCalendarGoals(element, dependencies = {}) {
   async function refresh(success = '', canCommit = null) {
     if (canCommit && !canCommit()) return;
     const rev = ++revision; message.textContent = 'Загружаем цели…'; list.setAttribute('aria-busy', 'true'); element.querySelector('[data-retry]').hidden = true;
-    const focused = document.activeElement?.closest?.('[data-goal-collapse], [data-edit-goal], [data-delete-goal], [data-select]');
+    const focused = document.activeElement?.closest?.('[data-goal-collapse], [data-goal-open], [data-goal-menu], [data-select]');
     const focusSelector = focused && list.contains(focused) ? Object.entries(focused.dataset).map(([key, value]) => `[data-${key.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`)}="${value}"]`).join('') : '';
     try {
-      const [loadedGoals, loadedLinks, raw, block] = await Promise.all([api('get_goals', { tabName: null }), api('get_calendar_task_goals'), api('get_ui_state', { key: 'calendar_now_v1' }), api('get_active_block')]);
+      const [loadedGoals, raw, block, developmentRaw] = await Promise.all([api('get_goals', { tabName: null }), api('get_ui_state', { key: 'calendar_now_v1' }), api('get_active_block'), api('get_ui_state', { key: DEVELOPMENT_STATE_KEY }).catch(() => null)]);
       if (disposed || rev !== revision || (canCommit && !canCommit())) return;
       const saved = raw ? JSON.parse(raw) : null;
       if (saved && saved.version !== 1) throw new Error('Unsupported calendar state');
-      goals = loadedGoals; links = loadedLinks; selectedId = saved?.goalId == null ? null : String(saved.goalId); active = block;
+      goals = loadedGoals; goalsLoaded = true; selectedId = saved?.goalId == null ? null : String(saved.goalId); active = block; development = readDevelopmentState(developmentRaw);
       renderCards(); focusSelector && list.querySelector(focusSelector)?.focus(); message.textContent = active ? 'Задача сейчас выполняется. Поставь её на паузу, чтобы сменить главную цель.' : success;
+      wishes?.render();
     } catch {
       if (disposed || rev !== revision || (canCommit && !canCommit())) return;
       message.textContent = 'Не удалось загрузить цели. Сохранённые цели остаются на месте.';
@@ -138,95 +291,36 @@ export async function mountCalendarGoals(element, dependencies = {}) {
     } catch { if (!disposed) message.textContent = selectionError || 'Не удалось сменить главную цель. Повтори выбор; текущая задача сохранена.'; }
     finally { busy = false; if (!disposed) renderCards(); }
   }
-  function openCreation(goal = null, initialParent = null) {
+  function openCreation(goal = null, initialParent = null, { draft = null, onSaved = null, returnFocus = null } = {}) {
     if (creationDialog || disposed) return;
-    const editor = createCalendarDialog({ document, title: goal ? 'Изменить цель' : 'Новая цель', hint: 'Сохрани то, к чему хочешь прийти. Срок можно добавить позже.', submitLabel: 'Сохранить цель',
-      isCurrent: () => !disposed && element.isConnected, returnFocus: () => (goal ? element.querySelector(`[data-edit-goal="${goal.id}"]`) : element.querySelector('[data-new]'))?.focus(), onClose: () => { creationDialog = null; } });
-    creationDialog = editor; editor.modal.dataset.goalCreate = '';
-    editor.body.innerHTML = `<label class="calendar-editor-field" for="${prefix}-new-title">Что хочешь получить?<input id="${prefix}-new-title" name="title" required maxlength="500" placeholder="Например, подготовить учебный проект" autocomplete="off"></label>
-      <label class="calendar-editor-field" for="${prefix}-new-deadline">Срок · необязательно<input id="${prefix}-new-deadline" name="deadline" type="date"></label>`;
-    const extra = document.createElement('div');
-    extra.className = 'calendar-goal-fields';
-    extra.innerHTML = `<fieldset ${goal?.goal_kind === 'daily_norm' ? '' : 'hidden'}><legend>Как учитывать</legend><label><input type="radio" name="goal_kind" value="goal"> Долгосрочная цель</label><label><input type="radio" name="goal_kind" value="daily_norm"> Ежедневная норма</label></fieldset>
-      <label class="calendar-editor-field">Желаемый результат<textarea name="description" maxlength="10000" placeholder="Что должно измениться?"></textarea></label>
-      <label class="calendar-editor-field">Критерии — по одному на строку<textarea name="criteria" maxlength="10000" placeholder="Например: самостоятельно описываю API-контракт"></textarea></label>
-      <label class="calendar-editor-field calendar-goal-numeric-toggle" data-numeric-toggle><input type="checkbox" name="numeric_progress"> Числовой прогресс</label>
-      <div data-numeric-fields><label class="calendar-editor-field">Целевое значение<input type="number" name="target_value" min="0.001" step="any"></label>
-      <label class="calendar-editor-field">Единица измерения<input name="unit" maxlength="100" placeholder="Например, л"></label><label class="calendar-editor-field">Текущий прогресс · необязательно<input type="number" name="current_value" min="0" step="any"></label></div><label class="calendar-editor-field" data-parent>Родительская цель<select name="parent_goal_id"><option value="">Верхний уровень</option></select></label>`;
-    editor.body.append(extra);
-    const fields = editor.form.elements;
-    fields.title.value = goal?.title || ''; fields.deadline.value = goal?.deadline || '';
-    fields.goal_kind.value = goal ? goal.goal_kind || '' : 'goal';
-    fields.description.value = goal?.description || ''; fields.criteria.value = goal?.criteria || '';
-    fields.target_value.value = goal?.target_value > 0 ? goal.target_value : 1; fields.unit.value = goal?.unit || '';
-    fields.current_value.value = goal?.current_value ?? '';
-    fields.numeric_progress.checked = fields.goal_kind.value === 'daily_norm' || !!(goal && (goal.unit || Number(goal.target_value) !== 1 || Number(goal.current_value) > 0));
-    const parentSelect = fields.parent_goal_id; const blocked = new Set([String(goal?.id || '')]);
-    let changed = true; while (changed) { changed = false; goals.forEach(item => { if (blocked.has(String(item.parent_goal_id)) && !blocked.has(String(item.id))) { blocked.add(String(item.id)); changed = true; } }); }
-    const parentLabel = item => { const path = []; const seen = new Set(); let current = item; while (current && !seen.has(String(current.id))) { seen.add(String(current.id)); path.unshift(current.title || 'Без названия'); current = goals.find(candidate => String(candidate.id) === String(current.parent_goal_id)); } return path.join(' → '); };
-    goals.filter(item => item.goal_kind === 'goal' && !blocked.has(String(item.id))).forEach(item => parentSelect.add(new window.Option(parentLabel(item), String(item.id))));
-    parentSelect.value = String(goal?.parent_goal_id ?? initialParent?.id ?? '');
-    const updateFields = () => {
-      const isDaily = fields.goal_kind.value === 'daily_norm', numeric = isDaily || fields.numeric_progress.checked;
-      editor.body.querySelector('[data-parent]').hidden = !fields.goal_kind.value || isDaily; parentSelect.disabled = !fields.goal_kind.value || isDaily; if (isDaily) parentSelect.value = '';
-      editor.body.querySelector('[data-numeric-toggle]').hidden = isDaily; editor.body.querySelector('[data-numeric-fields]').hidden = !numeric;
-      fields.target_value.required = numeric;
-    };
-    editor.form.querySelectorAll('[name=goal_kind]').forEach(input => input.addEventListener('change', updateFields)); fields.numeric_progress.addEventListener('change', updateFields); updateFields();
-    editor.form.addEventListener('submit', async event => {
-      event.preventDefault(); if (creating || disposed) return;
-      editor.showError('');
-      const titleInput = editor.form.elements.title, deadlineInput = editor.form.elements.deadline;
-      const title = titleInput.value.trim(), deadlineValue = deadlineInput.value;
-      if (!title) { editor.showError('Напиши, к чему хочешь прийти.', titleInput); return; }
-      if (title.length > 500) { editor.showError('Сократи название цели до 500 символов.', titleInput); return; }
-      const deadlineDate = deadlineValue ? new Date(`${deadlineValue}T12:00:00Z`) : null;
-      if (deadlineInput.validity.badInput || !deadlineInput.validity.valid || (deadlineValue && (!/^\d{4}-\d{2}-\d{2}$/.test(deadlineValue) || !Number.isFinite(deadlineDate.getTime()) || deadlineDate.toISOString().slice(0, 10) !== deadlineValue))) {
-        editor.showError('Введи срок полностью или очисти поле даты.', deadlineInput); return;
-      }
-      const deadline = deadlineValue || null;
-      if (!fields.goal_kind.value && !goal) { editor.showError('Выбери долгосрочную цель или ежедневную норму.', editor.body.querySelector('[name=goal_kind]')); return; }
-      const numeric = fields.goal_kind.value === 'daily_norm' || fields.numeric_progress.checked;
-      const targetValue = numeric ? Number(fields.target_value.value) : (goal?.target_value > 0 ? goal.target_value : 1);
-      if (!Number.isFinite(targetValue) || targetValue <= 0) { editor.showError('Укажи положительное целевое значение.', fields.target_value); return; }
-      creating = true; editor.setPending(true);
-      try {
-        const currentValue = numeric ? (fields.current_value.value === '' ? null : Number(fields.current_value.value)) : (goal?.current_value ?? null);
-        if (currentValue != null && (!Number.isFinite(currentValue) || currentValue < 0)) { editor.showError('Укажи неотрицательный прогресс или очисти поле.', fields.current_value); return; }
-        await api('save_calendar_goal', { id: goal?.id || null, title, targetValue, unit: numeric ? fields.unit.value.trim() : (goal?.unit || ''), deadline, goalKind: fields.goal_kind.value || null, description: fields.description.value.trim(), criteria: fields.criteria.value.trim(), parentGoalId: parentSelect.value ? String(parentSelect.value) : null, clearParent: !!goal?.parent_goal_id && !parentSelect.value, currentValue });
-        // Saving succeeded. Close before rereading: a failed refresh must not offer Create again.
-        editor.setPending(false); editor.close();
-        window.dispatchEvent(new window.Event('task-state-changed'));
-        if (!disposed) await refresh('Цель сохранена. Можно выбрать её главной, когда будешь готов.');
-      } catch { if (!disposed) { editor.setPending(false); editor.showError('Не удалось сохранить цель. Текст остался в форме — попробуй ещё раз.'); } }
-      finally { creating = false; }
-    });
-    editor.open(editor.form.elements.title);
+    creationDialog = openCalendarGoalEditor({ document, invoke: api, goal, parent: initialParent, draft, goals,
+      isCurrent: () => !disposed && element.isConnected,
+      returnFocus: returnFocus || (() => (goal ? rowButton(goal.id, '[data-record-menu]') : element.querySelector('[data-new]'))?.focus()),
+      onSavingChange: value => { creating = value; },
+      onClose: () => { creationDialog = null; },
+      onSaved: async id => { await onSaved?.(id); if (!disposed) await refresh(draft ? 'Цель создана из желания.' : 'Цель сохранена. Можно выбрать её главной, когда будешь готов.'); } });
   }
-  function openDeletion(goal) {
+  function openDeletion(goal, restore = null) {
     if (creationDialog || disposed) return;
-    const editor = createCalendarDialog({ document, title: 'Удалить цель?', submitLabel: 'Удалить цель',
-      hint: 'Связанные задачи и события сохранятся без этой цели.', isCurrent: () => !disposed && element.isConnected,
-      returnFocus: () => (element.querySelector(`[data-delete-goal="${goal.id}"]`) || element.querySelector('[data-new]'))?.focus(),
-      onClose: () => { creationDialog = null; } });
-    creationDialog = editor; editor.modal.dataset.goalDelete = ''; editor.body.textContent = goal.title;
-    editor.form.addEventListener('submit', async event => {
-      event.preventDefault(); if (creating || disposed) return;
-      creating = true; editor.showError(''); editor.setPending(true);
-      try {
-        await api('delete_goal', { id: goal.id });
-        editor.setPending(false); editor.close();
-        window.dispatchEvent(new window.Event('task-state-changed'));
-        if (!disposed) await refresh('Цель удалена. Задачи сохранены.');
-      } catch { if (!disposed) { editor.setPending(false); editor.showError('Не удалось удалить цель. Попробуй ещё раз.'); } }
-      finally { creating = false; }
-    });
-    editor.open(editor.modal.querySelector('[data-dialog-close]'));
+    creationDialog = openCalendarGoalDeletion({ document, invoke: api, goal, isCurrent: () => !disposed && element.isConnected,
+      returnFocus: () => (rowButton(goal.id, '[data-record-menu]') ? (restore || (() => focusMenu(goal.id)))() : element.querySelector('[data-new]')?.focus()),
+      onSavingChange: value => { creating = value; }, onClose: () => { creationDialog = null; },
+      onDeleted: async () => {
+        if (disposed) return;
+        await refresh('Цель удалена. Задачи сохранены.');
+        // The deleted row took the restored focus with it.
+        const focused = document.activeElement;
+        if (!disposed && (!focused || focused === document.body || !focused.isConnected)) element.querySelector('[data-new]')?.focus();
+      } });
   }
-  element.querySelector('[data-new]').onclick = () => openCreation();
+  element.querySelector('[data-new]').onclick = () => viewState.view === 'wishes' ? wishes?.openCreate() : openCreation();
+  element.querySelectorAll('[data-goals-view]').forEach(button => { button.onclick = () => showView(button.dataset.goalsView, true); });
   element.querySelector('[data-retry]').onclick = () => refresh();
   const onChange = event => { if (!busy && !creating && !disposed) void refresh('', event.detail?.remoteSync ? event.detail.canCommit : null); };
+  const onDevelopment = () => { if (!disposed && !busy && !creating) void refresh(); };
   window.addEventListener('task-state-changed', onChange);
+  window.addEventListener('hanni:development-changed', onDevelopment);
+  showView(viewState.view);
   await refresh();
-  return () => { disposed = true; revision++; creationDialog?.dispose(); window.removeEventListener('task-state-changed', onChange); };
+  return () => { disposed = true; revision++; creationDialog?.dispose(); wishes?.dispose(); disposeMenu(); window.removeEventListener('task-state-changed', onChange); window.removeEventListener('hanni:development-changed', onDevelopment); };
 }

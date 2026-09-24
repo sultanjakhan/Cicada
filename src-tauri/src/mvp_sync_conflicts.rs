@@ -287,6 +287,7 @@ fn entity(record: &Record) -> &'static str {
             Some("calendar_development_v1") => "Развитие цели",
             Some("calendar_recurring_v1") => "Дело или правило",
             Some("calendar_now_v1") => "Текущая задача и цель",
+            Some("calendar_wishes_v1") => "Желание",
             _ => "Запись",
         },
         _ => "Запись неизвестного формата",

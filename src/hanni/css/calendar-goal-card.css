@@ -1,17 +1,45 @@
-.calendar-now:not(.calendar-now--compact) .calendar-now__goal { display: block; padding: 22px 24px 24px; border: 1px solid var(--border-hover, var(--cn-line)); border-left: 4px solid var(--cn-text); border-radius: 14px; background: var(--cn-surface); margin-bottom: 18px; }
-.calendar-now:not(.calendar-now--compact) .calendar-now__goal h2 { font-size: clamp(26px, 3vw, 32px); line-height: 1.3; font-weight:700; }
-.calendar-now .calendar-now__goal-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
-.calendar-now .calendar-now__goal-top .calendar-now__eyebrow { display:flex; align-items:center; gap:10px; margin:0; color:var(--cn-text); font-size:14px; line-height:22px; }
-.calendar-now .calendar-now__goal-symbol { display:inline-flex; align-items:center; justify-content:center; flex:0 0 22px; width:22px; height:22px; }
-.calendar-now .calendar-now__goal-symbol svg { display:block; flex:none; width:22px; height:22px; }
-.calendar-now .calendar-now__goal-top button { min-height:36px; padding:6px 10px; font-size:13px; color:var(--cn-muted); }
-.calendar-now .calendar-now__goal button.calendar-now__goal-link { display:block; width:fit-content; min-height:44px; padding:0; border:0; border-radius:4px; background:transparent; color:inherit; font:inherit; text-align:left; }
-.calendar-now .calendar-now__goal-stage { margin:14px 0 0; color:var(--cn-muted); font-size:14px; line-height:1.5; overflow-wrap:anywhere; }
-.calendar-now__goal-status { flex-shrink: 0; font-size: 11px; line-height: 1.4; padding: 4px 8px; border: 1px solid var(--cn-line); border-radius: 20px; color: var(--cn-muted); background: var(--cn-surface); }
-.calendar-now .calendar-now__goal-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 18px; }
-.calendar-now .calendar-now__goal-meta, .calendar-now .calendar-now__goal-hint { margin: 12px 0 0; font-size: 13px; line-height: 1.5; color: var(--cn-muted); }
-.calendar-now:not(.calendar-now--compact) .calendar-now__card h2 { font-size: clamp(20px, 2.2vw, 24px); }
-.calendar-now:not(.calendar-now--compact) .calendar-now__goal :focus-visible { outline-color: var(--cn-green-text, var(--cn-green)); }
+/* Dashboard goal block (#98): title, current stage and the next task in about
+   160px on a phone. Everything else opens in the goal popup via «Открыть». */
+.calendar-now:not(.calendar-now--compact) .calendar-now__goal { display: block; margin: 0; padding: 8px 10px 12px 16px; border: 1px solid var(--border-default, var(--cn-line)); border-left: 3px solid var(--text-primary, var(--cn-text)); border-radius: 14px; background: var(--bg-card, var(--cn-surface)); }
+.calendar-now .calendar-now__goal-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 36px; margin: 0; }
+.calendar-now .calendar-now__goal-top .calendar-now__eyebrow { display: flex; align-items: center; gap: 6px; min-width: 0; margin: 0; color: var(--text-secondary, var(--cn-muted)); font-size: 12px; line-height: 16px; font-weight: 600; }
+.calendar-now .calendar-now__goal-symbol { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 16px; width: 16px; height: 16px; }
+.calendar-now .calendar-now__goal-symbol svg { display: block; flex: none; width: 16px; height: 16px; }
+.calendar-now .calendar-now__goal-tools { display: flex; flex: none; align-items: center; gap: 2px; }
+.calendar-now .calendar-now__goal-tools button { min-height: 34px; padding: 4px 10px; border-radius: 8px; font-size: 13px; line-height: 20px; font-weight: 500; }
+.calendar-now .calendar-now__goal-tools .calendar-now__secondary { border-color: var(--border-default, var(--cn-line)); background: var(--bg-card, var(--cn-surface)); }
+.calendar-now .calendar-now__goal-tools .calendar-now__secondary:not(:disabled):hover { background: var(--bg-hover); filter: none; }
+.calendar-now .calendar-now__goal-tools .calendar-now__quiet { color: var(--text-secondary, var(--cn-muted)); }
+.calendar-now .calendar-now__goal-tools .calendar-now__quiet:not(:disabled):hover { background: var(--bg-hover); color: var(--text-primary); filter: none; }
+.calendar-now .calendar-now__goal-tools .calendar-now__primary { padding: 4px 12px; }
+.calendar-now .calendar-now__goal-tools .calendar-now__button-icon { flex-basis: 14px; width: 14px; height: 14px; }
+.calendar-now:not(.calendar-now--compact) .calendar-now__goal h2 { margin: 0; font-size: 19px; line-height: 24px; font-weight: 650; }
+.calendar-now .calendar-now__goal button.calendar-now__goal-link { display: block; max-width: 100%; min-height: 0; padding: 0; border: 0; border-radius: 4px; background: transparent; color: inherit; font: inherit; line-height: inherit; text-align: left; }
+.calendar-now .calendar-now__goal-link > [data-ui="goal-title"], .calendar-now .calendar-now__goal [data-ui="goal-empty"] { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+.calendar-now[data-goal="none"] .calendar-now__goal h2, .calendar-now[data-goal="loading"] .calendar-now__goal h2 { font-size: 15px; line-height: 22px; font-weight: 500; color: var(--text-secondary, var(--cn-muted)); }
+.calendar-now .calendar-now__goal-stage { margin: 4px 0 0; color: var(--text-secondary, var(--cn-muted)); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
+.calendar-now__goal-status { display: inline-block; margin-top: 6px; font-size: 11px; line-height: 1.4; padding: 3px 8px; border: 1px solid var(--cn-line); border-radius: 20px; color: var(--cn-muted); background: var(--cn-surface); }
+.calendar-now .calendar-now__goal-hint { margin: 4px 0 0; font-size: 13px; line-height: 18px; color: var(--cn-muted); }
+.calendar-now .calendar-now__goal-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
+.calendar-now .calendar-now__goal-actions button { min-height: 32px; padding: 4px 0; font-size: 13px; color: var(--text-secondary, var(--cn-muted)); text-decoration: underline; text-decoration-color: var(--text-faint); text-underline-offset: 3px; }
+.calendar-now .calendar-now__goal-glance { margin-top: 4px; }
+.calendar-goal-glance { display: flex; align-items: center; gap: 12px; min-width: 0; color: var(--text-secondary); font-size: 13px; line-height: 18px; }
+.calendar-goal-glance__stage { flex: 0 1 auto; min-width: 0; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.calendar-goal-glance__stage.is-empty { color: var(--text-muted); }
+.calendar-goal-glance__label { color: var(--text-muted); }
+.calendar-goal-glance__value { color: var(--text-primary); font-weight: 500; }
+.calendar-goal-glance__progress { display: flex; flex: none; align-items: center; gap: 8px; }
+.calendar-goal-glance__track { display: block; width: 56px; height: 4px; overflow: hidden; border-radius: 4px; background: var(--border-subtle, #ebebeb); }
+.calendar-goal-glance__track > span { display: block; height: 100%; border-radius: 4px; background: var(--text-primary); }
+.calendar-goal-glance__count { color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.calendar-now .calendar-now__goal-next { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 28px; margin: 4px 0 0; font-size: 13px; line-height: 20px; }
+.calendar-now .calendar-now__goal-next-label { flex: none; color: var(--text-muted); font-size: 12px; }
+.calendar-now .calendar-now__goal-next-label::after { content: '→'; margin-left: 6px; color: var(--text-faint); }
+.calendar-now .calendar-now__goal button.calendar-now__goal-next-link { display: block; flex: 0 1 auto; min-width: 0; min-height: 28px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--text-primary); font-size: 14px; line-height: 28px; font-weight: 500; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.calendar-now .calendar-now__goal-next-link:not(:disabled):is(:hover, :focus-visible) { text-decoration: underline; text-decoration-color: var(--text-faint); text-underline-offset: 3px; filter: none; }
+.calendar-now .calendar-now__goal-next-text { min-width: 0; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.calendar-now .calendar-now__goal-next.is-empty .calendar-now__goal-next-text { color: var(--text-muted); }
+.calendar-now:not(.calendar-now--compact) .calendar-now__goal :focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
 .calendar-goal-dialog { box-sizing: border-box; width: min(560px, calc(100% - 32px)); max-height: calc(100dvh - clamp(16px, 6vh, 64px) - 16px); inset: 0 0 auto; overflow: hidden; margin: clamp(16px, 6vh, 64px) auto 16px; padding: 0; border: 1px solid var(--border-default); border-radius: 14px; color: var(--text-primary); background: var(--bg-card); }
 .calendar-goal-dialog[open] { display: flex; flex-direction: column; }
 .calendar-goal-dialog__header { display: flex; align-items: flex-start; gap: 16px; padding: 20px 24px 12px; flex-shrink: 0; }
@@ -37,10 +65,8 @@
 [data-theme="dark"] .calendar-goal-dialog { --cn-green-text: #8acfa9; }
 @media (max-width: 600px) {
   .calendar-goal-dialog h2 { font-size: 20px; }
-  .calendar-now:not(.calendar-now--compact) .calendar-now__goal { padding: 20px 16px; }
-  .calendar-now .calendar-now__goal-actions { gap: 6px; }
-  .calendar-now .calendar-now__goal-actions > button { flex: 1 1 120px; }
-  .calendar-now:not(.calendar-now--compact) .calendar-now__goal .calendar-now__quiet { padding-left: 12px; }
+  .calendar-now:not(.calendar-now--compact) .calendar-now__goal { padding: 6px 6px 10px 14px; }
+  .calendar-now:not(.calendar-now--compact) .calendar-now__goal h2 { font-size: 18px; line-height: 23px; }
   .calendar-goal-dialog { width: calc(100% - 24px); max-height: calc(100dvh - 24px); margin-top: 12px; }
   .calendar-goal-dialog__header { padding: 16px 16px 12px; }
   .calendar-goal-dialog__body { padding: 0 16px 12px; }

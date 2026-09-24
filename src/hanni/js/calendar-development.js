@@ -1,51 +1,17 @@
 import { createCalendarDialog } from './calendar-dialog.js';
 import { escapeHtml } from './utils.js';
 
-export const DEVELOPMENT_STATE_KEY = 'calendar_development_v1';
-const VERSION = 1;
+import {
+  DEVELOPMENT_STATE_KEY, VERSION, emptyDevelopmentState, normalizeDevelopmentState, readDevelopmentState, developmentOf as extension,
+  skillConfirmed as skillProgress, stageProgress, percentOf as pct, validDevelopmentDate as date, goalGlance, formatNumber,
+} from './calendar-development-state.js';
+
+export { DEVELOPMENT_STATE_KEY, emptyDevelopmentState, normalizeDevelopmentState };
 const MAX_IMPORT_BYTES = 200_000;
 let developmentWriteQueue = Promise.resolve();
 
 const uid = () => globalThis.crypto?.randomUUID?.() || `development-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const text = value => String(value ?? '').trim();
-const date = value => {
-  if (!value) return true;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const [year, month, day] = value.split('-').map(Number), parsed = new Date(`${value}T12:00:00`);
-  return parsed.getFullYear() === year && parsed.getMonth() + 1 === month && parsed.getDate() === day;
-};
-const pct = (done, total) => total ? Math.round(done / total * 100) : null;
-
-export function emptyDevelopmentState() { return { version: VERSION, goals: {} }; }
-
-export function normalizeDevelopmentState(raw) {
-  if (raw == null || raw === '') return emptyDevelopmentState();
-  const source = typeof raw === 'string' ? JSON.parse(raw) : raw;
-  if (!source || typeof source !== 'object' || source.version !== VERSION || !source.goals || typeof source.goals !== 'object' || Array.isArray(source.goals)) throw new Error('Неподдерживаемый формат развития. Сохранение остановлено, чтобы не потерять данные.');
-  const goals = {};
-  for (const [goalId, value] of Object.entries(source.goals || {})) {
-    if (!goalId || !value || typeof value !== 'object') continue;
-    const seen = new Set();
-    const skills = Array.isArray(value.skills) ? value.skills.flatMap(skill => {
-      const id = text(skill?.id), title = text(skill?.title), topic = text(skill?.topic);
-      if (!id || !title || !topic || seen.has(id)) return [];
-      const taskIds = [...new Set(Array.isArray(skill.taskIds) ? skill.taskIds.map(value => text(value)).filter(Boolean) : [])];
-      seen.add(id); return [{ id, title: title.slice(0, 160), topic: topic.slice(0, 80), group: skill.group === 'soft' ? 'soft' : 'hard', level: Math.max(1, Math.min(4, Number(skill.level) || 1)), description: text(skill.description ?? skill.result).slice(0, 2000), practice: text(skill.practice ?? skill.exercise).slice(0, 2000), evidence: text(skill.evidence).slice(0, 2000), taskIds }];
-    }) : [];
-    const ids = new Set(skills.map(skill => skill.id));
-    const stageSeen = new Set();
-    const stages = Array.isArray(value.stages) ? value.stages.flatMap(stage => {
-      const id = text(stage?.id), title = text(stage?.title);
-      if (!id || !title || stageSeen.has(id) || !date(text(stage.deadline))) return [];
-      stageSeen.add(id);
-      const skillIds = [...new Set(Array.isArray(stage.skillIds) ? stage.skillIds.map(String).filter(id => ids.has(id)) : [])];
-      const focusId = skillIds.includes(String(stage.focusId || '')) ? String(stage.focusId) : null;
-      return [{ id, title: title.slice(0, 160), outcome: text(stage.outcome).slice(0, 900), deadline: text(stage.deadline), skillIds, focusId, status: stage.status === 'completed' ? 'completed' : 'active' }];
-    }) : [];
-    goals[goalId] = { skills, stages, activeStageId: stages.some(stage => stage.id === String(value.activeStageId || '')) ? String(value.activeStageId) : null, focusId: ids.has(String(value.focusId || '')) ? String(value.focusId) : null };
-  }
-  return { version: VERSION, goals };
-}
 
 export function validateDevelopmentImport(value) {
   const json = typeof value === 'string' ? value : JSON.stringify(value);
@@ -76,9 +42,6 @@ export async function attachDevelopmentTask(goalId, skillId, sourceId, { invoke 
   await work;
 }
 
-function extension(state, goalId) { return state.goals[String(goalId)] || { skills: [], stages: [], activeStageId: null, focusId: null }; }
-function skillProgress(skill) { return Boolean(skill.evidence); }
-function stageProgress(stage, skills) { const set = new Set(stage.skillIds); const selected = skills.filter(skill => set.has(skill.id)); const done = selected.filter(skillProgress).length; return { done, total: selected.length, percent: pct(done, selected.length) }; }
 function topicList(skills) { return [...new Set(skills.map(skill => skill.topic))]; }
 function assertUnchangedRecord(current, original) {
   if (original && JSON.stringify(current) !== JSON.stringify(original)) throw Error('Эта запись изменена на другом устройстве. Черновик остаётся в открытой форме. Открой запись заново перед повторным сохранением.');
@@ -104,7 +67,11 @@ function mountTopicFirstPicker(host, skills, { multiple = false, values = [] } =
 
 function dispatchChange(goalId) { window.dispatchEvent(new CustomEvent('hanni:development-changed', { detail: { goalId: String(goalId) } })); }
 
-export async function mountGoalDevelopment(element, { invoke, goal, onCreateTask } = {}) {
+/**
+ * Full goal development: focus, stages (the stage filter scopes the skill list) and skills.
+ * `embedded` drops the goal title and intro when a surrounding popup already shows them.
+ */
+export async function mountGoalDevelopment(element, { invoke, goal, onCreateTask, embedded = false } = {}) {
   if (!element || !invoke || !goal?.id) throw new Error('Не хватает цели или native API.');
   let disposed = false, state = emptyDevelopmentState(), error = '', skillSearch = ''; const childDialogs = new Set();
   const goalId = String(goal.id);
@@ -174,8 +141,8 @@ export async function mountGoalDevelopment(element, { invoke, goal, onCreateTask
         return `<section class="dev-topic"><header><strong>${escapeHtml(topic)}</strong><span>${rows.filter(skillProgress).length} / ${rows.length}</span></header>${rows.map(skill=>`<article class="dev-skill"><button type="button" data-dev-skill="${escapeHtml(skill.id)}">${escapeHtml(skill.title)}</button><span>${skill.evidence?'Подтверждено':'Без подтверждения'}</span>${skill.description||skill.practice?`<p class="dev-skill-detail">${skill.description?escapeHtml(skill.description):''}${skill.description&&skill.practice?' · ':''}${skill.practice?`Практика: ${escapeHtml(skill.practice)}`:''}</p>`:''}<div><button type="button" data-dev-evidence="${escapeHtml(skill.id)}">${skill.evidence?'Изменить результат':'Подтвердить'}</button><button type="button" data-dev-task="${escapeHtml(skill.id)}">Задача</button><button type="button" data-dev-remove="${escapeHtml(skill.id)}">Исключить</button></div></article>`).join('')}</section>`;
       }).join('')}</section>`;
     }).join('');
-    const intro = `<div class="calendar-development-intro">${goal.description?`<p>${escapeHtml(goal.description)}</p>`:''}${goal.criteria?`<p><strong>Критерии готовности</strong><br>${escapeHtml(goal.criteria)}</p>`:''}${goal.deadline?`<p>Срок цели: ${escapeHtml(goal.deadline)}</p>`:''}</div>`;
-    element.innerHTML = `<section class="calendar-development" aria-label="Развитие цели"><header><div><p class="dev-eyebrow">Развитие цели</p><h2>${escapeHtml(goal.title || 'Цель')}</h2><span class="dev-total-progress">${totalPercent == null ? 'Навыков пока нет' : `${totalPercent}% · ${totalDone} из ${ext.skills.length} подтверждено`}</span></div><div><button type="button" data-dev-import>Импорт JSON</button><button type="button" data-dev-add>Добавить навык</button></div></header>${intro}${error ? `<p class="dev-error" role="alert">${escapeHtml(error)}</p>` : ''}<section class="dev-focus"><div><span>${active ? `Навык в этапе «${escapeHtml(active.title)}»` : 'Сейчас развиваю'}</span><strong>${focus ? `${escapeHtml(focus.topic)} · ${escapeHtml(focus.title)}` : active && !active.skillIds.length ? 'В этапе пока нет навыков' : 'Не выбрано'}</strong></div><button type="button" data-dev-focus>${focus ? 'Сменить или очистить' : 'Выбрать навык'}</button></section><section class="dev-stages"><header><h3>Этапы</h3><div>${active ? '<button type="button" data-dev-stage-clear>Вся цель</button>' : ''}<button type="button" data-dev-stage-add>Новый этап</button></div></header>${stageCards || '<p class="dev-empty">Раздели цель на ближайший результат и нужные навыки.</p>'}</section><section class="dev-skills"><header><h3>Навыки</h3><input type="search" data-dev-skill-search placeholder="Найти навык, тему или описание" value="${escapeHtml(skillSearch)}"><span>${matched.length} из ${ext.skills.length}</span></header>${skills || '<p class="dev-empty">В выбранном этапе нет подходящих навыков.</p>'}</section></section>`;
+    const intro = embedded ? '' : `<div class="calendar-development-intro">${goal.description?`<p>${escapeHtml(goal.description)}</p>`:''}${goal.criteria?`<p><strong>Критерии готовности</strong><br>${escapeHtml(goal.criteria)}</p>`:''}${goal.deadline?`<p>Срок цели: ${escapeHtml(goal.deadline)}</p>`:''}</div>`;
+    element.innerHTML = `<section class="calendar-development" aria-label="Развитие цели"><header><div>${embedded ? '<h3 class="dev-title">Развитие цели</h3>' : `<p class="dev-eyebrow">Развитие цели</p><h2>${escapeHtml(goal.title || 'Цель')}</h2>`}<span class="dev-total-progress">${totalPercent == null ? 'Навыков пока нет' : `${totalPercent}% · ${totalDone} из ${ext.skills.length} подтверждено`}</span></div><div><button type="button" data-dev-import>Импорт JSON</button><button type="button" data-dev-add>Добавить навык</button></div></header>${intro}${error ? `<p class="dev-error" role="alert">${escapeHtml(error)}</p>` : ''}<section class="dev-focus"><div><span>${active ? `Навык в этапе «${escapeHtml(active.title)}»` : 'Сейчас развиваю'}</span><strong>${focus ? `${escapeHtml(focus.topic)} · ${escapeHtml(focus.title)}` : active && !active.skillIds.length ? 'В этапе пока нет навыков' : 'Не выбрано'}</strong></div><button type="button" data-dev-focus>${focus ? 'Сменить или очистить' : 'Выбрать навык'}</button></section><section class="dev-stages"><header><h3>Этапы</h3><div>${active ? '<button type="button" data-dev-stage-clear>Вся цель</button>' : ''}<button type="button" data-dev-stage-add>Новый этап</button></div></header>${stageCards || '<p class="dev-empty">Раздели цель на ближайший результат и нужные навыки.</p>'}</section><section class="dev-skills"><header><h3>Навыки</h3><input type="search" data-dev-skill-search placeholder="Найти навык, тему или описание" value="${escapeHtml(skillSearch)}"><span>${matched.length} из ${ext.skills.length}</span></header>${skills || '<p class="dev-empty">В выбранном этапе нет подходящих навыков.</p>'}</section></section>`;
     const confirm = (title, hint, action) => openDialog({ title, hint, submitLabel:'Подтвердить', draw: () => '<p>Связанные задачи и подтверждения навыков сохранятся.</p>', submit: () => mutate(action) });
     element.querySelector('[data-dev-add]')?.addEventListener('click', () => skillEditor(null)); element.querySelector('[data-dev-import]')?.addEventListener('click', importSkills); element.querySelector('[data-dev-focus]')?.addEventListener('click', focusPicker); element.querySelector('[data-dev-stage-add]')?.addEventListener('click', () => stageEditor(null)); element.querySelector('[data-dev-stage-clear]')?.addEventListener('click', () => run(draft => { draft.activeStageId = null; })); element.querySelector('[data-dev-skill-search]')?.addEventListener('input', event => { skillSearch = event.target.value.toLocaleLowerCase('ru').trim(); render(); const input = element.querySelector('[data-dev-skill-search]'); input?.focus(); input?.setSelectionRange(input.value.length, input.value.length); });
     element.querySelectorAll('[data-dev-skill]').forEach(button => button.addEventListener('click', () => skillEditor(ext.skills.find(skill => skill.id === button.dataset.devSkill)))); element.querySelectorAll('[data-dev-evidence]').forEach(button => button.addEventListener('click', () => evidenceEditor(ext.skills.find(skill => skill.id === button.dataset.devEvidence)))); element.querySelectorAll('[data-dev-stage]').forEach(button => button.addEventListener('click', () => stageEditor(ext.stages.find(stage => stage.id === button.dataset.devStage)))); element.querySelectorAll('[data-dev-stage-active]').forEach(button => button.addEventListener('click', () => run(draft => { draft.activeStageId = button.dataset.devStageActive; }))); element.querySelectorAll('[data-dev-stage-complete]').forEach(button => button.addEventListener('click', () => confirm('Завершить этап?', 'Этап останется в истории цели.', draft => { const row = draft.stages.find(stage => stage.id === button.dataset.devStageComplete); if (row) row.status = 'completed'; if (draft.activeStageId === button.dataset.devStageComplete) draft.activeStageId = null; }))); element.querySelectorAll('[data-dev-stage-delete]').forEach(button => button.addEventListener('click', () => confirm('Удалить этап?', 'Навыки и их подтверждения останутся в цели.', draft => { draft.stages = draft.stages.filter(stage => stage.id !== button.dataset.devStageDelete); if (draft.activeStageId === button.dataset.devStageDelete) draft.activeStageId = null; }))); element.querySelectorAll('[data-dev-remove]').forEach(button => button.addEventListener('click', () => confirm('Исключить навык из цели?', 'Навык выйдет из этапов и фокуса, но связанные задачи не будут удалены.', draft => { const id = button.dataset.devRemove; draft.skills = draft.skills.filter(skill => skill.id !== id); for (const stage of draft.stages) { stage.skillIds = stage.skillIds.filter(value => value !== id); if (stage.focusId === id) stage.focusId = null; } if (draft.focusId === id) draft.focusId = null; }))); element.querySelectorAll('[data-dev-task]').forEach(button => button.addEventListener('click', () => { const skill = ext.skills.find(item => item.id === button.dataset.devTask); if (skill) onCreateTask?.({ goalId, skillId: skill.id, skillTitle: skill.title }); }));
@@ -191,39 +158,44 @@ export async function mountGoalDevelopment(element, { invoke, goal, onCreateTask
   return { dispose: () => { disposed = true; for (const api of childDialogs) api.dispose(); childDialogs.clear(); element.replaceChildren(); }, refresh: async () => { await load(); render(); }, openFocusPicker:focusPicker, openStagePicker:chooseStage, openStageEditor:id=>stageEditor(extension(state,goalId).stages.find(stage=>stage.id===id)||null) };
 }
 
-export async function mountGoalDevelopmentSummary(element, { invoke, goalId, onOpen } = {}) {
-  if (!element || !invoke || goalId == null) throw new Error('Не хватает цели или native API.');
-  const id = String(goalId),document=element.ownerDocument; let disposed = false,revision=0,editor=null;
-  const progressView=(progress,label)=>`<div class="hero-progress"><div class="progress-label"><strong>${progress.total?progress.percent+'%':'—'}</strong><span>${progress.total?`${progress.done} из ${progress.total}`:'Без оценки'}</span></div><div class="progress-track" role="progressbar" aria-label="${label}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress.percent||0}"><span style="width:${progress.percent||0}%"></span></div><small>${label}</small></div>`;
-  async function openFocusEditor(trigger){
-    if(editor||disposed)return;
-    const host=document.createElement('div');host.hidden=true;document.body.append(host);
-    let controller=null;
-    const handle={dispose:()=>{controller?.dispose();host.remove();}};editor=handle;
-    try{
-      controller=await mountGoalDevelopment(host,{invoke,goal:{id,title:''}});
-      if(disposed||editor!==handle){handle.dispose();return;}
-      const dialog=controller.openFocusPicker();
-      dialog.modal.addEventListener('close',()=>{handle.dispose();if(editor===handle)editor=null;if(!disposed)(element.querySelector('[data-summary-action="focus"]')||trigger)?.focus();},{once:true});
-    }catch(cause){handle.dispose();editor=null;throw cause;}
+/**
+ * Dashboard glance of a goal: the current stage (or «Этап не выбран») and one
+ * small progress indicator when real data exists. Read-only; details and the
+ * stage and skill pickers live in the goal popup.
+ */
+export async function mountGoalGlance(element, { invoke, goal } = {}) {
+  if (!element || !invoke || goal?.id == null) throw new Error('Не хватает цели или native API.');
+  const id = String(goal.id);
+  let current = goal, state = emptyDevelopmentState(), disposed = false, revision = 0, loaded = false;
+  const countText = progress => progress.scope === 'numeric'
+    ? `${formatNumber(progress.done)} / ${formatNumber(progress.total)}${progress.unit ? ` ${progress.unit}` : ''}`
+    : `${progress.done} / ${progress.total}`;
+  function draw() {
+    if (disposed) return;
+    const { stage, progress } = goalGlance(state, current);
+    const stageLine = stage
+      ? `<p class="calendar-goal-glance__stage" data-glance-stage><span class="calendar-goal-glance__label">Этап:</span> <span class="calendar-goal-glance__value" title="${escapeHtml(stage.title)}">${escapeHtml(stage.title)}</span></p>`
+      : `<p class="calendar-goal-glance__stage is-empty" data-glance-stage>${loaded ? 'Этап не выбран' : ''}</p>`;
+    const bar = progress ? `<div class="calendar-goal-glance__progress" data-glance-progress role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress.percent ?? 0}" aria-label="${escapeHtml(progress.label)}" title="${escapeHtml(progress.label)}"><span class="calendar-goal-glance__track" aria-hidden="true"><span style="width:${progress.percent ?? 0}%"></span></span><span class="calendar-goal-glance__count" aria-hidden="true">${escapeHtml(countText(progress))}</span></div>` : '';
+    element.innerHTML = `<div class="calendar-goal-glance" data-goal-glance="${escapeHtml(id)}">${stageLine}${bar}</div>`;
   }
-  const render = async (canCommit = null) => {
-    if (disposed || !element.isConnected) return;
-    if (canCommit && !canCommit()) return;
-    const own=++revision,state=normalizeDevelopmentState(await invoke('get_ui_state',{key:DEVELOPMENT_STATE_KEY}));
-    if(disposed||own!==revision||!element.isConnected||(canCommit&&!canCommit()))return;
-    const ext=extension(state,id),stage=ext.stages.find(item=>item.id===ext.activeStageId)||null,focus=ext.skills.find(skill=>skill.id===(stage?stage.focusId:ext.focusId));
-    const total=ext.skills.length,done=ext.skills.filter(skillProgress).length,progress={total,done,percent:pct(done,total)};
-    const focusBlock=`<div class="focus-copy"><small>Сейчас развиваю</small>${focus?`<button type="button" class="focus-topic" data-summary-action="focus" aria-haspopup="dialog" aria-label="${escapeHtml(focus.topic)}: выбрать навык" title="Выбрать навык">${escapeHtml(focus.topic)}</button><button type="button" class="focus-skill-title" data-summary-skill aria-haspopup="dialog" title="Открыть подробности навыка">${escapeHtml(focus.title)}</button>`:`<span class="focus-empty">Выбери навык ${stage?'из текущего этапа':'из цели'}</span><button type="button" class="text-button" data-summary-action="focus" aria-haspopup="dialog">Выбрать навык</button>`}</div>`;
-    element.innerHTML=`<div class="calendar-development-summary"><div class="hero-bottom">${focusBlock}${progressView(progress,'навыков всей цели подтверждено')}</div></div>`;
-    element.querySelector('[data-summary-skill]')?.addEventListener('click',()=>onOpen?.({goalId:id,skillId:focus.id}));
-    const focusButton=element.querySelector('[data-summary-action="focus"]');
-    focusButton.addEventListener('click',()=>void openFocusEditor(focusButton).catch(cause=>{const error=document.createElement('p');error.setAttribute('role','alert');error.textContent=cause?.message||String(cause);element.append(error);}));
-  };
-  const listener = event => { if (String(event.detail?.goalId) === id) void render().catch(()=>{}); };
-  const onSync = event => { if (event.detail?.remoteSync) void render(event.detail.canCommit).catch(()=>{}); };
+  async function load(canCommit = null) {
+    if (disposed || (canCommit && !canCommit())) return;
+    const own = ++revision;
+    let raw;
+    try { raw = await invoke('get_ui_state', { key: DEVELOPMENT_STATE_KEY }); } catch { return; }
+    if (disposed || own !== revision || (canCommit && !canCommit())) return;
+    state = readDevelopmentState(raw); loaded = true; draw();
+  }
+  const listener = event => { if (String(event.detail?.goalId) === id) void load(); };
+  const onSync = event => { if (event.detail?.remoteSync) void load(event.detail.canCommit); };
   window.addEventListener('hanni:development-changed', listener);
   window.addEventListener('hanni:calendar-refresh', onSync);
-  try{await render();}catch(cause){window.removeEventListener('hanni:development-changed',listener);window.removeEventListener('hanni:calendar-refresh',onSync);throw cause;}
-  return { dispose: () => { disposed = true;revision++;editor?.dispose();window.removeEventListener('hanni:development-changed', listener);window.removeEventListener('hanni:calendar-refresh',onSync); element.replaceChildren(); }, refresh: render };
+  draw(); await load();
+  return {
+    dispose: () => { disposed = true; revision++; window.removeEventListener('hanni:development-changed', listener); window.removeEventListener('hanni:calendar-refresh', onSync); element.replaceChildren(); },
+    refresh: load,
+    // A goal record edit (for example its current value) redraws without another read.
+    update: next => { if (next && String(next.id) === id && JSON.stringify(next) !== JSON.stringify(current)) { current = next; draw(); } },
+  };
 }

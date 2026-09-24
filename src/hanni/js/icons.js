@@ -16,6 +16,7 @@ export const ICONS = {
   chevronLeft: `<svg ${SVG_ATTRS}><path d="m10 3-5 5 5 5"/></svg>`,
   chevronRight: `<svg ${SVG_ATTRS}><path d="m6 3 5 5-5 5"/></svg>`,
   list: `<svg ${SVG_ATTRS}><path d="M6 4h7M6 8h7M6 12h7M2.5 4h.01M2.5 8h.01M2.5 12h.01"/></svg>`,
+  externalLink: `<svg ${SVG_ATTRS}><path d="M9.5 2.5h4v4M13.5 2.5 7.5 8.5M12 9.5V13a.5.5 0 0 1-.5.5h-8A.5.5 0 0 1 3 13V5a.5.5 0 0 1 .5-.5H7"/></svg>`,
   share: `<svg ${SVG_ATTRS}><circle cx="12" cy="3.5" r="1.75"/><circle cx="4" cy="8" r="1.75"/><circle cx="12" cy="12.5" r="1.75"/><path d="M5.5 7.1l5-2.7M5.5 8.9l5 2.7"/></svg>`,
   ban: `<svg ${SVG_ATTRS}><circle cx="8" cy="8" r="6"/><path d="M3.8 3.8l8.4 8.4"/></svg>`,
 };

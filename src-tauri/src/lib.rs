@@ -21,6 +21,7 @@ mod update_macos;
 mod update_journal;
 mod calendar_compat;
 mod task_attributes;
+mod external_url;
 mod desktop_launch;
 #[cfg(target_os = "macos")]
 mod window_placement_macos;
@@ -616,6 +617,7 @@ pub fn run() {
             calendar_compat::get_calendar_records,
             calendar_compat::get_ui_state,
             calendar_compat::set_ui_state,
+            external_url::open_url,
             calendar_compat::get_goals,
             calendar_compat::save_calendar_goal,
             calendar_compat::delete_goal,

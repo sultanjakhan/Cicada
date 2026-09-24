@@ -115,13 +115,14 @@ export function mountCalendarNow(element, dependencies = {}) {
       </form>
     </section>
     <section class="calendar-now__goal" aria-labelledby="${prefix}-goal-label ${prefix}-goal-title">
-      <div class="calendar-now__goal-top"><p class="calendar-now__eyebrow" id="${prefix}-goal-label"><span class="calendar-now__goal-symbol" aria-hidden="true">${ICONS.flag}</span>Главная цель</p><button type="button" data-action="open-goal" class="calendar-now__quiet" aria-label="Сменить главную цель" aria-haspopup="dialog"><span class="calendar-now__button-icon" data-ui="goal-change-icon" aria-hidden="true" hidden>${ICONS.cycle}</span><span data-action-label>Выбрать цель</span></button></div>
+      <div class="calendar-now__goal-top"><p class="calendar-now__eyebrow" id="${prefix}-goal-label"><span class="calendar-now__goal-symbol" aria-hidden="true">${ICONS.flag}</span>Главная цель</p>
+        <div class="calendar-now__goal-tools"><button type="button" data-action="goal-open" class="calendar-now__secondary" aria-haspopup="dialog" hidden>Открыть</button><button type="button" data-action="open-goal" class="calendar-now__quiet" aria-label="Сменить главную цель" aria-haspopup="dialog"><span class="calendar-now__button-icon" data-ui="goal-change-icon" aria-hidden="true" hidden>${ICONS.cycle}</span><span data-action-label>Выбрать цель</span></button></div></div>
       <h2 id="${prefix}-goal-title"><button type="button" data-action="goal-details" class="calendar-now__goal-link" title="Открыть цель" aria-haspopup="dialog" hidden><span data-ui="goal-title"></span></button><span data-ui="goal-empty"></span></h2>
       <span data-ui="goal-status" class="calendar-now__goal-status" hidden></span>
       <p data-ui="goal-stage" class="calendar-now__goal-stage" hidden></p>
-      <p data-ui="goal-meta" class="calendar-now__goal-meta" hidden></p>
       <p data-ui="goal-hint" class="calendar-now__goal-hint" hidden></p>
-      <div data-goal-development hidden></div>
+      <div data-goal-development class="calendar-now__goal-glance" hidden></div>
+      <p data-ui="goal-next" class="calendar-now__goal-next" hidden><span class="calendar-now__goal-next-label" aria-hidden="true">Дальше</span><button type="button" data-action="goal-next-task" class="calendar-now__goal-next-link" aria-haspopup="dialog" hidden><span data-ui="goal-next-title"></span></button><span data-ui="goal-next-text" class="calendar-now__goal-next-text"></span></p>
       <div class="calendar-now__goal-actions">
         <button type="button" data-action="browse-goals" class="calendar-now__quiet" hidden>Все цели</button>
       </div>
@@ -147,10 +148,16 @@ export function mountCalendarNow(element, dependencies = {}) {
     }
     return ids;
   };
-  function openGoalDetails() {
+  function openGoalDetails(trigger = actions['goal-details']) {
     const goal = selectedGoal();
     if (!goal || disposed) return;
-    if (dependencies.openGoalDetails) { dependencies.openGoalDetails(goal); return; }
+    if (dependencies.openGoalDetails) {
+      dependencies.openGoalDetails(goal, { returnFocus: () => {
+        if (disposed || !element.isConnected) return;
+        (trigger?.isConnected && !trigger.hidden && !trigger.disabled ? trigger : actions['open-goal']).focus({ preventScroll: true });
+      } });
+      return;
+    }
     if (goalDialog?.isConnected) return;
     closePicker();
     const modal = document.createElement('dialog'); modal.className = 'calendar-goal-dialog';
@@ -233,11 +240,19 @@ export function mountCalendarNow(element, dependencies = {}) {
     });
     return rank(available, { nowMin, weights: snapshot.weights, pins: snapshot.pins });
   }
+  // The goal block names one next open task of the main goal (and its subgoals).
+  // Running tasks are listed in «В работе», so the ranked candidates exclude them.
+  function nextGoalTask() {
+    const running = new Set((snapshot?.activeBlocks || []).map(keyOf));
+    const available = candidates().filter(task => !running.has(keyOf(task)));
+    return (saved.selectionMode === 'manual' && available.find(task => keyOf(task) === keyOf(saved.selection))) || available[0] || null;
+  }
   function chosenTask() {
     if (snapshot?.active && saved.execution) return saved.execution.task;
     if (saved.execution) return saved.execution.task;
     if (saved.completed) return saved.completed;
-    const available = candidates();
+    const running = new Set((snapshot?.activeBlocks || []).map(keyOf));
+    const available = candidates().filter(task => !running.has(keyOf(task)));
     return (saved.selectionMode === 'manual' && available.find(task => keyOf(task) === keyOf(saved.selection))) || available[0] || null;
   }
   function elapsedMinutes() {
@@ -444,14 +459,16 @@ export function mountCalendarNow(element, dependencies = {}) {
       const host = element.querySelector('[data-goal-development]'), own = ++summaryRevision;
       summary?.dispose(); summary = null; host.replaceChildren(); host.hidden = !goal;
       if (goal) void dependencies.mountGoalSummary(host, goal).then(mounted => {
-        if (disposed || own !== summaryRevision) mounted?.dispose(); else summary = mounted;
-      }).catch(error => { if (!disposed && own === summaryRevision) host.textContent = error?.message || 'Не удалось загрузить развитие цели.'; });
-    }
+        if (disposed || own !== summaryRevision) mounted?.dispose(); else { summary = mounted; summary?.update?.(selectedGoal()); }
+      }).catch(() => { if (!disposed && own === summaryRevision) host.hidden = true; });
+    } else if (goal) summary?.update?.(goal);
+    element.dataset.goal = goal ? 'selected' : snapshot ? 'none' : 'loading';
     ui['goal-title'].textContent = goal?.title || (!snapshot ? 'Загружаем цель…' : saved.goalId ? 'Выбранная цель недоступна' : 'Выбери, к чему хочешь прийти');
     ui['goal-empty'].textContent = goal ? '' : ui['goal-title'].textContent;
     ui['goal-empty'].hidden = !!goal;
     ui['goal-status'].textContent = !snapshot || goal ? '' : saved.goalId ? 'Цель недоступна' : 'Главная цель не выбрана';
-    ui['goal-status'].hidden = !snapshot || !!goal;
+    // Without a goal the block stays one short prompt; only a missing goal gets a status label.
+    ui['goal-status'].hidden = !snapshot || !!goal || !saved.goalId;
     const linkedGoal = snapshot?.links.find(link => keyOf(link) === keyOf(task));
     const branch = [], visited = new Set();
     let node = snapshot?.goals.find(item => String(item.id) === String(linkedGoal?.goal_id));
@@ -463,12 +480,23 @@ export function mountCalendarNow(element, dependencies = {}) {
     const isGoalBranch = goal && branch.length > 1 && String(branch[0].id) === String(goal.id);
     ui['goal-stage'].textContent = isGoalBranch ? `Текущий этап: ${branch.slice(1).map(item => item.title).join(' → ')}` : '';
     ui['goal-stage'].hidden = !isGoalBranch || !!dependencies.mountGoalSummary;
-    ui['goal-meta'].textContent = goalDateLabel(goal?.deadline) ? `Срок: ${goalDateLabel(goal.deadline)}` : '';
-    ui['goal-meta'].hidden = !ui['goal-meta'].textContent;
-    ui['goal-hint'].textContent = !snapshot || goal ? '' : saved.goalId ? 'Выбери другую цель или сохрани новую.' : 'Цель можно сохранить без срока и без готового плана.';
+    ui['goal-hint'].textContent = !snapshot || goal || !saved.goalId ? '' : 'Выбери другую цель или сохрани новую.';
     ui['goal-hint'].hidden = !ui['goal-hint'].textContent;
+    const next = goal && snapshot ? nextGoalTask() : null, canOpenNext = !!next && !!dependencies.openTaskDetails;
+    ui['goal-next'].hidden = !goal || !snapshot;
+    ui['goal-next'].classList.toggle('is-empty', !next);
+    actions['goal-next-task'].hidden = !canOpenNext;
+    actions['goal-next-task'].disabled = busy || reading || !!failure;
+    actions['goal-next-task'].dataset.taskKey = keyOf(next);
+    actions['goal-next-task'].setAttribute('aria-label', next ? `Следующая задача по цели: ${next.title}` : '');
+    actions['goal-next-task'].title = next?.title || '';
+    ui['goal-next-title'].textContent = canOpenNext ? next.title : '';
+    ui['goal-next-text'].textContent = canOpenNext ? '' : next ? next.title : 'Задач по цели пока нет';
+    ui['goal-next-text'].hidden = canOpenNext;
     actions['goal-details'].hidden = !goal;
     actions['goal-details'].disabled = busy || reading || !!failure;
+    actions['goal-open'].hidden = !goal;
+    actions['goal-open'].disabled = busy || reading || !!failure;
     actions['browse-goals'].hidden = !!goal || !snapshot;
     actions['open-goal'].querySelector('[data-action-label]').textContent = goal ? 'Сменить' : 'Выбрать цель';
     ui['goal-change-icon'].hidden = !goal;
@@ -818,7 +846,15 @@ export function mountCalendarNow(element, dependencies = {}) {
       });
       return;
     }
-    if (action === 'goal-details') { openGoalDetails(); return; }
+    if (action === 'goal-details' || action === 'goal-open') { openGoalDetails(button); return; }
+    if (action === 'goal-next-task') {
+      const task = candidates().find(item => keyOf(item) === button.dataset.taskKey);
+      if (task) dependencies.openTaskDetails?.({ ...task }, () => {
+        if (disposed || !element.isConnected) return;
+        (!actions['goal-next-task'].hidden ? actions['goal-next-task'] : actions['goal-open'].hidden ? actions['open-goal'] : actions['goal-open']).focus();
+      });
+      return;
+    }
     if (action === 'calendar') {
       if (dependencies.openCalendar) dependencies.openCalendar();
       else window.dispatchEvent(new window.CustomEvent('hanni:calendar-open-table'));

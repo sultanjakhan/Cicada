@@ -19,17 +19,20 @@ import { startCalendarExecution, readActiveBlocks } from './calendar-execution.j
 import { mountCalendarInProgress } from './calendar-in-progress.js';
 import { mountCalendarDayBanner } from './calendar-day-banner.js';
 import { loadCalendarPreferences } from './calendar-display-preferences.js';
-import { mountGoalDevelopment, mountGoalDevelopmentSummary, attachDevelopmentTask } from './calendar-development.js';
+import { mountGoalGlance, attachDevelopmentTask } from './calendar-development.js';
+import { openCalendarGoalPopup } from './calendar-goal-popup.js';
 import { sphereLabel, isInstantTask } from './task-model.js';
 
 let disposeNow = null, disposeTable = null, disposePanel = null, disposeTasks = null;
-let disposeRecurring = null, developmentDialog = null, tasksDialog = null;
+let disposeRecurring = null, goalPopup = null, tasksDialog = null;
 let disposeDayBanner = null, disposeInProgress = null;
 let preferences = { density:'comfortable', showCompleted:false };
 let workspaceRevision = 0;
 let dialogSequence = 0;
 const tasksPaneState = { filter:'active', search:'', goal:'', sphere:'', page:0 };
-function cleanupWorkspace() { workspaceRevision++; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeRecurring?.(); disposeDayBanner?.(); disposeInProgress?.(); developmentDialog?.dispose(); tasksDialog?.dispose(); disposeInProgress = null; disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; disposeRecurring = null; disposeDayBanner = null; developmentDialog = null; tasksDialog = null; }
+// The Goals/Wishes choice survives pane switches within a session; it is not a stored preference.
+const goalsPaneState = { view:'goals' };
+function cleanupWorkspace() { workspaceRevision++; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeRecurring?.(); disposeDayBanner?.(); disposeInProgress?.(); goalPopup?.dispose(); tasksDialog?.dispose(); disposeInProgress = null; disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; disposeRecurring = null; disposeDayBanner = null; goalPopup = null; tasksDialog = null; }
 const view = { period: 'day', mode: 'grid', date: views.iso(new Date()), firstDay:'mon' };
 let initialViewLoaded = false;
 window.addEventListener('hanni:calendar-settings-changed', event => {
@@ -49,25 +52,28 @@ window.addEventListener('hanni:open-recurring-settings', () => {
   dispose.onManagerClose = () => { dispose(); host.remove(); };
 });
 
-function openGoalDevelopment(goal, selection = {}) {
-  if (developmentDialog || !goal) return;
-  let mounted = null;
-  const dialog = createCalendarDialog({document,title:'Цель',onClose:()=>{mounted?.dispose();developmentDialog=null;}});
-  developmentDialog = dialog; dialog.modal.classList.add('calendar-development-dialog');
-  dialog.modal.querySelector('footer [data-dialog-close]').textContent='Закрыть';
-  const host=document.createElement('div');dialog.body.append(host);dialog.open();
-  void mountGoalDevelopment(host,{invoke,goal,onCreateTask:skill=>{
-    dialog.close();
-    void showCalendarCreateModal(null,{initialNoDate:true,initialTitle:skill.skillTitle,goalId:goal.id,goalTitle:goal.title,
-      onTaskSaved:task=>String(task.goalId)===String(goal.id)?attachDevelopmentTask(goal.id,skill.skillId,task.id,{invoke}):Promise.resolve(),
-    });
-  }}).then(value=>{
-    if(developmentDialog!==dialog){value.dispose();return;}mounted=value;
-    if(selection.skillId){
-      const skill=[...host.querySelectorAll('[data-dev-skill]')].find(button=>button.dataset.devSkill===selection.skillId);
-      if(skill){let parent=skill.parentElement;while(parent&&parent!==host){if(parent.tagName==='DETAILS')parent.open=true;parent=parent.parentElement;}skill.scrollIntoView({block:'center'});skill.focus();}
-    }
-  }).catch(error=>dialog.showError(error?.message||String(error)));
+// Actions that leave the goal popup. Set by the workspace mount, which owns navigation.
+const goalPopupActions = { selectGoal: null };
+function createGoalTask(goal, returnFocus = null, skill = null) {
+  const revision = workspaceRevision;
+  void showCalendarCreateModal(null, { initialNoDate:true, initialTitle:skill?.skillTitle, goalId:goal.goalId ?? goal.id, goalTitle:goal.path || goal.title,
+    returnFocus, isCurrent:() => revision === workspaceRevision && S.activeTab === 'calendar',
+    ...(skill ? { onTaskSaved:task => String(task.goalId) === String(goal.id) ? attachDevelopmentTask(goal.id, skill.skillId, task.id, { invoke }) : Promise.resolve() } : {}),
+  });
+}
+/** Full goal popup (#98): the third display level, opened from the dashboard, Goals and wishes. */
+function openGoalPopup(goal, { selection = {}, primaryGoalId, returnFocus } = {}) {
+  if (goalPopup || !goal) return;
+  const revision = workspaceRevision;
+  goalPopup = openCalendarGoalPopup({ document, invoke, goal, selection, primaryGoalId, returnFocus,
+    isCurrent:() => revision === workspaceRevision && S.activeTab === 'calendar',
+    onClose:() => { goalPopup = null; },
+    onSelectGoal: goalPopupActions.selectGoal ? goalId => goalPopupActions.selectGoal(goalId) : null,
+    onCreateTask:(target, restore) => createGoalTask(target, restore),
+    onCreateSkillTask:(target, skill, restore) => createGoalTask(target, restore, skill),
+    onOpenTask:(row, restore) => showRecord(calendarRecord(row), restore),
+    onOpenGoal:(next, restore) => { if (revision === workspaceRevision) openGoalPopup(next, { returnFocus:restore }); },
+  });
 }
 const key = (r) => `${r.source_type}:${r.source_id}`;
 const changed = () => { window.dispatchEvent(new Event('task-state-changed')); window.dispatchEvent(new Event('hanni:calendar-refresh')); };
@@ -528,6 +534,40 @@ export async function loadCalendarWorkspace(el) {
     disposeTasks=mountCalendarDashboardTasks(list,taskOptions);
     disposeTasks.showAll();dialog.open();
   };
+  // Selection belongs to the visible dashboard mount, including its save queue.
+  const selectMainGoal = async goalId => {
+    if (S.activeTab !== 'calendar') return;
+    S._unifiedPane.calendar = 'dash';
+    savePaneState('calendar', 'dash');
+    const rendering = renderUnifiedLayout(el, 'calendar', config);
+    const dashboardRevision = workspaceRevision;
+    await rendering;
+    const current = disposeNow;
+    if (dashboardRevision !== workspaceRevision || !current || S.activeTab !== 'calendar') return;
+    try { await current.selectGoal(goalId); }
+    catch (error) {
+      if (dashboardRevision !== workspaceRevision || current !== disposeNow || S.activeTab !== 'calendar') return;
+      const now = el.querySelector('[data-calendar-now]');
+      // Action/save errors already expose the controller's safe retry button.
+      if (!now || !now.querySelector('[data-ui="error"]').hidden) return;
+      const notice = document.createElement('div');
+      notice.className = 'calendar-now__error'; notice.dataset.goalSelectionError = '';
+      notice.setAttribute('role', 'alert'); notice.tabIndex = -1;
+      const message = document.createElement('p');
+      message.textContent = error?.message || 'Не удалось сменить главную цель. Повтори выбор в целях.';
+      const back = document.createElement('button');
+      back.type = 'button'; back.className = 'calendar-now__secondary'; back.textContent = 'Вернуться к целям';
+      back.onclick = () => el.querySelector('.uni-tab[data-pane="goals"]')?.click();
+      const dismiss = event => {
+        const action = event.target.closest('[data-action]');
+        if (!action || action.disabled) return;
+        notice.remove(); now.removeEventListener('click', dismiss, true);
+      };
+      now.addEventListener('click', dismiss, true);
+      notice.append(message, back); now.append(notice); notice.focus();
+    }
+  };
+  goalPopupActions.selectGoal = goalId => { void selectMainGoal(goalId); };
   let nowHost = null;
   const config = { title:'Календарь', headerIcon:TAB_ICONS.calendar, editableHeader:false, subtitle:'События и расписание', hideDescription:true, hideMemory:true, accessibleTabs:true, beforeRender:cleanupWorkspace, isCurrent:() => S.activeTab === 'calendar',
     toolbarActions: [
@@ -556,9 +596,9 @@ export async function loadCalendarWorkspace(el) {
         openTaskLauncher:() => showAllTasks(host.querySelector('[data-calendar-launch]')),
         onLauncherStateChange:state => renderLauncherState?.(state),
         returnHeaderFocus:() => host.querySelector('.uni-tab.active')?.focus({ preventScroll:true }),
-        openGoalDetails:openGoalDevelopment,
+        openGoalDetails:(goal, { returnFocus } = {}) => openGoalPopup(goal, { primaryGoalId:goal.id, returnFocus }),
         ...(S._unifiedPane.calendar === 'dash' ? {
-          mountGoalSummary:(element,goal)=>mountGoalDevelopmentSummary(element,{invoke,goalId:goal.id,onOpen:selection=>openGoalDevelopment(goal,selection)}),
+          mountGoalSummary:(element, goal) => mountGoalGlance(element, { invoke, goal }),
         } : {}),
         openTaskDetails: (row, restore) => {
           if(row.source_type==='schedule'){
@@ -567,7 +607,7 @@ export async function loadCalendarWorkspace(el) {
         },
         openGoals: async id => {
           await openPane('goals');
-          if (id != null && S.activeTab === 'calendar' && S._unifiedPane.calendar === 'goals') el.querySelector(`[data-edit-goal="${id}"]`)?.focus();
+          if (id != null && S.activeTab === 'calendar' && S._unifiedPane.calendar === 'goals') el.querySelector(`[data-goal-open="${id}"]`)?.focus();
         },
         openCalendar: () => openPane('table'),
         // The header counts parallel work; the dashboard widget lists each task.
@@ -612,42 +652,12 @@ export async function loadCalendarWorkspace(el) {
     },
     renderGoals: async (pane) => {
       const revision = workspaceRevision;
-      const dispose = await mountCalendarGoals(pane, { onOpenGoal:openGoalDevelopment, onCreateTask: goal => {
-        if (!goal || revision !== workspaceRevision || !pane.isConnected) return;
-        showCalendarCreateModal(null, { initialNoDate: true, goalId: goal.goalId, goalTitle: goal.path || goal.title, returnFocus: () => pane.querySelector(`[data-goal-id="${goal.goalId}"] [data-edit-goal]`)?.focus(), isCurrent: () => revision === workspaceRevision && pane.isConnected && S.activeTab === 'calendar' });
-      }, onSelectGoal: async goalId => {
-        // Selection belongs to the visible dashboard mount, including its save queue.
-        if (revision !== workspaceRevision || S.activeTab !== 'calendar') return;
-        S._unifiedPane.calendar = 'dash';
-        savePaneState('calendar', 'dash');
-        const rendering = renderUnifiedLayout(el, 'calendar', config);
-        const dashboardRevision = workspaceRevision;
-        await rendering;
-        const current = disposeNow;
-        if (dashboardRevision !== workspaceRevision || !current || S.activeTab !== 'calendar') return;
-        try { await current.selectGoal(goalId); }
-        catch (error) {
-          if (dashboardRevision !== workspaceRevision || current !== disposeNow || S.activeTab !== 'calendar') return;
-          const now = el.querySelector('[data-calendar-now]');
-          // Action/save errors already expose the controller's safe retry button.
-          if (!now || !now.querySelector('[data-ui="error"]').hidden) return;
-          const notice = document.createElement('div');
-          notice.className = 'calendar-now__error'; notice.dataset.goalSelectionError = '';
-          notice.setAttribute('role', 'alert'); notice.tabIndex = -1;
-          const message = document.createElement('p');
-          message.textContent = error?.message || 'Не удалось сменить главную цель. Повтори выбор в целях.';
-          const back = document.createElement('button');
-          back.type = 'button'; back.className = 'calendar-now__secondary'; back.textContent = 'Вернуться к целям';
-          back.onclick = () => el.querySelector('.uni-tab[data-pane="goals"]')?.click();
-          const dismiss = event => {
-            const action = event.target.closest('[data-action]');
-            if (!action || action.disabled) return;
-            notice.remove(); now.removeEventListener('click', dismiss, true);
-          };
-          now.addEventListener('click', dismiss, true);
-          notice.append(message, back); now.append(notice); notice.focus();
-        }
-      } });
+      const dispose = await mountCalendarGoals(pane, { state:goalsPaneState,
+        onOpenGoal:(goal, context) => { if (revision === workspaceRevision && pane.isConnected) openGoalPopup(goal, context); },
+        onCreateTask: goal => {
+          if (!goal || revision !== workspaceRevision || !pane.isConnected) return;
+          showCalendarCreateModal(null, { initialNoDate: true, goalId: goal.goalId, goalTitle: goal.path || goal.title, returnFocus: () => pane.querySelector(`[data-goal-id="${goal.goalId}"] [data-goal-menu]`)?.focus(), isCurrent: () => revision === workspaceRevision && pane.isConnected && S.activeTab === 'calendar' });
+        }, onSelectGoal: selectMainGoal });
       if (revision !== workspaceRevision) dispose?.();
       else disposePanel = dispose;
     },

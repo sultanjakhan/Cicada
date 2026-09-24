@@ -1,25 +1,5 @@
 /* Dashboard structure and sizes transferred from the approved v7 prototype. */
 [data-calendar-now]+[data-calendar-recurring]{margin-top:20px}
-.calendar-now .calendar-development-summary{display:block;margin:0;padding:0;border:0;border-radius:0;background:transparent;color:inherit}
-.calendar-now .calendar-development-summary .text-button{padding:0;min-height:30px;margin:0;border:0;border-radius:4px;background:transparent;font-size:12px;color:inherit;display:inline-flex;align-items:center;gap:8px}
-.calendar-development-summary .text-button svg{width:16px;height:16px;flex:0 0 16px}
-.calendar-development-summary .hero-bottom{display:grid;grid-template-columns:minmax(0,1fr) 200px;gap:28px;align-items:center;margin-top:22px;padding-top:20px;border-top:1px solid var(--border,#ddd)}
-.calendar-development-summary .hero-progress{flex:0 0 220px;min-width:0;max-width:100%;border-left:1px solid var(--border,#ddd);padding-left:28px}
-.calendar-development-summary .progress-label{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
-.calendar-development-summary .progress-label strong{font-size:26px;line-height:1.2;margin:0;font-weight:500}
-.calendar-development-summary .progress-label span{font-size:11px;color:var(--text-secondary,#777)}
-.calendar-development-summary .hero-progress small{font-size:11px;line-height:1.45;color:var(--text-secondary,#777);margin-top:8px;display:block}
-.calendar-development-summary .progress-track{height:4px;border-radius:4px;overflow:hidden;background:#eaeaea;margin-top:10px}
-.calendar-development-summary .progress-track>span{display:block;height:100%;background:#565656;border-radius:4px}
-.calendar-development-summary .focus-copy{flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:6px}
-.calendar-development-summary .focus-copy small{font-size:12px;margin:0;color:var(--text-secondary,#777)}
-.calendar-now .calendar-development-summary .focus-topic,.calendar-now .calendar-development-summary .focus-skill-title{display:block;max-width:100%;min-height:30px;padding:0;margin:0;border:0;border-radius:0;background:none;text-align:left;color:var(--cn-text,#242424);cursor:pointer;overflow-wrap:anywhere;text-decoration:none;text-decoration-thickness:1px;text-underline-offset:4px;text-decoration-color:currentColor}
-.calendar-now .calendar-development-summary .focus-topic{font-size:21px;line-height:1.3;font-weight:600}
-.calendar-now .calendar-development-summary .focus-skill-title{font-size:17px;line-height:1.5;font-weight:500}
-.calendar-development-summary .focus-topic:focus-visible,.calendar-development-summary .focus-skill-title:focus-visible{outline:2px solid currentColor;outline-offset:4px}
-.calendar-now .calendar-development-summary .focus-topic:hover,.calendar-now .calendar-development-summary .focus-skill-title:hover,.calendar-now .calendar-development-summary .focus-topic:focus-visible,.calendar-now .calendar-development-summary .focus-skill-title:focus-visible{text-decoration-line:underline}
-.calendar-development-summary .focus-empty{font-size:15px;color:#666}
 .dev-stage-choices{display:grid;gap:12px}.dev-stage-choices label{display:flex;gap:10px;align-items:center;padding:12px;border:1px solid #ddd;border-radius:8px}.dev-stage-choices small{display:block;color:#777;font-size:12px;margin-top:5px}
 .calendar-day-banner{flex-wrap:wrap;gap:8px 16px;margin:18px 0 26px}.calendar-day-banner .today-date{flex:1 1 0;min-width:0}.calendar-day-banner .today-date h2{margin:0;font-size:18px;line-height:24px;font-weight:650;color:var(--text-primary,#242424);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.calendar-day-banner .today-date__day{font-weight:500;color:var(--text-secondary,#666)}.calendar-day-banner .today-date time{display:inline;font:inherit;color:inherit;margin:0}.calendar-day-banner button{min-height:40px;padding:8px 14px}.calendar-day-banner [data-start-day]{flex:none;white-space:nowrap}.calendar-day-banner [role=alert]{flex-basis:100%;margin:0;font-size:12px}.calendar-day-banner .is-started{background:#e9f5ed;border-color:#afcfba;color:#25664c}
 @media(max-width:480px){.calendar-day-banner{gap:8px 10px;margin:4px 0 18px}.calendar-day-banner .today-date h2{font-size:14px;line-height:20px}.calendar-day-banner button{min-height:36px;padding:6px 10px;font-size:13px}}
-@media(max-width:740px){.calendar-development-summary .hero-bottom{grid-template-columns:1fr;gap:16px}.calendar-development-summary .hero-progress{border-left:0;border-top:1px solid var(--border,#ddd);padding:14px 0 0;flex-basis:auto;width:100%}}
