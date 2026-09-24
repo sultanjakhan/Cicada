@@ -1,8 +1,8 @@
-// Task time of day, kind and sphere (#96) and the shared «Создать» dialog (#97).
+// Task time of day, kind and sphere (#96), work stages (2026-09-24) and the shared «Создать» dialog (#97).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { TASK_SPHERES, sphereLabel, isInstantTask, taskTime, compareTaskTime } from '../src/hanni/js/task-model.js';
+import { TASK_SPHERES, TASK_STAGES, sphereLabel, stageLabel, isInstantTask, taskTime, compareTaskTime } from '../src/hanni/js/task-model.js';
 import { rankTasks } from '../src/hanni/js/task-picker-sort.js';
 import { mountCalendarTasks } from '../src/hanni/js/calendar-tasks.js';
 import { mountCalendarDashboardTasks } from '../src/hanni/js/calendar-dashboard-tasks.js';
@@ -108,7 +108,8 @@ test('Enter saves a task with its time, kind and sphere; an instant task skips t
   x.key('#evm-title', 'Enter');
   await settle();
   const [saved] = x.saved('save_calendar_task');
-  assert.deepEqual({ ...saved }, { id: null, title: 'Полить цветы', dueDate: '2026-09-24', time: '08:15', estimateMinutes: null, goalId: null, expectedVersion: null, important: false, taskKind: 'instant', sphere: 'home' });
+  assert.deepEqual({ ...saved }, { id: null, title: 'Полить цветы', dueDate: '2026-09-24', time: '08:15', estimateMinutes: null, goalId: null, expectedVersion: null, important: false, taskKind: 'instant', sphere: 'home', stage: null, waiting: null });
+  assert.equal(x.shown('#evm-stage'), false, 'an instant task has no stage');
   assert.equal(x.q('#evm-form'), null, 'saving closes the dialog');
 
   // A normal task without a day has no time of day; the typed time stays in the field.
@@ -118,7 +119,47 @@ test('Enter saves a task with its time, kind and sphere; an instant task skips t
   assert.equal(x.q('#evm-task-time').disabled, true);
   x.key('#evm-task-estimate', 'Enter'); await settle();
   const second = x.saved('save_calendar_task')[1];
-  assert.deepEqual([second.dueDate, second.time, second.estimateMinutes, second.taskKind, second.sphere], [null, '', 20, 'normal', '']);
+  assert.deepEqual([second.dueDate, second.time, second.estimateMinutes, second.taskKind, second.sphere, second.stage, second.waiting], [null, '', 20, 'normal', '', '', false]);
+});
+
+test('stages keep the owner order and the task dialog edits the stage and «Жду ответа»', async t => {
+  assert.deepEqual(TASK_STAGES.map(([id]) => id), ['understanding', 'requirements', 'description', 'agreement', 'decomposition', 'development', 'acceptance']);
+  assert.equal(stageLabel('development'), 'В разработке'); assert.equal(stageLabel('review'), ''); assert.equal(stageLabel(''), '');
+  let stored = { id: 't2', title: 'Fictional spec', date: '2026-09-24', time: null, task_kind: 'normal', sphere: null, stage: '', waiting: false, duration_minutes: 30, version: 2, priority: 0, status: 'task' };
+  const x = useWindow(t, { get_calendar_task: () => stored, save_calendar_task: 't2' });
+  const { showEventModal, showCalendarCreateModal } = await modal();
+  await showCalendarCreateModal('2026-09-24', {}); await settle();
+  assert.ok(x.shown('#evm-stage') && x.shown('#evm-waiting'));
+  assert.deepEqual([...x.q('#evm-stage').options].map(option => option.textContent), ['—', ...TASK_STAGES.map(([, label]) => label)]);
+  x.q('#evm-title').value = 'Согласовать макет'; x.q('#evm-stage').value = 'agreement'; x.q('#evm-waiting').click();
+  x.q('#evm-form').requestSubmit(); await settle();
+  let saved = x.saved('save_calendar_task')[0];
+  assert.deepEqual([saved.stage, saved.waiting], ['agreement', true]);
+
+  // Editing sends only changed values; an unknown stage from a newer version is kept.
+  stored = { ...stored, stage: '', waiting: true };
+  await showEventModal(null, null, { kind: 'task', taskId: 't2' }); await settle();
+  assert.equal(x.q('#evm-stage').value, ''); assert.equal(x.q('#evm-waiting').checked, true);
+  x.q('#evm-form').requestSubmit(); await settle();
+  saved = x.saved('save_calendar_task')[1];
+  assert.deepEqual([saved.stage, saved.waiting], [null, null], 'unchanged stage and waiting are kept');
+  stored = { ...stored, stage: 'review' };
+  await showEventModal(null, null, { kind: 'task', taskId: 't2' }); await settle();
+  assert.equal(x.q('#evm-stage').value, '', 'an unknown stage is not offered');
+  x.q('#evm-waiting').click(); x.q('#evm-form').requestSubmit(); await settle();
+  saved = x.saved('save_calendar_task')[2];
+  assert.deepEqual([saved.stage, saved.waiting], [null, false]);
+  await showEventModal(null, null, { kind: 'task', taskId: 't2' }); await settle();
+  x.q('#evm-stage').value = 'development'; x.q('#evm-form').requestSubmit(); await settle();
+  saved = x.saved('save_calendar_task')[3];
+  assert.deepEqual([saved.stage, saved.waiting], ['development', null]);
+  // Switching to an instant task hides the row and sends nothing for it.
+  await showEventModal(null, null, { kind: 'task', taskId: 't2' }); await settle();
+  x.q('#evm-stage').value = 'acceptance'; x.q('[name="evm-task-kind"][value="instant"]').click();
+  assert.equal(x.shown('#evm-stage'), false);
+  x.q('#evm-form').requestSubmit(); await settle();
+  saved = x.saved('save_calendar_task')[4];
+  assert.deepEqual([saved.taskKind, saved.stage, saved.waiting], ['instant', null, null]);
 });
 
 test('editing keeps unknown kind and sphere values and an instant task keeps its stored estimate', async t => {

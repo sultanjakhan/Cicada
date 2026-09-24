@@ -31,6 +31,7 @@ fn fixture_with_connection(
             api::get_calendar_tasks,
             api::get_calendar_records,
             api::complete_calendar_task,
+            api::set_calendar_task_stage,
             api::create_note,
             api::update_note,
             api::update_note_status,
@@ -43,6 +44,7 @@ fn fixture_with_connection(
             api::delete_event,
             api::start_task_block,
             api::pause_task_block,
+            api::cancel_task_block,
             api::finish_task_block,
             api::skip_recurring_step,
             api::get_active_block,
@@ -197,6 +199,8 @@ fn expected_list_record(
     if source == "note" {
         value["task_kind"] = json!("normal");
         value["sphere"] = Value::Null;
+        value["stage"] = json!("");
+        value["waiting"] = json!(false);
     }
     value
 }
@@ -2333,4 +2337,52 @@ fn atomic_day_and_snapshot_cas_use_the_real_ipc_contract() {
         call(&webview, "get_ui_state", json!({"key":key})).unwrap(),
         initial
     );
+}
+
+// Work stages and «Отменить запуск» (2026-09-24) with the exact payloads of the UI.
+#[test]
+fn stage_and_cancel_payloads_cross_the_real_ipc() {
+    let (_app, view) = fixture();
+    let task = call(
+        &view,
+        "save_calendar_task",
+        json!({"id":null,"title":"Example staged task","dueDate":"2026-09-24","estimateMinutes":60,
+        "goalId":null,"expectedVersion":null,"important":false,"taskKind":"normal","sphere":"",
+        "stage":"requirements","waiting":false}),
+    )
+    .unwrap();
+    let item = call(&view, "get_calendar_task", json!({"id":task})).unwrap();
+    assert_eq!((&item["stage"], &item["waiting"]), (&json!("requirements"), &json!(false)));
+    // The widget changes one mark and sends null for the other.
+    let row = call(&view, "set_calendar_task_stage", json!({"id":task,"stage":null,"waiting":true})).unwrap();
+    assert_eq!((&row["id"], &row["stage"], &row["waiting"]), (&json!(task), &json!("requirements"), &json!(true)));
+    assert_eq!(row["version"].as_i64(), item["version"].as_i64().map(|v| v + 1));
+    let row = call(&view, "set_calendar_task_stage", json!({"id":task,"stage":"development","waiting":true})).unwrap();
+    assert_eq!(row["stage"], "development");
+    let listed = call(&view, "get_calendar_tasks", json!({})).unwrap();
+    assert_eq!((&listed[0]["stage"], &listed[0]["waiting"]), (&json!("development"), &json!(true)));
+    let records = call(&view, "get_calendar_records", json!({"start":"2026-09-24","end":"2026-09-24"})).unwrap();
+    assert_eq!(records[0]["stage"], "development");
+    assert!(call(&view, "set_calendar_task_stage", json!({"id":task,"stage":"later","waiting":false})).is_err());
+    // An edit from an older caller omits stage and waiting and keeps them.
+    call(
+        &view,
+        "save_calendar_task",
+        json!({"id":task,"title":"Renamed","dueDate":"2026-09-24","estimateMinutes":60,
+        "goalId":null,"expectedVersion":row["version"]}),
+    )
+    .unwrap();
+    let item = call(&view, "get_calendar_task", json!({"id":task})).unwrap();
+    assert_eq!((&item["title"], &item["stage"], &item["waiting"]), (&json!("Renamed"), &json!("development"), &json!(true)));
+    // «Отменить запуск» removes only the running block.
+    let block = call(&view, "start_task_block", json!({"sourceType":"note","sourceId":task,"completionDate":"2026-09-24"})).unwrap();
+    let running = call(&view, "get_active_blocks", json!({})).unwrap();
+    assert_eq!((&running[0]["stage"], &running[0]["waiting"]), (&json!("development"), &json!(true)));
+    call(&view, "cancel_task_block", json!({"blockId":block})).unwrap();
+    assert_eq!(call(&view, "get_active_blocks", json!({})).unwrap(), json!([]));
+    assert!(call(&view, "cancel_task_block", json!({"blockId":block})).is_err());
+    let paused = call(&view, "start_task_block", json!({"sourceType":"note","sourceId":task,"completionDate":"2026-09-24"})).unwrap();
+    call(&view, "pause_task_block", json!({"blockId":paused})).unwrap();
+    assert!(call(&view, "cancel_task_block", json!({"blockId":paused})).is_err(), "recorded work is never cancelled");
+    assert_eq!(call(&view, "get_calendar_tasks", json!({})).unwrap()[0]["has_work"], true);
 }

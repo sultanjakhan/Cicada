@@ -251,6 +251,13 @@ fn date(v: &Option<String>) -> Result<(), String> {
 fn task_time(date: Option<&str>, time: Option<String>) -> Option<String> {
     date.and(time).filter(|value| !value.is_empty())
 }
+/// Task attributes kept in `items.tags` (#96, 2026-09-24 stages) on every task row.
+fn decorate_task(value: &mut Value, tags: &str) {
+    value["task_kind"] = json!(crate::task_attributes::kind(tags));
+    value["sphere"] = json!(crate::task_attributes::sphere(tags));
+    value["stage"] = json!(crate::task_attributes::stage(tags).unwrap_or(""));
+    value["waiting"] = json!(crate::task_attributes::waiting(tags));
+}
 fn item_value(
     item: &Item,
     category: String,
@@ -269,8 +276,7 @@ fn item_value(
     let mut value = json!({"id":item.id,"title":item.title,"content":item.notes,"description":item.notes,"date":item.date,"time":item.time,"duration_minutes":duration_minutes,"category":category,"color":color,"priority":priority,"completed":item.completed,"version":item.version,"created_at":item.created_at,"updated_at":item.updated_at,"source":"manual","linked_tab":"","tags":tags,"archived":archived,"tab_name":if item.kind=="task" {"calendar"} else {""},"status":if item.completed && status=="task" {"done"} else {&status},"due_date":if item.kind=="task" {item.date.clone()} else {None},"content_blocks":blocks});
     if item.kind == "task" {
         value["time"] = json!(task_time(item.date.as_deref(), item.time.clone()));
-        value["task_kind"] = json!(crate::task_attributes::kind(&tags));
-        value["sphere"] = json!(crate::task_attributes::sphere(&tags));
+        decorate_task(&mut value, &tags);
     }
     crate::health_sleep::decorate(&mut value, &item.id, &tags);
     crate::health_activity::decorate(&mut value, &item.id, &tags);
@@ -643,8 +649,7 @@ fn calendar_list(
                 "has_work": row.get::<_, i64>(13)? > 0,
             });
             if is_task {
-                value["task_kind"] = json!(crate::task_attributes::kind(&tags));
-                value["sphere"] = json!(crate::task_attributes::sphere(&tags));
+                decorate_task(&mut value, &tags);
             }
             if !tasks_only {
                 value["category"] = json!(row.get::<_, String>(6)?);
@@ -661,14 +666,17 @@ fn calendar_list(
 #[tauri::command]
 pub fn get_calendar_task(id: String, state: State<'_, AppState>) -> Result<Value, String> {
     let conn = lock(&state)?;
-    let mut value = load(&conn, &id)?;
+    task_detail(&conn, &id)
+}
+fn task_detail(conn: &Connection, id: &str) -> Result<Value, String> {
+    let mut value = load(conn, id)?;
     if value["status"] != "task" && value["status"] != "done" {
         return Err(fail("task not found"));
     }
     let goal: Option<String> = conn
         .query_row(
             "SELECT goal_id FROM calendar_task_goals WHERE source_type='note' AND source_id=?1",
-            [&id],
+            [id],
             |r| r.get(0),
         )
         .optional()
@@ -685,6 +693,10 @@ pub(crate) struct TaskFields {
     pub task_kind: Option<String>,
     /// `Some("")` clears the sphere.
     pub sphere: Option<String>,
+    /// Work stage (2026-09-24); `Some("")` clears it.
+    pub stage: Option<String>,
+    /// «Жду ответа».
+    pub waiting: Option<bool>,
 }
 #[tauri::command(rename_all = "camelCase")]
 pub fn save_calendar_task(
@@ -698,10 +710,12 @@ pub fn save_calendar_task(
     time: Option<String>,
     task_kind: Option<String>,
     sphere: Option<String>,
+    stage: Option<String>,
+    waiting: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let mut conn = lock(&state)?;
-    save_task(&mut conn, id, title, due_date, estimate_minutes, goal_id, expected_version, important, TaskFields { time, task_kind, sphere })
+    save_task(&mut conn, id, title, due_date, estimate_minutes, goal_id, expected_version, important, TaskFields { time, task_kind, sphere, stage, waiting })
 }
 pub(crate) fn save_task(
     conn: &mut Connection,
@@ -731,6 +745,9 @@ pub(crate) fn save_task(
     if let Some(value) = fields.sphere.as_deref() {
         crate::task_attributes::validate_sphere(value)?;
     }
+    if let Some(value) = fields.stage.as_deref() {
+        crate::task_attributes::validate_stage(value)?;
+    }
     // Without a date the time of day is cleared. An omitted time keeps the stored
     // one only while the task already had a date: «Без даты» on 0.3.29 leaves a
     // stale time behind, and assigning a day again must not revive it.
@@ -743,9 +760,10 @@ pub(crate) fn save_task(
     let transaction = conn
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|e| fail(e.to_string()))?;
-    let changes_tags = fields.task_kind.is_some() || fields.sphere.is_some();
+    let changes_tags = fields.task_kind.is_some() || fields.sphere.is_some() || fields.stage.is_some() || fields.waiting.is_some();
     let tags = |current: &str| {
-        crate::task_attributes::write(current, fields.task_kind.as_deref(), fields.sphere.as_deref())
+        let attributes = crate::task_attributes::write(current, fields.task_kind.as_deref(), fields.sphere.as_deref());
+        crate::task_attributes::write_stage(&attributes, fields.stage.as_deref(), fields.waiting)
     };
     if let Some(goal) = goal_id.as_deref() {
         let exists: bool = transaction
@@ -808,6 +826,56 @@ pub fn complete_calendar_task(id: String, state: State<'_, AppState>) -> Result<
     } else {
         Err(fail("task is active or no longer available"))
     }
+}
+/// Sets the work stage and «Жду ответа» of a task (2026-09-24) and returns the
+/// updated task row. `stage` is a stage id or '' (none); an omitted value keeps
+/// the stored one, including a stage id written by a newer version. The change
+/// is an ordinary task edit: it bumps version and updated_at, so it syncs.
+#[tauri::command(rename_all = "camelCase")]
+pub fn set_calendar_task_stage(
+    id: String,
+    stage: Option<String>,
+    waiting: Option<bool>,
+    state: State<'_, AppState>,
+) -> Result<Value, String> {
+    let mut conn = lock(&state)?;
+    set_task_stage(&mut conn, &id, stage.as_deref(), waiting)
+}
+pub(crate) fn set_task_stage(
+    conn: &mut Connection,
+    id: &str,
+    stage: Option<&str>,
+    waiting: Option<bool>,
+) -> Result<Value, String> {
+    crate::health_sleep::editable(id)?;
+    if let Some(value) = stage {
+        crate::task_attributes::validate_stage(value)?;
+    }
+    let transaction = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| fail(e.to_string()))?;
+    let tags: String = transaction
+        .query_row(
+            "SELECT tags FROM items WHERE id=?1 AND kind='task' AND status IN ('task','done')",
+            [item_id(id)?],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| fail(e.to_string()))?
+        .ok_or_else(|| fail("task not found"))?;
+    let next = crate::task_attributes::write_stage(&tags, stage, waiting);
+    // An unchanged choice writes nothing, so it creates no sync record.
+    if next != tags {
+        transaction
+            .execute(
+                "UPDATE items SET tags=?1,version=version+1,updated_at=?2 WHERE id=?3 AND kind='task' AND status IN ('task','done')",
+                params![next, now(), id],
+            )
+            .map_err(|e| fail(e.to_string()))?;
+    }
+    let value = task_detail(&transaction, id)?;
+    transaction.commit().map_err(|e| fail(e.to_string()))?;
+    Ok(value)
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -1186,10 +1254,17 @@ pub fn get_active_block(state: State<'_, AppState>) -> Result<Option<Value>, Str
 pub fn get_active_blocks(state: State<'_, AppState>) -> Result<Vec<Value>, String> {
     let conn = lock(&state)?;
     let mut statement = conn
-        .prepare("SELECT t.id,t.source_type,t.source_id,t.date,t.start_time,t.completion_date,i.title FROM timeline_blocks t LEFT JOIN items i ON t.source_type IN ('note','event') AND i.id=t.source_id WHERE t.is_active=1 ORDER BY t.created_at DESC,t.id DESC")
+        .prepare("SELECT t.id,t.source_type,t.source_id,t.date,t.start_time,t.completion_date,i.title,i.tags,i.kind FROM timeline_blocks t LEFT JOIN items i ON t.source_type IN ('note','event') AND i.id=t.source_id WHERE t.is_active=1 ORDER BY t.created_at DESC,t.id DESC")
         .map_err(|e| fail(e.to_string()))?;
     let mut rows = statement
-        .query_map([], |r| Ok(json!({"id":r.get::<_,i64>(0)?,"source_type":r.get::<_,String>(1)?,"source_id":r.get::<_,String>(2)?,"date":r.get::<_,String>(3)?,"start_time":r.get::<_,String>(4)?,"completion_date":r.get::<_,Option<String>>(5)?,"title":r.get::<_,Option<String>>(6)?})))
+        .query_map([], |r| {
+            let mut value = json!({"id":r.get::<_,i64>(0)?,"source_type":r.get::<_,String>(1)?,"source_id":r.get::<_,String>(2)?,"date":r.get::<_,String>(3)?,"start_time":r.get::<_,String>(4)?,"completion_date":r.get::<_,Option<String>>(5)?,"title":r.get::<_,Option<String>>(6)?});
+            // A running task carries its kind, sphere and stage like other task rows.
+            if value["source_type"] == "note" && r.get::<_, Option<String>>(8)?.as_deref() == Some("task") {
+                decorate_task(&mut value, &r.get::<_, Option<String>>(7)?.unwrap_or_default());
+            }
+            Ok(value)
+        })
         .map_err(|e| fail(e.to_string()))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| fail(e.to_string()))?;
@@ -1312,6 +1387,32 @@ fn stop(conn: &Connection, id: i64, complete: bool) -> Result<(), String> {
 pub fn pause_task_block(block_id: i64, state: State<'_, AppState>) -> Result<(), String> {
     let conn = lock(&state)?;
     stop(&conn, block_id, false)
+}
+/// «Отменить запуск» (2026-09-24): discards a running block as if it was never
+/// started. Only an active block qualifies, so recorded work is never removed.
+/// The row is deleted: the capture trigger turns that into a timeline tombstone
+/// with the block's birth identity, which every replica applies as a delete.
+#[tauri::command(rename_all = "camelCase")]
+pub fn cancel_task_block(block_id: i64, state: State<'_, AppState>) -> Result<(), String> {
+    let mut conn = lock(&state)?;
+    cancel_block(&mut conn, block_id)
+}
+pub(crate) fn cancel_block(conn: &mut Connection, block_id: i64) -> Result<(), String> {
+    let transaction = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| fail(e.to_string()))?;
+    let active: bool = transaction
+        .query_row("SELECT is_active FROM timeline_blocks WHERE id=?1", [block_id], |r| Ok(r.get::<_, i64>(0)? != 0))
+        .optional()
+        .map_err(|e| fail(e.to_string()))?
+        .ok_or_else(|| fail("block not found"))?;
+    if !active {
+        return Err(fail("block is not active"));
+    }
+    transaction
+        .execute("DELETE FROM timeline_blocks WHERE id=?1 AND is_active=1", [block_id])
+        .map_err(|e| fail(e.to_string()))?;
+    transaction.commit().map_err(|e| fail(e.to_string()))
 }
 #[tauri::command(rename_all = "camelCase")]
 pub fn finish_task_block(block_id: i64, state: State<'_, AppState>) -> Result<(), String> {
