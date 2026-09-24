@@ -6,6 +6,17 @@
 
 Перед новой постановкой прочитай [подтверждённый контекст продукта](docs/product-context.md), затем проверь исходный код и относящиеся к задаче Issues. Не повторяй вопросы, на которые уже есть ответ в этом контексте; уточняй только новые отсутствующие факты.
 
+Owner iteration, 2026-09-24 (evening): the header current-task block is removed
+on every tab; the header shows only a green «● N» indicator while tasks run,
+opening the «В работе» widget. Widget rows show time against the estimate,
+the work stage and the goal, with «Остановить» (hide until started again,
+per device) and «Отменить запуск» (deletes the running block). Tasks carry an
+optional stage (Понимание, Требования, Описание, Согласование, Декомпозиция,
+В разработке, Приёмка) and «Жду ответа», stored as tags. The Tasks pane
+splits Все/Работа/Дом/Другое, keeps running tasks in «В работе» on top,
+offers bulk actions for overdue tasks, grouping by date or goal and a
+quick-add line.
+
 Owner iteration, 2026-09-24 (private issue #104): the owner often works on
 several tasks at once. Starting a task never pauses other running work; the
 same source never gets a second running block. The Dashboard shows an «В работе»
