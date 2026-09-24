@@ -269,13 +269,13 @@ export function mountCalendarTasks(host, dependencies) {
     const row=rows.find(item=>taskKey(item)===id);if(!row||busy)return;
     const menu=node('div','ct-stage-menu');menu.setAttribute('role','menu');menu.setAttribute('aria-label',`Стадия: ${row.title}`);menu.dataset.tasksStageMenu='';
     // An unknown stage from a newer version is kept when only «Жду ответа» changes.
-    const stage=stageLabel(row.stage)?row.stage:'', stored=typeof row.stage==='string'?row.stage:'', waiting=!!row.waiting, items=[];
+    const stage=stageLabel(row.stage)?row.stage:'', waiting=!!row.waiting, items=[];
     const option=(label,role,checked,values)=>{const button=control('ct-stage-option',label,()=>void setStage(id,values));button.setAttribute('role',role);button.setAttribute('aria-checked',String(checked));button.tabIndex=-1;menu.append(button);items.push(button);return button;};
     menu.append(node('p','ct-stage-menu-title','Стадия'));
     for(const [value,label] of TASK_STAGES)option(label,'menuitemradio',stage===value,{stage:value,waiting}).dataset.stage=value;
     option('Без стадии','menuitemradio',!stage,{stage:'',waiting}).dataset.stage='';
     const line=node('div','ct-stage-separator');line.setAttribute('role','separator');menu.append(line);
-    option('Жду ответа','menuitemcheckbox',waiting,{stage:stored,waiting:!waiting}).dataset.stageWaiting='';
+    option('Жду ответа','menuitemcheckbox',waiting,{stage:null,waiting:!waiting}).dataset.stageWaiting='';
     const error=node('p','ct-stage-error');error.setAttribute('role','alert');error.hidden=true;menu.append(error);
     doc.body.append(menu);trigger.setAttribute('aria-expanded','true');
     const place=trigger.getBoundingClientRect(), size=menu.getBoundingClientRect();

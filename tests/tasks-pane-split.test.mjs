@@ -247,7 +247,7 @@ test('the stage in the row opens a menu that calls set_calendar_task_stage and r
   let fail = false;
   const x = await mount(t, rows, { handlers: { set_calendar_task_stage: ({ id, stage, waiting }) => {
     if (fail) throw 'offline';
-    const row = rows.find(item => item.source_id === id); Object.assign(row, { stage, waiting }); return { ...row };
+    const row = rows.find(item => item.source_id === id); Object.assign(row, { ...(stage == null ? {} : { stage }), waiting }); return { ...row };
   } } });
   const chip = id => x.item(id)?.querySelector('[data-task-control="stage"]') ?? null;
   const menu = () => x.doc.querySelector('[data-tasks-stage-menu]');
@@ -275,7 +275,7 @@ test('the stage in the row opens a menu that calls set_calendar_task_stage and r
   chip('Spec').click();
   assert.equal(menu().querySelector('[data-stage-waiting]').getAttribute('aria-checked'), 'true');
   menu().querySelector('[data-stage-waiting]').click(); await settle();
-  assert.deepEqual(x.commands('set_calendar_task_stage').at(-1), { id: 'Spec', stage: 'description', waiting: false });
+  assert.deepEqual(x.commands('set_calendar_task_stage').at(-1), { id: 'Spec', stage: null, waiting: false }, '«Жду ответа» alone leaves the stage to the backend');
   assert.equal(chip('Spec').querySelector('.ct-waiting'), null);
 
   chip('Home with stage').click();
@@ -294,12 +294,12 @@ test('the stage in the row opens a menu that calls set_calendar_task_stage and r
   x.filter('completed');
   assert.equal(chip('Closed'), null, 'closed tasks show no stage control');
   x.filter('active');
-  rows.push(note('Future', null, { sphere: 'work', stage: 'review-v2', waiting: false }));
+  rows.push(note('Future', null, { sphere: 'work', stage: '', waiting: false }));
   x.dom.window.dispatchEvent(new x.dom.window.Event('task-state-changed')); await settle();
-  assert.equal(chip('Future').textContent, 'Стадия', 'an unknown stage is not shown');
+  assert.equal(chip('Future').textContent, 'Стадия', 'the backend reports an unknown stage as unset');
   fail = false; chip('Future').click();
   menu().querySelector('[data-stage-waiting]').click(); await settle();
-  assert.deepEqual(x.commands('set_calendar_task_stage').at(-1), { id: 'Future', stage: 'review-v2', waiting: true }, 'toggling «Жду ответа» keeps a stage this version does not know');
+  assert.deepEqual(x.commands('set_calendar_task_stage').at(-1), { id: 'Future', stage: null, waiting: true }, 'toggling «Жду ответа» sends null so the backend keeps a stage this version does not know');
 });
 
 test('«По цели» groups active tasks under their top-level goal, «Без цели» last, «В работе» first', async t => {
