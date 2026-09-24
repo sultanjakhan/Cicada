@@ -246,6 +246,11 @@ fn date(v: &Option<String>) -> Result<(), String> {
     }
     Ok(())
 }
+/// A task's time of day belongs to its date. A 0.3.29 client can clear the date
+/// without touching `time`; such a stale value is neither shown nor sorted.
+fn task_time(date: Option<&str>, time: Option<String>) -> Option<String> {
+    date.and(time).filter(|value| !value.is_empty())
+}
 fn item_value(
     item: &Item,
     category: String,
@@ -262,6 +267,11 @@ fn item_value(
         Some(item.duration_minutes)
     };
     let mut value = json!({"id":item.id,"title":item.title,"content":item.notes,"description":item.notes,"date":item.date,"time":item.time,"duration_minutes":duration_minutes,"category":category,"color":color,"priority":priority,"completed":item.completed,"version":item.version,"created_at":item.created_at,"updated_at":item.updated_at,"source":"manual","linked_tab":"","tags":tags,"archived":archived,"tab_name":if item.kind=="task" {"calendar"} else {""},"status":if item.completed && status=="task" {"done"} else {&status},"due_date":if item.kind=="task" {item.date.clone()} else {None},"content_blocks":blocks});
+    if item.kind == "task" {
+        value["time"] = json!(task_time(item.date.as_deref(), item.time.clone()));
+        value["task_kind"] = json!(crate::task_attributes::kind(&tags));
+        value["sphere"] = json!(crate::task_attributes::sphere(&tags));
+    }
     crate::health_sleep::decorate(&mut value, &item.id, &tags);
     crate::health_activity::decorate(&mut value, &item.id, &tags);
     value
@@ -576,7 +586,7 @@ pub fn get_calendar_tasks(
     } else {
         "kind='task' AND archived=0 AND status='task' AND completed=0"
     };
-    calendar_list(&conn, predicate, "s.date IS NULL,s.date,s.id", &[], true)
+    calendar_list(&conn, predicate, "s.date IS NULL,s.date,NULLIF(s.time,'') IS NULL,s.time,s.id", &[], true)
 }
 
 // Only the two list commands supply these static SQL fragments. External values
@@ -614,12 +624,15 @@ fn calendar_list(
             let completed: bool = row.get(8)?;
             let status: String = row.get(9)?;
             let duration: i64 = row.get(5)?;
+            let date: Option<String> = row.get(3)?;
+            let time: Option<String> = row.get(4)?;
+            let tags: String = row.get(14)?;
             let mut value = json!({
                 "source_type": if is_task {"note"} else {"event"},
                 "source_id": row.get::<_, String>(0)?,
                 "title": row.get::<_, String>(2)?,
-                "date": row.get::<_, Option<String>>(3)?,
-                "planned_time": if tasks_only {None} else {row.get::<_, Option<String>>(4)?},
+                "date": date,
+                "planned_time": if is_task {task_time(date.as_deref(), time)} else if tasks_only {None} else {time},
                 "duration_minutes": if is_task && duration==0 {None} else {Some(duration)},
                 "completed": completed,
                 "status_extra": if completed && status=="task" {"done"} else {&status},
@@ -629,12 +642,16 @@ fn calendar_list(
                 "actual_minutes": row.get::<_, i64>(12)? / 60,
                 "has_work": row.get::<_, i64>(13)? > 0,
             });
+            if is_task {
+                value["task_kind"] = json!(crate::task_attributes::kind(&tags));
+                value["sphere"] = json!(crate::task_attributes::sphere(&tags));
+            }
             if !tasks_only {
                 value["category"] = json!(row.get::<_, String>(6)?);
                 value["color"] = json!(row.get::<_, String>(7)?);
             }
-            crate::health_sleep::decorate(&mut value, &row.get::<_,String>(0)?, &row.get::<_,String>(14)?);
-            crate::health_activity::decorate(&mut value, &row.get::<_,String>(0)?, &row.get::<_,String>(14)?);
+            crate::health_sleep::decorate(&mut value, &row.get::<_,String>(0)?, &tags);
+            crate::health_activity::decorate(&mut value, &row.get::<_,String>(0)?, &tags);
             Ok(value)
         })
         .map_err(|e| fail(e.to_string()))?;
@@ -659,6 +676,16 @@ pub fn get_calendar_task(id: String, state: State<'_, AppState>) -> Result<Value
     value["goal_id"] = json!(goal);
     Ok(value)
 }
+/// Optional task fields added by #96. `None` keeps the stored value, so
+/// date-only edits and callers that predate these fields cannot clear them.
+#[derive(Default)]
+pub(crate) struct TaskFields {
+    /// `Some("")` clears the time of day; a time requires a date.
+    pub time: Option<String>,
+    pub task_kind: Option<String>,
+    /// `Some("")` clears the sphere.
+    pub sphere: Option<String>,
+}
 #[tauri::command(rename_all = "camelCase")]
 pub fn save_calendar_task(
     id: Option<String>,
@@ -668,18 +695,56 @@ pub fn save_calendar_task(
     goal_id: Option<String>,
     expected_version: Option<i64>,
     important: Option<bool>,
+    time: Option<String>,
+    task_kind: Option<String>,
+    sphere: Option<String>,
     state: State<'_, AppState>,
+) -> Result<String, String> {
+    let mut conn = lock(&state)?;
+    save_task(&mut conn, id, title, due_date, estimate_minutes, goal_id, expected_version, important, TaskFields { time, task_kind, sphere })
+}
+pub(crate) fn save_task(
+    conn: &mut Connection,
+    id: Option<String>,
+    title: String,
+    due_date: Option<String>,
+    estimate_minutes: Option<i64>,
+    goal_id: Option<String>,
+    expected_version: Option<i64>,
+    important: Option<bool>,
+    fields: TaskFields,
 ) -> Result<String, String> {
     validate_title(&title)?;
     date(&due_date)?;
     if let Some(value) = estimate_minutes {
         duration(value)?;
     }
+    if let Some(value) = fields.time.as_deref().filter(|value| !value.is_empty()) {
+        validate_time(value)?;
+        if due_date.is_none() {
+            return Err(fail("time requires a date"));
+        }
+    }
+    if let Some(value) = fields.task_kind.as_deref() {
+        crate::task_attributes::validate_kind(value)?;
+    }
+    if let Some(value) = fields.sphere.as_deref() {
+        crate::task_attributes::validate_sphere(value)?;
+    }
+    // Without a date the time of day is cleared; otherwise an omitted time keeps it.
+    let keep_time = due_date.is_some() && fields.time.is_none();
+    let new_time = fields.time.filter(|value| !value.is_empty() && due_date.is_some());
     // Omitted importance preserves existing priorities for date-only edits and
     // older clients. The task UI exposes only the explicit highest priority.
     let priority = important.map(|value| if value { 5_i64 } else { 0_i64 });
-    let mut conn = lock(&state)?;
-    let transaction = conn.transaction().map_err(|e| fail(e.to_string()))?;
+    // Immediate: the stored tags are read and rewritten under one write lock.
+    let transaction = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| fail(e.to_string()))?;
+    let changes_tags = fields.task_kind.is_some() || fields.sphere.is_some();
+    let tags = |current: &str| {
+        crate::task_attributes::write(current, fields.task_kind.as_deref(), fields.sphere.as_deref())
+    };
     if let Some(goal) = goal_id.as_deref() {
         let exists: bool = transaction
             .query_row(
@@ -694,7 +759,16 @@ pub fn save_calendar_task(
     }
     let item_id = match id {
         Some(id) => {
-            let changed=transaction.execute("UPDATE items SET title=?1,date=?2,duration_minutes=COALESCE(?3,0),updated_at=?4,version=version+1,priority=COALESCE(?7,priority) WHERE id=?5 AND kind='task' AND status IN ('task','done') AND (?6 IS NULL OR version=?6)",params![title.trim(),due_date,estimate_minutes,now(),id,expected_version,priority]).map_err(|e|fail(e.to_string()))?;
+            let current_tags: Option<String> = if changes_tags {
+                transaction
+                    .query_row("SELECT tags FROM items WHERE id=?1 AND kind='task'", [&id], |r| r.get(0))
+                    .optional()
+                    .map_err(|e| fail(e.to_string()))?
+            } else {
+                None
+            };
+            let next_tags = current_tags.as_deref().map(tags);
+            let changed=transaction.execute("UPDATE items SET title=?1,date=?2,duration_minutes=COALESCE(?3,0),updated_at=?4,version=version+1,priority=COALESCE(?7,priority),time=CASE WHEN ?8 THEN time ELSE ?9 END,tags=COALESCE(?10,tags) WHERE id=?5 AND kind='task' AND status IN ('task','done') AND (?6 IS NULL OR version=?6)",params![title.trim(),due_date,estimate_minutes,now(),id,expected_version,priority,keep_time,new_time,next_tags]).map_err(|e|fail(e.to_string()))?;
             if changed != 1 {
                 return Err(fail("task changed elsewhere or was deleted"));
             }
@@ -706,7 +780,7 @@ pub fn save_calendar_task(
             }
             let id = Uuid::new_v4().to_string();
             let n = now();
-            transaction.execute("INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,status) VALUES(?1,'task',?2,'',?3,NULL,COALESCE(?4,0),0,1,?5,?5,'task','#9B9B9B',COALESCE(?6,0),0,'','task')",params![id,title.trim(),due_date,estimate_minutes,n,priority]).map_err(|e|fail(e.to_string()))?;
+            transaction.execute("INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,status) VALUES(?1,'task',?2,'',?3,?7,COALESCE(?4,0),0,1,?5,?5,'task','#9B9B9B',COALESCE(?6,0),0,?8,'task')",params![id,title.trim(),due_date,estimate_minutes,n,priority,new_time,tags("")]).map_err(|e|fail(e.to_string()))?;
             id
         }
     };
@@ -1371,6 +1445,9 @@ pub fn set_app_setting(
     Ok(())
 }
 
+#[cfg(test)]
+#[path = "task_model_tests.rs"]
+mod task_model_tests;
 #[cfg(test)]
 mod tests {
     use super::*;

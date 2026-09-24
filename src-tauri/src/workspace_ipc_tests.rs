@@ -190,10 +190,15 @@ fn expected_list_record(
     time: Option<&str>,
     duration: Option<i64>,
 ) -> Value {
-    json!({"source_type":source,"source_id":id,"title":id,"date":date,"planned_time":time,
+    let mut value = json!({"source_type":source,"source_id":id,"title":id,"date":date,"planned_time":time,
         "duration_minutes":duration,"category":"Example","color":"#123456","completed":false,
         "status_extra":"task","priority":3,"tracking_mode":if source=="note" {"check"}else{"track"},
-        "is_active":false,"actual_minutes":0,"has_work":false})
+        "is_active":false,"actual_minutes":0,"has_work":false});
+    if source == "note" {
+        value["task_kind"] = json!("normal");
+        value["sphere"] = Value::Null;
+    }
+    value
 }
 
 #[test]
@@ -268,12 +273,12 @@ fn calendar_lists_preserve_payloads_filters_and_timeline_totals() {
         ])
     );
 
-    // Task list has its own order, no date-range filter, and a deliberately smaller payload.
+    // Task list has its own order, no date-range filter, and a deliberately smaller
+    // payload. A dated task keeps its time of day (#96).
     let as_task = |mut value: Value| {
         let fields = value.as_object_mut().unwrap();
         fields.remove("category");
         fields.remove("color");
-        fields.insert("planned_time".into(), Value::Null);
         value
     };
     let outside = expected_list_record("t-out", "note", Some("2026-10-01"), None, Some(25));
@@ -302,9 +307,10 @@ fn calendar_lists_preserve_payloads_filters_and_timeline_totals() {
             json!({"includeCompleted":true})
         )
         .unwrap(),
+        // Within one day a timed task precedes untimed ones.
         json!([
-            as_task(done),
             as_task(open),
+            as_task(done),
             as_task(legacy),
             as_task(outside),
             as_task(undated)
@@ -1545,6 +1551,63 @@ fn original_goal_task_and_event_forms_round_trip_over_ipc() {
     assert_eq!(events[0]["time"], "10:30");
     call(&view, "delete_event", json!({"id":event})).unwrap();
     assert_eq!(call(&view, "get_all_events", json!({})).unwrap(), json!([]));
+}
+
+#[test]
+fn unified_create_payloads_for_task_goal_and_note_cross_the_real_ipc() {
+    let (_app, view) = fixture();
+    let parent = goal(&view, "Example parent", Value::Null);
+    let task = call(
+        &view,
+        "save_calendar_task",
+        json!({"id":null,"title":"Example instant task","dueDate":"2026-09-24","time":"08:40",
+        "taskKind":"instant","sphere":"health","estimateMinutes":null,"goalId":parent,
+        "expectedVersion":null,"important":false}),
+    )
+    .unwrap();
+    let item = call(&view, "get_calendar_task", json!({"id":task})).unwrap();
+    assert_eq!(
+        (&item["time"], &item["task_kind"], &item["sphere"], &item["goal_id"]),
+        (&json!("08:40"), &json!("instant"), &json!("health"), &parent)
+    );
+    let listed = call(&view, "get_calendar_tasks", json!({"includeCompleted":true})).unwrap();
+    assert_eq!(listed[0]["planned_time"], "08:40");
+    assert_eq!(listed[0]["task_kind"], "instant");
+    let records = call(&view, "get_calendar_records", json!({"start":"2026-09-24","end":"2026-09-24"})).unwrap();
+    assert_eq!(records[0]["sphere"], "health");
+    // An older caller omits the new arguments; the stored values stay.
+    call(
+        &view,
+        "save_calendar_task",
+        json!({"id":task,"title":"Renamed","dueDate":"2026-09-25","estimateMinutes":null,
+        "goalId":parent,"expectedVersion":item["version"]}),
+    )
+    .unwrap();
+    let item = call(&view, "get_calendar_task", json!({"id":task})).unwrap();
+    assert_eq!((&item["time"], &item["task_kind"], &item["sphere"]), (&json!("08:40"), &json!("instant"), &json!("health")));
+    assert!(call(&view, "save_calendar_task", json!({"id":null,"title":"Bad","dueDate":"2026-09-24","time":"08:40","taskKind":"routine","estimateMinutes":null,"goalId":null,"expectedVersion":null})).is_err());
+    // Goal and note types of the Create dialog reuse the existing commands.
+    let child = call(
+        &view,
+        "save_calendar_goal",
+        json!({"id":null,"title":"Example subgoal","targetValue":1,"unit":"","deadline":null,
+        "goalKind":"goal","description":"Short description","criteria":"","parentGoalId":parent,
+        "clearParent":false,"currentValue":null}),
+    )
+    .unwrap();
+    let goals = call(&view, "get_goals", json!({"tabName":null})).unwrap();
+    let saved = goals.as_array().unwrap().iter().find(|x| x["id"] == child).unwrap();
+    assert_eq!((&saved["parent_goal_id"], &saved["description"]), (&parent, &json!("Short description")));
+    let note = call(
+        &view,
+        "create_note",
+        json!({"title":"Example note","content":"Text","tags":"","tabName":"calendar","status":"note",
+        "dueDate":null,"reminderAt":null,"priority":null}),
+    )
+    .unwrap();
+    let note = call(&view, "get_note", json!({"id":note})).unwrap();
+    assert_eq!((&note["status"], &note["tab_name"], &note["content"]), (&json!("note"), &json!("calendar"), &json!("Text")));
+    assert_eq!(call(&view, "get_calendar_tasks", json!({"includeCompleted":true})).unwrap().as_array().unwrap().len(), 1, "a note is not a task");
 }
 
 #[test]

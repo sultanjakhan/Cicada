@@ -100,7 +100,8 @@ test('bundled shell boots the five workspace panes with only Calendar in the sid
   assert.ok(calls.some(call => call.command === 'get_calendar_records'));
   assert.ok(calls.some(call => call.command === 'get_notes'));
   await click('[data-pane="table"]');
-  assert.deepEqual([...w.document.querySelectorAll('.calendar-workspace .uni-header-action')].map(el => el.textContent.trim()), ['Новая задача', 'Запустить задачу']);
+  assert.deepEqual([...w.document.querySelectorAll('.calendar-workspace .uni-header-action')].map(el => el.textContent.trim()), ['Создать', 'Запустить задачу']);
+  assert.equal(w.document.querySelector('[data-calendar-create]').getAttribute('aria-label'), 'Создать задачу, событие, цель или заметку');
   assert.equal(w.document.querySelector('[data-mode="list"]'), null);
   assert.deepEqual(errors, []);
 });

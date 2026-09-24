@@ -1,5 +1,6 @@
 // Existing task records; all execution actions use the shared Calendar commands.
 import { renderTaskImportance } from './task-importance.js';
+import { sphereLabel, isInstantTask, taskTime, compareTaskTime } from './task-model.js';
 
 const taskKey = row => `${row.source_type}:${String(row.source_id)}`;
 const localDate = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -45,7 +46,7 @@ export function mountCalendarDashboardTasks(element, dependencies) {
   const groupOf = row => row.is_active ? 'active' : !row.date ? 'undated' : row.date < date ? 'past' : row.date === date ? 'today' : 'future';
   const groupLabels = { active: 'В работе', past: 'Просроченные', today: 'Сегодня', future: 'Позже', undated: 'Без даты' };
   const groupOrder = Object.keys(groupLabels);
-  const ordered = () => [...(rows || [])].sort((a, b) => groupOrder.indexOf(groupOf(a)) - groupOrder.indexOf(groupOf(b)) || (Number(b.priority) || 0) - (Number(a.priority) || 0) || (a.date || '9999').localeCompare(b.date || '9999') || a.title.localeCompare(b.title, 'ru') || taskKey(a).localeCompare(taskKey(b)));
+  const ordered = () => [...(rows || [])].sort((a, b) => groupOrder.indexOf(groupOf(a)) - groupOrder.indexOf(groupOf(b)) || (Number(b.priority) || 0) - (Number(a.priority) || 0) || (a.date || '9999').localeCompare(b.date || '9999') || compareTaskTime(a, b) || a.title.localeCompare(b.title, 'ru') || taskKey(a).localeCompare(taskKey(b)));
   const findRowButton = (key, scope, more = false) => [...element.querySelectorAll(more ? '[data-overview-menu-task]' : '[data-overview-task]')].find(button => (button.dataset.overviewTask || button.dataset.overviewMenuTask) === key && button.dataset.overviewScope === scope);
   const fallbackFocus = () => { if (title) title.focus(); else { element.tabIndex = -1; element.focus(); } };
   const disposeMenu = dependencies.mountMenu?.(element, {
@@ -63,9 +64,12 @@ export function mountCalendarDashboardTasks(element, dependencies) {
       const name = document.createElement('span'); name.className = 'cto-task-title'; name.textContent = row.title;
       const titleWrap = document.createElement('span'); titleWrap.className = 'cto-task-title-wrap'; titleWrap.append(name); renderTaskImportance(document, titleWrap, row, item);
       const meta = document.createElement('span'); meta.className = 'cto-task-meta';
-      const minutes = Number(row.duration_minutes || row.target_minutes);
+      const instant = isInstantTask(row), time = taskTime(row);
+      const minutes = instant ? 0 : Number(row.duration_minutes || row.target_minutes);
       const parts = [];
-      if (row.date && row.date !== date) parts.push(dateLabel(row.date));
+      if (row.date && row.date !== date) parts.push(time ? `${dateLabel(row.date)}, ${time}` : dateLabel(row.date));
+      else if (time) parts.push(time);
+      if (sphereLabel(row.sphere)) parts.push(sphereLabel(row.sphere));
       if (minutes > 0) parts.push(`${minutes} мин`);
       if (taskKey(row) === current.key) parts.push(current.state === 'active' ? 'В работе · сейчас' : current.state === 'paused' ? 'На паузе · сейчас' : 'Сейчас');
       else if (row.is_active) parts.push('В работе');
@@ -75,8 +79,9 @@ export function mountCalendarDashboardTasks(element, dependencies) {
       if (executeAction) {
         const run = document.createElement('button'); run.type = 'button'; run.className = 'cto-execute';
         run.dataset.overviewExecute = taskKey(row); run.dataset.overviewScope = scope;
-        run.textContent = row.is_active ? 'Пауза' : row.has_work || row.actual_minutes > 0 ? 'Продолжить' : 'Начать';
-        run.setAttribute('aria-label', `${run.textContent}: ${row.title}`); run.disabled = actionBusy;
+        run.textContent = row.is_active ? 'Пауза' : instant ? 'Готово' : row.has_work || row.actual_minutes > 0 ? 'Продолжить' : 'Начать';
+        run.setAttribute('aria-label', `${instant && !row.is_active ? 'Отметить выполненной' : run.textContent}: ${row.title}`); run.disabled = actionBusy;
+        if (instant && !row.is_active) run.classList.add('cto-execute--done');
         item.append(run);
       }
       if (dependencies.mountMenu) {
@@ -193,11 +198,13 @@ export function mountCalendarDashboardTasks(element, dependencies) {
     let started = false;
     actionBusy = true; actionMessage.textContent = ''; actionMessage.setAttribute('role', 'status'); render();
     try {
-      const result = await executeAction(row, row.is_active ? 'pause' : 'start');
+      // An instant task is done with one tap; it never starts a timer.
+      const action = row.is_active ? 'pause' : isInstantTask(row) ? 'finish' : 'start';
+      const result = await executeAction(row, action);
       if(result===false)return;
-      started = !row.is_active;
+      started = action === 'start';
       notifyChange?.();
-      if (!disposed) { await refresh(); actionMessage.textContent = row.is_active ? 'Задача на паузе.' : 'Задача в работе.'; }
+      if (!disposed) { await refresh(); actionMessage.textContent = { pause:'Задача на паузе.', start:'Задача в работе.', finish:'Задача выполнена.' }[action]; }
     } catch (error) {
       if (error?.refreshRequired) notifyChange?.();
       if (!disposed) { await refresh(); actionMessage.setAttribute('role', 'alert'); actionMessage.textContent = error?.message || 'Не удалось выполнить действие. Попробуй ещё раз.'; }

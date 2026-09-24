@@ -1,5 +1,6 @@
   'use strict';
 import { renderDayStartMarker } from './calendar-day-start.js';
+import { isInstantTask } from './task-model.js';
   const parse = (value) => new Date(`${value}T12:00:00`);
   const iso = (value) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
   const add = (value, days) => { const date = parse(value); date.setDate(date.getDate() + days); return iso(date); };
@@ -93,9 +94,13 @@ import { renderDayStartMarker } from './calendar-day-start.js';
         actions.append(control);
       };
       if (!record.date) addAction('date', 'Назначить дату');
-      if (record.is_active) addAction('pause', 'Пауза');
-      else addAction('start', record.has_work || record.actual_minutes > 0 ? 'Продолжить' : 'Начать');
-      if (record.is_active || record.has_work || record.actual_minutes > 0) addAction('finish', 'Завершить');
+      // An instant task is marked done with one tap and never starts a timer.
+      if (isInstantTask(record) && !record.is_active) addAction('finish', 'Готово');
+      else {
+        if (record.is_active) addAction('pause', 'Пауза');
+        else addAction('start', record.has_work || record.actual_minutes > 0 ? 'Продолжить' : 'Начать');
+        if (record.is_active || record.has_work || record.actual_minutes > 0) addAction('finish', 'Завершить');
+      }
       shell.append(actions);
     }
     return shell;

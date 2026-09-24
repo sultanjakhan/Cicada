@@ -57,9 +57,11 @@ export function pinKey(item) {
 
 // Sort a flat list of startable items by composite importance and tag each with
 // `_overdue` / `_pinned`. Order: pinned → overdue → composite score.
+// An instant task (#96) is done with one tap and is never a startable item.
 export function rankTasks(items, { nowMin, weights, pins = [] }) {
   const pinSet = new Set(pins);
   return items
+    .filter(it => !(it.source_type === 'note' && it.task_kind === 'instant'))
     .map(it => ({ ...it, _overdue: isOverdue(it, nowMin), _pinned: pinSet.has(pinKey(it)) }))
     .sort((a, b) => {
       if (a._pinned !== b._pinned) return a._pinned ? -1 : 1;

@@ -20,6 +20,7 @@ mod update_background;
 mod update_macos;
 mod update_journal;
 mod calendar_compat;
+mod task_attributes;
 mod desktop_launch;
 #[cfg(target_os = "macos")]
 mod window_placement_macos;
