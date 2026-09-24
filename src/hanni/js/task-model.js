@@ -19,3 +19,11 @@ export function compareTaskTime(a, b) {
   const left = taskTime(a), right = taskTime(b);
   return left === right ? 0 : !left ? 1 : !right ? -1 : left.localeCompare(right);
 }
+// Work stages of a task (2026-09-24). Rows carry `stage` ('' when unset) and
+// `waiting` («Жду ответа», shown over any stage). Stored as task tags.
+export const TASK_STAGES = Object.freeze([
+  ['understanding', 'Понимание'], ['requirements', 'Требования'], ['description', 'Описание'], ['agreement', 'Согласование'],
+  ['decomposition', 'Декомпозиция'], ['development', 'В разработке'], ['acceptance', 'Приёмка'],
+]);
+const STAGE_LABELS = new Map(TASK_STAGES);
+export const stageLabel = id => STAGE_LABELS.get(id) || '';
