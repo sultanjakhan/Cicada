@@ -1,6 +1,6 @@
 [package]
 name = "hanni-mvp"
-version = "0.3.29"
+version = "0.3.30"
 edition = "2021"
 license = "MIT"
 rust-version = "1.98"
