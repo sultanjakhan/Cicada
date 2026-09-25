@@ -20,6 +20,11 @@ src-tauri/plugins/*/android/.tauri/
 __pycache__/
 .mcp.json
 .claude/settings.json
+.claude/settings.local.json
+.vscode/
+.idea/
+*.jks
+*.keystore
 .local/
 test-results/
 playwright-report/
