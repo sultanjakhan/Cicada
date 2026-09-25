@@ -7,7 +7,8 @@ import { loadCategories } from './calendar-categories.js';
 import { showCategoryManager, showAddCategory } from './calendar-category-manager.js';
 import { createCalendarDialog } from './calendar-dialog.js';
 import { CREATE_TYPES, SCHEDULE_TYPES, createType, createTypeButtons } from './calendar-create-types.js';
-import { TASK_SPHERES, TASK_STAGES } from './task-model.js';
+import { TASK_SPHERES, PERSONAL_SPHERES } from './task-model.js';
+import { DELETED_STAGE_LABEL, findProcess, loadProcesses, mountStageTime, taskProcessId } from './task-processes.js';
 // Default time is the exact current local minute. Rounding made a modal opened
 // at 08:09 misleadingly show 08:10 even though "Создать и начать" starts now.
 function currentLocalTime() {
@@ -89,6 +90,9 @@ export async function showEventModal(eventId = null, initialDate = null, options
   let kind = !isEdit && offeredTypes.includes(options.kind) ? options.kind : options.kind === 'task' ? 'task' : 'event';
   let cats = await loadCategories();
   if (options.isCurrent?.() === false) return;
+  // Task processes (2026-09-25); an unreadable state falls back to the built-in one.
+  const processes = await loadProcesses(invoke);
+  if (options.isCurrent?.() === false) return;
   let event = null, task = null, recordReady = true;
   if (taskId != null) {
     try { task = await invoke('get_calendar_task', { id: taskId }); }
@@ -123,9 +127,14 @@ export async function showEventModal(eventId = null, initialDate = null, options
   const initTaskTime = taskId != null ? (task?.date && task?.time) || '' : options.initialTime || '';
   const loadedTaskKind = task?.task_kind === 'instant' ? 'instant' : 'normal';
   const loadedSphere = TASK_SPHERES.some(([id]) => id === task?.sphere) ? task.sphere : '';
-  // A stage id this version does not know shows as «—» and is kept unless changed.
-  const loadedStage = TASK_STAGES.some(([id]) => id === task?.stage) ? task.stage : '';
+  // A 0.3.33 stage without a process belongs to the built-in process; a deleted
+  // stage stays selected as «Стадия удалена» and is kept unless changed.
+  const loadedProcess = task ? taskProcessId(task) : '';
+  const loadedStage = typeof task?.stage === 'string' ? task.stage : '';
   const loadedWaiting = task?.waiting === true;
+  // Work or personal first (2026-09-25); a personal task may name its sphere.
+  const personalOptions = (value, withNone) => `${withNone ? `<option value=""${value === '' ? ' selected' : ''}>Без сферы</option>` : ''}${PERSONAL_SPHERES.map(([id, label]) => `<option value="${id}"${id === value ? ' selected' : ''}>${label}</option>`).join('')}`;
+  const processOptions = value => `<option value="">Без процесса</option>${processes.map(process => `<option value="${escapeHtml(process.id)}"${process.id === value ? ' selected' : ''}>${escapeHtml(process.title)}</option>`).join('')}${value && !findProcess(processes, value) ? `<option value="${escapeHtml(value)}" selected>Процесс не найден</option>` : ''}`;
   const initEnd = rangeEnd(initDate, initTime, initDur) || { date: initDate, time: initTime };
   let savedEventId = taskId ?? (isEdit ? String(eventId) : null);
   let savedVersion = task?.version ?? event?.version ?? null;
@@ -157,6 +166,14 @@ export async function showEventModal(eventId = null, initialDate = null, options
       </label>
       ${offeredTypes.length > 1 ? `<div class="evm-type-picker" role="group" aria-label="Что создать">${createTypeButtons(offeredTypes)}</div>` : ''}
       <div class="evm-schedule" data-editor-schedule>
+      <div class="evm-scope-row" data-editor-task>
+        <div class="evm-scope" role="group" aria-label="Рабочая или личная задача">
+          <button type="button" class="evm-scope-option" data-evm-scope="work" aria-pressed="false">Рабочая</button>
+          <button type="button" class="evm-scope-option" data-evm-scope="personal" aria-pressed="false">Личная</button>
+        </div>
+        <label class="evm-sphere-fine" for="evm-sphere" data-evm-personal><span class="evm-sr-only">Сфера личной задачи</span>
+          <select class="form-select" id="evm-sphere">${personalOptions(loadedSphere === 'work' ? 'personal' : isEdit ? loadedSphere : 'personal', isEdit && loadedSphere === '')}</select></label>
+      </div>
       <div class="evm-date-row">
         <label class="evm-field evm-date-field" for="evm-date"><span class="evm-field-label">Дата</span>
           <input class="form-input" id="evm-date" type="date" value="${escapeHtml(initDate)}" required></label>
@@ -172,16 +189,17 @@ export async function showEventModal(eventId = null, initialDate = null, options
           <label class="evm-kind-option"><input type="radio" name="evm-task-kind" value="instant"${loadedTaskKind === 'instant' ? ' checked' : ''}><span>Моментальная</span></label>
         </div><p class="evm-kind-hint" id="evm-kind-hint"></p></div>
       </div>
-      <div class="evm-task-row" data-editor-task>
-        <label class="evm-field" for="evm-sphere"><span class="evm-field-label">Сфера</span>
-          <select class="form-select" id="evm-sphere"><option value="">Без сферы</option>${TASK_SPHERES.map(([id, label]) => `<option value="${id}"${id === loadedSphere ? ' selected' : ''}>${label}</option>`).join('')}</select></label>
+      <div class="evm-task-row" data-editor-task data-editor-work>
         <label class="evm-field evm-estimate" for="evm-task-estimate"><span class="evm-field-label">Оценка, мин</span><input class="form-input" id="evm-task-estimate" type="number" min="1" step="1" inputmode="numeric" placeholder="Не задана" value="${task?.duration_minutes ?? ''}"></label>
+        <label class="evm-field evm-process" for="evm-process" data-editor-stage><span class="evm-field-label">Процесс</span>
+          <select class="form-select" id="evm-process">${processOptions(loadedProcess)}</select></label>
       </div>
-      <div class="evm-task-row evm-stage-row" data-editor-task data-editor-stage>
+      <div class="evm-task-row evm-stage-row" data-editor-task data-editor-stage data-evm-stage-fields>
         <label class="evm-field" for="evm-stage"><span class="evm-field-label">Стадия</span>
-          <select class="form-select" id="evm-stage"><option value="">—</option>${TASK_STAGES.map(([id, label]) => `<option value="${id}"${id === loadedStage ? ' selected' : ''}>${label}</option>`).join('')}</select></label>
+          <select class="form-select" id="evm-stage"></select></label>
         <label class="evm-untimed evm-waiting" for="evm-waiting"><input type="checkbox" id="evm-waiting"${loadedWaiting ? ' checked' : ''}> Жду ответа</label>
       </div>
+      <p class="evm-stage-time" id="evm-stage-time" data-editor-task data-editor-stage hidden></p>
       <div class="evm-when-row" data-editor-event>
         <label class="evm-field" for="evm-time" data-evm-timing><span class="evm-field-label">Время начала</span>
           <input class="form-input" id="evm-time" type="time" value="${escapeHtml(initTime)}"></label>
@@ -281,7 +299,29 @@ export async function showEventModal(eventId = null, initialDate = null, options
   const estimateInput = overlay.querySelector('#evm-task-estimate');
   const taskTimeInput = overlay.querySelector('#evm-task-time');
   const sphereSelect = overlay.querySelector('#evm-sphere');
+  const processSelect = overlay.querySelector('#evm-process');
   const stageSelect = overlay.querySelector('#evm-stage');
+  let scope = loadedSphere === 'work' ? 'work' : 'personal';
+  const selectedSphere = () => scope === 'work' ? 'work' : sphereSelect.value;
+  const updateScope = () => {
+    overlay.querySelectorAll('[data-evm-scope]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.evmScope === scope)));
+    overlay.querySelector('[data-evm-personal]').hidden = scope !== 'personal';
+  };
+  overlay.querySelectorAll('[data-evm-scope]').forEach(button => button.addEventListener('click', () => { scope = button.dataset.evmScope; updateScope(); }));
+  // The stage select follows the chosen process; a deleted stage stays selectable as it is.
+  const fillStages = (processId, value) => {
+    const stages = findProcess(processes, processId)?.stages || [];
+    stageSelect.replaceChildren(new Option('—', ''), ...stages.map(stage => new Option(stage.title, stage.id)));
+    if (value && !stages.some(stage => stage.id === value)) stageSelect.add(new Option(DELETED_STAGE_LABEL, value));
+    stageSelect.value = value || '';
+  };
+  fillStages(loadedProcess, loadedStage);
+  processSelect.addEventListener('change', () => {
+    const stages = findProcess(processes, processSelect.value)?.stages || [];
+    // Another process starts at its first stage unless the current one belongs to it.
+    fillStages(processSelect.value, stages.some(stage => stage.id === stageSelect.value) ? stageSelect.value : stages[0]?.id || '');
+    updateTiming();
+  });
   const waitingInput = overlay.querySelector('#evm-waiting');
   const kindHint = overlay.querySelector('#evm-kind-hint');
   const selectedTaskKind = () => overlay.querySelector('[name="evm-task-kind"]:checked')?.value === 'instant' ? 'instant' : 'normal';
@@ -340,7 +380,11 @@ export async function showEventModal(eventId = null, initialDate = null, options
     // An instant task is done with one tap: no timer and no estimate to fill.
     overlay.querySelector('.evm-estimate').hidden = kind !== 'task' || instant;
     // Stages belong to work that takes time; an instant task keeps a stored stage untouched.
-    overlay.querySelector('[data-editor-stage]').hidden = kind !== 'task' || instant;
+    overlay.querySelectorAll('[data-editor-stage]').forEach(node => { node.hidden = kind !== 'task' || instant; });
+    overlay.querySelector('[data-editor-work]').hidden = kind !== 'task' || instant;
+    // Without a process a task has no stage (2026-09-25).
+    overlay.querySelector('[data-evm-stage-fields]').hidden = kind !== 'task' || instant || !processSelect.value;
+    overlay.querySelector('#evm-stage-time').hidden = kind !== 'task' || instant || !retryLoaded.process || taskId == null;
     kindHint.textContent = instant ? 'Отмечается одним нажатием, без таймера.' : 'С оценкой времени, таймером и фактом.';
     updateRangeHint();
   };
@@ -366,7 +410,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
     const other = SCHEDULE_TYPES.includes(kind) ? null : createType(kind);
     overlay.querySelector('.calendar-editor-shell').dataset.editorKind = kind;
     overlay.querySelector('#evm-heading').textContent = other ? other.heading : isEdit ? (kind === 'task' ? 'Изменить задачу' : 'Редактировать событие') : (kind === 'task' ? 'Новая задача' : 'Новое событие');
-    overlay.querySelector('#evm-hint').textContent = other ? other.hint : kind === 'task' ? 'Дату, время, сферу, цель, оценку и стадию можно оставить пустыми.' : isEdit ? 'Измени детали в расписании.' : options.initialTime ? 'Выбраны дата и время ячейки. Их можно изменить.' : 'Выбраны дата календаря и текущее время. Их можно изменить.';
+    overlay.querySelector('#evm-hint').textContent = other ? other.hint : kind === 'task' ? 'Дату, время, цель, оценку и процесс можно оставить пустыми.' : isEdit ? 'Измени детали в расписании.' : options.initialTime ? 'Выбраны дата и время ячейки. Их можно изменить.' : 'Выбраны дата календаря и текущее время. Их можно изменить.';
     overlay.querySelector('#evm-title-label').textContent = other?.titleLabel || 'Название';
     titleInput.placeholder = other ? other.titlePlaceholder : kind === 'task' ? 'Например, описать пользовательский сценарий' : 'Например, встреча по проекту';
     if (kind !== 'event') titleInput.maxLength = 500; else titleInput.removeAttribute('maxlength');
@@ -434,8 +478,8 @@ export async function showEventModal(eventId = null, initialDate = null, options
     }
   };
   goalRetry.addEventListener('click', loadGoals);
-  // Values the form was built from; unchanged kind, sphere and stage are sent as null (kept).
-  const retryLoaded = { kind: loadedTaskKind, sphere: loadedSphere, stage: loadedStage, waiting: loadedWaiting };
+  // Values the form was built from; unchanged kind, sphere, process and stage are sent as null (kept).
+  const retryLoaded = { kind: loadedTaskKind, sphere: loadedSphere, process: loadedProcess, stage: loadedStage, waiting: loadedWaiting };
   const showRecordState = () => {
     recordError.hidden = recordReady;
     recordError.textContent = recordReady ? '' : 'Не удалось загрузить задачу. Её сохранённые поля пока неизвестны; повтори загрузку.';
@@ -451,9 +495,12 @@ export async function showEventModal(eventId = null, initialDate = null, options
       titleInput.value = task.title; dateInput.value = task.date || ''; noDate.checked = !task.date; estimateInput.value = task.duration_minutes ?? '';
       taskTimeInput.value = (task.date && task.time) || '';
       Object.assign(retryLoaded, { kind: task.task_kind === 'instant' ? 'instant' : 'normal', sphere: TASK_SPHERES.some(([id]) => id === task.sphere) ? task.sphere : '',
-        stage: TASK_STAGES.some(([id]) => id === task.stage) ? task.stage : '', waiting: task.waiting === true });
-      overlay.querySelector(`[name="evm-task-kind"][value="${retryLoaded.kind}"]`).checked = true; sphereSelect.value = retryLoaded.sphere;
-      stageSelect.value = retryLoaded.stage; waitingInput.checked = retryLoaded.waiting;
+        process: taskProcessId(task), stage: typeof task.stage === 'string' ? task.stage : '', waiting: task.waiting === true });
+      overlay.querySelector(`[name="evm-task-kind"][value="${retryLoaded.kind}"]`).checked = true;
+      scope = retryLoaded.sphere === 'work' ? 'work' : 'personal';
+      sphereSelect.innerHTML = personalOptions(retryLoaded.sphere === 'work' ? 'personal' : retryLoaded.sphere, retryLoaded.sphere === ''); updateScope();
+      processSelect.innerHTML = processOptions(retryLoaded.process); fillStages(retryLoaded.process, retryLoaded.stage); waitingInput.checked = retryLoaded.waiting;
+      showStageTime();
       importantInput.checked = Number(task.priority) >= 5; importantChanged = false;
       showError(''); showRecordState(); updateEditorType();
       if (isTopModal()) (options.initialFocus === 'date' ? (noDate.checked ? noDate : dateInput) : titleInput).focus();
@@ -461,7 +508,16 @@ export async function showEventModal(eventId = null, initialDate = null, options
     } catch { if (overlay.isConnected) showRecordState(); }
     finally { recordRetry.disabled = false; }
   });
-  showRecordState(); updateEditorType();
+  // Time per stage of the saved task, the current stage live.
+  let stopStageTime = null;
+  const showStageTime = () => {
+    stopStageTime?.(); stopStageTime = null;
+    if (taskId == null || !task || !retryLoaded.process) return;
+    stopStageTime = mountStageTime(overlay.querySelector('#evm-stage-time'), { invoke, row: { ...task, source_id: taskId, process: retryLoaded.process }, processes });
+    overlay.querySelector('#evm-stage-time').hidden = selectedTaskKind() === 'instant';
+  };
+  new MutationObserver((_, observer) => { if (!overlay.isConnected) { stopStageTime?.(); observer.disconnect(); } }).observe(document.body, { childList: true });
+  updateScope(); showRecordState(); updateEditorType(); showStageTime();
   if (isTopModal() && !overlay.contains(document.activeElement)) {
     (recordReady ? (options.initialFocus === 'date' ? (dateInput.disabled ? noDate : dateInput) : titleInput) : recordRetry).focus();
   }
@@ -553,9 +609,13 @@ export async function showEventModal(eventId = null, initialDate = null, options
       if (title.length > 500) { showError('Сократи название задачи до 500 символов.', titleInput); return; }
       const dueDate = noDate.checked ? null : dateInput.value;
       if (dueDate !== null && !Number.isFinite(civilMinute(dueDate, '00:00'))) { showError('Выбери дату или отметь «Без даты».', dateInput); return; }
-      const taskKind = selectedTaskKind(), sphere = sphereSelect.value, instant = taskKind === 'instant';
-      // The stage row is hidden for an instant task: nothing is sent, so a stored stage stays.
-      const stage = instant ? null : stageSelect.value, waiting = instant ? null : waitingInput.checked;
+      const taskKind = selectedTaskKind(), sphere = selectedSphere(), instant = taskKind === 'instant';
+      // The process rows are hidden for an instant task: nothing is sent, so a stored stage stays.
+      // «Без процесса» sends '' (it removes stage and «Жду ответа» too) only when it is a change.
+      const process = instant ? null : processSelect.value, dropsProcess = process === '' && (!isEdit || retryLoaded.process !== '');
+      const processChanged = process !== null && (!isEdit || process !== retryLoaded.process);
+      const stage = instant ? null : process === '' ? (dropsProcess ? '' : null) : !isEdit || processChanged || stageSelect.value !== retryLoaded.stage ? stageSelect.value : null;
+      const waiting = instant ? null : process === '' ? (dropsProcess ? false : null) : !isEdit || waitingInput.checked !== retryLoaded.waiting ? waitingInput.checked : null;
       // An instant task hides its estimate: a new one gets none and an edit keeps
       // the stored value, so a hidden field is never validated or silently saved.
       const estimateMinutes = instant ? (isEdit ? task?.duration_minutes ?? null : null) : estimateInput.value.trim() === '' ? null : Number(estimateInput.value);
@@ -573,7 +633,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
           // version does not know is kept.
           savedEventId = await invoke('save_calendar_task', { id: savedEventId, title, dueDate, time, estimateMinutes, goalId: desiredGoalId, expectedVersion: savedVersion, important,
             taskKind: !isEdit || taskKind !== retryLoaded.kind ? taskKind : null, sphere: !isEdit || sphere !== retryLoaded.sphere ? sphere : null,
-            stage: stage !== null && (!isEdit || stage !== retryLoaded.stage) ? stage : null, waiting: waiting !== null && (!isEdit || waiting !== retryLoaded.waiting) ? waiting : null });
+            stage, waiting, process: processChanged ? process : null });
           acknowledgedTask = { id:savedEventId, goalId:desiredGoalId };
         }
         if (options.onTaskSaved) {

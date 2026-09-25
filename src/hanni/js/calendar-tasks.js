@@ -1,6 +1,7 @@
 import { renderTaskImportance } from './task-importance.js';
 import { ICONS } from './icons.js';
-import { sphereLabel, isInstantTask, taskTime, compareTaskTime, TASK_STAGES, stageLabel } from './task-model.js';
+import { sphereLabel, isInstantTask, taskTime, compareTaskTime, isWorkTask } from './task-model.js';
+import { loadProcesses, loadStageBlocks, stageSeconds, stageTimeTitle, taskStage } from './task-processes.js';
 
 const taskKey = row => `${row.source_type}:${row.source_id}`;
 const closed = row => row.completed || ['done', 'skipped', 'missed'].includes(row.status_extra);
@@ -11,10 +12,15 @@ const shiftDay = (day, delta) => { const date = new Date(`${day}T12:00:00`); dat
 const GROUPS = [['running','В работе'],['overdue','Просрочено'],['today','Сегодня'],['soon','Скоро'],['undated','Без даты'],['completed','Завершённые']];
 const groupOf = (row, today) => closed(row) ? 'completed' : row.is_active ? 'running' : !row.date ? 'undated' : row.date < today ? 'overdue' : row.date === today ? 'today' : 'soon';
 const groupIndex = (row, today) => GROUPS.findIndex(([id]) => id === groupOf(row, today));
-// Work and Home are the main split (2026-09-24); health, growth, personal and
-// tasks without a sphere share «Другое».
-const SPHERE_TABS = [['','Все'],['work','Работа'],['home','Дом'],['other','Другое']];
-const bucketOf = row => row.sphere === 'work' || row.sphere === 'home' ? row.sphere : 'other';
+// Work and personal are the main split (2026-09-25): «Личное» is every task whose
+// sphere is not work, tasks without a sphere included. Inside it a light second
+// row narrows to one sphere when several are present.
+const SPHERE_TABS = [['','Все'],['work','Работа'],['personal','Личное']];
+const PERSONAL_TABS = [['','Все'],['home','Дом'],['health','Здоровье'],['growth','Развитие'],['personal','Личное'],['none','Без сферы']];
+const bucketOf = row => isWorkTask(row) ? 'work' : 'personal';
+const personalOf = row => ['home','health','growth','personal'].includes(row.sphere) ? row.sphere : 'none';
+const WAIT_ICON = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 1.5h5M3.5 10.5h5M4 1.5v1.3C4 4.1 6 4.8 6 6s-2 1.9-2 3.2v1.3M8 1.5v1.3C8 4.1 6 4.8 6 6s2 1.9 2 3.2v1.3"/></svg>';
+const ARROW_ICON = '<svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 7h8.5M7.5 3.5 11 7l-3.5 3.5"/></svg>';
 const plural = (count, forms) => { const n = Math.abs(count) % 100, d = n % 10; return forms[n > 10 && n < 20 ? 2 : d === 1 ? 0 : d >= 2 && d <= 4 ? 1 : 2]; };
 const EMPTY = { search:'Ничего не нашлось. Измени поиск, цель или сферу.', sphere:'В этой сфере задач нет. Выбери другую сферу или добавь задачу строкой выше.', completed:'Завершённых задач пока нет.', undated:'Все задачи распределены по дням.', today:'На сегодня задач нет.', active:'Задач пока нет. Добавь первую строкой выше.' };
 // Overdue cleanup acts on every task of the group through the task save path.
@@ -41,12 +47,14 @@ export function mountCalendarTasks(host, dependencies) {
   const { invoke, openTask, editDate, mountMenu, executeAction, notifyChange } = dependencies;
   const doc = host.ownerDocument, win = doc.defaultView;
   const state = dependencies.state || { filter:'active', search:'', goal:'', sphere:'', page:0 };
-  // A single sphere or «Без сферы» chosen before the split falls into «Другое».
-  if (['none', 'health', 'growth', 'personal'].includes(state.sphere)) state.sphere = 'other';
+  // A sphere chosen before the Work/Personal split falls into «Личное»; «Дом» keeps its sphere inside it.
+  if (state.sphere === 'home') { state.sphere = 'personal'; state.personal = 'home'; }
+  if (['none', 'health', 'growth', 'other'].includes(state.sphere)) state.sphere = 'personal';
   if (!SPHERE_TABS.some(([id]) => id === state.sphere)) state.sphere = '';
+  if (state.sphere !== 'personal' || !PERSONAL_TABS.some(([id]) => id === state.personal)) state.personal = '';
   if (state.groupBy !== 'goal') state.groupBy = 'date';
   const prefix = `calendar-tasks-${++sequence}`;
-  let rows = [], goals = [], links = [], ready = false, disposed = false, revision = 0, busy = false, queued = false, feedback = '';
+  let rows = [], goals = [], links = [], processes = [], stageBlocks = new Map(), ready = false, disposed = false, revision = 0, busy = false, queued = false, feedback = '';
   let adding = false, bulk = null, confirming = null, overdue = [], shown = new Set(), stageMenu = null;
   let today = dayOf(new Date());
   host.classList.add('calendar-tasks');
@@ -54,7 +62,8 @@ export function mountCalendarTasks(host, dependencies) {
     <div class="ct-grouping" role="group" aria-label="Группировать задачи" data-tasks-grouping>${[['date','По дате'],['goal','По цели']].map(([id,label])=>`<button type="button" data-tasks-group-by="${id}" aria-pressed="false">${label}</button>`).join('')}</div></div>
     <div class="ct-toolbar"><div class="ct-filters" role="group" aria-label="Какие задачи показать">${[['active','Активные'],['today','Сегодня'],['undated','Без даты'],['completed','Завершённые']].map(([id,label])=>`<button type="button" data-tasks-filter="${id}" aria-pressed="false">${label}</button>`).join('')}</div>
     <div class="ct-search-row"><label class="ct-search"><span class="ct-search-icon">${SEARCH_ICON}</span><input type="search" data-tasks-search placeholder="Найти задачу" aria-label="Найти задачу"></label><span class="ct-select"><select data-tasks-goal aria-label="Фильтр по цели"><option value="">Любая цель</option></select></span></div></div>
-    <div class="ct-spheres" role="group" aria-label="Сфера задач">${SPHERE_TABS.map(([id,label])=>`<button type="button" data-tasks-sphere="${id}" aria-pressed="false"><span>${label}</span><span class="ct-sphere-count" data-tasks-sphere-count></span></button>`).join('')}</div>
+    <div class="ct-spheres" role="group" aria-label="Рабочие или личные задачи">${SPHERE_TABS.map(([id,label])=>`<button type="button" data-tasks-sphere="${id}" aria-pressed="false"><span>${label}</span><span class="ct-sphere-count" data-tasks-sphere-count></span></button>`).join('')}</div>
+    <div class="ct-subspheres" role="group" aria-label="Сфера личных задач" data-tasks-personal hidden></div>
     <form class="ct-add" data-tasks-add-form novalidate><span class="ct-add-icon">${PLUS_ICON}</span><input type="text" data-tasks-add placeholder="Добавить задачу…" aria-label="Добавить задачу" autocomplete="off" enterkeyhint="done"><p class="ct-add-status" data-tasks-add-status aria-live="polite" hidden></p></form>
     <p data-tasks-message role="status" aria-live="polite"></p><button type="button" data-tasks-retry hidden>Повторить загрузку</button>
     <div data-tasks-list></div><div class="ct-pages" data-tasks-pages hidden><button type="button" data-tasks-prev>Назад</button><span data-tasks-page></span><button type="button" data-tasks-next>Далее</button></div></section>`;
@@ -77,7 +86,9 @@ export function mountCalendarTasks(host, dependencies) {
     while(value!=null&&!seen.has(String(value))){if(String(value)===state.goal)return true;seen.add(String(value));value=goals.find(g=>String(g.id)===String(value))?.parent_goal_id;}
     return false;
   }
-  const matchesSphere = row => !state.sphere || bucketOf(row) === state.sphere;
+  const matchesSphere = row => !state.sphere || bucketOf(row) === state.sphere && (state.sphere !== 'personal' || !state.personal || personalOf(row) === state.personal);
+  // Timer work of the task inside each stage period, for the stage tooltip.
+  const stageTitleOf = (row, stage) => stageTimeTitle(stage, stageSeconds({ blocks: stageBlocks.get(String(row.source_id)) || [], log: row.stage_log, stage: stage.stage, now: new Date() }));
   const formatDate = (date, options) => new Intl.DateTimeFormat('ru',{...options,...(date.slice(0,4)!==today.slice(0,4)?{year:'numeric'}:{})}).format(new Date(`${date}T12:00:00`));
   const dateLabel = date => date===today?'Сегодня':date===shiftDay(today,1)?'Завтра':date===shiftDay(today,-1)?'Вчера':formatDate(date,{day:'numeric',month:'short'});
   function effort(row) {
@@ -111,19 +122,30 @@ export function mountCalendarTasks(host, dependencies) {
       if(overdue)date.setAttribute('aria-label',`${when}, просрочено. Изменить дату`);
       meta.append(date);
     }
-    const stage=stageLabel(row.stage), waiting=!!row.waiting;
-    // Stages belong to work; any task keeps a stage it already has. Instant tasks have none.
-    if(!done&&!instant&&(stage||waiting||row.sphere==='work')){
+    // Stages belong to a task with a process (2026-09-25); instant and closed tasks show none.
+    const stage=!done&&!instant?taskStage(row,processes):null;
+    if(stage){
+      const group=node('span','ct-stage-group');
       const chip=control('ct-stage',null,()=>openStageMenu(id,chip));
-      if(stage)chip.append(node('span','ct-stage-label',stage));
-      if(waiting)chip.append(node('span','ct-waiting','жду ответа'));
-      if(!stage&&!waiting){chip.textContent='Стадия';chip.classList.add('is-empty');}
-      chip.title='Изменить стадию';chip.setAttribute('aria-label',`Стадия: ${stage||'не выбрана'}${waiting?', жду ответа':''}. Изменить`);
+      if(stage.label)chip.append(node('span','ct-stage-label',stage.label));
+      // «Жду ответа»: a small hourglass after the stage name.
+      if(stage.waiting){const mark=node('span','ct-waiting');mark.innerHTML=WAIT_ICON;mark.append(node('span','ct-visually-hidden','жду ответа'));chip.append(mark);}
+      if(!stage.label&&!stage.waiting){chip.textContent='Стадия';chip.classList.add('is-empty');}
+      chip.classList.toggle('is-deleted',stage.deleted);
+      chip.title=stageTitleOf(row,stage);chip.setAttribute('aria-label',`Стадия: ${stage.label||'не выбрана'}${stage.waiting?', жду ответа':''}. Выбрать стадию`);
       chip.setAttribute('aria-haspopup','menu');chip.setAttribute('aria-expanded','false');chip.disabled=busy;chip.dataset.taskId=id;chip.dataset.taskControl='stage';
-      meta.append(chip);
+      group.append(chip);
+      // One tap to the next stage; at the last stage there is no arrow.
+      if(stage.next){
+        const next=control('ct-stage-next',null,()=>void advance(id));next.innerHTML=ARROW_ICON;
+        next.title=`${stage.stage?'Дальше':'Начать'}: ${stage.next.title}`;next.setAttribute('aria-label',`Следующая стадия «${stage.next.title}»: ${row.title}`);
+        next.disabled=busy;next.dataset.taskId=id;next.dataset.taskControl='stage-next';group.append(next);
+      }
+      meta.append(group);
     }
     const work=effort(row);if(work.text){const estimate=node('span','ct-estimate',work.text);estimate.title=work.hint;meta.append(estimate);}
-    if(sphere&&state.sphere!=='work'&&state.sphere!=='home'){const label=node('span','ct-sphere',sphere);label.title=`Сфера: ${sphere}`;meta.append(label);}
+    // A row names its sphere unless the switch already does.
+    if(sphere&&state.sphere!=='work'&&!state.personal&&!(state.sphere==='personal'&&row.sphere==='personal')){const label=node('span','ct-sphere',sphere);label.title=`Сфера: ${sphere}`;meta.append(label);}
     // A goal group already names the top-level goal; the row keeps the sub-goal.
     const goalId=goalFor(row), chain=goalParts(goalId), parts=byGoal&&section.startsWith('goal:')?chain.slice(1):chain;
     if(parts.length&&!(state.goal&&String(goalId)===state.goal)){const goal=node('span','ct-goal',parts.at(-1));goal.title=chain.join(' / ');meta.append(goal);}
@@ -165,6 +187,21 @@ export function mountCalendarTasks(host, dependencies) {
     return box;
   }
   const focusBulk = kind => { if(!disposed)(host.querySelector(`[data-tasks-bulk="${kind}"]`)||heading).focus({preventScroll:true}); };
+  // The second row inside «Личное»: shown only when several spheres are present.
+  function renderPersonal(matching) {
+    const box=q('personal'), counts=new Map(PERSONAL_TABS.map(([id])=>[id,0]));
+    for(const row of matching.filter(item=>bucketOf(item)==='personal')){counts.set('',counts.get('')+1);counts.set(personalOf(row),counts.get(personalOf(row))+1);}
+    const present=PERSONAL_TABS.filter(([id])=>id&&counts.get(id)>0);
+    box.hidden=state.sphere!=='personal'||(present.length<2&&!state.personal);
+    if(box.hidden){box.replaceChildren();return;}
+    const focused=box.contains(doc.activeElement)?doc.activeElement.dataset.tasksPersonalOption:null;
+    box.replaceChildren(...PERSONAL_TABS.filter(([id])=>!id||counts.get(id)>0||id===state.personal).map(([id,label])=>{
+      const button=node('button');button.type='button';button.dataset.tasksPersonalOption=id;button.setAttribute('aria-pressed',String(id===state.personal));
+      button.append(node('span',null,label),node('span','ct-sphere-count',String(counts.get(id))));button.setAttribute('aria-label',`${label}: ${counts.get(id)}`);
+      return button;
+    }));
+    if(focused!=null)box.querySelector(`[data-tasks-personal-option="${focused}"]`)?.focus({preventScroll:true});
+  }
   function render() {
     if(disposed||!ready)return;
     const focused=doc.activeElement, focusId=focused?.dataset.taskId, focusAction=focused?.dataset.taskControl, focusedBulk=focused?.dataset.tasksBulk;
@@ -174,6 +211,7 @@ export function mountCalendarTasks(host, dependencies) {
     const counts=new Map(SPHERE_TABS.map(([id])=>[id,0]));
     for(const row of matching){counts.set('',counts.get('')+1);counts.set(bucketOf(row),counts.get(bucketOf(row))+1);}
     const byGoal=state.groupBy==='goal'&&state.filter!=='completed';
+    renderPersonal(matching);
     const visible=matching.filter(matchesSphere).map(row=>({row,section:sectionOf(row,byGoal)})).sort((a,b)=>a.section.rank-b.section.rank||a.section.name.localeCompare(b.section.name,'ru')||a.section.id.localeCompare(b.section.id)
       ||(byGoal?groupIndex(a.row,today)-groupIndex(b.row,today):0)||(Number(b.row.priority)||0)-(Number(a.row.priority)||0)||(a.row.date||'9999').localeCompare(b.row.date||'9999')||compareTaskTime(a.row,b.row)||a.row.title.localeCompare(b.row.title,'ru')||taskKey(a.row).localeCompare(taskKey(b.row)));
     shown=new Set(visible.map(({row})=>taskKey(row)));
@@ -206,10 +244,14 @@ export function mountCalendarTasks(host, dependencies) {
     if(disposed||busy||canCommit&&!canCommit())return;
     const request=++revision;host.setAttribute('aria-busy','true');if(!ready)message.textContent='Загружаем задачи…';
     try{
-      const result=await Promise.all([invoke('get_calendar_tasks',{includeCompleted:true}),invoke('get_goals',{tabName:null}),invoke('get_calendar_task_goals')]);
+      const result=await Promise.all([invoke('get_calendar_tasks',{includeCompleted:true}),invoke('get_goals',{tabName:null}),invoke('get_calendar_task_goals'),loadProcesses(invoke)]);
       if(disposed||request!==revision||canCommit&&!canCommit())return;
       if(result.some(value=>!Array.isArray(value)))throw new Error('Invalid task response');
-      rows=[...new Map(result[0].filter(row=>row.source_type==='note'&&!row.readonly&&!row.archived).map(row=>[taskKey(row),row])).values()];goals=result[1];links=result[2];ready=true;today=dayOf(new Date());
+      const nextRows=[...new Map(result[0].filter(row=>row.source_type==='note'&&!row.readonly&&!row.archived).map(row=>[taskKey(row),row])).values()];
+      // Time per stage is context for the tooltip; a failed read leaves it empty.
+      const blocks=await loadStageBlocks(invoke,nextRows.filter(row=>!closed(row)&&!isInstantTask(row)&&taskStage(row,result[3])).map(row=>row.source_id));
+      if(disposed||request!==revision||canCommit&&!canCommit())return;
+      rows=nextRows;goals=result[1];links=result[2];processes=result[3];stageBlocks=blocks;ready=true;today=dayOf(new Date());
       goalFilter.replaceChildren(new win.Option('Любая цель',''),new win.Option('Без цели','none'),...goals.map(goal=>new win.Option(goalPath(goal.id),String(goal.id))));
       if(state.goal&&!['none',...goals.map(goal=>String(goal.id))].includes(state.goal))state.goal='';goalFilter.value=state.goal;
       message.textContent=feedback;q('retry').hidden=true;render();
@@ -246,7 +288,7 @@ export function mountCalendarTasks(host, dependencies) {
     const title=addInput.value.trim();
     if(!title){addInput.value='';showAdd('');return;}
     if(title.length>500){showAdd('Сократи название задачи до 500 символов.',true);return;}
-    const sphere=state.sphere==='work'||state.sphere==='home'?state.sphere:'', dueDate=state.filter==='today'?dayOf(new Date()):null;
+    const sphere=state.sphere==='work'?'work':state.sphere!=='personal'?'':state.personal==='none'?'':state.personal||'personal', dueDate=state.filter==='today'?dayOf(new Date()):null;
     adding=true;addForm.setAttribute('aria-busy','true');addInput.readOnly=true;showAdd('');
     try{
       const id=await invoke('save_calendar_task',{id:null,title,dueDate,time:'',estimateMinutes:null,goalId:null,expectedVersion:null,important:false,taskKind:'normal',sphere});
@@ -263,16 +305,36 @@ export function mountCalendarTasks(host, dependencies) {
     if(current.trigger.isConnected)current.trigger.setAttribute('aria-expanded','false');
     if(returnFocus&&!disposed)restore(current.id,'stage');
   }
-  // Stage menu: seven work stages, «Без стадии» and the «Жду ответа» mark.
+  // The arrow: the next stage of the task's process in one tap.
+  async function advance(id) {
+    const row=rows.find(item=>taskKey(item)===id), stage=row&&taskStage(row,processes);
+    if(!stage?.next||busy||disposed)return;
+    closeStageMenu(false);busy=true;revision++;feedback='';message.textContent='';render();
+    let ok=false;
+    try{
+      const result=await invoke('set_calendar_task_stage',{id:String(row.source_id),stage:stage.next.id,waiting:null});
+      if(disposed)return;
+      rows=rows.map(item=>taskKey(item)===id?{...item,process:result?.process??item.process,stage:typeof result?.stage==='string'?result.stage:stage.next.id,waiting:typeof result?.waiting==='boolean'?result.waiting:item.waiting,stage_log:result?.stage_log??item.stage_log}:item);
+      ok=true;
+    }catch{}
+    finally{
+      if(!disposed){
+        busy=false;render();
+        if(ok){say(`Стадия: ${stage.next.title}.`);notifyChange();}else say('Не удалось перейти к следующей стадии. Повтори.',true);
+        restore(id,findButton(id,'stage-next')?'stage-next':'stage');
+      }
+    }
+  }
+  // Stage menu (secondary path): the stages of the task's process, «Без стадии» and «Жду ответа».
   function openStageMenu(id, trigger) {
     const current=stageMenu?.id===id;closeStageMenu(false);if(current)return;
-    const row=rows.find(item=>taskKey(item)===id);if(!row||busy)return;
+    const row=rows.find(item=>taskKey(item)===id), state=row&&taskStage(row,processes);if(!state||busy)return;
     const menu=node('div','ct-stage-menu');menu.setAttribute('role','menu');menu.setAttribute('aria-label',`Стадия: ${row.title}`);menu.dataset.tasksStageMenu='';
-    // An unknown stage from a newer version is kept when only «Жду ответа» changes.
-    const stage=stageLabel(row.stage)?row.stage:'', waiting=!!row.waiting, items=[];
+    // A deleted stage is kept when only «Жду ответа» changes (its stage is sent as null).
+    const stage=state.stage, waiting=state.waiting, items=[];
     const option=(label,role,checked,values)=>{const button=control('ct-stage-option',label,()=>void setStage(id,values));button.setAttribute('role',role);button.setAttribute('aria-checked',String(checked));button.tabIndex=-1;menu.append(button);items.push(button);return button;};
-    menu.append(node('p','ct-stage-menu-title','Стадия'));
-    for(const [value,label] of TASK_STAGES)option(label,'menuitemradio',stage===value,{stage:value,waiting}).dataset.stage=value;
+    menu.append(node('p','ct-stage-menu-title',state.processTitle));
+    for(const item of state.stages)option(item.title,'menuitemradio',stage===item.id,{stage:item.id,waiting}).dataset.stage=item.id;
     option('Без стадии','menuitemradio',!stage,{stage:'',waiting}).dataset.stage='';
     const line=node('div','ct-stage-separator');line.setAttribute('role','separator');menu.append(line);
     option('Жду ответа','menuitemcheckbox',waiting,{stage:null,waiting:!waiting}).dataset.stageWaiting='';
@@ -303,8 +365,8 @@ export function mountCalendarTasks(host, dependencies) {
       const sourceId=rows.find(row=>taskKey(row)===id)?.source_id??id.slice(id.indexOf(':')+1);
       const result=await invoke('set_calendar_task_stage',{id:String(sourceId),stage:values.stage,waiting:values.waiting});
       if(disposed)return;
-      const next={stage:typeof result?.stage==='string'?result.stage:values.stage,waiting:typeof result?.waiting==='boolean'?result.waiting:values.waiting};
-      rows=rows.map(row=>taskKey(row)===id?{...row,...next}:row);
+      rows=rows.map(row=>taskKey(row)===id?{...row,stage:typeof result?.stage==='string'?result.stage:values.stage??row.stage,waiting:typeof result?.waiting==='boolean'?result.waiting:values.waiting,
+        ...(result?.process!=null?{process:result.process}:{}),...(Array.isArray(result?.stage_log)?{stage_log:result.stage_log}:{})}:row);
       if(stageMenu===current)closeStageMenu(false);
       render();restore(id,'stage');notifyChange();
     }catch{
@@ -314,7 +376,8 @@ export function mountCalendarTasks(host, dependencies) {
   const disposeMenu=mountMenu?.(host,{getRecord:item=>rows.find(row=>taskKey(row)===item.dataset.contextRecord),restoreFocus:(item,trigger)=>restore(item.dataset.contextRecord,'recordMenu' in trigger.dataset?'menu':'open')});
   const choose=(key,value)=>{state[key]=value;state.page=0;confirming=null;render();};
   host.querySelectorAll('[data-tasks-filter]').forEach(el=>el.addEventListener('click',()=>choose('filter',el.dataset.tasksFilter)));
-  host.querySelectorAll('[data-tasks-sphere]').forEach(el=>el.addEventListener('click',()=>choose('sphere',el.dataset.tasksSphere)));
+  host.querySelectorAll('[data-tasks-sphere]').forEach(el=>el.addEventListener('click',()=>{state.personal='';choose('sphere',el.dataset.tasksSphere);}));
+  q('personal').addEventListener('click',event=>{const button=event.target.closest('[data-tasks-personal-option]');if(button){choose('personal',button.dataset.tasksPersonalOption);q('personal').querySelector(`[data-tasks-personal-option="${button.dataset.tasksPersonalOption}"]`)?.focus({preventScroll:true});}});
   host.querySelectorAll('[data-tasks-group-by]').forEach(el=>el.addEventListener('click',()=>choose('groupBy',el.dataset.tasksGroupBy)));
   search.addEventListener('input',()=>choose('search',search.value));goalFilter.addEventListener('change',()=>choose('goal',goalFilter.value));
   addForm.addEventListener('submit',event=>{event.preventDefault();void add();});
@@ -325,8 +388,10 @@ export function mountCalendarTasks(host, dependencies) {
   addInput.addEventListener('input',()=>{if(!addStatus.classList.contains('is-error'))showAdd('');});
   q('retry').addEventListener('click',()=>void refresh());for(const [name,delta]of[['prev',-1],['next',1]])q(name).addEventListener('click',()=>{state.page+=delta;render();heading.focus();});
   const onChange=event=>{if(queued||disposed)return;queued=true;queueMicrotask(()=>{queued=false;void refresh(event.detail?.remoteSync?event.detail.canCommit:null);});};
-  win.addEventListener('task-state-changed',onChange);win.addEventListener('hanni:calendar-refresh',onChange);win.addEventListener('focus',onChange);
-  const timer=win.setInterval(()=>{if(dayOf(new Date())!==today)void refresh();},30000);
+  win.addEventListener('task-state-changed',onChange);win.addEventListener('hanni:calendar-refresh',onChange);win.addEventListener('hanni:processes-changed',onChange);win.addEventListener('focus',onChange);
+  // Stage tooltips of running tasks follow their timer.
+  const updateStageTitles=()=>host.querySelectorAll('[data-task-control="stage"]').forEach(chip=>{const row=rows.find(item=>taskKey(item)===chip.dataset.taskId),stage=row?.is_active&&taskStage(row,processes);if(stage)chip.title=stageTitleOf(row,stage);});
+  const timer=win.setInterval(()=>{if(dayOf(new Date())!==today)void refresh();else updateStageTitles();},30000);
   void refresh();
-  return ()=>{disposed=true;revision++;closeStageMenu(false);disposeMenu?.();win.clearInterval(timer);win.removeEventListener('task-state-changed',onChange);win.removeEventListener('hanni:calendar-refresh',onChange);win.removeEventListener('focus',onChange);};
+  return ()=>{disposed=true;revision++;closeStageMenu(false);disposeMenu?.();win.clearInterval(timer);win.removeEventListener('task-state-changed',onChange);win.removeEventListener('hanni:calendar-refresh',onChange);win.removeEventListener('hanni:processes-changed',onChange);win.removeEventListener('focus',onChange);};
 }

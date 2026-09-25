@@ -13,6 +13,37 @@
 .calendar-settings-dialog .setting-pill.active, .calendar-settings-dialog .setting-pill.active:hover { color:var(--accent-contrast); background:var(--accent-fill); border-color:var(--accent-fill); }
 .calendar-settings-status { min-height:20px; margin:0; color:var(--text-secondary); font-size:12px; }
 .calendar-settings-hint { margin:8px 0 0; color:var(--text-secondary); font-size:12px; }
+/* «Процессы задач» (2026-09-25): name, ordered stages with ↑ ↓ ×, explicit save and cancel. */
+.calendar-processes { display:grid; gap:10px; }
+.calendar-processes h3 { margin:0; font-size:14px; font-weight:600; color:var(--text-primary); }
+.calendar-processes-hint, .calendar-processes-status { margin:0; font-size:12px; line-height:1.5; color:var(--text-secondary); }
+.calendar-processes-status:empty { display:none; }
+.calendar-processes-status:focus { outline:0; }
+.calendar-processes-error { margin:0; font-size:12px; line-height:1.5; color:var(--danger, #b42318); }
+.calendar-processes-list { display:grid; gap:12px; }
+.calendar-processes .cp-process { display:grid; gap:10px; min-width:0; margin:0; padding:12px; border:1px solid var(--border-default); border-radius:10px; }
+.calendar-settings-dialog .calendar-processes .cp-legend, .calendar-processes .cp-legend { margin:0; padding:0 4px; font-size:11px; line-height:16px; font-weight:600; letter-spacing:.05em; text-transform:uppercase; color:var(--text-muted); }
+.calendar-processes .cp-title { display:grid; gap:6px; }
+.calendar-processes .cp-label { font-size:12px; font-weight:550; color:var(--text-secondary); }
+.calendar-processes input[type="text"] { box-sizing:border-box; width:100%; min-width:0; min-height:38px; padding:7px 10px; border:1px solid var(--border-default); border-radius:8px; background:var(--bg-page); color:var(--text-primary); font:inherit; font-size:13px; }
+.calendar-processes input[aria-invalid="true"] { border-color:var(--danger, #b42318); }
+.calendar-processes .cp-stages { display:grid; gap:4px; margin:0; padding:0; list-style:none; }
+.calendar-processes .cp-stage { display:grid; grid-template-columns:22px minmax(0,1fr) repeat(3,34px); align-items:center; gap:4px; }
+.calendar-processes .cp-number { font-size:12px; color:var(--text-muted); text-align:right; padding-right:4px; font-variant-numeric:tabular-nums; }
+.calendar-processes .cp-icon { width:34px; height:34px; min-height:0; padding:0; border:1px solid transparent; border-radius:8px; background:transparent; color:var(--text-secondary); font-size:15px; line-height:1; cursor:pointer; }
+.calendar-processes .cp-icon:hover:not(:disabled) { background:var(--bg-hover); color:var(--text-primary); border-color:var(--border-default); }
+.calendar-processes .cp-icon:disabled { opacity:.3; cursor:default; }
+.calendar-processes .cp-delete { font-size:18px; }
+.calendar-processes .cp-process-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.calendar-processes .cp-add, .calendar-processes .cp-remove, .calendar-processes .calendar-processes-add { justify-self:start; min-height:36px; padding:0 12px; border:1px dashed var(--border-default); border-radius:8px; background:transparent; color:var(--text-secondary); font:inherit; font-size:13px; cursor:pointer; }
+.calendar-processes .cp-remove { border-style:solid; }
+.calendar-processes .cp-add:hover:not(:disabled), .calendar-processes .cp-remove:hover, .calendar-processes .calendar-processes-add:hover:not(:disabled) { color:var(--text-primary); border-color:var(--border-hover); background:transparent; }
+.calendar-processes .calendar-processes-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.calendar-processes .calendar-processes-actions button { min-height:38px; padding:0 12px; font-size:13px; }
+.calendar-processes-actions [hidden], .calendar-processes [hidden] { display:none; }
+@media (max-width:600px) { .calendar-processes .cp-stage { grid-template-columns:18px minmax(0,1fr) repeat(3,40px); } .calendar-processes .cp-icon { width:40px; height:40px; } .calendar-processes input[type="text"] { min-height:40px; font-size:14px; } .calendar-processes .cp-process { padding:10px; } }
+/* Task details: the stage line and time per stage. */
+.calendar-mvp-dialog [data-record-stage-time] { color:var(--text-secondary); line-height:1.5; }
 
 /* ── Integrations page ── */
 

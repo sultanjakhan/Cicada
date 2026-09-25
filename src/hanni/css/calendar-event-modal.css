@@ -38,6 +38,20 @@
 .evm-modal .evm-task-row > .evm-field { flex: 1 1 0; margin: 0; }
 /* Stage (2026-09-24): the select and «Жду ответа» share one compact row. */
 .evm-modal .evm-stage-row .evm-waiting { flex: 1 1 0; margin: 0; min-height: 44px; }
+.evm-modal .evm-task-row > .evm-estimate { margin: 0; }
+/* Work or personal (2026-09-25): the first task choice, a two-button toggle; a personal task may name its sphere. */
+.evm-modal .evm-scope-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 16px; }
+.evm-modal .evm-scope { display: inline-flex; flex: 0 0 auto; gap: 6px; }
+.evm-modal .evm-scope-option { min-height: 40px; min-width: 104px; padding: 0 16px; border: 1px solid var(--border-default); border-radius: 999px; background: var(--bg-page); color: var(--text-secondary); font: inherit; font-size: 14px; cursor: pointer; }
+.evm-modal .evm-scope-option:hover { border-color: var(--border-hover); color: var(--text-primary); }
+.evm-modal .evm-scope-option[aria-pressed="true"] { border-color: var(--text-primary); color: var(--text-primary); font-weight: 600; box-shadow: inset 0 0 0 1px var(--text-primary); }
+.evm-modal .evm-sphere-fine { flex: 1 1 140px; min-width: 0; max-width: 220px; }
+.evm-modal .evm-sphere-fine .form-select { min-height: 44px; }
+/* Time per stage of a task with a process: one quiet line, the current stage stronger. */
+.evm-modal .evm-stage-time { margin: -6px 0 16px; color: var(--text-secondary); font-size: 12.5px; line-height: 1.55; }
+.stage-time-label { color: var(--text-primary); font-weight: 550; }
+.stage-time-part { white-space: nowrap; }
+.stage-time [data-stage-time-current] { color: var(--text-primary); font-weight: 600; }
 .evm-modal .evm-create-panel { display: grid; gap: 14px; margin: 0 0 8px; }
 .evm-modal .evm-end-day { margin-top: 8px; }
 .evm-modal .evm-end-toggle { min-height: 36px; padding: 6px 0; border: 0; background: transparent; color: var(--text-secondary); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
@@ -89,6 +103,11 @@
   .evm-modal .evm-heading h2 { font-size: 20px; }
   .evm-modal .evm-when-row { grid-template-columns: 1fr 1fr; }
   .evm-modal .evm-type-picker button { padding: 8px 4px; font-size: 13px; }
+  /* Toggle and the personal sphere share one line on the phone. */
+  .evm-modal .evm-scope-row { flex-wrap: nowrap; gap: 8px; }
+  .evm-modal .evm-scope { flex: 1 1 auto; min-width: 0; }
+  .evm-modal .evm-scope-option { flex: 1 1 0; min-width: 0; padding: 0 10px; }
+  .evm-modal .evm-sphere-fine { flex: 0 0 128px; }
   .evm-modal .evm-classify { grid-template-columns: 1fr; }
   .evm-modal summary span { display: block; margin: 5px 0 0 16px; }
   .evm-modal .evm-actions { display: grid; grid-template-columns: 1fr 1.4fr; padding: 12px 16px; }

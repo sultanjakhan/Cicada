@@ -2,13 +2,18 @@
 // today that are still open. Each row shows the task's total time against its
 // estimate, its work stage and goal. Start, pause, finish and cancel use the
 // shared native commands and never touch other running tasks.
+// 2026-09-25: a stage shows only for a task with a process; «→» moves to the
+// next stage, the label opens the menu, its tooltip gives time per stage.
+// Work and personal tasks get their own sub-headings when both are listed.
 import { ICONS } from './icons.js';
 import { readActiveBlocks, startCalendarExecution, sourceKey } from './calendar-execution.js';
-import { TASK_STAGES, stageLabel, isInstantTask } from './task-model.js';
+import { isInstantTask } from './task-model.js';
+import { loadProcesses, loadStageBlocks, stageSeconds, stageTimeTitle, taskStage } from './task-processes.js';
 
 const MORE_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></svg>';
 const WAIT_ICON = '<svg class="cip-stage-mark" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 1.5h5M3.5 10.5h5M4 1.5v1.3C4 4.1 6 4.8 6 6s-2 1.9-2 3.2v1.3M8 1.5v1.3C8 4.1 6 4.8 6 6s2 1.9 2 3.2v1.3"/></svg>';
-const CHEVRON = '<svg class="cip-stage-caret" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m2.5 4 2.5 2.5L7.5 4"/></svg>';
+const ARROW = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 7h8.5M7.5 3.5 11 7l-3.5 3.5"/></svg>';
+const SCOPES = [['work', 'Работа'], ['personal', 'Личное']];
 const RUNNABLE = ['note', 'event', 'schedule'];
 // Device-local memory of «Остановить»: { sourceKey: stoppedAtISO }. Not synchronized.
 export const HIDDEN_KEY = 'calendar_in_progress_hidden_v1';
@@ -55,7 +60,7 @@ export function mountCalendarInProgress(element, dependencies) {
   element.classList.add('calendar-in-progress');
   element.innerHTML = `<section class="cip-card" aria-labelledby="${prefix}-title" data-cip-card>
     <div class="cip-heading" data-cip-heading><h2 id="${prefix}-title" tabindex="-1" data-cip-title>В работе</h2><span class="cip-summary" data-cip-count></span></div>
-    <ul class="cip-list" data-cip-list></ul>
+    <div class="cip-lists" data-cip-list></div>
     <div class="cip-footer" data-cip-footer><button type="button" class="cip-launch" data-cip-launch aria-haspopup="dialog"><span aria-hidden="true">＋</span> Запустить ещё</button></div>
     <div class="cip-empty" data-cip-empty hidden><span class="cip-empty-text" data-cip-empty-text>Ничего не запущено</span><button type="button" class="cip-start" data-cip-launch data-cip-empty-launch aria-haspopup="dialog"><span class="cip-glyph" aria-hidden="true">${ICONS.play}</span>Запустить</button><button type="button" class="cip-start" data-cip-retry hidden>Повторить</button></div>
     <p class="cip-message" data-cip-message role="status" aria-live="polite"></p>
@@ -71,7 +76,8 @@ export function mountCalendarInProgress(element, dependencies) {
   };
   const findControl = (key, control) => [...element.querySelectorAll('[data-cip-control]')].find(button => button.dataset.cipKey === key && button.dataset.cipControl === control);
   const focusFallback = () => { if (!disposed && element.isConnected) (rows?.length ? title : q('empty-launch')).focus({ preventScroll: true }); };
-  const restore = (key, control) => { if (disposed || !element.isConnected) return; const button = findControl(key, control) || findControl(key, 'open'); if (button) button.focus({ preventScroll: true }); else focusFallback(); };
+  // After the last stage the arrow is gone: focus stays on the stage.
+  const restore = (key, control) => { if (disposed || !element.isConnected) return; const button = findControl(key, control) || (control === 'stage-next' && findControl(key, 'stage')) || findControl(key, 'open'); if (button) button.focus({ preventScroll: true }); else focusFallback(); };
 
   // Total recorded time of the task (all days) plus its running block(s), live.
   function secondsOf(row, now = clock()) {
@@ -93,24 +99,40 @@ export function mountCalendarInProgress(element, dependencies) {
   function renderTimes() {
     if (disposed || !rows) return;
     const now = clock();
-    for (const item of list.children) {
+    for (const item of list.querySelectorAll('.cip-row')) {
       const row = rows.find(value => value.key === item.dataset.contextRecord);
-      if (row?.running) paintTime(row, item.querySelector('[data-cip-time]'), item.querySelector('[data-cip-progress]'), now);
+      if (!row?.running) continue;
+      paintTime(row, item.querySelector('[data-cip-time]'), item.querySelector('[data-cip-progress]'), now);
+      const chip = item.querySelector('[data-cip-control="stage"]');
+      if (chip && row.stageState) chip.title = stageTitle(row, now);
     }
   }
-  function stageChip(row) {
+  // Timer work of this task inside each stage period, the running block included.
+  const stageTitle = (row, now = clock()) => stageTimeTitle(row.stageState, stageSeconds({ blocks: row.stageBlocks, log: row.stageLog, stage: row.stageState.stage, now }));
+  // The stage label opens the menu; «→» moves to the next stage in one tap.
+  function stageControl(row) {
+    const state = row.stageState, group = node('span', 'cip-stage-group');
     const chip = node('button', 'cip-stage'); chip.type = 'button';
     chip.dataset.cipControl = 'stage'; chip.dataset.cipKey = row.key; chip.disabled = busy;
     chip.setAttribute('aria-haspopup', 'menu'); chip.setAttribute('aria-expanded', String(menu?.key === row.key && menu.control === 'stage'));
-    const label = stageLabel(row.stage);
-    chip.classList.toggle('is-empty', !label && !row.waiting);
-    chip.classList.toggle('is-waiting', row.waiting);
-    const text = node('span', 'cip-stage-text', row.waiting ? ['Жду ответа', label].filter(Boolean).join(' · ') : label || 'Стадия');
-    chip.innerHTML = row.waiting ? WAIT_ICON : '';
-    chip.append(text); chip.insertAdjacentHTML('beforeend', CHEVRON);
-    const description = `Стадия: ${label || 'не выбрана'}${row.waiting ? ', жду ответа' : ''}`;
-    chip.title = description; chip.setAttribute('aria-label', `${description}. Изменить: ${row.title}`);
-    return chip;
+    const label = state.label;
+    chip.classList.toggle('is-empty', !label && !state.waiting);
+    chip.classList.toggle('is-waiting', state.waiting);
+    chip.classList.toggle('is-deleted', state.deleted);
+    chip.innerHTML = state.waiting ? WAIT_ICON : '';
+    // «Жду ответа» is the small hourglass before the stage name.
+    chip.append(node('span', 'cip-stage-text', label || (state.waiting ? 'Жду ответа' : 'Стадия')));
+    chip.title = stageTitle(row);
+    chip.setAttribute('aria-label', `Стадия: ${label || 'не выбрана'}${state.waiting ? ', жду ответа' : ''}. Выбрать стадию: ${row.title}`);
+    group.append(chip);
+    if (state.next) {
+      const next = node('button', 'cip-stage-next'); next.type = 'button'; next.innerHTML = ARROW;
+      next.dataset.cipControl = 'stage-next'; next.dataset.cipKey = row.key; next.disabled = busy;
+      next.title = `${state.stage ? 'Дальше' : 'Начать'}: ${state.next.title}`;
+      next.setAttribute('aria-label', `Следующая стадия «${state.next.title}»: ${row.title}`);
+      group.append(next);
+    }
+    return group;
   }
   function confirmPanel(row) {
     const panel = node('div', 'cip-confirm'); panel.setAttribute('role', 'group'); panel.setAttribute('aria-label', `Отменить запуск: ${row.title}`);
@@ -130,7 +152,7 @@ export function mountCalendarInProgress(element, dependencies) {
     const head = node('div', 'cip-line'); head.append(open, time);
     const content = node('div', 'cip-content'); content.append(head);
     const meta = node('div', 'cip-line cip-meta');
-    if (row.showStage) meta.append(stageChip(row));
+    if (row.stageState) meta.append(stageControl(row));
     if (row.goal) { const goal = node('span', 'cip-goal', row.goal); goal.title = `Цель: ${row.goal}`; meta.append(goal); }
     if (meta.childElementCount) content.append(meta);
     let bar = null;
@@ -158,7 +180,15 @@ export function mountCalendarInProgress(element, dependencies) {
     q('empty-launch').hidden = rows === null; q('retry').hidden = !(rows === null && failed);
     q('count').textContent = empty ? '' : summaryOf(rows);
     element.querySelectorAll('[data-cip-launch], [data-cip-retry]').forEach(button => { button.disabled = busy; });
-    list.replaceChildren(...(rows || []).map(renderRow));
+    // Work first, then personal; sub-headings only when both kinds are listed.
+    const groups = SCOPES.map(([id, label]) => ({ id, label, items: (rows || []).filter(row => row.scope === id) })).filter(group => group.items.length);
+    list.replaceChildren(...(groups.length > 1 ? groups : [{ items: rows || [] }]).flatMap(group => {
+      const ul = node('ul', 'cip-list'); ul.append(...group.items.map(renderRow));
+      if (!group.label) return [ul];
+      const heading = node('h3', 'cip-group', group.label); heading.id = `${prefix}-group-${group.id}`; heading.dataset.cipGroup = group.id;
+      ul.setAttribute('aria-labelledby', heading.id);
+      return [heading, ul];
+    }));
     message.textContent = feedback?.text || (rows && failed ? 'Не удалось обновить список. Показано последнее состояние.' : '');
     message.setAttribute('role', feedback?.error || (rows && failed) ? 'alert' : 'status');
     // An open menu follows its re-rendered trigger or closes with its row.
@@ -166,7 +196,7 @@ export function mountCalendarInProgress(element, dependencies) {
     if (focusKey && !focused.isConnected) restore(focusKey, focusControl);
   }
   async function load(today) {
-    const [running, blocks, hiddenValue] = await Promise.all([readActiveBlocks(invoke), invoke('get_timeline_blocks', { date: today }), invoke('get_ui_state', { key: HIDDEN_KEY }).catch(() => hiddenRaw)]);
+    const [running, blocks, hiddenValue, processes] = await Promise.all([readActiveBlocks(invoke), invoke('get_timeline_blocks', { date: today }), invoke('get_ui_state', { key: HIDDEN_KEY }).catch(() => hiddenRaw), loadProcesses(invoke)]);
     if (!Array.isArray(running) || !Array.isArray(blocks)) throw new Error('Invalid timeline response');
     const entries = new Map();
     const entry = block => {
@@ -221,13 +251,18 @@ export function mountCalendarInProgress(element, dependencies) {
       row.baseSeconds = Number.isFinite(Number(record?.actual_minutes)) && record?.actual_minutes != null ? Number(record.actual_minutes) * 60 : row.closedSeconds;
       const instant = row.source_type === 'note' && isInstantTask(record || row.active);
       row.estimate = row.source_type === 'note' && !instant && Number(record?.duration_minutes) > 0 ? Number(record.duration_minutes) : null;
-      row.showStage = row.source_type === 'note' && !instant;
-      row.stage = String(record?.stage ?? row.active?.stage ?? '');
-      row.waiting = !!(record?.waiting ?? row.active?.waiting);
+      // A stage belongs to a task with a process; instant tasks have none.
+      const task = row.source_type === 'note' ? record || row.active : null;
+      row.processes = processes;
+      row.stageState = task && !instant ? taskStage(task, processes) : null;
+      row.stageLog = task?.stage_log || [];
+      row.scope = task?.sphere === 'work' ? 'work' : 'personal';
       const link = links.find(value => sourceKey(value) === row.key);
       row.goal = link ? goals.find(goal => String(goal.id) === String(link.goal_id))?.title || '' : '';
       result.push(row);
     }
+    const stageBlocks = await loadStageBlocks(invoke, result.filter(row => row.stageState).map(row => row.source_id));
+    for (const row of result) row.stageBlocks = stageBlocks.get(row.source_id) || [];
     const raw = JSON.stringify(nextHidden);
     if (raw !== JSON.stringify(readHidden(hiddenValue))) void saveHidden(nextHidden).catch(() => {});
     else { hidden = nextHidden; hiddenRaw = hiddenValue ?? null; }
@@ -261,7 +296,7 @@ export function mountCalendarInProgress(element, dependencies) {
     if (disposed || busy) return;
     closeMenu(false);
     busy = true; feedback = null; revision++; confirming = null; render();
-    let control = { finish: 'open', stop: 'open', cancel: 'open', stage: 'stage', waiting: 'stage' }[action.kind] || 'toggle';
+    let control = { finish: 'open', stop: 'open', cancel: 'open', stage: 'stage', waiting: 'stage', advance: 'stage-next' }[action.kind] || 'toggle';
     try {
       if (action.kind === 'pause') await pauseAll(row);
       else if (action.kind === 'start') await startCalendarExecution(invoke, { source_type: row.source_type, source_id: row.source_id, completion_date: row.completion_date });
@@ -271,9 +306,12 @@ export function mountCalendarInProgress(element, dependencies) {
         await saveHidden({ ...hidden, [row.key]: clock().toISOString() });
       } else if (action.kind === 'cancel') {
         for (const blockId of row.blockIds) await invoke('cancel_task_block', { blockId });
-      } else if (action.kind === 'stage' || action.kind === 'waiting') {
-        const updated = await invoke('set_calendar_task_stage', { id: row.source_id, stage: action.kind === 'stage' ? action.stage : null, waiting: action.kind === 'waiting' ? action.waiting : null });
-        if (updated && typeof updated === 'object') { row.stage = String(updated.stage ?? ''); row.waiting = !!updated.waiting; }
+      } else if (action.kind === 'stage' || action.kind === 'advance' || action.kind === 'waiting') {
+        const updated = await invoke('set_calendar_task_stage', { id: row.source_id, stage: action.kind === 'waiting' ? null : action.stage, waiting: action.kind === 'waiting' ? action.waiting : null });
+        if (updated && typeof updated === 'object') {
+          row.record = { ...row.record, process: updated.process ?? row.stageState.processId, stage: String(updated.stage ?? ''), waiting: !!updated.waiting, stage_log: updated.stage_log ?? row.stageLog };
+          row.stageState = taskStage(row.record, row.processes); row.stageLog = row.record.stage_log || [];
+        }
       } else if (row.source_type === 'note') {
         // Pause is idempotent; note completion atomically rejects a new running block.
         await pauseAll(row);
@@ -286,11 +324,11 @@ export function mountCalendarInProgress(element, dependencies) {
       feedback = { text: {
         pause: 'Задача на паузе.', start: 'Задача снова в работе.', finish: 'Задача завершена.',
         stop: 'Задача остановлена и убрана из «В работе». Время сохранено.', cancel: 'Запуск отменён. Его время не учтено.',
-        stage: action.stage ? `Стадия: ${stageLabel(action.stage)}.` : 'Стадия снята.', waiting: action.waiting ? 'Отмечено: жду ответа.' : 'Отметка «Жду ответа» снята.',
+        stage: action.stage ? `Стадия: ${action.label}.` : 'Стадия снята.', advance: `Стадия: ${action.label}.`, waiting: action.waiting ? 'Отмечено: жду ответа.' : 'Отметка «Жду ответа» снята.',
       }[action.kind] };
     } catch (error) {
       feedback = { error: true, text: errorText(error) || 'Не удалось выполнить действие. Обнови экран и повтори.' };
-      control = { finish: 'finish', stop: 'menu', cancel: 'menu', stage: 'stage', waiting: 'stage' }[action.kind] || 'toggle';
+      control = { finish: 'finish', stop: 'menu', cancel: 'menu', stage: 'stage', waiting: 'stage', advance: 'stage-next' }[action.kind] || 'toggle';
     } finally {
       busy = false;
       notify(row);
@@ -356,12 +394,14 @@ export function mountCalendarInProgress(element, dependencies) {
     menu = state; trigger?.setAttribute('aria-expanded', 'true');
     (buttons.find(button => button.classList.contains('is-checked') && button.getAttribute('role') === 'menuitemradio') || buttons[0])?.focus({ preventScroll: true });
   }
+  // The secondary path: go back, pick any stage of the task's process, or «Жду ответа».
   function openStageMenu(row, trigger) {
+    const state = row.stageState;
     const items = [
-      ...TASK_STAGES.map(([id, label]) => ({ id: `stage:${id}`, label, role: 'menuitemradio', checked: row.stage === id, run: () => void act(row, { kind: 'stage', stage: id }) })),
-      { id: 'stage:', label: 'Без стадии', role: 'menuitemradio', checked: !stageLabel(row.stage), run: () => void act(row, { kind: 'stage', stage: '' }) },
+      ...state.stages.map(stage => ({ id: `stage:${stage.id}`, label: stage.title, role: 'menuitemradio', checked: state.stage === stage.id, run: () => void act(row, { kind: 'stage', stage: stage.id, label: stage.title }) })),
+      { id: 'stage:', label: 'Без стадии', role: 'menuitemradio', checked: !state.stage, run: () => void act(row, { kind: 'stage', stage: '' }) },
       { separator: true },
-      { id: 'waiting', label: 'Жду ответа', role: 'menuitemcheckbox', checked: row.waiting, run: () => void act(row, { kind: 'waiting', waiting: !row.waiting }) },
+      { id: 'waiting', label: 'Жду ответа', role: 'menuitemcheckbox', checked: state.waiting, run: () => void act(row, { kind: 'waiting', waiting: !state.waiting }) },
     ];
     openMenu(row, 'stage', trigger, items, `Стадия: ${row.title}`);
   }
@@ -384,6 +424,7 @@ export function mountCalendarInProgress(element, dependencies) {
     if (control === 'open') openTask?.(row.record, () => restore(row.key, 'open'));
     else if (control === 'toggle') void act(row, { kind: row.running ? 'pause' : 'start' });
     else if (control === 'finish') void act(row, { kind: 'finish' });
+    else if (control === 'stage-next' && row.stageState?.next) void act(row, { kind: 'advance', stage: row.stageState.next.id, label: row.stageState.next.title });
     else if (control === 'stage' || control === 'menu') {
       if (menu?.key === row.key && menu.control === control) { closeMenu(true); return; }
       if (control === 'stage') openStageMenu(row, button); else openActionsMenu(row, button);
@@ -409,14 +450,14 @@ export function mountCalendarInProgress(element, dependencies) {
   element.addEventListener('click', onClick);
   element.addEventListener('contextmenu', onContextMenu);
   element.addEventListener('keydown', onKeydown);
-  for (const name of ['task-state-changed', 'hanni:calendar-refresh', 'hanni:recurring-changed', 'focus']) win.addEventListener(name, onChange);
+  for (const name of ['task-state-changed', 'hanni:calendar-refresh', 'hanni:recurring-changed', 'hanni:processes-changed', 'focus']) win.addEventListener(name, onChange);
   const timer = win.setInterval(() => { if (dayOf(clock()) !== day && !busy) void refresh(); else renderTimes(); }, 1000);
   render();
   const firstLoad = refresh();
   const dispose = () => {
     disposed = true; revision++; closeMenu(false); win.clearInterval(timer);
     element.removeEventListener('click', onClick); element.removeEventListener('contextmenu', onContextMenu); element.removeEventListener('keydown', onKeydown);
-    for (const name of ['task-state-changed', 'hanni:calendar-refresh', 'hanni:recurring-changed', 'focus']) win.removeEventListener(name, onChange);
+    for (const name of ['task-state-changed', 'hanni:calendar-refresh', 'hanni:recurring-changed', 'hanni:processes-changed', 'focus']) win.removeEventListener(name, onChange);
   };
   // The header indicator leads here; wait for the first read so focus lands on a visible control.
   dispose.focus = async () => {

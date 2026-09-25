@@ -22,6 +22,7 @@ import { loadCalendarPreferences } from './calendar-display-preferences.js';
 import { mountGoalGlance, attachDevelopmentTask } from './calendar-development.js';
 import { openCalendarGoalPopup } from './calendar-goal-popup.js';
 import { sphereLabel, isInstantTask } from './task-model.js';
+import { loadProcesses, mountStageTime, taskStage } from './task-processes.js';
 
 let disposeNow = null, disposeTable = null, disposePanel = null, disposeTasks = null;
 let disposeRecurring = null, goalPopup = null, tasksDialog = null;
@@ -215,6 +216,8 @@ async function showRecord(record, returnFocus = null, initialFocus = null) {
   void invoke('get_calendar_task_minutes', { sourceType: record.source_type, sourceId: String(record.source_id), completionDate: record.completion_date || record.date || null })
     .then(minutes => { if (modal.isConnected) workTime.textContent = `Учтено времени: ${minutes} мин`; })
     .catch(() => { if (modal.isConnected) workTime.textContent = 'Учтённое время сейчас недоступно.'; });
+  // A task with a process (2026-09-25): its stage and the time spent in each stage.
+  if (record.source_type === 'note') void showStageDetails(modal, record);
   try {
     const [goals, links] = await Promise.all([invoke('get_goals', { tabName: null }), invoke('get_calendar_task_goals')]);
     if (!modal.isConnected) return;
@@ -236,6 +239,21 @@ async function showRecord(record, returnFocus = null, initialFocus = null) {
     submit(modal, () => invoke('set_calendar_task_goal', { sourceType: record.source_type, sourceId: String(record.source_id), goalId: select.value ? String(select.value) : null }));
     if (initialFocus === 'goal') select.focus();
   } catch { modal.querySelector('[role=status]').textContent = 'Не удалось загрузить цель. Закрой и открой запись повторно.'; }
+}
+
+async function showStageDetails(modal, record) {
+  const [processes, detail] = await Promise.all([loadProcesses(invoke), invoke('get_calendar_task', { id: String(record.source_id) }).catch(() => null)]);
+  if (!modal.isConnected || isInstantTask(detail || record)) return;
+  // The stored row carries the full stage history; the list row is the fallback.
+  const row = { ...record, ...(detail ? { process: detail.process, stage: detail.stage, waiting: detail.waiting, stage_log: detail.stage_log } : {}) };
+  const stage = taskStage(row, processes);
+  if (!stage) return;
+  const line = document.createElement('p'); line.dataset.recordStage = '';
+  line.textContent = [stage.processTitle, stage.label || 'Стадия не выбрана', stage.waiting && 'жду ответа'].filter(Boolean).join(' · ');
+  const time = document.createElement('p'); time.dataset.recordStageTime = '';
+  modal.querySelector('[data-record-work-time]').after(line, time);
+  const stop = mountStageTime(time, { invoke, row, processes });
+  modal.addEventListener('close', stop, { once: true });
 }
 
 function mountRecordMenu(element, options) {

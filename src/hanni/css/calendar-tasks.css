@@ -52,6 +52,13 @@
 .ct-spheres button:focus-visible { outline-offset: -2px; }
 .ct-sphere-count { color: var(--text-faint); font-weight: 500; font-variant-numeric: tabular-nums; }
 .ct-spheres button[aria-pressed="true"] .ct-sphere-count { color: var(--text-muted); }
+/* Inside «Личное»: a lighter second row of spheres. */
+.ct-subspheres { display: flex; gap: 2px; min-width: 0; margin: 4px 0 0; padding-left: 4px; overflow-x: auto; scrollbar-width: none; }
+.ct-subspheres::-webkit-scrollbar { display: none; }
+.ct-subspheres button { display: inline-flex; flex: none; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border: 0; border-radius: 6px; background: transparent; color: var(--text-muted); font-size: 12.5px; white-space: nowrap; cursor: pointer; }
+.ct-subspheres button:hover { color: var(--text-primary); background: var(--ct-hover); }
+.ct-subspheres button[aria-pressed="true"] { color: var(--text-primary); font-weight: 500; text-decoration: underline; text-underline-offset: 4px; text-decoration-thickness: 1.5px; }
+.ct-subspheres button:focus-visible { outline-offset: -2px; }
 
 /* Quick add reads as the first row of the list. */
 .ct-add { display: grid; grid-template-columns: 20px minmax(0,1fr); align-items: center; column-gap: 12px; margin: 8px 0 0; padding: 0 4px 0 12px; border-bottom: 1px solid var(--border-subtle); transition: border-color .12s; }
@@ -118,20 +125,30 @@
 .ct-estimate { font-variant-numeric: tabular-nums; }
 .ct-kind { color: var(--text-secondary); }
 .ct-sphere { color: var(--text-secondary); }
-.ct-date, .ct-stage { padding: 0 0 0 13px; border: 0; background: transparent; color: var(--text-muted) !important; font-size: 12px !important; line-height: 16px; cursor: pointer; }
+.ct-date { padding: 0 0 0 13px; border: 0; background: transparent; color: var(--text-muted) !important; font-size: 12px !important; line-height: 16px; cursor: pointer; }
+.ct-stage, .ct-stage-next { position: relative; padding: 0; border: 0; background: transparent; color: var(--text-muted) !important; font-size: 12px !important; line-height: 16px; cursor: pointer; }
 .ct-date { font-variant-numeric: tabular-nums; }
 /* The hit area fills the padding band of the meta line (it clips anything larger). */
-.ct-date::after, .ct-stage::after { content: ''; position: absolute; inset: -3px -3px -3px 9px; }
+.ct-date::after { content: ''; position: absolute; inset: -3px -3px -3px 9px; }
+.ct-stage::after, .ct-stage-next::after { content: ''; position: absolute; inset: -3px -2px; }
 .ct-date:hover:not(:disabled), .ct-stage:hover:not(:disabled) { color: var(--text-primary) !important; text-decoration: underline; text-underline-offset: 2px; }
 .ct-date.is-overdue { color: var(--ct-danger) !important; font-weight: 500; }
 .ct-date:disabled, .ct-stage:disabled { cursor: default; }
 .calendar-tasks .ct-date:focus-visible, .calendar-tasks .ct-stage:focus-visible { outline: 0; text-decoration: underline 2px; text-underline-offset: 3px; color: var(--text-primary) !important; }
-/* Stage of a work task, with «жду ответа» as a small pill. */
+/* Stage of a task with a process (2026-09-25): label (menu) and «→» (next stage), «жду ответа» as a small pill. */
+.ct-stage-group { display: inline-flex; align-items: center; gap: 6px; }
 .ct-stage { display: inline-flex; align-items: center; gap: 5px; }
+.ct-stage.is-deleted .ct-stage-label { font-style: italic; }
+.ct-stage-next { display: inline-grid; place-items: center; width: 24px; height: 16px; border: 1px solid var(--border-default) !important; border-radius: 8px; color: var(--text-secondary) !important; background: var(--bg-card); }
+.ct-stage-next svg { display: block; }
+.ct-stage-next:hover:not(:disabled) { color: var(--text-primary) !important; border-color: var(--border-hover) !important; }
+.ct-stage-next:disabled { cursor: default; opacity: .5; }
+.calendar-tasks .ct-stage-next:focus-visible { outline: 2px solid var(--ct-focus); outline-offset: 1px; }
 .ct-stage-label { color: var(--text-secondary); }
 .ct-stage:hover .ct-stage-label { color: var(--text-primary); }
 .ct-stage.is-empty { color: var(--text-faint) !important; text-decoration: underline dotted 1px; text-underline-offset: 3px; }
-.ct-waiting { padding: 0 6px; border-radius: 999px; background: var(--ct-segment); color: var(--text-secondary); font-size: 11px; line-height: 16px; font-weight: 500; }
+.ct-waiting { position: relative; display: inline-flex; align-items: center; color: var(--text-secondary); }
+.ct-waiting svg { display: block; }
 
 .ct-actions { display: flex; align-items: center; gap: 2px; }
 .ct-icon-button { position: relative; display: inline-grid; place-items: center; flex: none; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--text-muted) !important; cursor: pointer; transition: opacity .12s, background-color .12s, color .12s; }
@@ -187,6 +204,9 @@
   .ct-select { flex: 1 1 45%; }
   .ct-spheres { margin-top: 10px; }
   .ct-spheres button { height: 36px; padding: 0 12px; }
+  .ct-subspheres button { height: 36px; padding: 0 10px; }
+  .ct-stage-next { width: 32px; height: 22px; border-radius: 11px; }
+  .ct-stage-next::after { inset: -5px -3px; }
   .ct-add { padding-left: 10px; column-gap: 10px; }
   .ct-add input { height: 48px; font-size: 15px; }
   .ct-group { padding-left: 10px; padding-right: 0; }

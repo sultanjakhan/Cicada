@@ -19,6 +19,9 @@
 .cip-summary { min-width: 0; font-size: 12px; line-height: 16px; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .cip-list { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+/* Work and personal tasks (2026-09-25): two quiet sub-headings when both are listed. */
+.cip-group { margin: 8px 0 2px; padding: 0 12px; font-size: 11px; line-height: 16px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); }
+.cip-group:first-child { margin-top: 2px; }
 .cip-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 12px; min-height: 52px; padding: 7px 6px 7px 12px; border-radius: 9px; transition: background-color .12s; }
 .cip-row:hover, .cip-row:has(:focus-visible) { background: var(--cip-hover); }
 .cip-row::before { content: ''; position: absolute; left: 0; top: 11px; bottom: 11px; width: 3px; border-radius: 0 3px 3px 0; background: transparent; }
@@ -34,12 +37,17 @@
 .cip-row.is-running .cip-time { color: var(--text-secondary); }
 .cip-time.is-over, .cip-row.is-running .cip-time.is-over { color: var(--cip-warn); font-weight: 600; }
 
-/* Line 2: the stage chip, then the goal. */
+/* Line 2: the stage (label opens the menu, «→» moves on), then the goal. */
 .cip-meta { gap: 8px; }
-.cip-stage { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 72%; height: 22px; padding: 0 6px 0 8px; border: 1px solid var(--border-default); border-radius: 11px; background: var(--bg-card); color: var(--text-secondary) !important; font-size: 12px !important; line-height: 20px; cursor: pointer; }
+.cip-stage-group { flex: 0 1 auto; display: inline-flex; align-items: center; gap: 2px; min-width: 0; max-width: 78%; }
+.cip-stage { flex: 0 1 auto; display: inline-flex; align-items: center; gap: 4px; min-width: 0; height: 22px; padding: 0 8px; border: 1px solid var(--border-default); border-radius: 11px; background: var(--bg-card); color: var(--text-secondary) !important; font-size: 12px !important; line-height: 20px; cursor: pointer; }
 .cip-stage-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cip-stage-caret { flex: none; color: var(--text-faint); }
 .cip-stage-mark { flex: none; color: var(--text-muted); }
+.cip-stage.is-deleted .cip-stage-text { font-style: italic; }
+.cip-stage-next { position: relative; flex: none; display: inline-grid; place-items: center; width: 26px; height: 22px; padding: 0; border: 1px solid var(--border-default); border-radius: 11px; background: var(--bg-card); color: var(--text-secondary) !important; cursor: pointer; transition: background-color .12s, border-color .12s, color .12s; }
+.cip-stage-next svg { display: block; }
+.cip-stage-next:hover:not(:disabled) { border-color: var(--border-hover); background: var(--cip-hover-strong); color: var(--text-primary) !important; }
+.cip-stage-next:disabled { cursor: default; opacity: .6; }
 .cip-stage:hover:not(:disabled), .cip-stage[aria-expanded="true"] { border-color: var(--border-hover); color: var(--text-primary) !important; }
 .cip-stage.is-empty { border-style: dashed; color: var(--text-muted) !important; }
 .cip-stage.is-waiting { background: var(--bg-soft); border-color: var(--border-hover); }
@@ -106,7 +114,11 @@
   .cip-line { gap: 8px; }
   .cip-actions { gap: 0; }
   .cip-icon { width: 36px; height: 36px; }
-  .cip-stage { height: 26px; border-radius: 13px; }
+  .cip-stage { height: 28px; border-radius: 14px; }
+  /* A 36px target around the 28px arrow. */
+  .cip-stage-next { width: 36px; height: 28px; border-radius: 14px; }
+  .cip-stage-next::after { content: ''; position: absolute; inset: -4px 0; }
+  .cip-group { padding-left: 10px; }
   /* The confirmation text takes its own line; both answers share the next one. */
   .cip-confirm-text { flex-basis: 100%; }
   /* The title stays one visual line but gets a 36px touch target. */

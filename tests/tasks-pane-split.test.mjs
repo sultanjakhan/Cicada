@@ -1,4 +1,4 @@
-// Tasks pane, 2026-09-24: Work/Home switch, «В работе» group, overdue cleanup,
+// Tasks pane, 2026-09-24/25: Work/Personal switch, «В работе» group, overdue cleanup,
 // fewer repeated labels, stage menu, grouping by goal and quick add.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -44,18 +44,19 @@ async function mount(t, rows, { goals = [], links = [], state = {}, handlers = {
   };
 }
 
-test('the Work/Home switch counts active tasks, filters rows and is remembered for the session', async t => {
+test('the Work/Personal switch counts active tasks, filters rows, narrows «Личное» by sphere and is remembered', async t => {
   const rows = [
     note('W1', day(), { sphere: 'work' }), note('W2', null, { sphere: 'work' }), note('W3', day(), { sphere: 'work', completed: true }),
     note('H1', day(), { sphere: 'home' }), note('H2', day(-1), { sphere: 'home' }),
     note('O1', null, { sphere: 'health' }), note('O2', day()), note('O3', day(2), { sphere: 'personal' }),
   ];
   const x = await mount(t, rows);
-  assert.deepEqual([...x.host.querySelectorAll('[data-tasks-sphere]')].map(el => el.firstElementChild.textContent), ['Все', 'Работа', 'Дом', 'Другое']);
+  assert.deepEqual([...x.host.querySelectorAll('[data-tasks-sphere]')].map(el => el.firstElementChild.textContent), ['Все', 'Работа', 'Личное']);
   assert.equal(x.$('select[data-tasks-sphere]'), null, 'the sphere select is replaced by the switch');
-  assert.deepEqual(x.counts(), { '': '7', work: '2', home: '2', other: '3' });
+  assert.deepEqual(x.counts(), { '': '7', work: '2', personal: '5' });
   assert.equal(x.$('[data-tasks-sphere=""]').getAttribute('aria-pressed'), 'true');
   assert.equal(x.item('H1').querySelector('.ct-sphere').textContent, 'Дом', '«Все» keeps the sphere label');
+  assert.equal(x.$('[data-tasks-personal]').hidden, true, 'the sphere row belongs to «Личное»');
 
   assert.equal(x.$('[data-tasks-sphere="work"]').getAttribute('aria-label'), 'Работа: 2');
   x.sphere('work');
@@ -65,28 +66,40 @@ test('the Work/Home switch counts active tasks, filters rows and is remembered f
   assert.equal(x.host.querySelectorAll('.ct-sphere').length, 0, 'a chosen sphere is not repeated in each row');
   assert.equal(x.$('[data-tasks-count]').textContent, '2');
 
-  x.sphere('home'); assert.deepEqual(x.titles(), ['H2', 'H1']);
-  x.sphere('other');
-  assert.deepEqual(x.titles(), ['O2', 'O3', 'O1'], 'Other holds health, growth, personal and tasks without a sphere');
-  assert.equal(x.item('O1').querySelector('.ct-sphere').textContent, 'Здоровье', 'Other mixes spheres, so rows name theirs');
+  x.sphere('personal');
+  assert.deepEqual(x.titles(), ['H2', 'H1', 'O2', 'O3', 'O1'], '«Личное» holds every task whose sphere is not work, tasks without a sphere included');
+  assert.equal(x.item('O1').querySelector('.ct-sphere').textContent, 'Здоровье', '«Личное» mixes spheres, so rows name theirs');
   assert.equal(x.item('O2').querySelector('.ct-sphere'), null);
+  assert.equal(x.item('O3').querySelector('.ct-sphere'), null, '«Личное» is not repeated for the personal sphere');
+  const personal = () => [...x.host.querySelectorAll('[data-tasks-personal-option]')];
+  assert.equal(x.$('[data-tasks-personal]').hidden, false);
+  assert.deepEqual(personal().map(el => el.getAttribute('aria-label')), ['Все: 5', 'Дом: 2', 'Здоровье: 1', 'Личное: 1', 'Без сферы: 1'], 'only spheres that have tasks');
+  personal().find(el => el.dataset.tasksPersonalOption === 'home').click();
+  assert.deepEqual(x.titles(), ['H2', 'H1']);
+  assert.equal(x.state.personal, 'home');
+  assert.equal(x.doc.activeElement.dataset.tasksPersonalOption, 'home', 'focus stays on the chosen sphere');
+  assert.equal(x.host.querySelectorAll('.ct-sphere').length, 0);
+  assert.equal(x.$('[data-tasks-count]').textContent, '2');
+  personal().find(el => el.dataset.tasksPersonalOption === '').click();
+  assert.equal(x.titles().length, 5);
 
   x.filter('today');
-  assert.deepEqual(x.counts(), { '': '3', work: '1', home: '1', other: '1' }, 'counts follow the day filter');
-  assert.deepEqual(x.titles(), ['O2']);
+  assert.deepEqual(x.counts(), { '': '3', work: '1', personal: '2' }, 'counts follow the day filter');
+  assert.deepEqual(x.titles(), ['H1', 'O2']);
   x.filter('active');
   x.$('[data-tasks-search]').value = 'w'; x.$('[data-tasks-search]').dispatchEvent(new x.dom.window.Event('input'));
-  assert.deepEqual(x.counts(), { '': '2', work: '2', home: '0', other: '0' });
+  assert.deepEqual(x.counts(), { '': '2', work: '2', personal: '0' });
   assert.match(x.$('.ct-empty').textContent, /сферу/);
+  assert.equal(x.$('[data-tasks-personal]').hidden, true, 'nothing to narrow');
 
   x.dispose();
   const again = mountCalendarTasks(x.host, x.dependencies); await settle();
-  assert.equal(x.$('[data-tasks-sphere="other"]').getAttribute('aria-pressed'), 'true', 'the choice survives a remount');
+  assert.equal(x.$('[data-tasks-sphere="personal"]').getAttribute('aria-pressed'), 'true', 'the choice survives a remount');
   again();
-  for (const [legacy, expected] of [['health', 'other'], ['none', 'other'], ['work', 'work'], ['bogus', '']]) {
+  for (const [legacy, expected, sub] of [['health', 'personal', ''], ['none', 'personal', ''], ['other', 'personal', ''], ['home', 'personal', 'home'], ['work', 'work', ''], ['bogus', '', '']]) {
     const state = { filter: 'active', search: '', goal: '', sphere: legacy, page: 0 };
     const stop = mountCalendarTasks(x.host, { ...x.dependencies, state }); await settle();
-    assert.equal(state.sphere, expected, `a session value «${legacy}» maps to «${expected}»`);
+    assert.deepEqual([state.sphere, state.personal], [expected, sub], `a session value «${legacy}» maps to «${expected}»`);
     stop();
   }
 });
@@ -235,42 +248,58 @@ test('rows do not repeat what their group or filter already says', async t => {
   assert.equal(x.item('Untimed').querySelector('.ct-goal'), null, 'the chosen goal is not repeated');
 });
 
-test('the stage in the row opens a menu that calls set_calendar_task_stage and refreshes the row', async t => {
+test('the stage in the row: «→» moves on, the label opens the process menu, and only a task with a process shows it', async t => {
   const rows = [
     note('Spec', day(), { sphere: 'work', stage: 'description', waiting: true }),
     note('Fresh', null, { sphere: 'work', stage: '' }),
+    note('Started', null, { sphere: 'work', process: 'system-analysis', stage: '' }),
     note('Home with stage', null, { sphere: 'home', stage: 'agreement' }),
     note('Home plain', null, { sphere: 'home' }),
     note('Instant', null, { sphere: 'work', task_kind: 'instant', stage: 'development' }),
     note('Closed', day(-1), { sphere: 'work', stage: 'acceptance', completed: true }),
+    note('Last', null, { process: 'system-analysis', stage: 'acceptance' }),
   ];
   let fail = false;
   const x = await mount(t, rows, { handlers: { set_calendar_task_stage: ({ id, stage, waiting }) => {
     if (fail) throw 'offline';
-    const row = rows.find(item => item.source_id === id); Object.assign(row, { ...(stage == null ? {} : { stage }), waiting }); return { ...row };
+    // As the backend: a stage change writes the process of a 0.3.33 stage.
+    const row = rows.find(item => item.source_id === id); Object.assign(row, { process: row.process || 'system-analysis', ...(stage == null ? {} : { stage }), ...(waiting == null ? {} : { waiting }) }); return { ...row };
   } } });
   const chip = id => x.item(id)?.querySelector('[data-task-control="stage"]') ?? null;
+  const arrow = id => x.item(id)?.querySelector('[data-task-control="stage-next"]') ?? null;
   const menu = () => x.doc.querySelector('[data-tasks-stage-menu]');
-  assert.equal(chip('Spec').querySelector('.ct-stage-label').textContent, 'Описание');
+  assert.equal(chip('Spec').querySelector('.ct-stage-label').textContent, 'Описание', 'a 0.3.33 stage belongs to the built-in process');
   assert.equal(chip('Spec').querySelector('.ct-waiting').textContent, 'жду ответа');
-  assert.equal(chip('Fresh').textContent, 'Стадия'); assert.equal(chip('Fresh').classList.contains('is-empty'), true);
-  assert.equal(chip('Home with stage').textContent, 'Согласование', 'a set stage shows on any task');
-  assert.equal(chip('Home plain'), null, 'no stage placeholder outside work');
+  assert.equal(chip('Fresh'), null, 'a work task without a process has no stage and no placeholder');
+  assert.equal(chip('Started').textContent, 'Стадия'); assert.equal(chip('Started').classList.contains('is-empty'), true);
+  assert.equal(arrow('Started').title, 'Начать: Понимание');
+  assert.equal(chip('Home with stage').textContent, 'Согласование', 'a stored stage shows on any task');
+  assert.equal(chip('Home plain'), null);
   assert.equal(chip('Instant'), null, 'instant tasks have no stage');
+  assert.equal(arrow('Last'), null, 'no arrow at the last stage');
+  assert.equal(arrow('Spec').getAttribute('aria-label'), 'Следующая стадия «Согласование»: Spec');
 
-  chip('Fresh').click();
-  assert.ok(menu()); assert.equal(chip('Fresh').getAttribute('aria-expanded'), 'true');
+  arrow('Spec').click(); await settle();
+  assert.deepEqual(x.commands('set_calendar_task_stage'), [{ id: 'Spec', stage: 'agreement', waiting: null }]);
+  assert.equal(chip('Spec').querySelector('.ct-stage-label').textContent, 'Согласование');
+  assert.equal(x.doc.activeElement, arrow('Spec'), 'focus stays on the arrow');
+  assert.equal(x.$('[data-tasks-message]').textContent, 'Стадия: Согласование.');
+  assert.ok(x.changes >= 1);
+
+  chip('Started').click();
+  assert.ok(menu()); assert.equal(chip('Started').getAttribute('aria-expanded'), 'true');
+  assert.equal(menu().querySelector('.ct-stage-menu-title').textContent, 'Системный анализ');
   const options = () => [...menu().querySelectorAll('[role^="menuitem"]')];
   assert.deepEqual(options().map(el => el.textContent), [...TASK_STAGES.map(([, label]) => label), 'Без стадии', 'Жду ответа']);
+  assert.ok(options().some(el => el.textContent === 'Анализ и модели'));
   assert.deepEqual(options().filter(el => el.getAttribute('aria-checked') === 'true').map(el => el.textContent), ['Без стадии']);
   assert.equal(x.doc.activeElement.textContent, 'Без стадии', 'focus starts on the current stage');
   x.key(x.doc.activeElement, 'ArrowDown'); assert.equal(x.doc.activeElement.textContent, 'Жду ответа');
   menu().querySelector('[data-stage="requirements"]').click(); await settle();
-  assert.deepEqual(x.commands('set_calendar_task_stage'), [{ id: 'Fresh', stage: 'requirements', waiting: false }]);
+  assert.deepEqual(x.commands('set_calendar_task_stage').at(-1), { id: 'Started', stage: 'requirements', waiting: false });
   assert.equal(menu(), null);
-  assert.equal(chip('Fresh').textContent, 'Требования');
-  assert.equal(x.doc.activeElement, chip('Fresh'), 'focus returns to the stage in the row');
-  assert.ok(x.changes >= 1);
+  assert.equal(chip('Started').textContent, 'Требования');
+  assert.equal(x.doc.activeElement, chip('Started'), 'focus returns to the stage in the row');
 
   chip('Spec').click();
   assert.equal(menu().querySelector('[data-stage-waiting]').getAttribute('aria-checked'), 'true');
@@ -281,25 +310,51 @@ test('the stage in the row opens a menu that calls set_calendar_task_stage and r
   chip('Home with stage').click();
   menu().querySelector('[data-stage=""]').click(); await settle();
   assert.deepEqual(x.commands('set_calendar_task_stage').at(-1), { id: 'Home with stage', stage: '', waiting: false });
-  assert.equal(chip('Home with stage'), null, 'a home task without a stage returns to a plain row');
+  assert.equal(chip('Home with stage').textContent, 'Стадия', '«Без стадии» keeps the process');
 
   fail = true; chip('Spec').click();
   menu().querySelector('[data-stage="agreement"]').click(); await settle();
   assert.ok(menu(), 'a failure keeps the menu open');
   assert.equal(menu().querySelector('[role=alert]').textContent, 'Не удалось изменить стадию. Повтори.');
-  assert.equal(chip('Spec').textContent, 'Описание');
   x.key(x.doc.activeElement, 'Escape');
   assert.equal(menu(), null); assert.equal(x.doc.activeElement, chip('Spec'));
+  arrow('Spec').click(); await settle();
+  assert.equal(x.$('[data-tasks-message]').getAttribute('role'), 'alert');
+  assert.equal(x.$('[data-tasks-message]').textContent, 'Не удалось перейти к следующей стадии. Повтори.');
+  assert.equal(chip('Spec').querySelector('.ct-stage-label').textContent, 'Согласование', 'nothing changed');
+  assert.equal(x.doc.activeElement, arrow('Spec'));
 
   x.filter('completed');
   assert.equal(chip('Closed'), null, 'closed tasks show no stage control');
   x.filter('active');
-  rows.push(note('Future', null, { sphere: 'work', stage: '', waiting: false }));
+  // A stage deleted in the settings stays on the task and says so.
+  rows.push(note('Removed', null, { process: 'system-analysis', stage: 'review', waiting: false }));
   x.dom.window.dispatchEvent(new x.dom.window.Event('task-state-changed')); await settle();
-  assert.equal(chip('Future').textContent, 'Стадия', 'the backend reports an unknown stage as unset');
-  fail = false; chip('Future').click();
+  assert.equal(chip('Removed').textContent, 'Стадия удалена');
+  assert.equal(chip('Removed').classList.contains('is-deleted'), true);
+  assert.equal(arrow('Removed'), null);
+  fail = false; chip('Removed').click();
+  assert.deepEqual([...menu().querySelectorAll('[aria-checked="true"]')].map(el => el.textContent), [], 'no listed stage is current');
   menu().querySelector('[data-stage-waiting]').click(); await settle();
-  assert.deepEqual(x.commands('set_calendar_task_stage').at(-1), { id: 'Future', stage: null, waiting: true }, 'toggling «Жду ответа» sends null so the backend keeps a stage this version does not know');
+  assert.deepEqual(x.commands('set_calendar_task_stage').at(-1), { id: 'Removed', stage: null, waiting: true }, 'toggling «Жду ответа» keeps the deleted stage');
+});
+
+test('the stage tooltip in a row gives timer time per stage; blocks of other tasks never count', async t => {
+  const base = Date.parse('2026-09-24T12:00:00.000Z'), iso = minutes => new Date(base + minutes * 60000).toISOString();
+  const rows = [
+    note('Model', day(), { process: 'system-analysis', stage: 'analysis', stage_log: [{ stage: 'requirements', at: iso(-120) }, { stage: 'analysis', at: iso(-60) }] }),
+    note('Parallel', day(), { process: 'system-analysis', stage: 'requirements' }),
+    note('Plain', day()),
+  ];
+  const blocks = [
+    { id: 1, source_type: 'note', source_id: 'Model', created_at: iso(-90), duration_seconds: 3600, is_active: false },
+    { id: 2, source_type: 'note', source_id: 'Parallel', created_at: iso(-90), duration_seconds: 1500, is_active: false },
+  ];
+  const x = await mount(t, rows, { handlers: { get_calendar_task_blocks: ({ sourceIds }) => blocks.filter(block => sourceIds.includes(block.source_id)) } });
+  const title = id => x.item(id).querySelector('[data-task-control="stage"]').title;
+  assert.equal(title('Model'), 'Время по стадиям: Требования 30 мин · Анализ и модели 30 мин', 'a block spanning the change is split');
+  assert.equal(title('Parallel'), 'Время по стадиям: Требования 25 мин', 'a parallel task keeps its own time');
+  assert.deepEqual(x.commands('get_calendar_task_blocks').at(-1).sourceIds.sort(), ['Model', 'Parallel'], 'only tasks with a process are read');
 });
 
 test('«По цели» groups active tasks under their top-level goal, «Без цели» last, «В работе» first', async t => {
@@ -354,10 +409,13 @@ test('quick add creates a title-only task in the chosen sphere and plans it for 
   assert.deepEqual(x.commands('save_calendar_task').at(-1), { id: null, title: 'Созвон по API', dueDate: day(), time: '', estimateMinutes: null, goalId: null, expectedVersion: null, important: false, taskKind: 'normal', sphere: 'work' });
   assert.equal(status.textContent, 'Задача добавлена.');
   assert.deepEqual(x.titles(), ['Созвон по API']);
-  x.sphere('home'); x.filter('undated'); await enter('Полить цветы');
-  assert.deepEqual([x.commands('save_calendar_task').at(-1).sphere, x.commands('save_calendar_task').at(-1).dueDate], ['home', null]);
-  x.sphere('other'); await enter('Прогулка');
-  assert.equal(x.commands('save_calendar_task').at(-1).sphere, '', '«Другое» adds without a sphere');
+  x.sphere('personal'); x.filter('undated'); await enter('Полить цветы');
+  assert.deepEqual([x.commands('save_calendar_task').at(-1).sphere, x.commands('save_calendar_task').at(-1).dueDate], ['personal', null], '«Личное» adds a personal task');
+  // Two spheres inside «Личное» now: the chosen one is used.
+  x.$('[data-tasks-personal-option="none"]').click(); await enter('Прогулка');
+  assert.equal(x.commands('save_calendar_task').at(-1).sphere, '', '«Без сферы» adds without a sphere');
+  x.$('[data-tasks-personal-option="personal"]').click(); await enter('Позвонить маме');
+  assert.equal(x.commands('save_calendar_task').at(-1).sphere, 'personal');
 
   const saved = x.commands('save_calendar_task').length;
   await enter('   ');
@@ -388,10 +446,12 @@ test('phone layout keeps the switches scrollable and the tap targets at least 36
   const css = fs.readFileSync(new URL('../src/hanni/css/calendar-tasks.css', import.meta.url), 'utf8');
   const phone = css.slice(css.indexOf('@media (max-width: 600px)'));
   assert.match(css, /\.ct-spheres \{[^}]*overflow-x: auto/);
-  for (const selector of ['.ct-filters button', '.ct-spheres button', '.ct-group-action', '.ct-icon-button']) {
+  for (const selector of ['.ct-filters button', '.ct-spheres button', '.ct-subspheres button', '.ct-group-action', '.ct-icon-button']) {
     const rule = phone.match(new RegExp(`${selector.replace(/[.]/g, '\\.')} \\{([^}]*)\\}`))?.[1] || '';
     assert.match(rule, /height: (3[6-9]|4\d)px/, `${selector} is at least 36px tall on the phone`);
   }
   assert.match(phone, /\.ct-add input \{[^}]*height: 48px/);
   assert.match(phone, /\.ct-grouping button \{[^}]*height: 36px/);
+  assert.match(phone, /\.ct-stage-next \{[^}]*width: 32px; height: 22px/, 'the stage arrow grows on the phone');
+  assert.match(css, /\.ct-subspheres \{[^}]*overflow-x: auto/);
 });
