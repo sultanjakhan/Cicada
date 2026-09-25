@@ -6,6 +6,18 @@
 
 Перед новой постановкой прочитай [подтверждённый контекст продукта](docs/product-context.md), затем проверь исходный код и относящиеся к задаче Issues. Не повторяй вопросы, на которые уже есть ответ в этом контексте; уточняй только новые отсутствующие факты.
 
+Owner iteration, 2026-09-25: stages belong only to tasks with a process. The
+built-in process «Системный анализ» has Понимание, Требования, Анализ и модели,
+Описание, Согласование, Декомпозиция, В разработке, Приёмка; processes and
+their stages are edited in Calendar settings («Процессы задач», synced key
+`calendar_processes_v1`; devices on 0.3.33 or older pause receiving sync once
+a process record exists, until they update). The stage moves forward with a
+«→» button; the label opens the menu. Stage changes are logged as
+`task-stage-log:<stage>@<UTC>` tags and time per stage is shown in task
+details. Work and non-work tasks are split: «Все · Работа · Личное» in Tasks,
+«Работа»/«Личное» sub-headings in «В работе», and «Рабочая / Личная» first in
+the task dialog. The widget clock ticks as mm:ss against the estimate.
+
 Owner iteration, 2026-09-24 (evening): the header current-task block is removed
 on every tab; the header shows only a green «● N» indicator while tasks run,
 opening the «В работе» widget. Widget rows show time against the estimate,
