@@ -251,12 +251,17 @@ fn date(v: &Option<String>) -> Result<(), String> {
 fn task_time(date: Option<&str>, time: Option<String>) -> Option<String> {
     date.and(time).filter(|value| !value.is_empty())
 }
-/// Task attributes kept in `items.tags` (#96, 2026-09-24 stages) on every task row.
+/// Task attributes kept in `items.tags` (#96, 2026-09-24 stages, 2026-09-25
+/// processes and stage history) on every task row. `process` is derived for a
+/// 0.3.33 task that has a stage but no process tag.
 fn decorate_task(value: &mut Value, tags: &str) {
-    value["task_kind"] = json!(crate::task_attributes::kind(tags));
-    value["sphere"] = json!(crate::task_attributes::sphere(tags));
-    value["stage"] = json!(crate::task_attributes::stage(tags).unwrap_or(""));
-    value["waiting"] = json!(crate::task_attributes::waiting(tags));
+    use crate::task_attributes as attributes;
+    value["task_kind"] = json!(attributes::kind(tags));
+    value["sphere"] = json!(attributes::sphere(tags));
+    value["process"] = json!(attributes::effective_process(tags).unwrap_or(""));
+    value["stage"] = json!(attributes::stage(tags).unwrap_or(""));
+    value["waiting"] = json!(attributes::waiting(tags));
+    value["stage_log"] = attributes::stage_log(tags).into_iter().map(|(stage, at)| json!({"stage":stage,"at":at})).collect();
 }
 fn item_value(
     item: &Item,
@@ -697,6 +702,8 @@ pub(crate) struct TaskFields {
     pub stage: Option<String>,
     /// «Жду ответа».
     pub waiting: Option<bool>,
+    /// Process (2026-09-25); `Some("")` removes it with the stage and «Жду ответа».
+    pub process: Option<String>,
 }
 #[tauri::command(rename_all = "camelCase")]
 pub fn save_calendar_task(
@@ -712,10 +719,11 @@ pub fn save_calendar_task(
     sphere: Option<String>,
     stage: Option<String>,
     waiting: Option<bool>,
+    process: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let mut conn = lock(&state)?;
-    save_task(&mut conn, id, title, due_date, estimate_minutes, goal_id, expected_version, important, TaskFields { time, task_kind, sphere, stage, waiting })
+    save_task(&mut conn, id, title, due_date, estimate_minutes, goal_id, expected_version, important, TaskFields { time, task_kind, sphere, stage, waiting, process })
 }
 pub(crate) fn save_task(
     conn: &mut Connection,
@@ -748,6 +756,9 @@ pub(crate) fn save_task(
     if let Some(value) = fields.stage.as_deref() {
         crate::task_attributes::validate_stage(value)?;
     }
+    if let Some(value) = fields.process.as_deref() {
+        crate::task_attributes::validate_process(value)?;
+    }
     // Without a date the time of day is cleared. An omitted time keeps the stored
     // one only while the task already had a date: «Без даты» on 0.3.29 leaves a
     // stale time behind, and assigning a day again must not revive it.
@@ -760,10 +771,15 @@ pub(crate) fn save_task(
     let transaction = conn
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|e| fail(e.to_string()))?;
-    let changes_tags = fields.task_kind.is_some() || fields.sphere.is_some() || fields.stage.is_some() || fields.waiting.is_some();
-    let tags = |current: &str| {
-        let attributes = crate::task_attributes::write(current, fields.task_kind.as_deref(), fields.sphere.as_deref());
-        crate::task_attributes::write_stage(&attributes, fields.stage.as_deref(), fields.waiting)
+    // A stage change is recorded with this time; a task that already had a
+    // stage and no history (0.3.33) keeps its earlier work with it from `since`.
+    let edited_at = now();
+    let tags = |current: &str, since: &str| {
+        use crate::task_attributes::{edit_stage, with_process, write, StageEdit};
+        let attributes = write(current, fields.task_kind.as_deref(), fields.sphere.as_deref());
+        let edit = StageEdit { process: fields.process.as_deref(), stage: fields.stage.as_deref(), waiting: fields.waiting };
+        // Every edit also writes the process a 0.3.33 stage belongs to.
+        with_process(&edit_stage(&attributes, edit, &edited_at, since))
     };
     if let Some(goal) = goal_id.as_deref() {
         let exists: bool = transaction
@@ -779,15 +795,15 @@ pub(crate) fn save_task(
     }
     let item_id = match id {
         Some(id) => {
-            let current_tags: Option<String> = if changes_tags {
-                transaction
-                    .query_row("SELECT tags FROM items WHERE id=?1 AND kind='task'", [&id], |r| r.get(0))
-                    .optional()
-                    .map_err(|e| fail(e.to_string()))?
-            } else {
-                None
-            };
-            let next_tags = current_tags.as_deref().map(tags);
+            let current: Option<(String, String)> = transaction
+                .query_row("SELECT tags,created_at FROM items WHERE id=?1 AND kind='task'", [&id], |r| Ok((r.get(0)?, r.get(1)?)))
+                .optional()
+                .map_err(|e| fail(e.to_string()))?;
+            // Unchanged tags are not rewritten (NULL keeps the column).
+            let next_tags = current
+                .as_ref()
+                .map(|(stored, since)| tags(stored, since))
+                .filter(|next| current.as_ref().is_some_and(|(stored, _)| stored != next));
             let changed=transaction.execute("UPDATE items SET title=?1,date=?2,duration_minutes=COALESCE(?3,0),updated_at=?4,version=version+1,priority=COALESCE(?7,priority),time=CASE WHEN ?8 AND date IS NOT NULL THEN time ELSE ?9 END,tags=COALESCE(?10,tags) WHERE id=?5 AND kind='task' AND status IN ('task','done') AND (?6 IS NULL OR version=?6)",params![title.trim(),due_date,estimate_minutes,now(),id,expected_version,priority,keep_time,new_time,next_tags]).map_err(|e|fail(e.to_string()))?;
             if changed != 1 {
                 return Err(fail("task changed elsewhere or was deleted"));
@@ -799,8 +815,8 @@ pub(crate) fn save_task(
                 return Err(fail("new task cannot have expected version"));
             }
             let id = Uuid::new_v4().to_string();
-            let n = now();
-            transaction.execute("INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,status) VALUES(?1,'task',?2,'',?3,?7,COALESCE(?4,0),0,1,?5,?5,'task','#9B9B9B',COALESCE(?6,0),0,?8,'task')",params![id,title.trim(),due_date,estimate_minutes,n,priority,new_time,tags("")]).map_err(|e|fail(e.to_string()))?;
+            let n = edited_at.clone();
+            transaction.execute("INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,status) VALUES(?1,'task',?2,'',?3,?7,COALESCE(?4,0),0,1,?5,?5,'task','#9B9B9B',COALESCE(?6,0),0,?8,'task')",params![id,title.trim(),due_date,estimate_minutes,n,priority,new_time,tags("", &n)]).map_err(|e|fail(e.to_string()))?;
             id
         }
     };
@@ -829,8 +845,9 @@ pub fn complete_calendar_task(id: String, state: State<'_, AppState>) -> Result<
 }
 /// Sets the work stage and «Жду ответа» of a task (2026-09-24) and returns the
 /// updated task row. `stage` is a stage id or '' (none); an omitted value keeps
-/// the stored one, including a stage id written by a newer version. The change
-/// is an ordinary task edit: it bumps version and updated_at, so it syncs.
+/// the stored one, including a deleted stage. A new stage is recorded in the
+/// task's stage history (2026-09-25). The change is an ordinary task edit: it
+/// bumps version and updated_at, so it syncs with the row.
 #[tauri::command(rename_all = "camelCase")]
 pub fn set_calendar_task_stage(
     id: String,
@@ -854,18 +871,21 @@ pub(crate) fn set_task_stage(
     let transaction = conn
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|e| fail(e.to_string()))?;
-    let tags: String = transaction
+    let (tags, since): (String, String) = transaction
         .query_row(
-            "SELECT tags FROM items WHERE id=?1 AND kind='task' AND status IN ('task','done')",
+            "SELECT tags,created_at FROM items WHERE id=?1 AND kind='task' AND status IN ('task','done')",
             [item_id(id)?],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()
         .map_err(|e| fail(e.to_string()))?
         .ok_or_else(|| fail("task not found"))?;
-    let next = crate::task_attributes::write_stage(&tags, stage, waiting);
-    // An unchanged choice writes nothing, so it creates no sync record.
-    if next != tags {
+    let edit = crate::task_attributes::StageEdit { process: None, stage, waiting };
+    let edited = crate::task_attributes::edit_stage(&tags, edit, &now(), &since);
+    // An unchanged choice writes nothing, so it creates no sync record. A real
+    // change also writes the process a 0.3.33 stage belongs to.
+    if edited != tags {
+        let next = crate::task_attributes::with_process(&edited);
         transaction
             .execute(
                 "UPDATE items SET tags=?1,version=version+1,updated_at=?2 WHERE id=?3 AND kind='task' AND status IN ('task','done')",
@@ -1211,6 +1231,30 @@ pub fn delete_event_category(
     Ok(n)
 }
 
+/// Every work block of the given tasks, all days, for the time per stage
+/// (2026-09-25). `created_at` is the UTC start; a running block has no end yet.
+#[tauri::command(rename_all = "camelCase")]
+pub fn get_calendar_task_blocks(source_ids: Vec<String>, state: State<'_, AppState>) -> Result<Vec<Value>, String> {
+    if source_ids.len() > 2000 {
+        return Err(fail("too many tasks"));
+    }
+    let conn = lock(&state)?;
+    task_blocks(&conn, &source_ids)
+}
+pub(crate) fn task_blocks(conn: &Connection, source_ids: &[String]) -> Result<Vec<Value>, String> {
+    if source_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut statement = conn
+        .prepare("SELECT id,source_id,date,start_time,created_at,CASE WHEN duration_seconds > 0 THEN duration_seconds ELSE duration_minutes * 60 END,is_active FROM timeline_blocks WHERE source_type='note' AND source_id IN (SELECT value FROM json_each(?1)) ORDER BY created_at,id")
+        .map_err(|e| fail(e.to_string()))?;
+    let rows = statement
+        .query_map([json!(source_ids).to_string()], |r| Ok(json!({"id":r.get::<_,i64>(0)?,"source_type":"note","source_id":r.get::<_,String>(1)?,"date":r.get::<_,String>(2)?,"start_time":r.get::<_,String>(3)?,"created_at":r.get::<_,String>(4)?,"duration_seconds":r.get::<_,i64>(5)?,"is_active":r.get::<_,i64>(6)?!=0})))
+        .map_err(|e| fail(e.to_string()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| fail(e.to_string()));
+    rows
+}
 #[tauri::command(rename_all = "camelCase")]
 pub fn get_timeline_blocks(date: String, state: State<'_, AppState>) -> Result<Vec<Value>, String> {
     validate_date(&date)?;

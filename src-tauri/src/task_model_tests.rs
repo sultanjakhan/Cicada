@@ -272,32 +272,79 @@ fn conflicts(conn: &Connection) -> i64 {
     conn.query_row("SELECT count(*) FROM mvp_sync_conflicts", [], |r| r.get(0)).unwrap()
 }
 
+/// Tags without the stage history, whose times vary between runs.
+fn plain(tags: &str) -> String {
+    tags.split(',').filter(|token| !token.starts_with("task-stage-log:")).collect::<Vec<_>>().join(",")
+}
+/// The stages recorded in the history, oldest first ('' is «no stage»).
+fn history(tags: &str) -> Vec<String> {
+    crate::task_attributes::stage_log(tags).into_iter().map(|(stage, _)| stage.to_owned()).collect()
+}
+
 #[test]
 fn stage_and_waiting_round_trip_through_every_task_query() {
     let mut conn = replica();
     let id = create(&mut conn, "Describe the fictional form", Some("2026-09-24"), with_stage(Some("description"), Some(true)));
-    assert_eq!(stored(&conn, &id).1, "task-stage:description,task-waiting");
+    // A stage without a process belongs to the built-in process; its first stage is recorded.
+    assert_eq!(plain(&stored(&conn, &id).1), "task-stage:description,task-waiting,task-process:system-analysis");
+    assert_eq!(history(&stored(&conn, &id).1), ["description"]);
     let detail = load(&conn, &id).unwrap();
-    assert_eq!((detail["stage"].clone(), detail["waiting"].clone()), (json!("description"), json!(true)));
+    assert_eq!((detail["process"].clone(), detail["stage"].clone(), detail["waiting"].clone()), (json!("system-analysis"), json!("description"), json!(true)));
+    assert_eq!(detail["stage_log"][0]["stage"], "description");
+    let created = chrono::DateTime::parse_from_rfc3339(detail["created_at"].as_str().unwrap()).unwrap();
+    let logged = chrono::DateTime::parse_from_rfc3339(detail["stage_log"][0]["at"].as_str().unwrap()).unwrap();
+    assert!((logged - created).num_milliseconds().abs() <= 1, "the first stage starts with the task");
     for tasks_only in [true, false] {
         let row = listed(&conn, &id, tasks_only);
-        assert_eq!((row["stage"].clone(), row["waiting"].clone()), (json!("description"), json!(true)), "tasks_only={tasks_only}");
+        assert_eq!((row["process"].clone(), row["stage"].clone(), row["waiting"].clone()), (json!("system-analysis"), json!("description"), json!(true)), "tasks_only={tasks_only}");
+        assert_eq!(row["stage_log"].as_array().unwrap().len(), 1, "tasks_only={tasks_only}");
     }
-    // Unset values read as '' and false, also for a record saved by 0.3.29.
+    // Unset values read as '', false and no history, also for a record saved by 0.3.29.
     conn.execute(V0329_TASK_INSERT, params!["legacy", "Legacy task", "2026-09-20", 30, "2026-09-20T08:00:00Z", 0]).unwrap();
     for row in [listed(&conn, "legacy", true), load(&conn, "legacy").unwrap()] {
-        assert_eq!((row["stage"].clone(), row["waiting"].clone()), (json!(""), json!(false)));
+        assert_eq!((row["process"].clone(), row["stage"].clone(), row["waiting"].clone(), row["stage_log"].clone()), (json!(""), json!(""), json!(false), json!([])));
     }
     // An edit without the new fields keeps them; explicit values replace each one.
     edit(&mut conn, &id, Some("2026-09-25"), fields(None, Some("normal"), Some("work"))).unwrap();
-    assert_eq!(stored(&conn, &id).1, "task-stage:description,task-waiting,task-sphere:work");
+    assert_eq!(plain(&stored(&conn, &id).1), "task-stage:description,task-waiting,task-process:system-analysis,task-sphere:work");
+    assert_eq!(history(&stored(&conn, &id).1), ["description"], "only a stage change is recorded");
     edit(&mut conn, &id, Some("2026-09-25"), with_stage(Some("acceptance"), None)).unwrap();
-    assert_eq!(stored(&conn, &id).1, "task-waiting,task-sphere:work,task-stage:acceptance");
+    assert_eq!(plain(&stored(&conn, &id).1), "task-waiting,task-process:system-analysis,task-sphere:work,task-stage:acceptance");
     edit(&mut conn, &id, Some("2026-09-25"), with_stage(Some(""), Some(false))).unwrap();
-    assert_eq!(stored(&conn, &id).1, "task-sphere:work");
+    assert_eq!(plain(&stored(&conn, &id).1), "task-process:system-analysis,task-sphere:work", "«Без стадии» keeps the process");
+    assert_eq!(history(&stored(&conn, &id).1), ["description", "acceptance", ""]);
+    // «Без процесса» removes the process; the stage UI then disappears.
+    edit(&mut conn, &id, Some("2026-09-25"), TaskFields { process: Some(String::new()), ..TaskFields::default() }).unwrap();
+    assert_eq!(plain(&stored(&conn, &id).1), "task-sphere:work");
+    assert_eq!(load(&conn, &id).unwrap()["process"], "");
     let before = load(&conn, &id).unwrap();
-    assert!(edit(&mut conn, &id, Some("2026-09-25"), with_stage(Some("review"), None)).unwrap_err().contains("stage"));
-    assert_eq!(load(&conn, &id).unwrap(), before, "an unknown stage is rejected without writing");
+    for bad in [with_stage(Some("Review"), None), TaskFields { process: Some("Системный".into()), ..TaskFields::default() }] {
+        assert!(edit(&mut conn, &id, Some("2026-09-25"), bad).unwrap_err().contains("must be"));
+    }
+    assert_eq!(load(&conn, &id).unwrap(), before, "a malformed id is rejected without writing");
+}
+
+#[test]
+fn a_process_and_its_first_stage_are_saved_together_and_a_legacy_stage_migrates_on_edit() {
+    let mut conn = replica();
+    let id = create(&mut conn, "Model the fictional order", None, TaskFields { process: Some("p-repair".into()), stage: Some("s-estimate".into()), ..TaskFields::default() });
+    let row = load(&conn, &id).unwrap();
+    assert_eq!((row["process"].clone(), row["stage"].clone()), (json!("p-repair"), json!("s-estimate")));
+    assert_eq!(history(&stored(&conn, &id).1), ["s-estimate"]);
+    // A process without a stage yet still shows the stage control (placeholder).
+    let bare = create(&mut conn, "Bare process", None, TaskFields { process: Some("system-analysis".into()), ..TaskFields::default() });
+    assert_eq!((load(&conn, &bare).unwrap()["process"].clone(), stored(&conn, &bare).1), (json!("system-analysis"), "task-process:system-analysis".to_owned()));
+    // A 0.3.33 task: stage and waiting, no process. Reading derives it; any edit writes it.
+    conn.execute("INSERT INTO items(id,kind,title,duration_minutes,version,created_at,updated_at,tags,status) VALUES('old','task','Old staged task',30,1,'2026-09-24T08:00:00Z','2026-09-24T08:00:00Z','task-stage:agreement,task-waiting','task')", []).unwrap();
+    assert_eq!(load(&conn, "old").unwrap()["process"], "system-analysis");
+    assert_eq!(stored(&conn, "old").1, "task-stage:agreement,task-waiting", "reading changes nothing");
+    edit(&mut conn, "old", None, TaskFields::default()).unwrap();
+    assert_eq!(stored(&conn, "old").1, "task-stage:agreement,task-waiting,task-process:system-analysis");
+    // Its first stage change keeps the earlier work with the old stage from the task's creation.
+    set_task_stage(&mut conn, "old", Some("decomposition"), None).unwrap();
+    let log = crate::task_attributes::stage_log(&stored(&conn, "old").1).into_iter().map(|(stage, at)| (stage.to_owned(), at.to_owned())).collect::<Vec<_>>();
+    assert_eq!(log[0], ("agreement".to_owned(), "2026-09-24T08:00:00.000Z".to_owned()));
+    assert_eq!(log[1].0, "decomposition");
 }
 
 #[test]
@@ -309,23 +356,26 @@ fn the_stage_command_edits_one_task_like_other_edits_and_rejects_other_records()
     let app = app(conn);
     let row = set_calendar_task_stage("task".into(), Some("agreement".into()), Some(true), app.state()).unwrap();
     assert_eq!((row["id"].clone(), row["stage"].clone(), row["waiting"].clone(), row["sphere"].clone(), row["version"].clone()), (json!("task"), json!("agreement"), json!(true), json!("home"), json!(5)));
+    assert_eq!(row["process"], "system-analysis", "a stage set without a process belongs to the built-in one");
     assert_ne!(row["updated_at"], "a", "updated_at moves so the edit syncs");
     assert!(row.as_object().unwrap().contains_key("goal_id"), "the same row shape as get_calendar_task");
     // An omitted value keeps the stored one; '' clears only the stage.
     let row = set_calendar_task_stage("task".into(), None, Some(false), app.state()).unwrap();
     assert_eq!((row["stage"].clone(), row["waiting"].clone(), row["version"].clone()), (json!("agreement"), json!(false), json!(6)));
+    assert_eq!(row["stage_log"].as_array().unwrap().len(), 1, "«Жду ответа» is not a stage change");
     let row = set_calendar_task_stage("task".into(), Some(String::new()), None, app.state()).unwrap();
-    assert_eq!((row["stage"].clone(), row["version"].clone()), (json!(""), json!(7)));
+    assert_eq!((row["stage"].clone(), row["version"].clone(), row["process"].clone()), (json!(""), json!(7), json!("system-analysis")));
     // Repeating the current choice writes nothing.
     let row = set_calendar_task_stage("task".into(), Some(String::new()), Some(false), app.state()).unwrap();
     assert_eq!(row["version"], 7);
-    assert_eq!(stored(&app.state::<crate::AppState>().0.lock().unwrap(), "task").1, "calendar,task-sphere:home");
+    let tags = stored(&app.state::<crate::AppState>().0.lock().unwrap(), "task").1;
+    assert_eq!((plain(&tags), history(&tags)), ("calendar,task-sphere:home,task-process:system-analysis".to_owned(), vec!["agreement".to_owned(), String::new()]));
     for (id, stage, error) in [
         ("note", Some("agreement"), "task not found"),
         ("event", Some("agreement"), "task not found"),
         ("missing", None, "task not found"),
         ("hc-sleep:fixture", Some("agreement"), "health_sleep_readonly"),
-        ("task", Some("review"), "stage must be"),
+        ("task", Some("Review"), "stage must be"),
         ("", Some(""), "record id is required"),
     ] {
         let error_text = set_calendar_task_stage(id.into(), stage.map(Into::into), Some(true), app.state()).unwrap_err();
@@ -339,7 +389,7 @@ fn the_stage_command_edits_one_task_like_other_edits_and_rejects_other_records()
 }
 
 #[test]
-fn a_stage_written_here_travels_through_a_0329_replica_and_unknown_stages_survive() {
+fn a_stage_written_here_travels_through_a_0329_replica_and_deleted_stages_survive() {
     let mut newer = replica();
     let older = replica();
     let id = create(&mut newer, "Agree the fictional contract", Some("2026-09-24"), TaskFields::default());
@@ -349,25 +399,29 @@ fn a_stage_written_here_travels_through_a_0329_replica_and_unknown_stages_surviv
     set_task_stage(&mut newer, &id, Some("agreement"), Some(true)).unwrap();
     assert_eq!(stamp_of(&newer, &key), written, "an unchanged choice creates no sync record");
     assert!(transfer(&newer, &older, &id).unwrap(), "a tag write keeps the 0.3.29 column set");
-    assert_eq!(stored(&older, &id).1, "task-stage:agreement,task-waiting");
+    assert_eq!(stored(&older, &id).1, stored(&newer, &id).1, "process and history travel in the row");
+    assert_eq!(plain(&stored(&older, &id).1), "task-stage:agreement,task-waiting,task-process:system-analysis");
     // The older client renames and reschedules with its own statement and keeps the tags.
     let version: i64 = older.query_row("SELECT version FROM items WHERE id=?1", [&id], |r| r.get(0)).unwrap();
     assert_eq!(older.execute(V0329_TASK_UPDATE, params!["Renamed on the old phone", "2026-09-26", None::<i64>, "2026-09-24T09:00:00Z", &id, version, None::<i64>]).unwrap(), 1);
     assert!(transfer(&older, &newer, &id).unwrap());
     let back = load(&newer, &id).unwrap();
-    assert_eq!((back["title"].clone(), back["stage"].clone(), back["waiting"].clone()), (json!("Renamed on the old phone"), json!("agreement"), json!(true)));
+    assert_eq!((back["title"].clone(), back["stage"].clone(), back["waiting"].clone(), back["process"].clone()), (json!("Renamed on the old phone"), json!("agreement"), json!(true), json!("system-analysis")));
+    assert_eq!(back["stage_log"].as_array().unwrap().len(), 1);
     assert_eq!(conflicts(&newer), 0, "sequential edits are not conflicts");
-    // A stage id from a newer version reads as unset but survives this version's edits.
+    // A stage id missing from its process (deleted in the settings) is reported
+    // as is, so the interface can say «Стадия удалена», and survives other edits.
     newer.execute("UPDATE items SET tags='task-stage:review,task-waiting' WHERE id=?1", [&id]).unwrap();
-    assert_eq!(load(&newer, &id).unwrap()["stage"], "");
+    assert_eq!(load(&newer, &id).unwrap()["stage"], "review");
     edit(&mut newer, &id, Some("2026-09-27"), fields(None, None, Some("work"))).unwrap();
     set_task_stage(&mut newer, &id, None, Some(false)).unwrap();
-    assert_eq!(stored(&newer, &id).1, "task-stage:review,task-sphere:work");
+    assert_eq!(stored(&newer, &id).1, "task-stage:review,task-sphere:work,task-process:system-analysis");
     assert!(transfer(&newer, &older, &id).unwrap());
-    assert_eq!(stored(&older, &id).1, "task-stage:review,task-sphere:work");
+    assert_eq!(stored(&older, &id).1, "task-stage:review,task-sphere:work,task-process:system-analysis");
     // Only an explicit choice replaces it.
     set_task_stage(&mut newer, &id, Some("development"), None).unwrap();
-    assert_eq!(stored(&newer, &id).1, "task-sphere:work,task-stage:development");
+    assert_eq!(plain(&stored(&newer, &id).1), "task-sphere:work,task-process:system-analysis,task-stage:development");
+    assert_eq!(history(&stored(&newer, &id).1), ["review", "development"]);
 }
 
 #[test]

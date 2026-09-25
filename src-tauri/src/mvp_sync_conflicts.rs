@@ -288,6 +288,7 @@ fn entity(record: &Record) -> &'static str {
             Some("calendar_recurring_v1") => "Дело или правило",
             Some("calendar_now_v1") => "Текущая задача и цель",
             Some("calendar_wishes_v1") => "Желание",
+            Some("calendar_processes_v1") => "Процесс задач",
             _ => "Запись",
         },
         _ => "Запись неизвестного формата",
@@ -368,8 +369,14 @@ fn preview(
         if let Some(sphere) = crate::task_attributes::sphere(tags) {
             rows.push(json!({"label":"Сфера","value":crate::task_attributes::sphere_label(sphere)}));
         }
-        if let Some(stage) = crate::task_attributes::stage(tags) {
-            rows.push(json!({"label":"Стадия","value":crate::task_attributes::stage_label(stage)}));
+        if let Some(process) = crate::task_attributes::effective_process(tags) {
+            let stored = crate::mvp_sync_db::read_ui(conn, "calendar_processes_v1")?;
+            let stage = crate::task_attributes::stage(tags);
+            let (process, stage) = crate::task_attributes::names(stored.as_deref(), process, stage);
+            rows.push(json!({"label":"Процесс","value":process}));
+            if let Some(stage) = stage {
+                rows.push(json!({"label":"Стадия","value":stage}));
+            }
         }
         if crate::task_attributes::waiting(tags) {
             rows.push(json!({"label":"Жду ответа","value":"Да"}));
@@ -420,6 +427,11 @@ fn preview(
         }
         rows.push(json!({"label":"Выбор задачи","value":if value["selectionMode"]=="manual"{"Вручную"}else{"Автоматически"}}));
     }
+    // Two versions of a process usually differ only in their stages.
+    if record.kind == "ui" && record.key.first().and_then(Value::as_str) == Some("calendar_processes_v1") {
+        let stages: Vec<&str> = value["stages"].as_array().into_iter().flatten().filter_map(|stage| stage["title"].as_str()).collect();
+        rows.push(json!({"label":"Стадии","value":shortened(&stages.join(" → "),600)}));
+    }
     Ok(json!({"state":"present","fields":rows,"updated_at":stamp}))
 }
 fn entry(conn: &Connection, selected: Selected) -> Result<Value, String> {
@@ -444,7 +456,7 @@ fn entry(conn: &Connection, selected: Selected) -> Result<Value, String> {
         json!({"token":token,"expected":expected(&selected,current.as_ref())?,"source":selected.location.source,"label":label,"reason":allowed.as_ref().err(),"current":preview(conn,current.as_ref().map(|v|&v.record),current.as_ref().map(|v|v.stamp.as_str()),readable)?,"incoming":preview(conn,selected.record.as_ref(),Some(&selected.location.stamp),readable)?,"can_keep_current":readable,"can_use_incoming":allowed.is_ok()}),
     )
 }
-fn list(conn: &Connection, offset: usize, limit: usize) -> Result<Value, String> {
+pub(crate) fn list(conn: &Connection, offset: usize, limit: usize) -> Result<Value, String> {
     if limit == 0 || limit > 50 || offset > 1_000_000 {
         return Err("mvp_sync_conflict_invalid_page".into());
     }

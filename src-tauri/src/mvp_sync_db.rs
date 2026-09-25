@@ -23,6 +23,9 @@ const UI_KEYS: &[&str] = &[
     "calendar_recurring_v1",
     "calendar_now_v1",
     "calendar_wishes_v1",
+    // Task processes (2026-09-25), one record per process. Older versions pause
+    // receiving at the first such record until they update (see split_ui).
+    "calendar_processes_v1",
 ];
 pub(crate) const DAY_KEY: &str = "calendar_day_start_v1";
 pub(crate) fn sql<T>(result: rusqlite::Result<T>) -> Result<T, String> {
@@ -801,6 +804,30 @@ fn split_ui(name: &str, value: &Value) -> Result<BTreeMap<String, Value>, String
                 return Err("mvp_sync_invalid_snapshot".into());
             }
         }
+    } else if name == "calendar_processes_v1" {
+        // One record per process: edits of different processes on two devices
+        // merge, and a process edited on both keeps the newer version with the
+        // other one in conflict review. The built-in process is not stored until
+        // the owner saves the editor, so nothing is sent before that. A 0.3.33 or
+        // older replica does not know this key: it rejects the page that carries
+        // the record (content_sync_unknown_schema) and keeps its receive cursor
+        // there, so it stops receiving (it still uploads) until it is updated,
+        // then resumes from that page without losing anything.
+        for (position, row) in array(&value["processes"])?.iter().enumerate() {
+            if !process_row(row) {
+                return Err("mvp_sync_invalid_snapshot".into());
+            }
+            let id = row["id"].as_str().unwrap_or_default();
+            if out
+                .insert(
+                    json!([name, "processes", id]).to_string(),
+                    json!({"position":position,"row":row}),
+                )
+                .is_some()
+            {
+                return Err("mvp_sync_invalid_snapshot".into());
+            }
+        }
     } else if name == "calendar_recurring_v1" {
         for (position, row) in array(&value["plans"])?.iter().enumerate() {
             let id = row["id"]
@@ -831,6 +858,22 @@ fn split_ui(name: &str, value: &Value) -> Result<BTreeMap<String, Value>, String
     }
     Ok(out)
 }
+/// A process: a well-formed id, a name and 1–50 stages with unique ids and
+/// names. Other fields are kept, so a newer version may add them.
+fn process_row(row: &Value) -> bool {
+    let text = |value: &Value| value.as_str().is_some_and(|v| !v.trim().is_empty() && v.chars().count() <= 200);
+    let Some(stages) = row["stages"].as_array() else {
+        return false;
+    };
+    let mut seen = std::collections::HashSet::new();
+    row["id"].as_str().is_some_and(crate::task_attributes::valid_id)
+        && text(&row["title"])
+        && (1..=50).contains(&stages.len())
+        && stages.iter().all(|stage| {
+            stage["id"].as_str().is_some_and(|id| crate::task_attributes::valid_id(id) && seen.insert(id.to_owned()))
+                && text(&stage["title"])
+        })
+}
 fn validate_ui_record(record: &Record) -> Result<(), String> {
     let keys: Vec<_> = record
         .key
@@ -854,6 +897,13 @@ fn validate_ui_record(record: &Record) -> Result<(), String> {
                 && id.len() <= 128
                 && (record.deleted
                     || (record.value["row"]["id"] == *id && record.value["position"].is_u64()))
+        }
+        ["calendar_processes_v1", "processes", id] => {
+            crate::task_attributes::valid_id(id)
+                && (record.deleted
+                    || (record.value["row"]["id"] == *id
+                        && record.value["position"].is_u64()
+                        && process_row(&record.value["row"])))
         }
         ["calendar_recurring_v1", "plans", id] => {
             !id.is_empty()
@@ -884,6 +934,8 @@ fn apply_ui_record(conn: &Connection, record: &Record) -> Result<(), String> {
         json!({"version":1,"goals":{}})
     } else if name == "calendar_wishes_v1" {
         json!({"version":1,"wishes":[]})
+    } else if name == "calendar_processes_v1" {
+        json!({"version":1,"processes":[]})
     } else {
         json!({"version":1,"plans":[],"days":{}})
     };
@@ -932,6 +984,11 @@ fn apply_ui_record(conn: &Connection, record: &Record) -> Result<(), String> {
             }
         } else if name == "calendar_wishes_v1" {
             state["wishes"]
+                .as_array_mut()
+                .ok_or("mvp_sync_invalid_snapshot")?
+                .push(row.value["row"].clone());
+        } else if name == "calendar_processes_v1" {
+            state["processes"]
                 .as_array_mut()
                 .ok_or("mvp_sync_invalid_snapshot")?
                 .push(row.value["row"].clone());

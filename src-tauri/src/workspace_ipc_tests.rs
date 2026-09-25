@@ -50,6 +50,7 @@ fn fixture_with_connection(
             api::get_active_block,
             api::get_active_blocks,
             api::get_timeline_blocks,
+            api::get_calendar_task_blocks,
             api::get_latest_task_block,
             api::get_calendar_task_minutes,
             api::get_calendar_task_seconds,
@@ -199,8 +200,10 @@ fn expected_list_record(
     if source == "note" {
         value["task_kind"] = json!("normal");
         value["sphere"] = Value::Null;
+        value["process"] = json!("");
         value["stage"] = json!("");
         value["waiting"] = json!(false);
+        value["stage_log"] = json!([]);
     }
     value
 }
@@ -2363,7 +2366,7 @@ fn stage_and_cancel_payloads_cross_the_real_ipc() {
     assert_eq!((&listed[0]["stage"], &listed[0]["waiting"]), (&json!("development"), &json!(true)));
     let records = call(&view, "get_calendar_records", json!({"start":"2026-09-24","end":"2026-09-24"})).unwrap();
     assert_eq!(records[0]["stage"], "development");
-    assert!(call(&view, "set_calendar_task_stage", json!({"id":task,"stage":"later","waiting":false})).is_err());
+    assert!(call(&view, "set_calendar_task_stage", json!({"id":task,"stage":"Later stage","waiting":false})).is_err());
     // An edit from an older caller omits stage and waiting and keeps them.
     call(
         &view,
@@ -2385,4 +2388,38 @@ fn stage_and_cancel_payloads_cross_the_real_ipc() {
     call(&view, "pause_task_block", json!({"blockId":paused})).unwrap();
     assert!(call(&view, "cancel_task_block", json!({"blockId":paused})).is_err(), "recorded work is never cancelled");
     assert_eq!(call(&view, "get_calendar_tasks", json!({})).unwrap()[0]["has_work"], true);
+}
+
+// Processes, the stage arrow and time per stage (2026-09-25) with the exact UI payloads.
+#[test]
+fn process_payloads_and_task_blocks_cross_the_real_ipc() {
+    let (_app, view) = fixture();
+    let save = |id: Value, process: Value, stage: Value, version: Value| {
+        call(&view, "save_calendar_task", json!({"id":id,"title":"Example analysis task","dueDate":null,"time":"","estimateMinutes":null,
+            "goalId":null,"expectedVersion":version,"important":false,"taskKind":"normal","sphere":"work","stage":stage,"waiting":false,"process":process}))
+    };
+    let task = save(Value::Null, json!("system-analysis"), json!("understanding"), Value::Null).unwrap();
+    let item = call(&view, "get_calendar_task", json!({"id":task})).unwrap();
+    assert_eq!((&item["process"], &item["stage"], &item["sphere"]), (&json!("system-analysis"), &json!("understanding"), &json!("work")));
+    assert_eq!(item["stage_log"].as_array().unwrap().len(), 1);
+    // The arrow sends the next stage and leaves «Жду ответа» alone.
+    let row = call(&view, "set_calendar_task_stage", json!({"id":task,"stage":"requirements","waiting":null})).unwrap();
+    assert_eq!(row["stage_log"].as_array().unwrap().iter().map(|entry| entry["stage"].clone()).collect::<Vec<_>>(), [json!("understanding"), json!("requirements")]);
+    let listed = call(&view, "get_calendar_tasks", json!({})).unwrap();
+    assert_eq!((&listed[0]["process"], &listed[0]["stage_log"]), (&json!("system-analysis"), &row["stage_log"]));
+    // «Без процесса» from the dialog removes the stage control.
+    save(json!(task), json!(""), json!(""), row["version"].clone()).unwrap();
+    let item = call(&view, "get_calendar_task", json!({"id":task})).unwrap();
+    assert_eq!((&item["process"], &item["stage"]), (&json!(""), &json!("")));
+    assert!(save(json!(task), json!("Bad process"), Value::Null, item["version"].clone()).is_err());
+    // Every block of the task, all days, with its UTC start.
+    let block = call(&view, "start_task_block", json!({"sourceType":"note","sourceId":task,"completionDate":"2026-09-24"})).unwrap();
+    call(&view, "pause_task_block", json!({"blockId":block})).unwrap();
+    call(&view, "start_task_block", json!({"sourceType":"note","sourceId":task,"completionDate":"2026-09-24"})).unwrap();
+    let blocks = call(&view, "get_calendar_task_blocks", json!({"sourceIds":[task, "missing"]})).unwrap();
+    let blocks = blocks.as_array().unwrap();
+    assert_eq!(blocks.len(), 2);
+    assert_eq!(blocks.iter().map(|b| b["is_active"].clone()).collect::<Vec<_>>(), [json!(false), json!(true)]);
+    assert!(blocks.iter().all(|b| b["source_id"] == task && chrono::DateTime::parse_from_rfc3339(b["created_at"].as_str().unwrap()).is_ok()));
+    assert_eq!(call(&view, "get_calendar_task_blocks", json!({"sourceIds":[]})).unwrap(), json!([]));
 }

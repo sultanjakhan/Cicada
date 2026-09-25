@@ -407,6 +407,124 @@ fn malformed_wish_snapshots_are_rejected_before_any_record() {
         .unwrap()
         .is_none());
 }
+// ---- Task processes (2026-09-25) ----
+fn processes(conn: &Connection) -> Value {
+    serde_json::from_str::<Value>(&crate::mvp_sync_db::read_ui(conn, "calendar_processes_v1").unwrap().unwrap()).unwrap()
+}
+fn process(id: &str, title: &str, stages: &[(&str, &str)]) -> Value {
+    json!({"id":id,"title":title,"stages":stages.iter().map(|(id, title)| json!({"id":id,"title":title})).collect::<Vec<_>>()})
+}
+fn save_processes(conn: &Connection, rows: Vec<Value>) {
+    let before = crate::mvp_sync_db::read_ui(conn, "calendar_processes_v1").unwrap();
+    let state = json!({"version":1,"processes":rows});
+    crate::mvp_sync_db::set_ui(conn, "calendar_processes_v1", &state.to_string(), Some(before.as_deref().unwrap_or(""))).unwrap();
+}
+#[test]
+fn processes_sync_per_record_so_edits_of_different_processes_merge() {
+    let (a, ac) = replica("mac");
+    let (b, bc) = replica("phone");
+    let analysis = |stages: &[(&str, &str)]| process("system-analysis", "Системный анализ", stages);
+    save_processes(&a, vec![analysis(&[("understanding", "Понимание"), ("analysis", "Анализ и модели")])]);
+    save_processes(&b, vec![analysis(&[("understanding", "Понимание"), ("analysis", "Анализ и модели")]), process("p-repair", "Ремонт", &[("s-estimate", "Смета")])]);
+    assert_eq!(ui_rows(&a).len(), 1, "one record per process");
+    let (mut a, mut b) = (a, b);
+    apply(&mut a, &ac, stored(&bc, ui_rows(&b), 1, 1)).unwrap();
+    apply(&mut b, &bc, stored(&ac, ui_rows(&a), 1, 1)).unwrap();
+    assert_eq!(processes(&a), processes(&b));
+    assert_eq!(processes(&a)["processes"].as_array().unwrap().len(), 2);
+    // The Mac renames and reorders stages of one process while the phone renames the other.
+    let mut on_a = processes(&a)["processes"].as_array().unwrap().clone();
+    on_a[0] = analysis(&[("analysis", "Модели"), ("understanding", "Понимание")]);
+    save_processes(&a, on_a);
+    let mut on_b = processes(&b)["processes"].as_array().unwrap().clone();
+    on_b[1] = process("p-repair", "Ремонт кухни", &[("s-estimate", "Смета")]);
+    save_processes(&b, on_b);
+    let (left, right) = (ui_rows(&a), ui_rows(&b));
+    apply(&mut a, &ac, stored(&bc, right, 2, 2)).unwrap();
+    apply(&mut b, &bc, stored(&ac, left, 2, 2)).unwrap();
+    assert_eq!(processes(&a), processes(&b));
+    assert_eq!(processes(&a)["processes"], json!([analysis(&[("analysis", "Модели"), ("understanding", "Понимание")]), process("p-repair", "Ремонт кухни", &[("s-estimate", "Смета")])]));
+    assert_eq!(scalar(&a, "SELECT count(*) FROM mvp_sync_conflicts").unwrap(), 0, "different processes do not conflict");
+    // Both devices edit the same process: the newer version wins everywhere, the other is kept for review.
+    let mut on_a = processes(&a)["processes"].as_array().unwrap().clone();
+    on_a[1] = process("p-repair", "Ремонт A", &[("s-estimate", "Смета")]);
+    save_processes(&a, on_a);
+    let mut on_b = processes(&b)["processes"].as_array().unwrap().clone();
+    on_b[1] = process("p-repair", "Ремонт B", &[("s-estimate", "Смета"), ("s-buy", "Закупка")]);
+    save_processes(&b, on_b);
+    let (left, right) = (ui_rows(&a), ui_rows(&b));
+    apply(&mut a, &ac, stored(&bc, right, 3, 3)).unwrap();
+    apply(&mut b, &bc, stored(&ac, left, 3, 3)).unwrap();
+    assert_eq!(processes(&a), processes(&b));
+    for conn in [&a, &b] {
+        assert_eq!(scalar(conn, "SELECT count(*) FROM mvp_sync_conflicts").unwrap(), 1, "the losing version is kept");
+    }
+    let listed = crate::mvp_sync_db::conflicts::list(&a, 0, 25).unwrap();
+    let text = listed.to_string();
+    assert!(text.contains("Процесс задач") && text.contains("Стадии"), "{text}");
+}
+#[test]
+fn malformed_process_snapshots_are_rejected_before_any_record() {
+    let (a, _) = replica("mac");
+    for rows in [
+        vec![process("Bad Id", "Процесс", &[("s", "Стадия")])],
+        vec![process("p", "", &[("s", "Стадия")])],
+        vec![process("p", "Процесс", &[])],
+        vec![process("p", "Процесс", &[("s", "A"), ("s", "B")])],
+        vec![process("p", "Процесс", &[("s,1", "A")])],
+        vec![process("p", "Процесс", &[("s", "A")]), process("p", "Копия", &[("s", "A")])],
+    ] {
+        let state = json!({"version":1,"processes":rows});
+        assert_eq!(crate::mvp_sync_db::set_ui(&a, "calendar_processes_v1", &state.to_string(), Some("")).unwrap_err(), "mvp_sync_invalid_snapshot", "{state}");
+    }
+    assert!(ui_rows(&a).is_empty());
+    assert!(crate::mvp_sync_db::read_ui(&a, "calendar_processes_v1").unwrap().is_none());
+}
+/// What a 0.3.33 replica does with a process record: its UI key list lacks
+/// `calendar_processes_v1`, so the record reads exactly like this unknown key.
+/// The page is rejected and the cursor stays; nothing of the page is applied.
+/// This version applies the same kind of page, so after the update the older
+/// device resumes from the held cursor without losing anything.
+#[test]
+fn an_older_replica_pauses_receiving_at_an_unknown_ui_record_and_this_version_applies_it() {
+    let (a, ac) = replica("mac");
+    let (mut older, oc) = replica("phone");
+    task(&a, "t", "Fictional task");
+    save_processes(&a, vec![process("system-analysis", "Системный анализ", &[("understanding", "Понимание")])]);
+    let task_row = row(&a, &json!(["items", ["t"]]).to_string());
+    let mut unknown = ui_rows(&a).remove(0);
+    let renamed = unknown.f["id"].as_str().unwrap().replace("calendar_processes_v1", "calendar_processes_v0");
+    let data = unknown.f["data"].as_str().unwrap().replace("calendar_processes_v1", "calendar_processes_v0");
+    unknown.f.insert("id".into(), json!(renamed));
+    unknown.f.insert("data".into(), json!(data));
+    assert_eq!(apply(&mut older, &oc, stored(&ac, vec![task_row.clone(), unknown], 1, 1)).unwrap_err(), "content_sync_unknown_schema");
+    assert_eq!(scalar(&older, "SELECT receive_seq FROM content_sync_state").unwrap(), 0, "the cursor waits for the update");
+    assert_eq!(scalar(&older, "SELECT count(*) FROM items WHERE id='t'").unwrap(), 0, "nothing of the page is applied");
+    // The updated device knows the key: the same page applies in full.
+    let (mut updated, uc) = replica("tablet");
+    apply(&mut updated, &uc, stored(&ac, vec![task_row, ui_rows(&a).remove(0)], 1, 1)).unwrap();
+    assert_eq!(scalar(&updated, "SELECT receive_seq FROM content_sync_state").unwrap(), 1);
+    assert_eq!(scalar(&updated, "SELECT count(*) FROM items WHERE id='t'").unwrap(), 1);
+    assert_eq!(processes(&updated), processes(&a));
+}
+#[test]
+fn stage_history_travels_in_the_task_row_and_both_devices_read_the_same_history() {
+    let (mut a, ac) = replica("mac");
+    let (mut b, bc) = replica("phone");
+    let id = crate::calendar_compat::save_task(&mut a, None, "Fictional analysis".into(), None, None, None, None, Some(false), crate::calendar_compat::TaskFields { process: Some("system-analysis".into()), stage: Some("understanding".into()), ..Default::default() }).unwrap();
+    crate::calendar_compat::set_task_stage(&mut a, &id, Some("requirements"), None).unwrap();
+    let key = json!(["items", [&id]]).to_string();
+    apply(&mut b, &bc, stored(&ac, vec![row(&a, &key)], 1, 1)).unwrap();
+    let tags = |conn: &Connection| conn.query_row("SELECT tags FROM items WHERE id=?1", [&id], |r| r.get::<_, String>(0)).unwrap();
+    assert_eq!(tags(&a), tags(&b));
+    let log = crate::task_attributes::stage_log(&tags(&b)).into_iter().map(|(stage, _)| stage.to_owned()).collect::<Vec<_>>();
+    assert_eq!(log, ["understanding", "requirements"]);
+    // The phone moves on; the Mac receives the longer history with the row.
+    crate::calendar_compat::set_task_stage(&mut b, &id, Some("analysis"), None).unwrap();
+    apply(&mut a, &ac, stored(&bc, vec![row(&b, &key)], 1, 1)).unwrap();
+    assert_eq!(crate::task_attributes::stage_log(&tags(&a)).len(), 3);
+    assert_eq!(crate::task_attributes::stage(&tags(&a)), Some("analysis"));
+}
 #[test]
 fn generic_seed_does_not_create_a_false_conflict() {
     let (mut a, ac) = replica("mac");
