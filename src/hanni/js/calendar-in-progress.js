@@ -30,10 +30,12 @@ export function formatWorkTime(seconds) {
   if (total < 3600) return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
   return `${Math.floor(total / 3600)} ч ${String(Math.floor(total % 3600 / 60)).padStart(2, '0')} мин`;
 }
-/** «12 / 60 мин» against an estimate, «12 мин» without one. */
+const pad = value => String(value).padStart(2, '0');
+/** A live clock against an estimate: «12:34 / 60 мин», «1:05:12» without one. */
 export function formatAgainstEstimate(seconds, estimate) {
-  const minutes = Math.max(0, Math.floor((Number(seconds) || 0) / 60));
-  return estimate > 0 ? `${minutes} / ${estimate} мин` : `${minutes} мин`;
+  const total = Math.max(0, Math.floor(Number(seconds) || 0)), hours = Math.floor(total / 3600);
+  const clock = `${hours ? `${hours}:` : ''}${pad(Math.floor(total % 3600 / 60))}:${pad(total % 60)}`;
+  return estimate > 0 ? `${clock} / ${estimate} мин` : clock;
 }
 function readHidden(raw) {
   try {

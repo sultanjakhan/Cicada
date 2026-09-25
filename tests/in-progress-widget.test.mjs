@@ -92,10 +92,10 @@ test('work time reads as mm:ss under an hour and against the estimate in minutes
   assert.equal(formatWorkTime(0), '00:00');
   assert.equal(formatWorkTime(754), '12:34');
   assert.equal(formatWorkTime(3900), '1 ч 05 мин');
-  assert.equal(formatAgainstEstimate(754, 60), '12 / 60 мин');
-  assert.equal(formatAgainstEstimate(754, null), '12 мин');
-  assert.equal(formatAgainstEstimate(-5, 30), '0 / 30 мин');
-  assert.equal(formatAgainstEstimate(4500, 60), '75 / 60 мин');
+  assert.equal(formatAgainstEstimate(754, 60), '12:34 / 60 мин');
+  assert.equal(formatAgainstEstimate(754, null), '12:34');
+  assert.equal(formatAgainstEstimate(-5, 30), '00:00 / 30 мин');
+  assert.equal(formatAgainstEstimate(4500, 60), '1:15:00 / 60 мин');
 });
 
 test('nothing running folds into one line whose only action opens the existing task picker', async t => {
@@ -115,9 +115,9 @@ test('nothing running folds into one line whose only action opens the existing t
 test('rows show total time against the estimate, the stage chip and the goal; over the estimate turns amber', async t => {
   const x = await mount(t);
   assert.deepEqual(x.text(), [
-    ['Зарядка · Разминка', '2 мин', null, null],
-    ['Черновик отчёта', '70 / 60 мин', 'Описание', 'Портфолио аналитика'],
-    ['Разобрать письма', '32 / 45 мин', 'Жду ответа · Согласование', null],
+    ['Зарядка · Разминка', '02:00', null, null],
+    ['Черновик отчёта', '1:10:00 / 60 мин', 'Описание', 'Портфолио аналитика'],
+    ['Разобрать письма', '32:00 / 45 мин', 'Жду ответа · Согласование', null],
   ], 'running first; paused-today next; finished and older work stays out');
   assert.equal(x.host.querySelector('[data-cip-count]').textContent, '2 идут · 1 на паузе');
   assert.deepEqual(x.rows().map(item => item.classList.contains('is-running')), [true, true, false]);
@@ -136,7 +136,7 @@ test('rows show total time against the estimate, the stage chip and the goal; ov
   assert.match(x.control('note:draft', 'stage').getAttribute('aria-label'), /^Стадия: Описание\. Изменить: Черновик отчёта$/);
   x.data.now = new Date(`${TODAY}T11:01:00`);
   await new Promise(resolve => setTimeout(resolve, 1100));
-  assert.deepEqual(x.text().map(row => row[1]), ['3 мин', '71 / 60 мин', '32 / 45 мин'], 'running rows tick, paused rows stay');
+  assert.deepEqual(x.text().map(row => row[1]), ['03:00', '1:11:00 / 60 мин', '32:00 / 45 мин'], 'running rows tick, paused rows stay');
   x.control('note:letters', 'open').click();
   assert.equal(x.opened[0].row.source_id, 'letters');
   assert.equal(x.data.count('start_task_block') + x.data.count('pause_task_block') + x.data.count('set_ui_state'), 0, 'reading changes nothing');
@@ -149,7 +149,7 @@ test('an instant task shows no stage chip and no estimate', async t => {
   const x = await mount(t, data);
   const quick = x.row('note:quick');
   assert.equal(quick.querySelector('.cip-stage'), null);
-  assert.equal(quick.querySelector('.cip-time').textContent, '1 мин');
+  assert.equal(quick.querySelector('.cip-time').textContent, '01:00');
   assert.equal(quick.querySelector('[data-cip-progress]'), null);
 });
 
@@ -284,7 +284,7 @@ test('Cancel start asks once inline, then discards only the running block', asyn
   assert.equal(x.data.count('pause_task_block'), 0);
   // Earlier work of today stays: the task is listed as paused with only that time.
   assert.equal(x.row('note:draft').classList.contains('is-paused'), true);
-  assert.equal(x.row('note:draft').querySelector('.cip-time').textContent, '40 / 60 мин');
+  assert.equal(x.row('note:draft').querySelector('.cip-time').textContent, '40:00 / 60 мин');
   assert.equal(x.data.blocks.find(block => block.id === 14).is_active, true, 'other running work is untouched');
   assert.match(x.host.querySelector('[data-cip-message]').textContent, /Запуск отменён/);
 });
