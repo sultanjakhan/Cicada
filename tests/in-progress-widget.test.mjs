@@ -133,6 +133,10 @@ test('rows show total time against the estimate, the stage chip and the goal; ov
   const draft = x.row('note:draft'), letters = x.row('note:letters');
   assert.equal(draft.querySelector('.cip-time').classList.contains('is-over'), true, 'actual 70 is over the 60 minute estimate');
   assert.equal(draft.querySelector('.cip-time').getAttribute('aria-label'), 'Идёт. Учтено 70 из 60 мин, больше оценки');
+  assert.deepEqual([...draft.children].map(item => item.className), ['cip-content', 'cip-time-meter', 'cip-actions']);
+  assert.equal(draft.querySelector('.cip-meta .cip-state').textContent, 'Идёт');
+  assert.equal(draft.querySelector('.cip-time-label').textContent, 'Всего / оценка');
+  assert.match(draft.querySelector('.cip-stage-time').textContent, /^Учтено на этапе /);
   assert.equal(draft.querySelector('[data-cip-progress]').classList.contains('is-over'), true);
   assert.equal(draft.querySelector('[data-cip-progress] > span').style.width, '100%');
   assert.equal(letters.querySelector('.cip-time').classList.contains('is-over'), false);
@@ -454,13 +458,54 @@ test('the stage tooltip gives timer time per stage, the running block included, 
   data.tasks.find(task => task.source_id === 'draft').stage_log = [{ stage:'requirements', at:at('08:00:00') }, { stage:'description', at:at('09:20:00') }];
   const x = await mount(t, data);
   const chip = () => x.control('note:draft', 'stage');
+  const elapsed = () => x.row('note:draft').querySelector('.cip-stage-time').textContent;
   assert.equal(chip().title, 'Время по стадиям: Требования 20 мин · Описание 50 мин', 'the 10:30 running block counts up to 11:00');
+  assert.equal(elapsed(), 'Учтено на этапе 50:00');
   assert.deepEqual(x.data.args('get_calendar_task_blocks').at(-1).sourceIds.sort(), ['draft', 'letters']);
   x.data.now = new Date(`${TODAY}T11:15:00`);
   await new Promise(resolve => setTimeout(resolve, 1100));
   assert.equal(chip().title, 'Время по стадиям: Требования 20 мин · Описание 1 ч 5 мин', 'the current stage is live');
+  assert.equal(elapsed(), 'Учтено на этапе 1:05:00');
   // No history: the stored stage owns all of the task's time.
   assert.equal(x.control('note:letters', 'stage').title, 'Время по стадиям: Согласование 12 мин');
+});
+
+test('stage time reports an unavailable read and recovers without showing a false zero', async t => {
+  const data = backend();
+  const invoke = data.invoke; data.failStageRead = true;
+  data.invoke = async (name, args) => {
+    if (name === 'get_calendar_task_blocks' && data.failStageRead) { data.calls.push({ name, args }); throw new Error('stage blocks unavailable'); }
+    return invoke(name, args);
+  };
+  const x = await mount(t, data);
+  const chip = () => x.control('note:draft', 'stage');
+  const elapsed = () => x.row('note:draft').querySelector('.cip-stage-time');
+  assert.equal(elapsed().textContent, 'Время этапа недоступно');
+  assert.equal(chip().title, 'Время по стадиям недоступно');
+  data.failStageRead = false;
+  await x.refresh();
+  assert.match(elapsed().textContent, /^Учтено на этапе /);
+  assert.notEqual(chip().title, 'Время по стадиям недоступно');
+});
+
+test('quiet refresh keeps row and focus identity; one changed task leaves neighboring rows intact', async t => {
+  const data = backend();
+  const x = await mount(t, data);
+  const draft = x.row('note:draft'), letters = x.row('note:letters');
+  const list = x.host.querySelector('.cip-list');
+  const focused = x.control('note:letters', 'toggle'); focused.focus();
+  await x.refresh();
+  assert.equal(x.row('note:draft'), draft, 'unchanged running row is reused');
+  assert.equal(x.row('note:letters'), letters, 'unchanged paused row is reused');
+  assert.equal(x.host.querySelector('.cip-list'), list, 'the list container stays mounted on a no-op refresh');
+  assert.equal(x.doc.activeElement, focused, 'passive refresh keeps focus');
+  data.tasks.find(task => task.source_id === 'draft').title = 'Обновлённый отчёт';
+  await x.refresh();
+  assert.equal(x.row('note:draft').querySelector('.cip-title').textContent, 'Обновлённый отчёт');
+  assert.notEqual(x.row('note:draft'), draft, 'changed task row is updated');
+  assert.equal(x.row('note:letters'), letters, 'unrelated row preserves DOM identity');
+  assert.equal(x.host.querySelector('.cip-list'), list, 'a single task update keeps the shared list mounted');
+  assert.equal(x.doc.activeElement, focused, 'neighbor control remains focused');
 });
 
 test('work and personal tasks get their own sub-headings, work first; one kind shows none', async t => {
