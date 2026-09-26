@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { mountCalendarInProgress, formatWorkTime, formatAgainstEstimate, HIDDEN_KEY } from '../src/hanni/js/calendar-in-progress.js';
 
@@ -121,6 +120,11 @@ test('nothing running folds into one line whose only action opens the existing t
   assert.equal(data.count('start_task_block'), 0, 'opening the picker starts nothing');
 });
 
+test('the widget heading is «Текущие задачи»', async t => {
+  const x = await mount(t);
+  assert.equal(x.host.querySelector('[data-cip-title]').textContent, 'Текущие задачи');
+});
+
 test('rows show total time against the estimate, the stage chip and the goal; over the estimate turns amber', async t => {
   const x = await mount(t);
   assert.deepEqual(x.text(), [
@@ -143,12 +147,12 @@ test('rows show total time against the estimate, the stage chip and the goal; ov
   assert.equal(letters.querySelector('[data-cip-progress] > span').style.width, '72.2%');
   assert.equal(letters.querySelector('.cip-stage').classList.contains('is-waiting'), true);
   assert.ok(letters.querySelector('.cip-stage .cip-stage-mark'), '«Жду ответа» is a small hourglass before the stage');
-  assert.match(x.control('note:letters', 'stage').getAttribute('aria-label'), /^Стадия: Согласование, жду ответа\./);
+  assert.match(x.control('note:letters', 'stage').getAttribute('aria-label'), /^Этап: Согласование, жду ответа\./);
   assert.equal(x.row(`schedule:${routine}`).querySelector('[data-cip-progress]'), null, 'no estimate, no bar');
   assert.equal(x.row(`schedule:${routine}`).querySelector('.cip-stage'), null, 'a routine step has no stage');
   assert.equal(x.control('note:draft', 'toggle').getAttribute('aria-label'), 'Пауза: Черновик отчёта');
   assert.equal(x.control('note:letters', 'finish').getAttribute('aria-label'), 'Готово: Разобрать письма');
-  assert.match(x.control('note:draft', 'stage').getAttribute('aria-label'), /^Стадия: Описание\. Выбрать стадию: Черновик отчёта$/);
+  assert.match(x.control('note:draft', 'stage').getAttribute('aria-label'), /^Этап: Описание\. Выбрать этап для задачи: Черновик отчёта$/);
   x.data.now = new Date(`${TODAY}T11:01:00`);
   await new Promise(resolve => setTimeout(resolve, 1100));
   assert.deepEqual(x.text().map(row => row[1]), ['03:00', '1:11:00 / 60 мин', '32:30 / 45 мин'], 'running rows tick, paused rows stay');
@@ -239,7 +243,8 @@ test('pause and resume act on one task while the other keeps running', async t =
   assert.equal(x.data.count('pause_task_block'), 1, 'resuming never pauses other work');
   assert.deepEqual(x.data.blocks.filter(block => block.is_active).map(block => block.source_id).sort(), ['letters', routine].sort());
   assert.equal(x.rows()[0].querySelector('.cip-title').textContent, 'Разобрать письма', 'the newest running task leads');
-  assert.match(x.host.querySelector('[data-cip-message]').textContent, /снова в работе/);
+  assert.match(x.host.querySelector('[data-cip-announcement]').textContent, /снова в работе/);
+  assert.equal(x.host.querySelector('[data-cip-message]').textContent, '');
 });
 
 test('Done closes a note through task completion and a routine step through its latest block', async t => {
@@ -288,6 +293,23 @@ test('the stage label opens the stages of the task process, «Без стади�
   assert.equal(x.data.count('pause_task_block') + x.data.count('start_task_block'), 0, 'a stage never touches the timer');
 });
 
+test('process settings appear only with a route, then close the menu and receive the stage chip for focus return', async t => {
+  const plain = await mount(t);
+  plain.control('note:draft', 'stage').click();
+  assert.equal(plain.menuItems().includes('Настроить этапы…'), false);
+  plain.doc.dispatchEvent(new plain.dom.window.KeyboardEvent('keydown', { key:'Escape', bubbles:true, cancelable:true }));
+
+  let passedTrigger;
+  const routed = await mount(t, backend(), { openProcessSettings(trigger) { passedTrigger = trigger; } });
+  const chip = routed.control('note:draft', 'stage');
+  chip.click();
+  const item = [...routed.menu().querySelectorAll('[role^="menuitem"]')].find(value => value.querySelector('.cip-menu-label').textContent === 'Настроить этапы…');
+  assert.equal(item.querySelector('.cip-menu-hint').textContent, 'Общий список этапов процесса');
+  item.click();
+  assert.equal(routed.menu(), null);
+  assert.equal(passedTrigger, chip);
+});
+
 test('the ⋯ menu offers Stop, Cancel start only for running work, and Open', async t => {
   const x = await mount(t);
   x.control('note:draft', 'menu').click();
@@ -310,7 +332,7 @@ test('Stop pauses the task and keeps it out of «В работе» until it is s
   assert.equal(Date.parse(stored['note:draft']), new Date(`${TODAY}T11:00:00`).getTime());
   assert.equal(x.row('note:draft'), undefined);
   assert.deepEqual(x.text().map(row => row[0]), ['Зарядка · Разминка', 'Разобрать письма']);
-  assert.match(x.host.querySelector('[data-cip-message]').textContent, /Время сохранено/);
+  assert.match(x.host.querySelector('[data-cip-announcement]').textContent, /Время сохранено/);
   await x.refresh();
   assert.equal(x.row('note:draft'), undefined, 'a reread keeps it hidden');
   // A paused task can be stopped too; nothing is paused for it.
@@ -361,7 +383,7 @@ test('Cancel start asks once inline, then discards only the running block', asyn
   assert.equal(x.row('note:draft').classList.contains('is-paused'), true);
   assert.equal(x.row('note:draft').querySelector('.cip-time').textContent, '40:00 / 60 мин');
   assert.equal(x.data.blocks.find(block => block.id === 14).is_active, true, 'other running work is untouched');
-  assert.match(x.host.querySelector('[data-cip-message]').textContent, /Запуск отменён/);
+  assert.match(x.host.querySelector('[data-cip-announcement]').textContent, /Запуск отменён/);
 });
 
 test('a failed action keeps the rows, reports the error and allows another try', async t => {
@@ -383,32 +405,25 @@ test('a failed action keeps the rows, reports the error and allows another try',
   assert.equal(y.row('note:draft').querySelector('.cip-stage-text').textContent, 'Описание', 'the stage is unchanged');
 });
 
-// ---- Processes, the arrow and time per stage (2026-09-25) ----
+// ---- Process stage selection and time per stage ----
 const at = time => new Date(`${TODAY}T${time}`).toISOString();
 
-test('«→» moves to the next stage in one tap and is gone at the last stage; focus stays on the stage', async t => {
+test('the stage chip is the only stage action, visibly names its role, and stage changes announce without a success echo', async t => {
   const x = await mount(t);
-  const arrow = () => x.control('note:draft', 'stage-next');
-  assert.equal(arrow().title, 'Дальше: Согласование');
-  assert.equal(arrow().getAttribute('aria-label'), 'Следующая стадия «Согласование»: Черновик отчёта');
-  arrow().click(); await settle();
-  assert.deepEqual(x.data.args('set_calendar_task_stage'), [{ id:'draft', stage:'agreement', waiting:null }], '«Жду ответа» is left alone');
+  const chip = () => x.control('note:draft', 'stage');
+  assert.match(chip().textContent, /^Этап:\s*Описание/);
+  assert.ok(chip().querySelector('.cip-stage-chevron'));
+  assert.equal(x.control('note:draft', 'stage-next'), undefined, 'there is no second quick-change action');
+  chip().click();
+  x.doc.activeElement.dispatchEvent(new x.dom.window.KeyboardEvent('keydown', { key:'ArrowDown', bubbles:true, cancelable:true }));
+  x.doc.activeElement.dispatchEvent(new x.dom.window.KeyboardEvent('keydown', { key:'Enter', bubbles:true, cancelable:true }));
+  await settle();
+  assert.deepEqual(x.data.args('set_calendar_task_stage'), [{ id:'draft', stage:'agreement', waiting:null }], 'Enter selects the focused stage and leaves waiting unchanged');
   assert.equal(x.row('note:draft').querySelector('.cip-stage-text').textContent, 'Согласование');
-  assert.equal(x.doc.activeElement, arrow(), 'focus stays on the arrow for the next tap');
-  assert.match(x.host.querySelector('[data-cip-message]').textContent, /Стадия: Согласование/);
+  assert.equal(x.doc.activeElement, chip(), 'focus returns to the stage chip');
+  assert.match(x.host.querySelector('[data-cip-announcement]').textContent, /Стадия: Согласование/);
+  assert.equal(x.host.querySelector('[data-cip-message]').textContent, '', 'successful changes have no visible echo');
   assert.equal(x.row('note:letters').querySelector('.cip-stage-text').textContent, 'Согласование');
-  x.control('note:letters', 'stage-next').click(); await settle();
-  assert.deepEqual(x.data.args('set_calendar_task_stage')[1], { id:'letters', stage:'decomposition', waiting:null });
-  assert.equal(x.row('note:letters').querySelector('.cip-stage-text').textContent, 'Декомпозиция');
-  assert.equal(x.control('note:letters', 'stage').classList.contains('is-waiting'), true, 'the waiting mark stays');
-  for (const stage of ['development', 'acceptance']) { x.control('note:letters', 'stage-next').click(); await settle(); assert.equal(x.data.args('set_calendar_task_stage').at(-1).stage, stage); }
-  assert.equal(x.control('note:letters', 'stage-next'), undefined, 'no arrow at the last stage');
-  assert.equal(x.doc.activeElement, x.control('note:letters', 'stage'), 'focus moves to the stage label');
-  // The menu is the way back.
-  x.control('note:letters', 'stage').click();
-  await x.choose('Требования');
-  assert.equal(x.data.args('set_calendar_task_stage').at(-1).stage, 'requirements');
-  assert.ok(x.control('note:letters', 'stage-next'));
   assert.equal(x.data.count('pause_task_block') + x.data.count('start_task_block'), 0, 'stages never touch the timer');
 });
 
@@ -419,14 +434,13 @@ test('only a task with a process shows a stage; a process without a stage offers
   const x = await mount(t, data);
   assert.equal(x.row('note:draft').querySelector('.cip-stage'), null, 'no process: no stage control, no placeholder');
   const chip = x.control('note:letters', 'stage');
-  assert.equal(chip.textContent, 'Стадия'); assert.equal(chip.classList.contains('is-empty'), true);
-  assert.equal(x.control('note:letters', 'stage-next').title, 'Начать: Понимание');
-  x.control('note:letters', 'stage-next').click(); await settle();
+  assert.match(chip.textContent, /Этап:\s*Выбрать/); assert.equal(chip.classList.contains('is-empty'), true);
+  chip.click(); await x.choose('Понимание');
   assert.deepEqual(x.data.args('set_calendar_task_stage'), [{ id:'letters', stage:'understanding', waiting:null }]);
   assert.equal(x.row('note:letters').querySelector('.cip-stage-text').textContent, 'Понимание');
 });
 
-test('a custom process drives the menu and the arrow; a deleted stage shows «Стадия удалена» without an arrow', async t => {
+test('a custom process drives the stage menu; a deleted stage remains selectable without a next-stage action', async t => {
   const data = backend();
   data.ui.set('calendar_processes_v1', JSON.stringify({ version:1, processes:[
     { id:'system-analysis', title:'Системный анализ', stages:[{ id:'understanding', title:'Понимание' }, { id:'requirements', title:'Требования' }] },
@@ -438,18 +452,16 @@ test('a custom process drives the menu and the arrow; a deleted stage shows «С
   x.control('note:draft', 'stage').click();
   assert.deepEqual(x.menuItems(), ['Черновик', 'Проверка', 'Без стадии', 'Жду ответа']);
   x.doc.dispatchEvent(new x.dom.window.KeyboardEvent('keydown', { key:'Escape', bubbles:true, cancelable:true }));
-  x.control('note:draft', 'stage-next').click(); await settle();
-  assert.equal(x.data.args('set_calendar_task_stage')[0].stage, 's-check');
   assert.equal(x.control('note:draft', 'stage-next'), undefined);
   // «Согласование» was removed from the built-in process: the task keeps it and says so.
   const letters = x.control('note:letters', 'stage');
   assert.equal(letters.querySelector('.cip-stage-text').textContent, 'Стадия удалена');
   assert.equal(letters.classList.contains('is-deleted'), true);
-  assert.equal(x.control('note:letters', 'stage-next'), undefined, 'the next stage of a deleted one is unknown');
+  assert.equal(x.control('note:letters', 'stage-next'), undefined, 'there is no separate next-stage action');
   x.control('note:letters', 'stage').click();
   assert.deepEqual(x.menuItems(), ['Понимание', 'Требования', 'Без стадии', 'Жду ответа']);
   await x.choose('Жду ответа');
-  assert.deepEqual(x.data.args('set_calendar_task_stage')[1], { id:'letters', stage:null, waiting:false }, 'the deleted stage is kept');
+  assert.deepEqual(x.data.args('set_calendar_task_stage')[0], { id:'letters', stage:null, waiting:false }, 'the deleted stage is kept');
 });
 
 test('the stage tooltip gives timer time per stage, the running block included, and ticks', async t => {
@@ -528,22 +540,4 @@ test('work and personal tasks get their own sub-headings, work first; one kind s
   x.data.now = new Date(`${TODAY}T11:01:00`);
   await new Promise(resolve => setTimeout(resolve, 1100));
   assert.equal(x.row('note:draft').querySelector('.cip-time').textContent, '1:11:00 / 60 мин');
-});
-
-test('on the phone the stage arrow has a 36px target', () => {
-  const css = fs.readFileSync(new URL('../src/hanni/css/calendar-in-progress.css', import.meta.url), 'utf8');
-  const declarationMap = text => Object.fromEntries(text.split(';').map(item => item.trim()).filter(Boolean).map(item => {
-    const colon = item.indexOf(':'); return [item.slice(0, colon).trim(), item.slice(colon + 1).trim()];
-  }));
-  const phoneRules = [...css.matchAll(/@media[^\n{]*max-width\s*:\s*\d+px[^\n{]*\{([\s\S]*?)^\}/gm)].map(match => match[1]);
-  const usableTarget = phoneRules.some(phone => {
-    const arrow = phone.match(/\.cip-stage-next\s*\{([^}]*)\}/), hitArea = phone.match(/\.cip-stage-next::after\s*\{([^}]*)\}/);
-    if (!arrow) return false;
-    const box = declarationMap(arrow[1]), hit = declarationMap(hitArea?.[1] || '');
-    const width = Number.parseFloat(box.width), height = Number.parseFloat(box.height);
-    const inset = (hit.inset || '').split(/\s+/).map(value => Number.parseFloat(value));
-    const vertical = inset.length === 1 ? [inset[0], inset[0]] : [inset[0] || 0, inset[2] ?? inset[0] ?? 0];
-    return width >= 36 && height - vertical[0] - vertical[1] >= 36;
-  });
-  assert.equal(usableTarget, true, 'a small-screen rule gives the arrow at least a 36px by 36px touch area');
 });
