@@ -198,6 +198,7 @@ fn expected_list_record(
         "status_extra":"task","priority":3,"tracking_mode":if source=="note" {"check"}else{"track"},
         "is_active":false,"actual_minutes":0,"has_work":false});
     if source == "note" {
+        value["actual_seconds"] = json!(0);
         value["task_kind"] = json!("normal");
         value["sphere"] = Value::Null;
         value["process"] = json!("");
@@ -249,6 +250,7 @@ fn calendar_lists_preserve_payloads_filters_and_timeline_totals() {
     );
     open["is_active"] = json!(true);
     open["has_work"] = json!(true);
+    open["actual_seconds"] = json!(900);
     open["actual_minutes"] = json!(15);
     let mut legacy = expected_list_record("t-legacy", "note", Some("2026-09-13"), None, Some(20));
     legacy["completed"] = json!(true);
