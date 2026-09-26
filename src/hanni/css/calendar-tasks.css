@@ -205,6 +205,8 @@
   .ct-subspheres button { height: 36px; padding: 0 10px; }
   .ct-stage { min-height: 36px; }
   .ct-stage::after { inset: 0 -3px; }
+  /* Stage + estimate can wrap to three lines on a narrow pane; never clip its touch target. */
+  .ct-meta { max-height: none; overflow: visible; }
   .ct-add { padding-left: 10px; column-gap: 10px; }
   .ct-add input { height: 48px; font-size: 15px; }
   .ct-group { padding-left: 10px; padding-right: 0; }

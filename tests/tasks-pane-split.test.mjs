@@ -466,5 +466,6 @@ test('phone layout keeps the switches scrollable and the tap targets at least 36
   assert.match(phone, /\.ct-add input \{[^}]*height: 48px/);
   assert.match(phone, /\.ct-grouping button \{[^}]*height: 36px/);
   assert.match(phone, /\.ct-stage \{[^}]*min-height: 36px/, 'the stage selector keeps a 36px phone touch target');
+  assert.match(phone, /\.ct-meta \{[^}]*max-height: none; overflow: visible/, 'wrapped stage and estimate metadata stays fully visible on narrow screens');
   assert.match(css, /\.ct-subspheres \{[^}]*overflow-x: auto/);
 });
