@@ -227,7 +227,7 @@ fn schedule_projections(
                             snapshot["title"].as_str().unwrap_or("").to_string()
                         };
                         let status = step["status"].as_str().unwrap_or("pending");
-                        out.push(json!({"id":source_id,"source_type":"schedule","source_id":source_id,"title":title,"date":origin,"completion_date":origin,"block_id":block_id,"block_date":block_date,"completed":status!="pending","status_extra":status,"tracking_mode":"track","is_active":active,"has_work":has_work>0,"actual_minutes":seconds/60}));
+                        out.push(json!({"id":source_id,"source_type":"schedule","source_id":source_id,"title":title,"date":origin,"completion_date":origin,"block_id":block_id,"block_date":block_date,"completed":status!="pending","status_extra":status,"tracking_mode":"track","is_active":active,"has_work":has_work>0,"actual_seconds":seconds,"actual_minutes":seconds/60}));
                     }
                 }
             }
@@ -654,6 +654,7 @@ fn calendar_list(
                 "has_work": row.get::<_, i64>(13)? > 0,
             });
             if is_task {
+                value["actual_seconds"] = json!(row.get::<_, i64>(12)?);
                 decorate_task(&mut value, &tags);
             }
             if !tasks_only {
@@ -1719,6 +1720,7 @@ mod tests {
         assert_eq!(row["date"], "2026-09-20");
         assert_eq!(row["block_id"], 41);
         assert_eq!(row["block_date"], "2026-09-21");
+        assert_eq!(row["actual_seconds"], 720);
         assert_eq!(row["actual_minutes"], 12);
     }
     #[test]
