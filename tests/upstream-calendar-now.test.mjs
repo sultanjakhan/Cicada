@@ -33,6 +33,22 @@ test('remote refresh rereads saved goal without writing the old cached selection
   assert.match(x.ui('goal-title').textContent,/Гардероб/);assert.equal(x.data.count('set_ui_state'),before);assert.equal(JSON.parse(x.data.stored).goalId,'goal-b');
 });
 
+test('a quiet remote read keeps action styling and replays one still-valid click after current data arrives', async t => {
+  const x=await mount(t); let release;
+  const gate=new Promise(resolve=>{release=resolve;});
+  x.data.before.set('get_ui_state',()=>gate);
+  x.dom.window.dispatchEvent(new x.dom.window.CustomEvent('task-state-changed',{detail:{remoteSync:true,canCommit:()=>true}}));
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(x.ui('card').getAttribute('aria-busy'),'true');
+  assert.equal(x.action('start').disabled,false,'quiet sync does not flash the action disabled');
+  x.action('start').click(); x.action('start').click();
+  assert.equal(x.data.count('start_task_block'),0,'the action waits for the current snapshot');
+  release(); await x.settle();
+  await new Promise(resolve=>setImmediate(resolve)); await x.settle();
+  assert.equal(x.action('start').disabled,false);
+  assert.equal(x.data.count('start_task_block'),1,'a deferred click runs once despite a double click');
+});
+
 test('remote refresh waits for an open picker and never overwrites its draft', async t => {
   const x=await mount(t);await x.click('open-goal');const picker=x.dom.window.document.querySelector('.calendar-goal-picker');
   const search=picker.querySelector('[data-goal-search]');search.value='draft query';search.dispatchEvent(new x.dom.window.Event('input',{bubbles:true}));

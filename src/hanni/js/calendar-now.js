@@ -58,7 +58,7 @@ export function mountCalendarNow(element, dependencies = {}) {
   const prefix = `calendar-now-${++nextInstance}`;
   let saved = freshState(), initialized = false, snapshot = null;
   let stateRaw = '', remotePending = false, remoteGuard = null, remoteVersion = 0;
-  let disposed = false, busy = false, reading = false, readAgain = false;
+  let disposed = false, busy = false, reading = false, quietReading = false, readAgain = false, readAgainQuiet = true;
   let readFlight = null, failure = null, panel = null, panelReturn = null, needsSave = false;
   let stateVersion = 0, currentState = 'loading';
   let goalDialog = null, goalPicker = null;
@@ -415,6 +415,7 @@ export function mountCalendarNow(element, dependencies = {}) {
   function render() {
     if (disposed) return;
     const task = chosenTask(), active = snapshot?.active;
+    const blockingRead = reading && !quietReading;
     currentState = !snapshot ? 'loading' : active ? 'active' : saved.execution ? 'paused' : saved.completed ? 'completed' : task ? 'recommendation' : 'empty';
     element.dataset.state = currentState; element.dataset.taskKey = keyOf(task); element.dataset.selectionMode = saved.selectionMode;
     ui.card.setAttribute('aria-busy', String(busy || reading));
@@ -451,7 +452,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     ui['goal-next'].hidden = !goal || !snapshot;
     ui['goal-next'].classList.toggle('is-empty', !next);
     actions['goal-next-task'].hidden = !canOpenNext;
-    actions['goal-next-task'].disabled = busy || reading || !!failure;
+    actions['goal-next-task'].disabled = busy || blockingRead || !!failure;
     actions['goal-next-task'].dataset.taskKey = keyOf(next);
     actions['goal-next-task'].setAttribute('aria-label', next ? `Следующая задача по цели: ${next.title}` : '');
     actions['goal-next-task'].title = next?.title || '';
@@ -459,9 +460,9 @@ export function mountCalendarNow(element, dependencies = {}) {
     ui['goal-next-text'].textContent = canOpenNext ? '' : next ? next.title : 'Задач по цели пока нет';
     ui['goal-next-text'].hidden = canOpenNext;
     actions['goal-details'].hidden = !goal;
-    actions['goal-details'].disabled = busy || reading || !!failure;
+    actions['goal-details'].disabled = busy || blockingRead || !!failure;
     actions['goal-open'].hidden = !goal;
-    actions['goal-open'].disabled = busy || reading || !!failure;
+    actions['goal-open'].disabled = busy || blockingRead || !!failure;
     actions['browse-goals'].hidden = !!goal || !snapshot;
     actions['open-goal'].querySelector('[data-action-label]').textContent = goal ? 'Сменить' : 'Выбрать цель';
     ui['goal-change-icon'].hidden = !goal;
@@ -469,7 +470,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     actions['browse-goals'].parentElement.hidden = !!goal || !snapshot;
     actions['open-goal'].classList.toggle('calendar-now__primary', !goal);
     actions['open-goal'].classList.toggle('calendar-now__quiet', !!goal);
-    actions['open-goal'].disabled = !!active || busy || reading || !!failure || !snapshot || (!hideTaskCard && !!saved.completed);
+    actions['open-goal'].disabled = !!active || busy || blockingRead || !!failure || !snapshot || (!hideTaskCard && !!saved.completed);
     actions['open-goal'].title = active ? 'Для смены цели поставь задачу на паузу' : '';
     const status = { active: 'В работе', paused: 'На паузе', completed: 'Завершено' }[currentState];
     ui.status.textContent = status || ''; ui.status.hidden = !status;
@@ -477,7 +478,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     renderTaskImportance(document, ui.card, task);
     const canOpenTask = !!task && !!dependencies.openTaskDetails;
     actions['task-details'].hidden = !canOpenTask;
-    actions['task-details'].disabled = busy || reading || !!failure;
+    actions['task-details'].disabled = busy || blockingRead || !!failure;
     actions['task-details'].title = canOpenTask ? 'Открыть задачу' : '';
     ui['title-empty'].textContent = canOpenTask ? '' : ui.title.textContent;
     ui['title-empty'].hidden = canOpenTask;
@@ -487,16 +488,16 @@ export function mountCalendarNow(element, dependencies = {}) {
     if(saved.returnTo && keyOf(saved.returnTo)!==keyOf(task))visible.push('return');
     actions.return.textContent=saved.returnTo?`Вернуться: ${saved.returnTo.title}`:'';
     for (const button of ui.card.querySelectorAll('.calendar-now__actions button')) {
-      button.hidden = !visible.includes(button.dataset.action); button.disabled = busy || reading || !!failure;
+      button.hidden = !visible.includes(button.dataset.action); button.disabled = busy || blockingRead || !!failure;
     }
     actions.start.querySelector('[data-action-label]').textContent = currentState === 'paused' ? 'Продолжить' : 'Начать';
     if (active || busy) closePicker();
     if (panel === 'task' && !reading && !failure) renderTaskPicker();
-    ui['task-alternatives'].querySelectorAll('button').forEach(button => { button.disabled = busy || reading || !!failure || !!active; });
-    actions['all-tasks'].disabled = busy || reading || !!failure || !!active;
+    ui['task-alternatives'].querySelectorAll('button').forEach(button => { button.disabled = busy || blockingRead || !!failure || !!active; });
+    actions['all-tasks'].disabled = busy || blockingRead || !!failure || !!active;
     ui.error.hidden = !failure || !!goalPicker;
     ui['error-text'].textContent = failure?.message || '';
-    actions.retry.disabled = busy || reading;
+    actions.retry.disabled = busy || blockingRead;
     renderGoalPicker();
     renderTime();
     // Without a visible current-task card nothing is shown twice, so Today lists every task.
@@ -651,11 +652,11 @@ export function mountCalendarNow(element, dependencies = {}) {
     }
     return Math.max(0, Number(await api('get_calendar_task_minutes', args)) || 0) * 60;
   }
-  async function refresh() {
+  async function refresh({ quiet = false } = {}) {
     if (disposed) return;
-    if (busy || readFlight) { readAgain = true; return readFlight; }
+    if (busy || readFlight) { readAgain = true; readAgainQuiet = readAgainQuiet && quiet; return readFlight; }
     if (remotePending && !canApplyRemote()) return;
-    reading = true; render();
+    reading = true; quietReading = quiet; render();
     readFlight = (async () => {
       try { await fetchSnapshot(); if (failure?.operation.kind === 'refresh') failure = null; }
       catch (error) {
@@ -664,8 +665,8 @@ export function mountCalendarNow(element, dependencies = {}) {
         if (!failure) failure = { operation: { kind: 'refresh', phase: 'refresh' }, message: stale ? 'Выбор изменён на другом устройстве. Повтори загрузку актуального состояния.' : 'Не удалось обновить текущую задачу. Последний выбор сохранён.' };
       }
       finally {
-        reading = false; readFlight = null; render();
-        if (readAgain && !busy && !disposed) { readAgain = false; void refresh(); }
+        reading = false; quietReading = false; readFlight = null; render();
+        if (readAgain && !busy && !disposed) { const nextQuiet = readAgainQuiet; readAgain = false; readAgainQuiet = true; void refresh({ quiet: nextQuiet }); }
       }
     })();
     return readFlight;
@@ -780,9 +781,21 @@ export function mountCalendarNow(element, dependencies = {}) {
   const onHeaderClick = event => {
     if (!disposed && event.target.closest('[data-header-action="in-progress"]')) dependencies.openInProgress?.();
   };
+  const actionTarget = action => JSON.stringify([action, keyOf(chosenTask()), keyOf(selectedGoal()), keyOf(snapshot?.active), saved.execution?.blockId ?? null, keyOf(saved.returnTo), currentState]);
   const onClick = event => {
     const button = event.target.closest('[data-action]'); if (!button || !element.contains(button) || button.disabled) return;
     const action = button.dataset.action;
+    if (reading && quietReading && readFlight) {
+      const target = actionTarget(action), pending = readFlight;
+      void pending.then(() => {
+        if (disposed) return;
+        const current = [...ui.card.querySelectorAll('[data-action]')].find(item => item.dataset.action === action);
+        if (actionTarget(action) !== target) { announce('Состояние обновилось. Проверь задачу перед действием.'); return; }
+        if (!current || current.hidden || current.disabled) return;
+        current.click();
+      });
+      return;
+    }
     if (action === 'cancel-picker') { closePicker(true); return; }
     if (action === 'open-goal' || action === 'choose-goal') { openPicker('goal', button); return; }
     if (action === 'open-task') { openPicker('task', button); return; }
@@ -841,7 +854,7 @@ export function mountCalendarNow(element, dependencies = {}) {
   const onKeydown = event => { if (event.key === 'Escape' && panel) { event.preventDefault(); closePicker(true); } };
   const onExternal = event => {
     if (event.detail?.remoteSync) { remotePending = true; remoteVersion++; remoteGuard = event.detail.canCommit || null; }
-    void refresh();
+    void refresh({ quiet: !!event.detail?.remoteSync });
   };
   const onStarted = async event => {
     // A dialog retains its own controls; an inline start hands focus to the visible card.
