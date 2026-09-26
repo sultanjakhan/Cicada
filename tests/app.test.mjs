@@ -14,6 +14,15 @@ const result = await build({
 });
 const bundle = (Array.isArray(result) ? result[0] : result).output.find(file => file.type === 'chunk').code;
 const settle = async () => { for (let i = 0; i < 12; i++) await new Promise(resolve => setImmediate(resolve)); };
+function assertIdleHeader(header) {
+  assert.equal(header.hidden, false, 'the current-task navigation remains available after a successful snapshot');
+  const action = header.querySelector('[data-header-action="in-progress"]');
+  assert.equal(action.querySelector('[data-header-label]').textContent, 'Текущие задачи');
+  assert.equal(action.getAttribute('aria-label'), 'Текущие задачи · запущено: 0');
+  assert.equal(action.title, 'Текущие задачи · запущено: 0');
+  assert.equal(action.querySelector('[data-header-count]').hidden, true, 'zero running tasks has no count');
+  assert.equal(action.querySelector('.calendar-running__dot').hidden, true, 'zero running tasks has no dot');
+}
 
 async function launch(t, { mobile = false, initialSettings = [], width, userAgent, taskState = null } = {}) {
   const dom = new JSDOM(html, { url: 'http://localhost/', runScripts: 'outside-only', pretendToBeVisual: true });
@@ -96,12 +105,12 @@ test('bundled shell boots the five workspace panes with only Calendar in the sid
   assert.ok(w.document.querySelector('[data-calendar-now]'));
   assert.equal(w.document.querySelector('.calendar-now__card').hidden, true);
   assert.equal(w.document.querySelector('.calendar-now__goal').closest('[hidden]'), null);
-  assert.equal(w.document.querySelector('[data-calendar-running]').hidden, true);
+  assertIdleHeader(w.document.querySelector('[data-calendar-running]'));
   for (const [pane, selector] of [['table','.calendar-workspace-table'],['tasks','.calendar-tasks'],['goals','.calendar-goals'],['notes','.calendar-notes']]) {
     await click('[data-pane="' + pane + '"]');
     assert.equal(w.document.querySelector('.uni-tab.active').dataset.pane, pane);
     if (pane !== 'table') assert.ok(w.document.querySelector(selector), selector);
-    assert.equal(w.document.querySelector('[data-calendar-running]').hidden, true);
+    assertIdleHeader(w.document.querySelector('[data-calendar-running]'));
   }
   assert.ok(calls.some(call => call.command === 'get_calendar_records'));
   assert.ok(calls.some(call => call.command === 'get_notes'));
@@ -121,7 +130,7 @@ test('persistent launcher is beside creation in every empty pane and closes back
     assert.equal(launcher.disabled, false);
     assert.equal(launcher.closest('[hidden]'), null);
     assert.equal(launcher.previousElementSibling, w.document.querySelector('[data-calendar-create]'));
-    assert.equal(w.document.querySelector('[data-calendar-running]').hidden, true);
+    assertIdleHeader(w.document.querySelector('[data-calendar-running]'));
     assert.equal(w.document.querySelector('.calendar-now__card').hidden, true);
     launcher.focus(); await click('[data-calendar-launch]');
     const chooser = w.document.querySelector('[data-task-launcher]');
@@ -145,7 +154,7 @@ test('automatic recommendation remains visible in Today while the header preview
   const saved = { version:1, goalId:'main-goal', selectionMode:'auto', selection:null, execution:null, completed:null, observedBlockId:null };
   const { w, calls, errors } = await launch(t, { taskState, initialSettings:[['calendar_now_v1',JSON.stringify(saved)]] });
   assert.equal(w.document.querySelector('[data-calendar-now]').dataset.taskKey, 'note:suggested', 'the controller has an automatic candidate');
-  assert.equal(w.document.querySelector('[data-calendar-running]').hidden, true);
+  assertIdleHeader(w.document.querySelector('[data-calendar-running]'));
   assert.equal(w.document.querySelector('.calendar-now__card').hidden, true);
   const today = w.document.querySelector('[data-calendar-recurring] [data-overview-task="note:suggested"]');
   assert.ok(today, 'Today must not exclude an invisible automatic recommendation');
@@ -169,7 +178,7 @@ test('launcher previews goal-free undated tasks without starting and only its ex
   preview.focus(); await click('[data-task-launcher] [data-overview-task="note:unscheduled"]');
   assert.equal(w.document.querySelector('.calendar-mvp-dialog h2').textContent, 'Проверить пример');
   assert.equal(calls.filter(call => call.command === 'start_task_block').length, 0);
-  assert.equal(w.document.querySelector('[data-calendar-running]').hidden, true);
+  assertIdleHeader(w.document.querySelector('[data-calendar-running]'));
   await click('.calendar-mvp-dialog [data-close]');
   assert.equal(w.document.activeElement, preview);
   await click('[data-task-launcher] [data-overview-execute="note:unscheduled"]');
@@ -179,7 +188,9 @@ test('launcher previews goal-free undated tasks without starting and only its ex
   assert.equal(taskState.blocks.filter(block => block.is_active).length, 1);
   const indicator = w.document.querySelector('[data-calendar-running]');
   assert.equal(indicator.hidden, false);
-  assert.equal(indicator.querySelector('[data-header-action="in-progress"]').getAttribute('aria-label'), 'В работе: 1');
+  assert.equal(indicator.querySelector('[data-header-action="in-progress"]').getAttribute('aria-label'), 'Текущие задачи · запущено: 1');
+  assert.equal(indicator.querySelector('[data-header-count]').hidden, false);
+  assert.equal(indicator.querySelector('.calendar-running__dot').hidden, false);
   assert.equal(w.document.querySelector('.calendar-now__card').hidden, true);
   assert.equal(w.document.activeElement, w.document.querySelector('[data-task-launcher] [data-overview-execute="note:unscheduled"]'));
   await click('[data-task-launcher] footer [data-dialog-close]');
@@ -189,7 +200,7 @@ test('launcher previews goal-free undated tasks without starting and only its ex
   assert.equal(w.document.querySelector('.uni-tab.active').dataset.pane, 'dash');
   await click('[data-calendar-in-progress] [data-cip-control="toggle"]'); await settle();
   assert.equal(calls.filter(call => call.command === 'pause_task_block').length, 1);
-  assert.equal(w.document.querySelector('[data-calendar-running]').hidden, true, 'paused work is not counted');
+  assertIdleHeader(w.document.querySelector('[data-calendar-running]'));
   assert.deepEqual(errors, []);
 });
 
@@ -206,7 +217,7 @@ test('Done in the widget finishes current work and the launcher returns to the p
   assert.deepEqual([...widget.querySelectorAll('.cip-title')].map(title => title.textContent), ['Вторая задача']);
   await click('[data-calendar-in-progress] [data-cip-control="finish"]');
   assert.deepEqual(calls.filter(call => call.command === 'complete_calendar_task').map(call => call.args.id), ['second-task']);
-  assert.equal(indicator.hidden, true);
+  assertIdleHeader(indicator);
   await click('[data-calendar-launch]');
   const previous = w.document.querySelector('[data-launcher-return]');
   assert.equal(previous.hidden, false, '«Вернуться к предыдущей задаче» stays in the launcher');
@@ -233,7 +244,7 @@ test('one running indicator follows all panes and leads to the dashboard widget'
   const panes = ['dash', 'table', 'tasks', 'notes', 'goals'];
   for (const pane of panes) {
     await click(`[data-pane="${pane}"]`);
-    assert.equal(w.document.querySelector('[data-calendar-running]').hidden, true, 'paused work is not counted');
+    assertIdleHeader(w.document.querySelector('[data-calendar-running]'));
     assert.equal(w.document.querySelectorAll('[data-calendar-now]').length, 1);
     assert.equal(w.document.querySelector('[data-calendar-now]').hidden, pane !== 'dash');
   }
@@ -245,7 +256,7 @@ test('one running indicator follows all panes and leads to the dashboard widget'
     const indicator = w.document.querySelector('[data-calendar-running]');
     assert.equal(indicator.hidden, false);
     assert.equal(indicator.closest('.uni-header'), w.document.querySelector('#calendar-content > .uni-header'));
-    assert.equal(indicator.querySelector('[data-header-action="in-progress"]').title, 'В работе: 1');
+    assert.equal(indicator.querySelector('[data-header-action="in-progress"]').title, 'Текущие задачи · запущено: 1');
   }
   await click('[data-header-action="in-progress"]'); await settle();
   assert.equal(w.document.querySelector('.uni-tab.active').dataset.pane, 'dash');
@@ -268,7 +279,7 @@ test('unknown current work stays hidden on read failure and launcher keeps error
   assert.equal(w.document.querySelector('[data-task-launcher] [data-dialog-retry]').hidden, false);
   before.delete('get_ui_state');
   await click('[data-task-launcher] [data-dialog-retry]');
-  assert.equal(header.hidden, true);
+  assertIdleHeader(header);
   assert.equal(w.document.querySelector('[data-task-launcher] [data-dialog-error]').hidden, true);
   await click('[data-task-launcher] footer [data-dialog-close]');
   assert.equal(w.document.activeElement, launcher);
@@ -537,7 +548,7 @@ test('two tasks run at once from Tasks and the launcher; the header count leads 
   await click('[data-task-control="execute"][data-task-id="note:first"]');
   // Navigation renders the shared header again, so the indicator is read each time.
   const header = () => w.document.querySelector('[data-calendar-running]');
-  const count = () => header().hidden ? 0 : Number(header().querySelector('[data-header-count]').textContent);
+  const count = () => header().querySelector('[data-header-count]').hidden ? 0 : Number(header().querySelector('[data-header-count]').textContent);
   assert.equal(count(), 1);
   await click('[data-calendar-launch]');
   await click('[data-task-launcher] [data-overview-execute="note:second"]');
@@ -545,7 +556,7 @@ test('two tasks run at once from Tasks and the launcher; the header count leads 
   assert.equal(calls.filter(call => call.command === 'pause_task_block').length, 0, 'starting never pauses the other task');
   assert.equal(taskState.blocks.filter(block => block.is_active).length, 2);
   assert.equal(count(), 2);
-  assert.equal(header().querySelector('[data-header-action="in-progress"]').getAttribute('aria-label'), 'В работе: 2');
+  assert.equal(header().querySelector('[data-header-action="in-progress"]').getAttribute('aria-label'), 'Текущие задачи · запущено: 2');
   await click('[data-header-action="in-progress"]');
   await settle();
   assert.equal(w.document.querySelector('.uni-tab.active').dataset.pane, 'dash');
