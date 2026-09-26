@@ -29,7 +29,7 @@
 
 .cip-content { display: grid; grid-template-columns: minmax(0, 1fr); row-gap: 4px; min-width: 0; }
 .cip-line { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.cip-title { flex: 1 1 auto; display: block; min-width: 0; padding: 0; border: 0; border-radius: 3px; background: transparent; font-size: 14px !important; line-height: 20px; font-weight: 600; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.calendar-in-progress .cip-title { flex: 1 1 auto; display: block; min-width: 0; padding: 0; border: 0; border-radius: 3px; background: transparent; font-size: 14px !important; line-height: 20px; font-weight: 600; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .cip-title:hover { text-decoration: underline; text-decoration-color: var(--text-faint); text-underline-offset: 3px; }
 .cip-state { flex: none; font-size: 11px; line-height: 16px; color: var(--text-muted); white-space: nowrap; }
 .cip-row.is-running .cip-state { color: var(--text-secondary); }
@@ -117,7 +117,7 @@
   .cip-heading { padding-left: 10px; }
   .cip-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; column-gap: 8px; row-gap: 6px; min-height: 64px; padding: 7px 2px 7px 10px; }
   .cip-content { grid-column: 1 / -1; grid-row: 1; row-gap: 3px; }
-  .cip-title { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  .calendar-in-progress .cip-title { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
   .cip-meta { row-gap: 3px; }
   .cip-time-meter { grid-column: 1; grid-row: 2; display: grid; grid-template-columns: max-content max-content; grid-template-rows: auto auto; justify-items: start; align-items: center; column-gap: 6px; row-gap: 2px; }
   .cip-time-label { grid-column: 1; }
@@ -138,6 +138,11 @@
   .cip-title { position: relative; }
   .cip-title::after { content: ''; position: absolute; inset: -8px 0; }
   .cip-card.is-empty { padding: 6px 6px 6px 12px; }
+}
+
+@media (max-width: 420px) {
+  .cip-time-meter { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto; align-items: start; }
+  .cip-time-label, .cip-time, .cip-time-meter .cip-progress { grid-column: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
