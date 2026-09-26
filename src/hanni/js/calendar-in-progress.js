@@ -20,6 +20,7 @@ export const HIDDEN_KEY = 'calendar_in_progress_hidden_v1';
 const HIDDEN_DAYS = 2;
 const dayOf = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const blockSeconds = block => Math.max(0, Number(block.duration_seconds) || (Number(block.duration_minutes) || 0) * 60);
+const validDuration = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
 const blockStart = block => new Date(`${block.date}T${block.start_time}`).getTime();
 const oneOf = count => count % 10 === 1 && count % 100 !== 11;
 // «2 идут · 1 на паузе»: the header counts only running work, the widget names both parts.
@@ -248,7 +249,8 @@ export function mountCalendarInProgress(element, dependencies) {
       if (row.source_type === 'schedule' && !row.running && record?.block_id != null) row.lastBlockId = Number(record.block_id);
       row.record = { ...(record || {}), source_type: row.source_type, source_id: row.source_id, title: row.title, is_active: row.running, has_work: true, completion_date: row.completion_date, date: record?.date ?? (row.source_type === 'note' ? null : row.completion_date) };
       // Closed work of every day comes from the task row; events fall back to today's blocks.
-      row.baseSeconds = Number.isFinite(Number(record?.actual_minutes)) && record?.actual_minutes != null ? Number(record.actual_minutes) * 60 : row.closedSeconds;
+      const exactSeconds = row.source_type !== 'event' && validDuration(record?.actual_seconds) ? record.actual_seconds : null;
+      row.baseSeconds = exactSeconds ?? (validDuration(record?.actual_minutes) ? record.actual_minutes * 60 : row.closedSeconds);
       const instant = row.source_type === 'note' && isInstantTask(record || row.active);
       row.estimate = row.source_type === 'note' && !instant && Number(record?.duration_minutes) > 0 ? Number(record.duration_minutes) : null;
       // A stage belongs to a task with a process; instant tasks have none.

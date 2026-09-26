@@ -382,6 +382,13 @@ fn timer_seconds_preserve_new_precision_and_legacy_minute_totals() {
         .unwrap(),
         json!(1)
     );
+    let listed = call(&view, "get_calendar_tasks", json!({})).unwrap();
+    let exact = listed.as_array().unwrap().iter().find(|row| row["source_id"] == "new-task").unwrap();
+    assert_eq!(exact["actual_seconds"], json!(180), "task seconds include blocks from multiple dates");
+    assert_eq!(exact["actual_minutes"], json!(3));
+    let mixed = listed.as_array().unwrap().iter().find(|row| row["source_id"] == "mixed-task").unwrap();
+    assert_eq!(mixed["actual_seconds"], json!(90), "legacy whole minutes and exact seconds are combined");
+    assert_eq!(mixed["actual_minutes"], json!(1), "the existing whole-minute field keeps its contract");
     let midnight = call(&view, "get_timeline_blocks", json!({"date":"2026-09-14"})).unwrap();
     assert_eq!(midnight[0]["duration_seconds"], json!(90));
     assert_eq!(

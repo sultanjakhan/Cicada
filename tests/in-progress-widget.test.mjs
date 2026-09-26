@@ -32,7 +32,14 @@ function backend() {
     ],
   };
   // Closed work of every day, as the native task list reports it.
-  const withWork = task => ({ ...task, actual_minutes: Math.floor((task.earlier + state.blocks.filter(block => !block.is_active && block.source_id === task.source_id).reduce((sum, block) => sum + (block.duration_seconds || 0), 0)) / 60) });
+  const withWork = task => {
+    const actual_seconds = task.earlier + state.blocks.filter(block => !block.is_active && block.source_type === 'note' && block.source_id === task.source_id).reduce((sum, block) => sum + (block.duration_seconds || 0), 0);
+    return { ...task, actual_seconds, actual_minutes: Math.floor(actual_seconds / 60) };
+  };
+  const schedulesWithWork = () => state.schedules.map(task => {
+    const actual_seconds = state.blocks.filter(block => block.source_type === 'schedule' && block.source_id === task.source_id).reduce((sum, block) => sum + (block.duration_seconds || 0), 0);
+    return { ...task, actual_seconds, actual_minutes: Math.floor(actual_seconds / 60) };
+  });
   state.invoke = async (name, args = {}) => {
     state.calls.push({ name, args });
     if (name === 'get_active_blocks') return state.blocks.filter(block => block.is_active).sort((a, b) => b.created_at.localeCompare(a.created_at))
@@ -41,12 +48,12 @@ function backend() {
     if (name === 'get_calendar_task_blocks') return state.blocks.filter(block => block.source_type === 'note' && args.sourceIds.includes(block.source_id));
     if (name === 'get_calendar_tasks') return state.tasks.filter(task => task.status_extra === 'task' && !task.completed).map(withWork);
     if (name === 'get_all_events') return state.events;
-    if (name === 'get_schedules') return state.schedules;
+    if (name === 'get_schedules') return schedulesWithWork();
     if (name === 'get_goals') return state.goals;
     if (name === 'get_calendar_task_goals') return state.links;
     if (name === 'get_ui_state') return state.ui.get(args.key) ?? null;
     if (name === 'set_ui_state') { state.ui.set(args.key, args.value); return; }
-    if (name === 'pause_task_block') { const block = state.blocks.find(value => value.id === args.blockId); block.is_active = false; block.duration_seconds = 60; block.end_time = '11:00:00'; return; }
+    if (name === 'pause_task_block') { const block = state.blocks.find(value => value.id === args.blockId); block.is_active = false; block.duration_seconds = block.pauseDurationSeconds ?? 60; delete block.pauseDurationSeconds; block.end_time = '11:00:00'; return; }
     if (name === 'start_task_block') {
       assert.equal(state.blocks.some(block => block.is_active && block.source_type === args.sourceType && block.source_id === args.sourceId), false);
       const id = state.nextId++, start = state.now.toTimeString().slice(0, 8);
@@ -119,7 +126,7 @@ test('rows show total time against the estimate, the stage chip and the goal; ov
   assert.deepEqual(x.text(), [
     ['Зарядка · Разминка', '02:00', null, null],
     ['Черновик отчёта', '1:10:00 / 60 мин', 'Описание', 'Портфолио аналитика'],
-    ['Разобрать письма', '32:00 / 45 мин', 'Согласование', null],
+    ['Разобрать письма', '32:30 / 45 мин', 'Согласование', null],
   ], 'running first; paused-today next; finished and older work stays out');
   assert.equal(x.host.querySelector('[data-cip-count]').textContent, '2 идут · 1 на паузе');
   assert.deepEqual(x.rows().map(item => item.classList.contains('is-running')), [true, true, false]);
@@ -129,7 +136,7 @@ test('rows show total time against the estimate, the stage chip and the goal; ov
   assert.equal(draft.querySelector('[data-cip-progress]').classList.contains('is-over'), true);
   assert.equal(draft.querySelector('[data-cip-progress] > span').style.width, '100%');
   assert.equal(letters.querySelector('.cip-time').classList.contains('is-over'), false);
-  assert.equal(letters.querySelector('[data-cip-progress] > span').style.width, '71.1%');
+  assert.equal(letters.querySelector('[data-cip-progress] > span').style.width, '72.2%');
   assert.equal(letters.querySelector('.cip-stage').classList.contains('is-waiting'), true);
   assert.ok(letters.querySelector('.cip-stage .cip-stage-mark'), '«Жду ответа» is a small hourglass before the stage');
   assert.match(x.control('note:letters', 'stage').getAttribute('aria-label'), /^Стадия: Согласование, жду ответа\./);
@@ -140,10 +147,69 @@ test('rows show total time against the estimate, the stage chip and the goal; ov
   assert.match(x.control('note:draft', 'stage').getAttribute('aria-label'), /^Стадия: Описание\. Выбрать стадию: Черновик отчёта$/);
   x.data.now = new Date(`${TODAY}T11:01:00`);
   await new Promise(resolve => setTimeout(resolve, 1100));
-  assert.deepEqual(x.text().map(row => row[1]), ['03:00', '1:11:00 / 60 мин', '32:00 / 45 мин'], 'running rows tick, paused rows stay');
+  assert.deepEqual(x.text().map(row => row[1]), ['03:00', '1:11:00 / 60 мин', '32:30 / 45 мин'], 'running rows tick, paused rows stay');
   x.control('note:letters', 'open').click();
   assert.equal(x.opened[0].row.source_id, 'letters');
   assert.equal(x.data.count('start_task_block') + x.data.count('pause_task_block') + x.data.count('set_ui_state'), 0, 'reading changes nothing');
+});
+
+test('the widget keeps exact seconds through pause and resume after the task list floors minutes', async t => {
+  const data = backend();
+  const task = { ...data.tasks.find(value => value.source_id === 'draft'), duration_minutes:null };
+  data.tasks = [task];
+  data.blocks = [{ id:21, source_type:'note', source_id:'draft', date:TODAY, start_time:'10:58:30', completion_date:TODAY, is_active:true, created_at:'1', pauseDurationSeconds:90 }];
+  const x = await mount(t, data);
+  assert.equal(x.row('note:draft').querySelector('.cip-time').textContent, '01:30', 'the current run starts with ninety exact seconds');
+
+  x.control('note:draft', 'toggle').click(); await settle();
+  assert.equal(x.data.blocks[0].duration_seconds, 90, 'pause stores the exact duration');
+  assert.equal(x.row('note:draft').querySelector('.cip-time').textContent, '01:30', 'one minute in the list does not replace ninety seconds');
+
+  x.control('note:draft', 'toggle').click(); await settle();
+  data.now = new Date(data.now.getTime() + 30_000);
+  await new Promise(resolve => setTimeout(resolve, 1100));
+  assert.equal(x.row('note:draft').querySelector('.cip-time').textContent, '02:00', 'closed ninety seconds plus thirty active seconds');
+});
+
+test('task totals include closed seconds from earlier days', async t => {
+  const data = backend(), task = { ...data.tasks.find(value => value.source_id === 'draft'), duration_minutes:null };
+  data.tasks = [task];
+  data.blocks = [
+    { id:21, source_type:'note', source_id:'draft', date:YESTERDAY, start_time:'23:00:00', completion_date:YESTERDAY, is_active:false, duration_seconds:60, created_at:'0' },
+    { id:22, source_type:'note', source_id:'draft', date:TODAY, start_time:'10:00:00', completion_date:TODAY, is_active:false, duration_seconds:30, created_at:'1' },
+  ];
+  const x = await mount(t, data);
+  assert.equal(x.row('note:draft').querySelector('.cip-time').textContent, '01:30', 'sixty prior-day seconds plus thirty today are retained');
+});
+
+test('invalid exact totals use legacy minutes, while invalid minute totals use today blocks', async t => {
+  for (const invalid of [null, -1, NaN]) {
+    const data = backend(), task = data.tasks.find(value => value.source_id === 'draft');
+    data.tasks = [{ ...task, duration_minutes:null }];
+    data.blocks = [
+      { id:20, source_type:'note', source_id:'draft', date:YESTERDAY, start_time:'23:00:00', completion_date:YESTERDAY, is_active:false, duration_seconds:60, created_at:'0' },
+      { id:21, source_type:'note', source_id:'draft', date:TODAY, start_time:'10:00:00', completion_date:TODAY, is_active:false, duration_seconds:30, created_at:'1' },
+      { id:22, source_type:'note', source_id:'draft', date:TODAY, start_time:'11:00:00', completion_date:TODAY, is_active:true, created_at:'2' },
+    ];
+    const nativeInvoke = data.invoke;
+    data.invoke = async (name, args) => {
+      const result = await nativeInvoke(name, args);
+      if (name === 'get_calendar_tasks') return result.map(row => ({ ...row, actual_seconds:invalid }));
+      return result;
+    };
+    const x = await mount(t, data);
+    assert.equal(x.row('note:draft').querySelector('.cip-time').textContent, '01:00', `invalid exact seconds (${String(invalid)}) fall back to whole legacy minutes`);
+    x.dispose();
+
+    data.invoke = async (name, args) => {
+      const result = await nativeInvoke(name, args);
+      if (name === 'get_calendar_tasks') return result.map(row => ({ ...row, actual_seconds:undefined, actual_minutes:invalid }));
+      return result;
+    };
+    const y = await mount(t, data);
+    assert.equal(y.row('note:draft').querySelector('.cip-time').textContent, '00:30', `invalid legacy minutes (${String(invalid)}) fall back to today's closed seconds`);
+    y.dispose();
+  }
 });
 
 test('an instant task shows no stage chip and no estimate', async t => {
