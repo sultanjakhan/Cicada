@@ -288,29 +288,43 @@ async function mount(t, data = backend(), dependencies ={
       };
 
   }
-// Owner decision 2026-09-24: the shared header shows only «● N» running tasks.
-test('the header indicator counts running work only and never starts, pauses or selects anything', async t => {
+test('the header always navigates to current tasks and counts only running work', async t => {
   let opened = 0;
   const x = await mount(t, backend(), { header:true, openInProgress:() => opened++ });
   const button = x.header.querySelector('[data-header-action="in-progress"]');
-  assert.equal(x.header.querySelectorAll('button').length, 1, 'no task title, toggle, time or menu in the header');
-  assert.equal(x.header.hidden, true, 'an automatic suggestion is not running work');
+  const dot = button.querySelector('.calendar-running__dot');
+  const count = button.querySelector('[data-header-count]');
+  assert.equal(x.header.querySelectorAll('button').length, 1);
+  assert.equal(x.header.hidden, false, 'navigation is available after a successful snapshot');
+  assert.equal(button.querySelector('[data-header-label]').textContent, 'Текущие задачи');
+  assert.equal(button.textContent, 'Текущие задачи');
+  assert.equal(dot.hidden, true, 'no running work hides the green dot');
+  assert.equal(count.hidden, true, 'no running work hides the numeric count');
+  assert.equal(button.getAttribute('aria-label'), 'Текущие задачи · запущено: 0');
+  assert.equal(button.title, 'Текущие задачи · запущено: 0');
   await x.choose('task', 'note:task-a');
-  assert.equal(x.header.hidden, true, 'a selected task is not running work');
+  assert.equal(x.header.hidden, false, 'a selected task does not hide navigation');
   await x.click('start');
   assert.equal(x.header.hidden, false);
-  assert.equal(button.textContent, '1');
-  assert.equal(button.getAttribute('aria-label'), 'В работе: 1');
-  assert.equal(button.title, 'В работе: 1');
-  assert.ok(button.querySelector('.calendar-running__dot[aria-hidden="true"]'));
+  assert.equal(button.textContent, 'Текущие задачи1');
+  assert.equal(count.textContent, '1');
+  assert.equal(count.hidden, false);
+  assert.equal(button.getAttribute('aria-label'), 'Текущие задачи · запущено: 1');
+  assert.equal(button.title, 'Текущие задачи · запущено: 1');
+  assert.equal(dot.hidden, false);
   const calls = x.data.calls.length;
   button.click();
   assert.equal(opened, 1);
-  assert.equal(x.data.calls.length, calls, 'the indicator only navigates');
+  assert.equal(x.data.calls.length, calls, 'navigation never changes execution or selection');
   await x.click('pause');
-  assert.equal(x.header.hidden, true, 'paused work is not counted');
+  assert.equal(x.header.hidden, false, 'paused work keeps navigation available');
+  assert.equal(button.textContent, 'Текущие задачи');
+  assert.equal(dot.hidden, true);
+  assert.equal(count.hidden, true, 'paused work is not included in the running count');
+  assert.equal(button.getAttribute('aria-label'), 'Текущие задачи · запущено: 0');
   const empty = await mount(t, backend({ ...blank(), goalId:null }), { header:true });
-  assert.equal(empty.header.hidden, true);
+  assert.equal(empty.header.hidden, false, 'an empty successful snapshot still shows navigation');
+  assert.equal(empty.header.querySelector('[data-header-count]').hidden, true);
 });
 
 test('unknown current work stays hidden on read failure while launcher exposes safe retry', async t => {
@@ -320,8 +334,28 @@ test('unknown current work stays hidden on read failure while launcher exposes s
   assert.equal(x.header.hidden, true);
   assert.match(x.cleanup.getLauncherState().error, /Не удалось обновить/);
   await x.cleanup.retry(); await x.settle();
-  assert.equal(x.header.hidden, true, 'nothing runs after a successful load');
+  assert.equal(x.header.hidden, false, 'navigation appears after the first successful snapshot');
+  assert.equal(x.header.querySelector('[data-header-count]').hidden, true);
   assert.equal(data.count('start_task_block'), 0);
+});
+
+test('a paused task keeps the current-task link through later read failure', async t => {
+  const initial = {
+    ...blank(), goalId:null,
+    execution:{ blockId:81, date:'2026-09-05', task:{ source_type:'note', source_id:'task-a', title:'Заметки по API' } }
+  };
+  const data = backend(initial);
+  data.blocks.push({ id:81, source_type:'note', source_id:'task-a', date:'2026-09-05', start_time:'09:00', duration_seconds:90, duration_minutes:1, is_active:false });
+  const x = await mount(t, data, { header:true });
+  const button = x.header.querySelector('[data-header-action="in-progress"]');
+  assert.equal(x.header.hidden, false);
+  assert.equal(button.querySelector('[data-header-label]').textContent, 'Текущие задачи');
+  assert.equal(button.querySelector('.calendar-running__dot').hidden, true);
+  assert.equal(button.querySelector('[data-header-count]').hidden, true);
+  data.onceFail('get_goals');
+  await x.refresh();
+  assert.equal(x.ui('error').hidden, false, 'the read failure remains visible on the task surface');
+  assert.equal(x.header.hidden, false, 'a failed refresh preserves navigation from the last good snapshot');
 });
 
 test('the task card preserves routine step identity and occurrence across pause and resume', async t => {
@@ -336,7 +370,8 @@ test('the task card preserves routine step identity and occurrence across pause 
   assert.equal(opened[0].completion_date, '2026-09-04');
   await x.click('pause');
   assert.equal(x.action('start').textContent, 'Продолжить');
-  assert.equal(x.header.hidden, true);
+  assert.equal(x.header.hidden, false, 'navigation remains available while this task is paused');
+  assert.equal(x.header.querySelector('[data-header-count]').hidden, true);
   await x.click('start');
   assert.equal(data.blocks.at(-1).source_id, sourceId);
   assert.equal(data.blocks.at(-1).completion_date, '2026-09-04');
@@ -1602,14 +1637,14 @@ test('Now does not hide real seconds-command errors behind the legacy fallback',
 test('parallel running tasks update the header count and the return target without pausing anything', async t => {
   let opened = 0;
   const x = await mount(t, backend({ ...blank(), goalId:null }), { header:true, hideTaskCard:true, openInProgress:() => opened++ });
-  const header = x.header, count = () => header.hidden ? 0 : Number(header.querySelector('[data-header-count]').textContent);
+  const header = x.header, count = () => header.hidden || header.querySelector('[data-header-count]').hidden ? 0 : Number(header.querySelector('[data-header-count]').textContent);
   await x.data.invoke('start_task_block', { sourceType:'note', sourceId:'task-a', completionDate:'2026-09-05' });
   await x.refresh();
   assert.equal(count(), 1);
   await x.data.invoke('start_task_block', { sourceType:'event', sourceId:'event-a', completionDate:'2026-09-05' });
   await x.refresh();
   assert.equal(count(), 2);
-  assert.equal(header.querySelector('[data-header-action="in-progress"]').getAttribute('aria-label'), 'В работе: 2');
+  assert.equal(header.querySelector('[data-header-action="in-progress"]').getAttribute('aria-label'), 'Текущие задачи · запущено: 2');
   header.querySelector('[data-header-action="in-progress"]').click();
   assert.equal(opened, 1);
   assert.equal(x.data.count('pause_task_block'), 0);

@@ -65,13 +65,13 @@ export function mountCalendarNow(element, dependencies = {}) {
   let taskListExpanded = false;
   let secondsCommandAvailable = true;
   let summaryGoalId = undefined, summary = null, summaryRevision = 0;
-  // The shared header shows only «● N» running tasks (owner decision 2026-09-24);
-  // the dashboard «В работе» widget lists and controls each one.
+  // The shared header stays available as navigation after a successful snapshot.
+  // Its optional count describes tasks running now; paused work is not counted.
   const header = dependencies.headerElement;
   if (header) {
     header.classList.add('calendar-running');
     header.hidden = true;
-    header.innerHTML = `<button type="button" class="calendar-running__button" data-header-action="in-progress"><span class="calendar-running__dot" aria-hidden="true"></span><span data-header-count></span></button>`;
+    header.innerHTML = `<button type="button" class="calendar-running__button" data-header-action="in-progress"><span class="calendar-running__dot" aria-hidden="true" hidden></span><span data-header-label>Текущие задачи</span><span data-header-count aria-hidden="true" hidden></span></button>`;
   }
   const headerInProgress = header?.querySelector('[data-header-action="in-progress"]');
   const runningCount = () => snapshot?.activeBlocks?.length || 0;
@@ -272,10 +272,14 @@ export function mountCalendarNow(element, dependencies = {}) {
   }
   function renderHeader() {
     if (!header || disposed) return;
-    const count = runningCount(), label = count ? `В работе: ${count}` : '';
-    header.hidden = !count;
+    const count = runningCount(), label = `Текущие задачи · запущено: ${count}`;
+    header.hidden = !snapshot;
     header.dataset.count = String(count);
-    headerInProgress.querySelector('[data-header-count]').textContent = count ? String(count) : '';
+    const dot = headerInProgress.querySelector('.calendar-running__dot');
+    const countLabel = headerInProgress.querySelector('[data-header-count]');
+    dot.hidden = count === 0;
+    countLabel.hidden = count === 0;
+    countLabel.textContent = count ? String(count) : '';
     headerInProgress.title = label;
     headerInProgress.setAttribute('aria-label', label);
   }
