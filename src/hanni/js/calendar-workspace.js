@@ -668,6 +668,10 @@ export async function loadCalendarWorkspace(el) {
       const revision = workspaceRevision;
       disposePanel = mountCalendarTasks(pane, {
         invoke, state:tasksPaneState, mountMenu:mountRecordMenu, notifyChange:changed,
+        openProcessSettings:trigger => showCalendarSettings(trigger, { section:'processes', returnFocus:() => {
+          const target = [...pane.querySelectorAll('[data-task-control="stage"]')].find(button => button.dataset.taskId === trigger.dataset.taskId);
+          target?.focus({ preventScroll:true });
+        } }),
         openTask:(row,restore) => showRecord(calendarRecord(row),restore),
         editDate:(row,restore) => taskEditor(calendarRecord(row),restore,'date',()=>revision===workspaceRevision && pane.isConnected),
         executeAction:(row,action) => executeCalendarTaskAction(calendarRecord(row),action),
