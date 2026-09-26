@@ -17,7 +17,7 @@ export function startMvpSyncRefresh({ window, invoke, listen, requestSync, reque
     } catch { /* Settings show a status read failure when the user opens them. */ }
     finally { checking = false; if (checkAgain && !disposed) { checkAgain = false; void check(); } }
   }
-  const wake = () => { if (document.visibilityState === 'visible') { requestSync(); requestRefresh({ remote: true }); void check(); } };
+  const wake = () => { if (document.visibilityState === 'visible') { requestSync(); void check(); } };
   const received = event => {
     if (disposed) return;
     const payload = event?.payload;

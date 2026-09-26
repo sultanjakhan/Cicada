@@ -5,13 +5,63 @@ import { JSDOM } from 'jsdom';
 import { startMvpSyncRefresh } from '../src/hanni/js/content-sync-refresh.js';
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-test('native apply, foreground wake and changed revisions invalidate views without sending records to events', async t => {
-  const dom=new JSDOM('',{pretendToBeVisual:true});let received,status={revision:'9007199254740993'},wakes=0,unlistened=0;const changes=[];
-  const dispose=startMvpSyncRefresh({window:dom.window,invoke:async()=>status,listen:async(name,callback)=>{assert.equal(name,'mvp-sync-updated');received=callback;return()=>unlistened++;},requestSync:()=>wakes++,requestRefresh:details=>changes.push(details)});
-  t.after(()=>{dispose();dom.window.close();});await tick();assert.equal(wakes,1);
-  status={revision:'9007199254740994'};received({payload:{views_changed:true,revision:status.revision}});await tick();assert.equal(changes.length,1);assert.deepEqual(changes[0],{remote:true});
-  status={revision:'9007199254740995'};dom.window.dispatchEvent(new dom.window.Event('focus'));await tick();assert.ok(wakes>=2);assert.ok(changes.length>=2);
-  dispose();assert.equal(unlistened,1);
+function setupRefresh(t, initialRevision='9007199254740993') {
+  const dom=new JSDOM('',{pretendToBeVisual:true});
+  let received,status={revision:initialRevision},wakes=0,unlistened=0,interval;
+  let failedReads=0;
+  const changes=[],statuses=[];
+  const invoke=async()=>{if(failedReads){failedReads--;throw Error('temporary status failure');}return status;};
+  dom.window.setInterval=(callback,delay)=>{assert.equal(delay,30_000);interval=callback;return 1;};
+  dom.window.clearInterval=()=>{};
+  dom.window.addEventListener('hanni:sync-status',event=>statuses.push(event.detail));
+  const dispose=startMvpSyncRefresh({window:dom.window,invoke,listen:async(name,callback)=>{assert.equal(name,'mvp-sync-updated');received=callback;return()=>unlistened++;},requestSync:()=>wakes++,requestRefresh:details=>changes.push(details)});
+  t.after(()=>{dispose();dom.window.close();});
+  return {dom,changes,statuses,setStatus:value=>{status=value;},failNext:()=>{failedReads++;},fireInterval:()=>interval(),emit:value=>received({payload:value}),get wakes(){return wakes;},get unlistened(){return unlistened;}};
+}
+
+test('initial revision is a baseline; a no-change 30s wake syncs and checks status without invalidating views', async t => {
+  const x=setupRefresh(t); await tick();
+  assert.equal(x.wakes,1); assert.deepEqual(x.statuses,[{revision:'9007199254740993'}]);
+  x.fireInterval(); await tick();
+  assert.equal(x.wakes,2); assert.equal(x.statuses.length,2); assert.deepEqual(x.changes,[]);
+  x.dom.window.dispatchEvent(new x.dom.window.Event('focus')); await tick();
+  assert.equal(x.wakes,3); assert.deepEqual(x.changes,[]);
+});
+
+test('a changed native receive revision invalidates views after sync completes', async t => {
+  const x=setupRefresh(t); await tick();
+  x.setStatus({revision:'9007199254740994'});
+  x.fireInterval(); await tick();
+  assert.equal(x.wakes,2); assert.deepEqual(x.changes,[{remote:true}]);
+});
+
+test('an explicit views_changed event refreshes immediately and establishes its revision baseline', async t => {
+  const x=setupRefresh(t); await tick();
+  x.setStatus({revision:'9007199254740994'});
+  x.emit({views_changed:true,revision:'9007199254740994'}); await tick();
+  assert.deepEqual(x.changes,[{remote:true}]);
+  x.dom.window.dispatchEvent(new x.dom.window.Event('hanni:sync-check-status')); await tick();
+  assert.deepEqual(x.changes,[{remote:true}], 'the status check must not duplicate the event refresh');
+});
+
+test('a failed status read preserves the old revision so recovery still detects received changes', async t => {
+  const x=setupRefresh(t); await tick();
+  x.failNext(); x.fireInterval(); await tick();
+  assert.deepEqual(x.changes,[]);
+  x.setStatus({revision:'9007199254740994'});
+  x.dom.window.dispatchEvent(new x.dom.window.Event('hanni:sync-check-status')); await tick();
+  assert.deepEqual(x.changes,[{remote:true}]);
+  assert.ok(x.statuses.some(status=>status.revision==='9007199254740994'));
+});
+
+test('returning from a hidden window checks the current revision without a spurious refresh', async t => {
+  const x=setupRefresh(t); await tick();
+  Object.defineProperty(x.dom.window.document,'visibilityState',{configurable:true,value:'hidden'});
+  x.fireInterval(); await tick();
+  assert.equal(x.wakes,1); assert.deepEqual(x.changes,[]);
+  Object.defineProperty(x.dom.window.document,'visibilityState',{configurable:true,value:'visible'});
+  x.dom.window.document.dispatchEvent(new x.dom.window.Event('visibilitychange')); await tick();
+  assert.equal(x.wakes,2); assert.deepEqual(x.changes,[]);
 });
 
 test('native invoke schedules sync only for acknowledged writes', async t => {
