@@ -5,7 +5,7 @@
   --cip-running: color-mix(in srgb, var(--text-primary) 5%, var(--bg-card));
   /* Over the estimate: the amber warning token, darkened (light) or lightened (dark) for text contrast. */
   --cip-warn: color-mix(in srgb, var(--color-yellow, #cb8a05) 72%, var(--text-primary));
-  display: block; min-width: 0; margin: 0 0 18px; color: var(--text-primary);
+  display: block; width: 100%; max-width: 660px; min-width: 0; margin: 0 0 18px; color: var(--text-primary);
 }
 .calendar-in-progress, .calendar-in-progress * { box-sizing: border-box; }
 .calendar-in-progress [hidden] { display: none !important; }
@@ -23,9 +23,9 @@
 .cip-group { margin: 8px 0 2px; padding: 0 12px; font-size: 11px; line-height: 16px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); }
 .cip-group:first-child { margin-top: 2px; }
 .cip-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 112px auto; align-items: center; column-gap: 16px; min-height: 64px; padding: 8px 8px 8px 12px; border: 1px solid transparent; border-radius: 10px; transition: background-color .12s, border-color .12s; }
-.cip-row:hover, .cip-row:has(:focus-visible) { background: var(--cip-hover); }
+.cip-row:has(:focus-visible) { background: var(--cip-hover); }
 .cip-row.is-running { background: transparent; }
-.cip-row.is-running:hover { background: var(--cip-hover); }
+.cip-row.is-running:hover { background: transparent; }
 
 .cip-content { display: grid; grid-template-columns: minmax(0, 1fr); row-gap: 4px; min-width: 0; }
 .cip-line { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -44,8 +44,8 @@
 .cip-meta .cip-state { color: var(--text-muted); }
 .cip-meta .cip-state.is-running { color: var(--text-secondary); }
 .cip-stage-group { flex: 0 1 auto; display: inline-flex; align-items: center; gap: 2px; min-width: 0; max-width: 100%; }
-.cip-stage-time { flex: 0 1 auto; min-width: 0; color: var(--text-muted); font-size: 11px; line-height: 16px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.cip-stage { flex: 0 1 auto; display: inline-flex; align-items: center; gap: 4px; min-width: 0; height: 22px; padding: 0 6px; border: 1px solid transparent; border-radius: 11px; background: transparent; color: var(--text-secondary) !important; font-size: 11px !important; line-height: 20px; cursor: pointer; }
+.cip-stage-time { flex: 0 1 auto; min-width: 0; color: var(--text-secondary); font-size: 12px; line-height: 16px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cip-stage { flex: 0 1 auto; display: inline-flex; align-items: center; gap: 6px; min-width: 0; min-height: 28px; padding: 2px 7px; border: 1px solid var(--border-default); border-radius: 6px; background: var(--bg-card); color: var(--text-primary) !important; font-size: 12px !important; line-height: 20px; cursor: pointer; }
 .cip-stage-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cip-stage-mark { flex: none; color: var(--text-muted); }
 .cip-stage.is-deleted .cip-stage-text { font-style: italic; }
@@ -99,6 +99,13 @@
 .cip-message:empty { display: none; }
 .cip-message[role="alert"] { color: var(--color-red, #b42318); }
 .cip-card.is-empty .cip-message { display: none; }
+.cip-announcement { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+/* Stage work is primary here; task totals remain in the task details. */
+.cip-row:has(.cip-stage-time) .cip-time-meter { display: none; }
+@media (min-width: 681px) {
+  .cip-row:has(.cip-stage-time) { grid-template-columns: minmax(0, 1fr) auto; }
+  .cip-row:has(.cip-stage-time) .cip-actions { grid-column: 2; }
+}
 
 /* Stage and ⋯ menus reuse .calendar-record-menu (calendar-context-menu.css). */
 .cip-menu { width: 232px; }
@@ -127,7 +134,7 @@
   .cip-line { gap: 8px; }
   .cip-actions { gap: 0; }
   .cip-icon { width: 36px; height: 36px; }
-  .cip-stage { height: 28px; border-radius: 14px; }
+  .cip-stage { min-height: 36px; border-radius: 6px; }
   /* A 36px target around the 28px arrow. */
   .cip-stage-next { width: 36px; height: 28px; border-radius: 14px; }
   .cip-stage-next::after { content: ''; position: absolute; inset: -4px 0; }

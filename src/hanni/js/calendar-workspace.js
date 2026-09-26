@@ -17,6 +17,7 @@ import { mountCalendarRecurring } from './calendar-recurring.js';
 import { openRecurringRun } from './calendar-routine-execution.js';
 import { startCalendarExecution, readActiveBlocks } from './calendar-execution.js';
 import { mountCalendarInProgress } from './calendar-in-progress.js';
+import { showCalendarSettings } from './calendar-settings.js';
 import { mountCalendarDayBanner } from './calendar-day-banner.js';
 import { loadCalendarPreferences } from './calendar-display-preferences.js';
 import { mountGoalGlance, attachDevelopmentTask } from './calendar-development.js';
@@ -646,6 +647,10 @@ export async function loadCalendarWorkspace(el) {
       disposeInProgress = mountCalendarInProgress(pane.querySelector('[data-calendar-in-progress]'), {
         invoke, notifyChange:changed,
         openLauncher:button => showAllTasks(button),
+        openProcessSettings:trigger => showCalendarSettings(trigger, { section:'processes', returnFocus:() => {
+          const target = [...document.querySelectorAll('[data-cip-control="stage"]')].find(button => button.dataset.cipKey === trigger.dataset.cipKey);
+          target?.focus({ preventScroll:true });
+        } }),
         onRowsChange:keys => disposeRecurring?.setInProgress?.(keys),
         openTask:(row, restore) => {
           if (row.source_type === 'schedule') { const [id, date] = JSON.parse(row.source_id); openRecurringRun({ document, invoke, id, date }); }
