@@ -532,7 +532,18 @@ test('work and personal tasks get their own sub-headings, work first; one kind s
 
 test('on the phone the stage arrow has a 36px target', () => {
   const css = fs.readFileSync(new URL('../src/hanni/css/calendar-in-progress.css', import.meta.url), 'utf8');
-  const phone = css.slice(css.indexOf('@media (max-width: 600px)'));
-  assert.match(phone, /\.cip-stage-next \{[^}]*width: 36px; height: 28px/);
-  assert.match(phone, /\.cip-stage-next::after \{[^}]*inset: -4px 0/);
+  const declarationMap = text => Object.fromEntries(text.split(';').map(item => item.trim()).filter(Boolean).map(item => {
+    const colon = item.indexOf(':'); return [item.slice(0, colon).trim(), item.slice(colon + 1).trim()];
+  }));
+  const phoneRules = [...css.matchAll(/@media[^\n{]*max-width\s*:\s*\d+px[^\n{]*\{([\s\S]*?)^\}/gm)].map(match => match[1]);
+  const usableTarget = phoneRules.some(phone => {
+    const arrow = phone.match(/\.cip-stage-next\s*\{([^}]*)\}/), hitArea = phone.match(/\.cip-stage-next::after\s*\{([^}]*)\}/);
+    if (!arrow) return false;
+    const box = declarationMap(arrow[1]), hit = declarationMap(hitArea?.[1] || '');
+    const width = Number.parseFloat(box.width), height = Number.parseFloat(box.height);
+    const inset = (hit.inset || '').split(/\s+/).map(value => Number.parseFloat(value));
+    const vertical = inset.length === 1 ? [inset[0], inset[0]] : [inset[0] || 0, inset[2] ?? inset[0] ?? 0];
+    return width >= 36 && height - vertical[0] - vertical[1] >= 36;
+  });
+  assert.equal(usableTarget, true, 'a small-screen rule gives the arrow at least a 36px by 36px touch area');
 });
