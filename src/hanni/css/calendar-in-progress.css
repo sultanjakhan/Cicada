@@ -22,29 +22,34 @@
 /* Work and personal tasks (2026-09-25): two quiet sub-headings when both are listed. */
 .cip-group { margin: 8px 0 2px; padding: 0 12px; font-size: 11px; line-height: 16px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); }
 .cip-group:first-child { margin-top: 2px; }
-.cip-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 12px; min-height: 52px; padding: 7px 6px 7px 12px; border-radius: 9px; transition: background-color .12s; }
+.cip-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 112px auto; align-items: center; column-gap: 16px; min-height: 64px; padding: 8px 8px 8px 12px; border: 1px solid transparent; border-radius: 10px; transition: background-color .12s, border-color .12s; }
 .cip-row:hover, .cip-row:has(:focus-visible) { background: var(--cip-hover); }
-.cip-row::before { content: ''; position: absolute; left: 0; top: 11px; bottom: 11px; width: 3px; border-radius: 0 3px 3px 0; background: transparent; }
-.cip-row.is-running { background: var(--cip-running); }
-.cip-row.is-running:hover { background: var(--cip-hover-strong); }
-.cip-row.is-running::before { background: var(--text-primary); }
+.cip-row.is-running { background: transparent; }
+.cip-row.is-running:hover { background: var(--cip-hover); }
 
-.cip-content { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.cip-content { display: grid; grid-template-columns: minmax(0, 1fr); row-gap: 4px; min-width: 0; }
 .cip-line { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.cip-title { flex: 0 1 auto; display: block; min-width: 0; padding: 0; border: 0; border-radius: 3px; background: transparent; font-size: 14px !important; line-height: 20px; font-weight: 500; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.cip-title { flex: 1 1 auto; display: block; min-width: 0; padding: 0; border: 0; border-radius: 3px; background: transparent; font-size: 14px !important; line-height: 20px; font-weight: 600; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .cip-title:hover { text-decoration: underline; text-decoration-color: var(--text-faint); text-underline-offset: 3px; }
-.cip-time { flex: none; margin-left: auto; font-size: 12px; line-height: 16px; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cip-state { flex: none; font-size: 11px; line-height: 16px; color: var(--text-muted); white-space: nowrap; }
+.cip-row.is-running .cip-state { color: var(--text-secondary); }
+.cip-time-meter { display: grid; justify-items: end; row-gap: 2px; min-width: 0; }
+.cip-time-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-size: 10px; line-height: 12px; color: var(--text-muted); white-space: nowrap; }
+.cip-time { flex: none; margin-left: auto; font-size: 12px; line-height: 16px; color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .cip-row.is-running .cip-time { color: var(--text-secondary); }
 .cip-time.is-over, .cip-row.is-running .cip-time.is-over { color: var(--cip-warn); font-weight: 600; }
 
-/* Line 2: the stage (label opens the menu, «→» moves on), then the goal. */
-.cip-meta { gap: 8px; }
-.cip-stage-group { flex: 0 1 auto; display: inline-flex; align-items: center; gap: 2px; min-width: 0; max-width: 78%; }
-.cip-stage { flex: 0 1 auto; display: inline-flex; align-items: center; gap: 4px; min-width: 0; height: 22px; padding: 0 8px; border: 1px solid var(--border-default); border-radius: 11px; background: var(--bg-card); color: var(--text-secondary) !important; font-size: 12px !important; line-height: 20px; cursor: pointer; }
+/* Secondary line: state, then stage (label opens its menu, «→» moves on), then goal. */
+.cip-meta { grid-column: 1; grid-row: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 3px 8px; min-width: 0; }
+.cip-meta .cip-state { color: var(--text-muted); }
+.cip-meta .cip-state.is-running { color: var(--text-secondary); }
+.cip-stage-group { flex: 0 1 auto; display: inline-flex; align-items: center; gap: 2px; min-width: 0; max-width: 100%; }
+.cip-stage-time { flex: 0 1 auto; min-width: 0; color: var(--text-muted); font-size: 11px; line-height: 16px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cip-stage { flex: 0 1 auto; display: inline-flex; align-items: center; gap: 4px; min-width: 0; height: 22px; padding: 0 6px; border: 1px solid transparent; border-radius: 11px; background: transparent; color: var(--text-secondary) !important; font-size: 11px !important; line-height: 20px; cursor: pointer; }
 .cip-stage-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cip-stage-mark { flex: none; color: var(--text-muted); }
 .cip-stage.is-deleted .cip-stage-text { font-style: italic; }
-.cip-stage-next { position: relative; flex: none; display: inline-grid; place-items: center; width: 26px; height: 22px; padding: 0; border: 1px solid var(--border-default); border-radius: 11px; background: var(--bg-card); color: var(--text-secondary) !important; cursor: pointer; transition: background-color .12s, border-color .12s, color .12s; }
+.cip-stage-next { position: relative; flex: none; display: inline-grid; place-items: center; width: 26px; height: 22px; padding: 0; border: 1px solid var(--border-subtle); border-radius: 11px; background: transparent; color: var(--text-muted) !important; cursor: pointer; transition: background-color .12s, border-color .12s, color .12s; }
 .cip-stage-next svg { display: block; }
 .cip-stage-next:hover:not(:disabled) { border-color: var(--border-hover); background: var(--cip-hover-strong); color: var(--text-primary) !important; }
 .cip-stage-next:disabled { cursor: default; opacity: .6; }
@@ -52,15 +57,15 @@
 .cip-stage.is-empty { border-style: dashed; color: var(--text-muted) !important; }
 .cip-stage.is-waiting { background: var(--bg-soft); border-color: var(--border-hover); }
 .cip-stage:disabled { cursor: default; opacity: .6; }
-.cip-goal { flex: 1 1 0; min-width: 0; font-size: 12px; line-height: 16px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cip-goal { flex: 1 1 140px; min-width: 0; font-size: 12px; line-height: 16px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* Time against the estimate: a thin line, graphite until the estimate is passed. */
-.cip-progress { display: block; height: 3px; margin-top: 3px; border-radius: 2px; background: var(--border-subtle); overflow: hidden; }
-.cip-progress > span { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--text-faint); transition: width .4s ease; }
+.cip-progress { display: block; width: 64px; height: 3px; margin: 0; border-radius: 2px; background: var(--border-subtle); overflow: hidden; }
+.cip-progress > span { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--text-faint); }
 .cip-row.is-running .cip-progress > span { background: var(--text-secondary); }
 .cip-progress.is-over > span, .cip-row.is-running .cip-progress.is-over > span { background: var(--cip-warn); }
 
-.cip-actions { display: flex; align-items: center; gap: 2px; }
+.cip-actions { display: flex; grid-column: 3; grid-row: 1; align-items: center; gap: 2px; }
 .cip-icon { position: relative; display: inline-grid; place-items: center; flex: none; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--text-muted) !important; cursor: pointer; transition: background-color .12s, color .12s, box-shadow .12s; }
 .cip-icon svg { display: block; }
 .cip-icon:hover:not(:disabled), .cip-icon[aria-expanded="true"] { background: var(--cip-hover-strong); color: var(--text-primary) !important; }
@@ -104,13 +109,21 @@
 .cip-menu-hint { font-size: 11px; line-height: 14px; color: var(--text-muted); font-weight: 400; }
 .cip-menu-separator { height: 1px; margin: 5px 6px; background: var(--border-subtle); }
 
-[data-calendar-density=compact] .cip-row { min-height: 44px; padding-block: 4px; }
+[data-calendar-density=compact] .cip-row { min-height: 56px; padding-block: 5px; }
 
-@media (max-width: 600px) {
+@media (max-width: 680px) {
   .calendar-in-progress { margin-bottom: 14px; }
   .cip-card { padding: 8px 4px 4px; }
   .cip-heading { padding-left: 10px; }
-  .cip-row { column-gap: 6px; min-height: 56px; padding: 7px 2px 7px 10px; }
+  .cip-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; column-gap: 8px; row-gap: 6px; min-height: 64px; padding: 7px 2px 7px 10px; }
+  .cip-content { grid-column: 1 / -1; grid-row: 1; row-gap: 3px; }
+  .cip-title { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  .cip-meta { row-gap: 3px; }
+  .cip-time-meter { grid-column: 1; grid-row: 2; display: grid; grid-template-columns: max-content max-content; grid-template-rows: auto auto; justify-items: start; align-items: center; column-gap: 6px; row-gap: 2px; }
+  .cip-time-label { grid-column: 1; }
+  .cip-time { grid-column: 2; margin-left: 0; }
+  .cip-time-meter .cip-progress { grid-column: 1 / -1; width: 64px; }
+  .cip-actions { grid-column: 2; grid-row: 2; align-self: center; }
   .cip-line { gap: 8px; }
   .cip-actions { gap: 0; }
   .cip-icon { width: 36px; height: 36px; }
@@ -125,4 +138,8 @@
   .cip-title { position: relative; }
   .cip-title::after { content: ''; position: absolute; inset: -8px 0; }
   .cip-card.is-empty { padding: 6px 6px 6px 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cip-row, .cip-stage-next, .cip-icon { transition: none; }
 }
