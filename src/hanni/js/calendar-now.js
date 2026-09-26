@@ -781,15 +781,16 @@ export function mountCalendarNow(element, dependencies = {}) {
   const onHeaderClick = event => {
     if (!disposed && event.target.closest('[data-header-action="in-progress"]')) dependencies.openInProgress?.();
   };
-  const actionTarget = action => JSON.stringify([action, keyOf(chosenTask()), keyOf(selectedGoal()), keyOf(snapshot?.active), saved.execution?.blockId ?? null, keyOf(saved.returnTo), currentState]);
+  const actionTarget = action => JSON.stringify([action, keyOf(chosenTask()), String(selectedGoal()?.id ?? saved.goalId ?? ''), keyOf(snapshot?.active), snapshot?.active?.id ?? null, saved.execution?.blockId ?? null, keyOf(saved.returnTo), currentState]);
   const onClick = event => {
     const button = event.target.closest('[data-action]'); if (!button || !element.contains(button) || button.disabled) return;
     const action = button.dataset.action;
     if (reading && quietReading && readFlight) {
+      const taskKey = button.dataset.taskKey || null;
       const target = actionTarget(action), pending = readFlight;
       void pending.then(() => {
         if (disposed) return;
-        const current = [...ui.card.querySelectorAll('[data-action]')].find(item => item.dataset.action === action);
+        const current = [...ui.card.querySelectorAll('[data-action]')].find(item => item.dataset.action === action && (item.dataset.taskKey || null) === taskKey);
         if (actionTarget(action) !== target) { announce('Состояние обновилось. Проверь задачу перед действием.'); return; }
         if (!current || current.hidden || current.disabled) return;
         current.click();
