@@ -20,7 +20,7 @@ const PERSONAL_TABS = [['','Все'],['home','Дом'],['health','Здоровь
 const bucketOf = row => isWorkTask(row) ? 'work' : 'personal';
 const personalOf = row => ['home','health','growth','personal'].includes(row.sphere) ? row.sphere : 'none';
 const WAIT_ICON = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 1.5h5M3.5 10.5h5M4 1.5v1.3C4 4.1 6 4.8 6 6s-2 1.9-2 3.2v1.3M8 1.5v1.3C8 4.1 6 4.8 6 6s2 1.9 2 3.2v1.3"/></svg>';
-const ARROW_ICON = '<svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 7h8.5M7.5 3.5 11 7l-3.5 3.5"/></svg>';
+const CHEVRON_ICON = '<svg class="ct-stage-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 4.5 3 3 3-3"/></svg>';
 const plural = (count, forms) => { const n = Math.abs(count) % 100, d = n % 10; return forms[n > 10 && n < 20 ? 2 : d === 1 ? 0 : d >= 2 && d <= 4 ? 1 : 2]; };
 const EMPTY = { search:'Ничего не нашлось. Измени поиск, цель или сферу.', sphere:'В этой сфере задач нет. Выбери другую сферу или добавь задачу строкой выше.', completed:'Завершённых задач пока нет.', undated:'Все задачи распределены по дням.', today:'На сегодня задач нет.', active:'Задач пока нет. Добавь первую строкой выше.' };
 // Overdue cleanup acts on every task of the group through the task save path.
@@ -44,7 +44,7 @@ async function saveTaskDate(invoke, row, dueDate) {
 }
 
 export function mountCalendarTasks(host, dependencies) {
-  const { invoke, openTask, editDate, mountMenu, executeAction, notifyChange } = dependencies;
+  const { invoke, openTask, editDate, mountMenu, executeAction, notifyChange, openProcessSettings } = dependencies;
   const doc = host.ownerDocument, win = doc.defaultView;
   const state = dependencies.state || { filter:'active', search:'', goal:'', sphere:'', page:0 };
   // A sphere chosen before the Work/Personal split falls into «Личное»; «Дом» keeps its sphere inside it.
@@ -65,7 +65,7 @@ export function mountCalendarTasks(host, dependencies) {
     <div class="ct-spheres" role="group" aria-label="Рабочие или личные задачи">${SPHERE_TABS.map(([id,label])=>`<button type="button" data-tasks-sphere="${id}" aria-pressed="false"><span>${label}</span><span class="ct-sphere-count" data-tasks-sphere-count></span></button>`).join('')}</div>
     <div class="ct-subspheres" role="group" aria-label="Сфера личных задач" data-tasks-personal hidden></div>
     <form class="ct-add" data-tasks-add-form novalidate><span class="ct-add-icon">${PLUS_ICON}</span><input type="text" data-tasks-add placeholder="Добавить задачу…" aria-label="Добавить задачу" autocomplete="off" enterkeyhint="done"><p class="ct-add-status" data-tasks-add-status aria-live="polite" hidden></p></form>
-    <p data-tasks-message role="status" aria-live="polite"></p><button type="button" data-tasks-retry hidden>Повторить загрузку</button>
+    <p data-tasks-message role="status" aria-live="polite"></p><p class="ct-visually-hidden" data-tasks-stage-announcement role="status" aria-live="polite"></p><button type="button" data-tasks-retry hidden>Повторить загрузку</button>
     <div data-tasks-list></div><div class="ct-pages" data-tasks-pages hidden><button type="button" data-tasks-prev>Назад</button><span data-tasks-page></span><button type="button" data-tasks-next>Далее</button></div></section>`;
   const q = name => host.querySelector(`[data-tasks-${name}]`);
   const heading = host.querySelector('h2'), message = q('message'), list = q('list'), search = q('search'), goalFilter = q('goal');
@@ -127,20 +127,15 @@ export function mountCalendarTasks(host, dependencies) {
     if(stage){
       const group=node('span','ct-stage-group');
       const chip=control('ct-stage',null,()=>openStageMenu(id,chip));
-      if(stage.label)chip.append(node('span','ct-stage-label',stage.label));
+      chip.append(node('span','ct-stage-prefix','Этап:'),node('span','ct-stage-label',stage.label||(stage.waiting?'Жду ответа':'Выбрать')));
       // «Жду ответа»: a small hourglass after the stage name.
       if(stage.waiting){const mark=node('span','ct-waiting');mark.innerHTML=WAIT_ICON;mark.append(node('span','ct-visually-hidden','жду ответа'));chip.append(mark);}
-      if(!stage.label&&!stage.waiting){chip.textContent='Стадия';chip.classList.add('is-empty');}
+      chip.insertAdjacentHTML('beforeend',CHEVRON_ICON);
+      if(!stage.label&&!stage.waiting)chip.classList.add('is-empty');
       chip.classList.toggle('is-deleted',stage.deleted);
-      chip.title=stageTitleOf(row,stage);chip.setAttribute('aria-label',`Стадия: ${stage.label||'не выбрана'}${stage.waiting?', жду ответа':''}. Выбрать стадию`);
+      chip.title=stageTitleOf(row,stage);chip.setAttribute('aria-label',`Этап: ${stage.label||(stage.waiting?'Жду ответа':'не выбран')}${stage.waiting?', жду ответа':''}. Выбрать этап для задачи: ${row.title}`);
       chip.setAttribute('aria-haspopup','menu');chip.setAttribute('aria-expanded','false');chip.disabled=busy;chip.dataset.taskId=id;chip.dataset.taskControl='stage';
       group.append(chip);
-      // One tap to the next stage; at the last stage there is no arrow.
-      if(stage.next){
-        const next=control('ct-stage-next',null,()=>void advance(id));next.innerHTML=ARROW_ICON;
-        next.title=`${stage.stage?'Дальше':'Начать'}: ${stage.next.title}`;next.setAttribute('aria-label',`Следующая стадия «${stage.next.title}»: ${row.title}`);
-        next.disabled=busy;next.dataset.taskId=id;next.dataset.taskControl='stage-next';group.append(next);
-      }
       meta.append(group);
     }
     const work=effort(row);if(work.text){const estimate=node('span','ct-estimate',work.text);estimate.title=work.hint;meta.append(estimate);}
@@ -305,31 +300,11 @@ export function mountCalendarTasks(host, dependencies) {
     if(current.trigger.isConnected)current.trigger.setAttribute('aria-expanded','false');
     if(returnFocus&&!disposed)restore(current.id,'stage');
   }
-  // The arrow: the next stage of the task's process in one tap.
-  async function advance(id) {
-    const row=rows.find(item=>taskKey(item)===id), stage=row&&taskStage(row,processes);
-    if(!stage?.next||busy||disposed)return;
-    closeStageMenu(false);busy=true;revision++;feedback='';message.textContent='';render();
-    let ok=false;
-    try{
-      const result=await invoke('set_calendar_task_stage',{id:String(row.source_id),stage:stage.next.id,waiting:null});
-      if(disposed)return;
-      rows=rows.map(item=>taskKey(item)===id?{...item,process:result?.process??item.process,stage:typeof result?.stage==='string'?result.stage:stage.next.id,waiting:typeof result?.waiting==='boolean'?result.waiting:item.waiting,stage_log:result?.stage_log??item.stage_log}:item);
-      ok=true;
-    }catch{}
-    finally{
-      if(!disposed){
-        busy=false;render();
-        if(ok){say(`Стадия: ${stage.next.title}.`);notifyChange();}else say('Не удалось перейти к следующей стадии. Повтори.',true);
-        restore(id,findButton(id,'stage-next')?'stage-next':'stage');
-      }
-    }
-  }
-  // Stage menu (secondary path): the stages of the task's process, «Без стадии» and «Жду ответа».
+  // Choose a process stage or waiting state; process settings are delegated by the owner surface.
   function openStageMenu(id, trigger) {
     const current=stageMenu?.id===id;closeStageMenu(false);if(current)return;
     const row=rows.find(item=>taskKey(item)===id), state=row&&taskStage(row,processes);if(!state||busy)return;
-    const menu=node('div','ct-stage-menu');menu.setAttribute('role','menu');menu.setAttribute('aria-label',`Стадия: ${row.title}`);menu.dataset.tasksStageMenu='';
+    const menu=node('div','ct-stage-menu');menu.setAttribute('role','menu');menu.setAttribute('aria-label',`Этап: ${row.title}`);menu.dataset.tasksStageMenu='';
     // A deleted stage is kept when only «Жду ответа» changes (its stage is sent as null).
     const stage=state.stage, waiting=state.waiting, items=[];
     const option=(label,role,checked,values)=>{const button=control('ct-stage-option',label,()=>void setStage(id,values));button.setAttribute('role',role);button.setAttribute('aria-checked',String(checked));button.tabIndex=-1;menu.append(button);items.push(button);return button;};
@@ -338,6 +313,11 @@ export function mountCalendarTasks(host, dependencies) {
     option('Без стадии','menuitemradio',!stage,{stage:'',waiting}).dataset.stage='';
     const line=node('div','ct-stage-separator');line.setAttribute('role','separator');menu.append(line);
     option('Жду ответа','menuitemcheckbox',waiting,{stage:null,waiting:!waiting}).dataset.stageWaiting='';
+    if(typeof openProcessSettings==='function'){
+      const line=node('div','ct-stage-separator');line.setAttribute('role','separator');menu.append(line);
+      const settings=control('ct-stage-option',null,()=>{closeStageMenu(false);openProcessSettings(trigger);});settings.setAttribute('role','menuitem');settings.tabIndex=-1;
+      settings.append(node('span','ct-stage-settings-label','Настроить этапы…'),node('span','ct-stage-settings-hint','Общий список этапов процесса'));menu.append(settings);items.push(settings);
+    }
     const error=node('p','ct-stage-error');error.setAttribute('role','alert');error.hidden=true;menu.append(error);
     doc.body.append(menu);trigger.setAttribute('aria-expanded','true');
     const place=trigger.getBoundingClientRect(), size=menu.getBoundingClientRect();
@@ -347,6 +327,7 @@ export function mountCalendarTasks(host, dependencies) {
     const keys=event=>{
       if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeStageMenu(true);return;}
       if(event.key==='Tab'){closeStageMenu(false);return;}
+      if(event.key==='Enter'&&menu.contains(event.target)&&event.target.matches('button.ct-stage-option')){event.preventDefault();event.target.click();return;}
       if(!['ArrowDown','ArrowUp','Home','End'].includes(event.key))return;
       event.preventDefault();const index=items.indexOf(doc.activeElement);
       items[event.key==='Home'?0:event.key==='End'?items.length-1:(index+(event.key==='ArrowDown'?1:-1)+items.length)%items.length].focus();
@@ -360,6 +341,7 @@ export function mountCalendarTasks(host, dependencies) {
   }
   async function setStage(id, values) {
     const current=stageMenu;if(!current||current.busy||disposed)return;
+    feedback='';message.textContent='';
     current.busy=true;current.menu.setAttribute('aria-busy','true');current.items.forEach(item=>{item.disabled=true;});current.error.hidden=true;
     try{
       const sourceId=rows.find(row=>taskKey(row)===id)?.source_id??id.slice(id.indexOf(':')+1);
@@ -369,6 +351,8 @@ export function mountCalendarTasks(host, dependencies) {
         ...(result?.process!=null?{process:result.process}:{}),...(Array.isArray(result?.stage_log)?{stage_log:result.stage_log}:{})}:row);
       if(stageMenu===current)closeStageMenu(false);
       render();restore(id,'stage');notifyChange();
+      const changed=rows.find(row=>taskKey(row)===id), state=changed&&taskStage(changed,processes);
+      host.querySelector('[data-tasks-stage-announcement]').textContent=values.stage!=null?`Этап: ${state?.label||'не выбран'}.`:(values.waiting?'Отмечено: жду ответа.':'Отметка «Жду ответа» снята.');
     }catch{
       if(stageMenu===current){current.busy=false;current.menu.removeAttribute('aria-busy');current.items.forEach(item=>{item.disabled=false;});current.error.textContent='Не удалось изменить стадию. Повтори.';current.error.hidden=false;current.items[0].focus();}
     }

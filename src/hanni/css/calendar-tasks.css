@@ -126,25 +126,23 @@
 .ct-kind { color: var(--text-secondary); }
 .ct-sphere { color: var(--text-secondary); }
 .ct-date { padding: 0 0 0 13px; border: 0; background: transparent; color: var(--text-muted) !important; font-size: 12px !important; line-height: 16px; cursor: pointer; }
-.ct-stage, .ct-stage-next { position: relative; padding: 0; border: 0; background: transparent; color: var(--text-muted) !important; font-size: 12px !important; line-height: 16px; cursor: pointer; }
+.ct-stage { position: relative; padding: 0; border: 0; background: transparent; color: var(--text-muted) !important; font-size: 12px !important; line-height: 16px; cursor: pointer; }
 .ct-date { font-variant-numeric: tabular-nums; }
 /* The hit area fills the padding band of the meta line (it clips anything larger). */
 .ct-date::after { content: ''; position: absolute; inset: -3px -3px -3px 9px; }
-.ct-stage::after, .ct-stage-next::after { content: ''; position: absolute; inset: -3px -2px; }
+.ct-stage::after { content: ''; position: absolute; inset: -3px -2px; }
 .ct-date:hover:not(:disabled), .ct-stage:hover:not(:disabled) { color: var(--text-primary) !important; text-decoration: underline; text-underline-offset: 2px; }
 .ct-date.is-overdue { color: var(--ct-danger) !important; font-weight: 500; }
 .ct-date:disabled, .ct-stage:disabled { cursor: default; }
 .calendar-tasks .ct-date:focus-visible, .calendar-tasks .ct-stage:focus-visible { outline: 0; text-decoration: underline 2px; text-underline-offset: 3px; color: var(--text-primary) !important; }
-/* Stage of a task with a process (2026-09-25): label (menu) and «→» (next stage), «жду ответа» as a small pill. */
+/* Stage of a task with a process: one explicit selector with its waiting state. */
 .ct-stage-group { display: inline-flex; align-items: center; gap: 6px; }
 .ct-stage { display: inline-flex; align-items: center; gap: 5px; }
 .ct-stage.is-deleted .ct-stage-label { font-style: italic; }
-.ct-stage-next { display: inline-grid; place-items: center; width: 24px; height: 16px; border: 1px solid var(--border-default) !important; border-radius: 8px; color: var(--text-secondary) !important; background: var(--bg-card); }
-.ct-stage-next svg { display: block; }
-.ct-stage-next:hover:not(:disabled) { color: var(--text-primary) !important; border-color: var(--border-hover) !important; }
-.ct-stage-next:disabled { cursor: default; opacity: .5; }
-.calendar-tasks .ct-stage-next:focus-visible { outline: 2px solid var(--ct-focus); outline-offset: 1px; }
 .ct-stage-label { color: var(--text-secondary); }
+.ct-stage-prefix { color: var(--text-muted); }
+.ct-stage-chevron { display: block; flex: none; }
+.ct-stage-settings-hint { display: block; color: var(--text-muted); font-size: 11px; line-height: 15px; }
 .ct-stage:hover .ct-stage-label { color: var(--text-primary); }
 .ct-stage.is-empty { color: var(--text-faint) !important; text-decoration: underline dotted 1px; text-underline-offset: 3px; }
 .ct-waiting { position: relative; display: inline-flex; align-items: center; color: var(--text-secondary); }
@@ -205,8 +203,8 @@
   .ct-spheres { margin-top: 10px; }
   .ct-spheres button { height: 36px; padding: 0 12px; }
   .ct-subspheres button { height: 36px; padding: 0 10px; }
-  .ct-stage-next { width: 32px; height: 22px; border-radius: 11px; }
-  .ct-stage-next::after { inset: -5px -3px; }
+  .ct-stage { min-height: 36px; }
+  .ct-stage::after { inset: 0 -3px; }
   .ct-add { padding-left: 10px; column-gap: 10px; }
   .ct-add input { height: 48px; font-size: 15px; }
   .ct-group { padding-left: 10px; padding-right: 0; }
