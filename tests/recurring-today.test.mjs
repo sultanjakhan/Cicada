@@ -35,7 +35,7 @@ test('open recurring editor keeps its draft when the same plan was changed remot
   const invoke=async(command,args)=>{if(command==='get_ui_state')return raw;if(command==='set_ui_state'){writes++;raw=args.value;return;}throw Error(command);};
   const dispose=mountCalendarRecurring(host,{invoke,now:()=>new Date(`${today}T12:00:00`)});t.after(()=>{dispose();dom.window.close();});
   await dispose.openManager();dom.window.document.querySelector('[data-recurring-edit="rule-1"]').click();
-  const modal=[...dom.window.document.querySelectorAll('dialog[open]')].at(-1),field=modal.querySelector('[name=title]');field.value='Local draft';
+  const modal=[...dom.window.document.querySelectorAll('dialog[open]')].at(-1),field=modal.querySelector('[data-routine-title]');field.value='Local draft';
   raw=JSON.stringify({...state,plans:[{...plan,title:'Remote title'}]});const remote=raw;modal.querySelector('form').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));
   await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
   assert.equal(modal.open,true);assert.equal(field.value,'Local draft');assert.match(modal.querySelector('[data-dialog-error]').textContent,/другом устройстве/);assert.equal(raw,remote);assert.equal(writes,0);
@@ -75,7 +75,7 @@ test('routine library shows enabled and disabled plans, filters, marks rules, an
   assert.equal(commands.includes('start_task_block'),false);
   dispose.create();
   const editor=dom.window.document.querySelector('dialog[open]');assert.ok(editor);
-  assert.equal(editor.querySelector('[name=title]').value,'');
+  assert.equal(editor.querySelector('[data-routine-title]').value,'');
   assert.equal(writes,2);
   editor.close();
 });
@@ -94,7 +94,7 @@ test('routine library rolls its daily marks forward after midnight',async t=>{
   assert.match(host.querySelector('[data-library-id="rule-1"]').textContent,/Отметить/);
 });
 
-test('graph editor keeps dependency structure read-only while saving schedule edits',async t=>{
+test('graph editor lets imported step properties be edited without changing the plan identity',async t=>{
   const dom=new JSDOM('<main></main>',{url:'https://fixture.invalid'}),host=dom.window.document.querySelector('main');
   dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;this.dispatchEvent(new dom.window.Event('close'));};
   const steps=[{title:'Умыться',dependsOn:[],trackingMode:'check',optional:false},{title:'Подготовить вещи',dependsOn:[0],trackingMode:'track',optional:true}];
@@ -102,14 +102,18 @@ test('graph editor keeps dependency structure read-only while saving schedule ed
   const invoke=async(command,args)=>{if(command==='get_ui_state')return raw;if(command==='set_ui_state'){raw=args.value;return;}throw Error(command);};
   const dispose=mountCalendarRecurring(host,{invoke,now:()=>new Date(`${today}T12:00:00`)});t.after(()=>{dispose();dom.window.close();});
   await dispose.openManager();dom.window.document.querySelector('[data-recurring-edit="imported-graph"]').click();
-  const modal=[...dom.window.document.querySelectorAll('dialog[open]')].at(-1),mode=modal.querySelector('[name=mode]');
-  assert.equal(mode.value,'graph');assert.equal(mode.disabled,true);
-  assert.match(modal.querySelector('[data-graph-fields]').textContent,/После: Умыться/);
-  modal.querySelector('[name=title]').value='Утренний порядок';
+  const modal=[...dom.window.document.querySelectorAll('dialog[open]')].at(-1);
+  assert.equal(modal.querySelectorAll('[data-routine-step]').length,2);
+  assert.equal(modal.querySelectorAll('[data-step-dependency]:checked').length,1);
+  modal.querySelector('[data-routine-title]').value='Утренний порядок';
+  modal.querySelectorAll('[data-step-title]')[1].value='Подготовить сумку';
+  modal.querySelectorAll('[data-step-optional]')[1].click();
   modal.querySelector('form').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));
   await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
   const saved=JSON.parse(raw).plans[0];
-  assert.equal(saved.title,'Утренний порядок');assert.deepEqual(saved.steps,steps);
+  assert.equal(saved.title,'Утренний порядок');assert.equal(saved.mode,'graph');
+  assert.equal(saved.steps[1].title,'Подготовить сумку');assert.equal(saved.steps[1].optional,false);
+  assert.deepEqual(saved.steps[1].dependsOn,[0]);assert.equal(saved.steps[0].trackingMode,'check');
 });
 
 test('Today combines current-date task and pending rule under one Дела heading', async t => {

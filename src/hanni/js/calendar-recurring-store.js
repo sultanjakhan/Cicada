@@ -36,7 +36,6 @@ function planFields(fields, old, today, id) {
   if (plan.time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(plan.time)) throw Error('Проверь время.');
   plan.mode = fields.mode || old?.mode || 'check';
   if (!['check','activity','chain','graph'].includes(plan.mode) || plan.kind==='rule' && plan.mode!=='check') throw Error('Правило можно только отмечать.');
-  if (old?.mode==='graph'&&plan.mode!=='graph') throw Error('Структура графа шагов сохраняется. Для другого формата создай отдельную рутину.');
   const stepSource=fields.steps ?? (plan.mode==='graph'?old?.steps:undefined) ?? [];
   plan.steps = plan.mode==='graph' ? validatedGraphSteps(stepSource) : plan.mode==='chain' ? stepSource.map(step=>({title:String(step.title||'').trim()})) : [];
   if (plan.mode==='chain' && (!plan.steps.length || plan.steps.length>50 || plan.steps.some(step=>!step.title || step.title.length>160))) throw Error('Укажи от 1 до 50 шагов, до 160 символов каждый.');

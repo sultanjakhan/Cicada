@@ -106,6 +106,18 @@ test('editing graph schedule fields keeps structure in both plan and original ru
   assert.equal(state.plans[0].title,'Renamed graph');
 });
 
+test('changing a graph plan to one action preserves the already-started run snapshot',async()=>{
+  const {store}=setup(),steps=[{title:'Root',dependsOn:[],trackingMode:'check',optional:false},{title:'Leaf',dependsOn:[0],trackingMode:'track',optional:true}];
+  const {result:id}=await store.savePlan({...action,mode:'graph',steps});
+  await store.ensureRun(id);
+  const before=(await store.read()).days['2026-09-13'][id];
+  await store.savePlan({...action,title:'One future action',mode:'activity',steps:[]},id);
+  const after=(await store.read()).days['2026-09-13'][id];
+  assert.equal((await store.read()).plans[0].mode,'activity');
+  assert.deepEqual(after.snapshot,before.snapshot);
+  assert.deepEqual(after.run,before.run);
+});
+
 test('stored graph run whose dependencies differ from its snapshot fails closed',()=>{
   const source={version:1,plans:[],days:{'2026-09-13':{graph:{snapshot:{...action,id:'graph',mode:'graph',steps:[{title:'A',dependsOn:[]},{title:'B',dependsOn:[0]}]},status:'pending',run:{steps:[{title:'A',dependsOn:[],status:'pending'},{title:'B',dependsOn:[],status:'pending'}]}}}}};
   assert.throws(()=>parseRecurring(JSON.stringify(source)),/Не удалось прочитать/);
