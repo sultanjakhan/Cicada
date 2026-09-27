@@ -45,7 +45,7 @@ test('process changes save from their own section and never piggyback on calenda
   assert.equal(stored.processes[0].stages.find(stage => stage.id === 'analysis').title, 'Модели');
 });
 
-test('an invalid process keeps the dialog open at its field; Escape discards the edits', async () => {
+test('an invalid process keeps the dialog open; Escape dismisses close confirmation', async () => {
   const x = await boot();
   const section = x.modal.querySelector('.calendar-processes');
   x.type(section.querySelector('[data-control="process-title"]'), '');
@@ -55,8 +55,13 @@ test('an invalid process keeps the dialog open at its field; Escape discards the
   assert.deepEqual(x.writes, [], 'nothing is written');
   assert.equal(section.querySelector('[data-processes-error]').textContent, 'Назови процесс.');
   assert.equal(document.activeElement, section.querySelector('[data-control="process-title"]'));
-  x.dom.window.confirm = () => true;
   x.modal.dispatchEvent(new x.dom.window.Event('cancel', { cancelable: true }));
+  assert.equal(x.modal.open, true);
+  assert.equal(x.modal.querySelector('[data-close-confirmation]').hidden, false);
+  x.modal.dispatchEvent(new x.dom.window.Event('cancel', { cancelable: true }));
+  assert.equal(x.modal.querySelector('[data-close-confirmation]').hidden, true);
+  assert.equal(x.modal.open, true);
+  x.modal.querySelector('[data-close-confirmation] button:last-child').click();
   assert.equal(x.modal.open, false);
   assert.deepEqual(x.writes, [], 'Escape writes nothing');
 });

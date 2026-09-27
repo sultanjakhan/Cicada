@@ -63,6 +63,35 @@
   min-height: 44px;
   margin-top: 6px;
 }
+.calendar-settings-confirmation {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0 16px 12px;
+  padding: 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  color: var(--text-primary);
+  background: var(--bg-card);
+}
+.calendar-settings-confirmation p {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.calendar-settings-confirmation button {
+  flex: 1 1 180px;
+  min-width: 0;
+  min-height: 44px;
+}
+.calendar-settings-confirmation button:first-of-type {
+  border-color: var(--text-primary);
+  color: var(--bg-card);
+  background: var(--text-primary);
+}
 .calendar-settings-panel h3 {
   margin: 5px 0 8px;
   font-size: 16px;
@@ -216,6 +245,14 @@
     display: flex;
     flex-wrap: wrap;
     padding: 10px 16px;
+  }
+  .calendar-settings-confirmation {
+    display: grid;
+    grid-template-columns: 1fr;
+    margin: 0 16px 12px;
+  }
+  .calendar-settings-confirmation button {
+    width: 100%;
   }
   .calendar-settings-actions button {
     flex: 1 1 140px;

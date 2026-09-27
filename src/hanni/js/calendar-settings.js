@@ -105,6 +105,10 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
   api.modal.querySelector('.calendar-editor-actions').classList.add('calendar-settings-actions');
   const saveButton = api.submit;
   const cancelButton = api.modal.querySelector('.calendar-editor-actions [data-dialog-close]');
+  const closeButtons = [...api.modal.querySelectorAll('[data-dialog-close]')];
+  const footerButtons = [...api.modal.querySelectorAll('.calendar-editor-actions button')];
+  const headerClose = api.modal.querySelector('.calendar-editor-close');
+  const feedback = api.modal.querySelector('.calendar-editor-feedback');
   cancelButton.textContent = 'Отмена';
   cancelButton.setAttribute('aria-label', 'Отмена и закрыть настройки');
   const prefsError = document.createElement('p');
@@ -123,6 +127,21 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
   const prefsLoadState = document.createElement('div');
   prefsLoadState.className = 'calendar-settings-load-state';
   prefsLoadState.append(prefsLoading, prefsError, prefsRetry);
+  let closeIntent = null, focusAfterConfirmation = null;
+  const closeConfirmation = document.createElement('div');
+  closeConfirmation.className = 'calendar-settings-confirmation';
+  closeConfirmation.dataset.closeConfirmation = '';
+  closeConfirmation.setAttribute('role', 'group');
+  closeConfirmation.setAttribute('aria-label', 'Подтверждение закрытия с несохранёнными изменениями');
+  closeConfirmation.hidden = true;
+  const closeMessage = document.createElement('p');
+  closeMessage.textContent = 'Есть несохранённые изменения.';
+  const continueEditing = document.createElement('button');
+  continueEditing.type = 'button'; continueEditing.textContent = 'Продолжить редактирование';
+  const discardAndClose = document.createElement('button');
+  discardAndClose.type = 'button'; discardAndClose.textContent = 'Закрыть без сохранения';
+  closeConfirmation.append(closeMessage, continueEditing, discardAndClose);
+  feedback.prepend(closeConfirmation);
 
   function setActive(id, focus = false) {
     if (!tabs[id]) return;
@@ -175,22 +194,57 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
     if (next) { event.preventDefault(); setActive(next, true); }
   });
 
-  function requestClose() {
-    if (api.pending) return;
-    const dirty = preferenceDirty() || !!processSettings?.isDirty();
-    if (dirty && !window.confirm('Есть несохранённые настройки. Закрыть и отбросить их?')) return;
+  function finishClose(intent) {
+    closeConfirmation.hidden = true;
+    closeIntent = null;
+    api.body.removeAttribute('inert');
+    closeButtons.forEach(button => { button.disabled = api.pending; });
+    footerButtons.forEach(button => { button.disabled = api.pending; });
+    const openRoutines = intent === 'routines';
     api.close({ skipBeforeClose: true });
+    if (openRoutines) window.dispatchEvent(new window.CustomEvent('hanni:open-recurring-settings'));
+  }
+  function dismissCloseConfirmation() {
+    if (closeConfirmation.hidden) return false;
+    closeConfirmation.hidden = true;
+    closeIntent = null;
+    api.body.removeAttribute('inert');
+    closeButtons.forEach(button => { button.disabled = api.pending; });
+    footerButtons.forEach(button => { button.disabled = api.pending; });
+    const target = focusAfterConfirmation;
+    focusAfterConfirmation = null;
+    if (target?.isConnected && !target.disabled) target.focus({ preventScroll: true });
+    else tabs[SECTIONS.find(item => tabs[item.id].getAttribute('aria-selected') === 'true')?.id]?.focus();
+    return true;
+  }
+  function requestClose(intent = 'close') {
+    if (api.pending) return;
+    if (!closeConfirmation.hidden) { dismissCloseConfirmation(); return; }
+    const dirty = preferenceDirty() || !!processSettings?.isDirty();
+    if (!dirty) { finishClose(intent); return; }
+    closeIntent = intent;
+    focusAfterConfirmation = document.activeElement;
+    closeMessage.textContent = 'Есть несохранённые изменения.';
+    closeConfirmation.hidden = false;
+    api.body.setAttribute('inert', '');
+    closeButtons.forEach(button => { button.disabled = true; });
+    footerButtons.forEach(button => { button.disabled = true; });
+    continueEditing.focus({ preventScroll: true });
   }
   const scheduleFooterRefresh = () => window.setTimeout(refreshFooter, 0);
   // Intercept both Escape and shell close buttons so dirty drafts are never silently lost.
   api.modal.addEventListener('cancel', event => {
-    event.preventDefault(); event.stopImmediatePropagation(); requestClose();
+    event.preventDefault(); event.stopImmediatePropagation();
+    if (!dismissCloseConfirmation()) requestClose();
   }, true);
   api.modal.addEventListener('click', event => {
     const close = event.target.closest('[data-dialog-close]');
     if (!close) return;
-    event.preventDefault(); event.stopImmediatePropagation(); requestClose();
+    event.preventDefault(); event.stopImmediatePropagation();
+    if (!dismissCloseConfirmation()) requestClose();
   }, true);
+  continueEditing.addEventListener('click', dismissCloseConfirmation);
+  discardAndClose.addEventListener('click', () => finishClose(closeIntent));
 
   const today = hosts.today;
   today.innerHTML = `<section data-next-action-settings>
@@ -269,9 +323,7 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
     });
   }
   today.querySelector('[data-recurring]').addEventListener('click', () => {
-    if ((preferenceDirty() || processSettings?.isDirty()) && !window.confirm('Есть несохранённые настройки. Закрыть и отбросить их?')) return;
-    api.close({ skipBeforeClose: true });
-    window.dispatchEvent(new window.CustomEvent('hanni:open-recurring-settings'));
+    requestClose('routines');
   });
   prefsRetry.addEventListener('click', () => { void loadPreferences(); });
 

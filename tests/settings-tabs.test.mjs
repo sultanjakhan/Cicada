@@ -12,7 +12,6 @@ async function boot({ failPreferenceSave = false, failPreferenceLoad = false, de
   });
   dom.window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   dom.window.HTMLDialogElement.prototype.close = function () { this.open = false; this.dispatchEvent(new dom.window.Event('close')); };
-  dom.window.confirm = () => false;
   globalThis.marked = { Marked: class { use() {} parse(value) { return value; } } };
 
   const ui = new Map(), writes = [], calls = [];
@@ -111,18 +110,47 @@ test('recommendation sources honor a saved disabled master toggle after loading'
   assert.equal(x.modal.querySelector('[data-key="recommendRoutines"]').disabled, true);
 });
 
-test('Cancel guards unsaved preferences and discards only after an explicit choice', async () => {
+test('Cancel opens inline confirmation; Escape or Continue resumes editing and explicit discard closes', async () => {
   const x = await boot();
   const toggle = x.modal.querySelector('[data-key="recommendTasks"]');
   toggle.checked = false;
   toggle.dispatchEvent(new x.dom.window.Event('change', { bubbles: true }));
   const cancel = x.modal.querySelector('[data-dialog-close]');
   cancel.click();
-  assert.equal(x.modal.open, true, 'declining the native confirmation keeps the draft open');
-  x.dom.window.confirm = () => true;
+  const confirmation = x.modal.querySelector('[data-close-confirmation]');
+  assert.equal(confirmation.hidden, false);
+  assert.equal(document.activeElement, confirmation.querySelector('button'));
+  assert.match(confirmation.textContent, /Есть несохранённые изменения/);
+  x.modal.dispatchEvent(new x.dom.window.Event('cancel', { cancelable: true }));
+  assert.equal(confirmation.hidden, true, 'Escape dismisses the inline confirmation');
+  assert.equal(x.modal.open, true);
   cancel.click();
+  assert.equal(confirmation.hidden, false);
+  confirmation.querySelectorAll('button')[1].click();
   assert.equal(x.modal.open, false);
   assert.deepEqual(x.writes, []);
+});
+
+test('routine transition waits for explicit discard and does not fire on repeated close', async () => {
+  const x = await boot();
+  let opened = 0;
+  x.dom.window.addEventListener('hanni:open-recurring-settings', () => { opened++; });
+  const toggle = x.modal.querySelector('[data-key="recommendTasks"]');
+  toggle.checked = false;
+  toggle.dispatchEvent(new x.dom.window.Event('change', { bubbles: true }));
+  x.modal.querySelector('[data-recurring]').click();
+  assert.equal(x.modal.querySelector('[data-close-confirmation]').hidden, false);
+  assert.equal(opened, 0);
+  assert.equal(x.modal.querySelector('[data-dialog-close]').disabled, true);
+  x.modal.querySelector('[data-dialog-close]').click();
+  assert.equal(x.modal.open, true, 'a repeated close cannot close the dialog');
+  assert.equal(opened, 0, 'a repeated close does not invoke the routines route');
+  x.modal.dispatchEvent(new x.dom.window.Event('cancel', { cancelable: true }));
+  assert.equal(x.modal.querySelector('[data-close-confirmation]').hidden, true);
+  x.modal.querySelector('[data-recurring]').click();
+  x.modal.querySelector('[data-close-confirmation] button:last-child').click();
+  assert.equal(x.modal.open, false);
+  assert.equal(opened, 1, 'the routines route runs only after explicit discard');
 });
 
 test('a preference write failure stays in its edited tab and retains the draft', async () => {
