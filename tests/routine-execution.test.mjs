@@ -108,6 +108,8 @@ test('graph branch choices unlock a join after parents are done or skipped',asyn
   assert.equal(other.is_active,true);
   assert.equal(x.document.querySelector('[data-routine-step="1"]').disabled,false);
   assert.equal(x.document.querySelector('[data-routine-step="2"]').disabled,false);
+  assert.match(x.document.querySelector('[data-routine-step="2"] small').textContent,/Можно отметить/);
+  assert.doesNotMatch(x.document.querySelector('[data-routine-step="2"] small').textContent,/Выполнено/);
   x.document.querySelector('[data-routine-step="1"]').click();await click('skip');
   assert.equal(x.record.run.steps[1].status,'skipped');
   x.document.querySelector('[data-routine-step="2"]').click();
@@ -126,6 +128,20 @@ test('a sole check step opens as an explicit check action and never autostarts a
   x.open(true);await settle();
   assert.equal(x.calls.filter(call=>call.name==='start_task_block').length,0);
   assert.equal(x.document.querySelector('[data-run-action="complete"]').textContent,'Готово');
+});
+
+test('completing a check step with multiple unlocked successors focuses the first step choice',async t=>{
+  const x=setup(t,{mode:'graph',graphSteps:[
+    {title:'Check',dependsOn:[],trackingMode:'check'},
+    {title:'Branch A',dependsOn:[0],trackingMode:'track'},
+    {title:'Branch B',dependsOn:[0],trackingMode:'track'},
+  ]});
+  x.open();await settle();
+  x.document.querySelector('[data-run-action="complete"]').click();await settle();
+  const available=x.document.querySelectorAll('[data-routine-step]:not(:disabled)');
+  assert.equal(available.length,2);
+  assert.equal(x.document.activeElement,available[0]);
+  assert.equal(available[0].dataset.routineStep,'1');
 });
 
 test('graph start revalidates unlocked dependencies before writing',async t=>{

@@ -37,7 +37,7 @@ export function openRecurringRun({document,invoke,id,date,start=false,returnFocu
       title.textContent=step.title;
       const waitingFor=dependencies.filter(dependency=>!['done','skipped'].includes(record.run.steps[dependency]?.status));
       const graphStep=graph()?record.snapshot.steps[index]:null;
-      const stepStatus=step.status==='done'?'Выполнено':step.status==='skipped'?'Пропущено':row?.is_active?'В работе':row?.has_work?'На паузе':graph()?(isAvailable?`${graphStep?.optional?'По желанию · ':''}${graphStep?.trackingMode==='check'?'Готово':'Доступен'}`:`После: ${waitingFor.map(dependency=>record.snapshot.steps[dependency]?.title||'шага').join(', ')}`):index===current?'Следующий шаг':'Ожидает';
+      const stepStatus=step.status==='done'?'Выполнено':step.status==='skipped'?'Пропущено':row?.is_active?'В работе':row?.has_work?'На паузе':graph()?(isAvailable?`${graphStep?.optional?'По желанию · ':''}${graphStep?.trackingMode==='check'?'Можно отметить':'Доступен'}`:`После: ${waitingFor.map(dependency=>record.snapshot.steps[dependency]?.title||'шага').join(', ')}`):index===current?'Следующий шаг':'Ожидает';
       status.textContent=stepStatus;
       if(graph()){
         const choice=document.createElement('button');choice.type='button';choice.className='calendar-routine-step-choice';choice.dataset.routineStep=String(index);choice.disabled=!isAvailable;choice.setAttribute('aria-pressed',String(index===current));
@@ -109,7 +109,7 @@ export function openRecurringRun({document,invoke,id,date,start=false,returnFocu
     }catch(error){dialog.showError(error?.message||String(error));}
     finally{busy=false;if(!disposed){
       dialog.setPending(false);
-      if(dialog.error.hidden)(dialog.body.querySelector('[data-run-action]')||dialog.modal.querySelector('footer [data-dialog-close]'))?.focus();
+      if(dialog.error.hidden)(dialog.body.querySelector('[data-run-action]')||dialog.body.querySelector('[data-routine-step]:not(:disabled)')||dialog.modal.querySelector('footer [data-dialog-close]'))?.focus();
     }}
   }
   const onExternal=()=>{if(!busy&&!disposed)void refresh().catch(error=>dialog.showError(error?.message||String(error)));};
