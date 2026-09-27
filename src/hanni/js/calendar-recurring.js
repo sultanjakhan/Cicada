@@ -80,7 +80,7 @@ export function mountCalendarRecurring(element,{invoke=defaultInvoke,showComplet
     dialog.body.addEventListener('change',event=>{
       const input=event.target;
       if(input.matches('[data-reflection-date]')){
-        if(!validDate(input.value)||input.value>store.today()){dialog.showError('Выбери сегодня или прошедший день.',input);return;}
+        if(!validDate(input.value)||input.value>store.today()){input.value=reflectionDate;dialog.showError('Выбери сегодня или прошедший день.',input);return;}
         captureDraft();reflectionDate=input.value;item=forDate(reflectionDate);pending=item.status==='pending';saveNotice='';dialog.showError('');renderDetails();
       }else if(input.matches('[data-reflection-rule],[data-reflection-restoration]'))dialog.showError('');
     });
@@ -91,9 +91,10 @@ export function mountCalendarRecurring(element,{invoke=defaultInvoke,showComplet
       else if(button?.hasAttribute('data-save-reflection')){
         const ruleOutcome=dialog.body.querySelector('[data-reflection-rule]')?.value,restoration=dialog.body.querySelector('[data-reflection-restoration]')?.value;
         if(!ruleOutcome||!restoration){dialog.showError('Выбери ответ на оба вопроса. Если не хочешь отвечать, выбери «Нет ответа».',!ruleOutcome?dialog.body.querySelector('[data-reflection-rule]'):dialog.body.querySelector('[data-reflection-restoration]'));return;}
-        captureDraft();button.disabled=true;dialog.showError('');
+        captureDraft();dialog.setPending(true);dialog.showError('');
         try{const result=await store.setReflection(item.id,{ruleOutcome,restoration,trigger:dialog.body.querySelector('[data-reflection-trigger]').value},reflectionDate);state=result.state;item=forDate(reflectionDate);pending=item.status==='pending';drafts.delete(reflectionDate);saveNotice='Ответы сохранены за '+reflectionDate+'.';renderDetails();window.dispatchEvent(new window.CustomEvent('hanni:recurring-changed'));render();}
-        catch(error){dialog.showError(error?.message||String(error));const retry=dialog.body.querySelector('[data-save-reflection]');if(retry)retry.disabled=false;}
+        catch(error){dialog.showError(error?.message||String(error));}
+        finally{dialog.setPending(false);dialog.body.querySelector('[data-save-reflection]')?.focus();}
       }
     });
     dialog.open();
@@ -104,7 +105,7 @@ export function mountCalendarRecurring(element,{invoke=defaultInvoke,showComplet
     const dialog=openCalendarRoutineEditor({document,store,plan,kind,returnFocus:options.returnFocus,isCurrent:()=>!disposed,onClose:()=>{editor=null;},onSaved:next=>{state=next;render();renderManager();}});
     editor=dialog;
   }
-  function openHistory(){if(history||disposed)return;const dialog=createCalendarDialog({document,title:'История',hint:'Выбери сегодня или прошедший день.',submitLabel:'Показать',onClose:()=>{history=null;},isCurrent:()=>!disposed});history=dialog;dialog.body.innerHTML=`<label>День учёта<input type="date" data-history-date max="${store.today()}" value="${escaped(date)}"></label><button type="button" class="calendar-recurring__text" data-history-today hidden>Вернуться к сегодня</button>`;const input=dialog.body.querySelector('[data-history-date]'),todayButton=dialog.body.querySelector('[data-history-today]');const sync=()=>{todayButton.hidden=input.value===store.today();};input.addEventListener('input',sync);dialog.form.addEventListener('submit',event=>{event.preventDefault();if(!validDate(input.value)||input.value>store.today()){dialog.showError('Выбери сегодня или прошедший день.',input);return;}date=input.value;followToday=date===store.today();tasks?.setDate?.(date);dialog.close();render();});todayButton.addEventListener('click',()=>{input.value=store.today();sync();input.focus();});sync();dialog.open(input);}
+  function openHistory(){if(history||disposed)return;const dialog=createCalendarDialog({document,title:'История',hint:'Выбери сегодня или прошедший день.',submitLabel:'Показать',onClose:()=>{history=null;},isCurrent:()=>!disposed});history=dialog;dialog.body.innerHTML=`<label>День учёта<input type="date" data-history-date max="${store.today()}" value="${escaped(date)}"></label><button type="button" class="calendar-recurring__text" data-history-today hidden>Вернуться к сегодня</button>`;const input=dialog.body.querySelector('[data-history-date]'),todayButton=dialog.body.querySelector('[data-history-today]');const sync=()=>{todayButton.hidden=input.value===store.today();};input.addEventListener('input',sync);dialog.form.addEventListener('submit',event=>{event.preventDefault();if(!validDate(input.value)||input.value>store.today()){input.value=reflectionDate;dialog.showError('Выбери сегодня или прошедший день.',input);return;}date=input.value;followToday=date===store.today();tasks?.setDate?.(date);dialog.close();render();});todayButton.addEventListener('click',()=>{input.value=store.today();sync();input.focus();});sync();dialog.open(input);}
   function renderManager(){
     if(library){
       if(!state)return;

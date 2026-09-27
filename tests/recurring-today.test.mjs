@@ -102,13 +102,17 @@ test('library opens dated reflection, keeps drafts across dates and does not tre
   const dispose=mountCalendarRecurring(host,{invoke,now:()=>new Date(`${today}T12:00:00`),library:true});t.after(()=>{dispose();dom.window.close();});
   await new Promise(resolve=>setImmediate(resolve));const opener=host.querySelector('[data-library-reflection="reflection"]');assert.ok(opener);opener.click();
   const detail=dom.window.document.querySelector('dialog[open]');assert.match(detail.textContent,/Мой вопрос/);assert.equal(detail.querySelector('[data-reflection-date]').value,today);
+  const invalidDate=detail.querySelector('[data-reflection-date]');invalidDate.value='2026-09-14';invalidDate.dispatchEvent(new dom.window.Event('change',{bubbles:true}));
+  assert.equal(invalidDate.value,today);assert.match(detail.querySelector('[data-dialog-error]').textContent,/прошедший день/);
   detail.querySelector('[data-reflection-rule]').value='kept';detail.querySelector('[data-reflection-restoration]').value='better';detail.querySelector('[data-reflection-trigger]').value='Черновик сегодня';
   let dateInput=detail.querySelector('[data-reflection-date]');dateInput.value=yesterday;dateInput.dispatchEvent(new dom.window.Event('change',{bubbles:true}));
   assert.equal(detail.querySelector('[data-reflection-rule]').value,'');assert.equal(detail.querySelector('[data-reflection-date]').value,yesterday);
   detail.querySelector('[data-save-reflection]').click();await new Promise(resolve=>setImmediate(resolve));
   assert.equal(writes,0);assert.match(detail.querySelector('[data-dialog-error]').textContent,/Выбери ответ/);
   detail.querySelector('[data-reflection-rule]').value='no_answer';detail.querySelector('[data-reflection-restoration]').value='no_answer';detail.querySelector('[data-save-reflection]').click();
+  assert.equal(detail.querySelector('fieldset').disabled,true);
   await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(detail.querySelector('fieldset').disabled,false);
   let saved=JSON.parse(raw).days[yesterday].reflection;assert.equal(saved.status,'pending');assert.equal(saved.reflection.ruleOutcome,'no_answer');assert.equal(saved.reflection.restoration,'no_answer');assert.equal(saved.reflection.trigger,'');assert.equal(writes,1);
   dateInput=detail.querySelector('[data-reflection-date]');dateInput.value=today;dateInput.dispatchEvent(new dom.window.Event('change',{bubbles:true}));
   assert.equal(detail.querySelector('[data-reflection-rule]').value,'kept');assert.equal(detail.querySelector('[data-reflection-restoration]').value,'better');assert.equal(detail.querySelector('[data-reflection-trigger]').value,'Черновик сегодня');
