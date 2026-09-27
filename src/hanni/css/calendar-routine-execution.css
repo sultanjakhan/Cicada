@@ -1,4 +1,12 @@
 .calendar-routine-dialog .calendar-run-progress{margin:0 0 20px;font-size:13px;color:var(--text-secondary,#666)}
+.calendar-routine-inline{min-width:0;color:var(--text-primary,#242424)}
+.calendar-run-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}
+.calendar-run-heading h3{margin:0;font-size:17px;line-height:1.4;overflow-wrap:anywhere}
+.calendar-run-heading button{flex:none;min-height:44px;border:1px solid var(--border-default,#ddd);border-radius:8px;background:var(--bg-card,#fff);color:inherit;font:inherit;padding:8px 12px;cursor:pointer}
+.calendar-run-heading button:focus-visible,.calendar-run-heading h3:focus-visible,.calendar-routine-inline button:focus-visible{outline:2px solid var(--accent,#4c8);outline-offset:2px}
+.calendar-routine-inline .calendar-run-progress{margin:0 0 14px;font-size:13px;color:var(--text-secondary,#666)}
+.calendar-routine-inline .calendar-run-error{color:var(--text-danger,#a22);font-size:13px;margin:10px 0}
+.calendar-routine-inline>[data-run-retry]{min-height:44px;border:1px solid var(--border-default,#ddd);border-radius:8px;background:var(--bg-card,#fff);color:inherit;font:inherit;padding:8px 12px;cursor:pointer}
 .calendar-run-ready h3{font-size:15px;margin:0 0 8px}
 .calendar-run-ready>p{font-size:13px;color:var(--text-secondary,#666);margin:0 0 14px}
 .calendar-run-step{padding:16px 0;border-top:1px solid var(--border-subtle,#e9e9e9);min-width:0}
@@ -12,6 +20,7 @@
 .calendar-routine-dialog .calendar-editor-header p:empty{display:none}
 .calendar-run-actions .calendar-run-skip{border-color:transparent;background:transparent;color:var(--text-secondary,#666)}
 .calendar-run-actions button:focus-visible,.calendar-run-plan>summary:focus-visible{outline:2px solid var(--text-primary,#242424);outline-offset:2px}
+.calendar-routine-inline .calendar-run-actions button{min-height:44px}
 .calendar-run-plan{margin-top:16px;border-top:1px solid var(--border-default,#ddd);padding-top:8px}
 .calendar-run-plan>summary{padding:12px 0;font-size:13px;cursor:pointer;min-height:44px;box-sizing:border-box}
 .calendar-run-plan li{font-size:14px;line-height:1.4}
