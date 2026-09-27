@@ -12,7 +12,7 @@ afterEach(() => {
   windows.clear();
 });
 
-async function boot({ failPreferenceSave = false, failPreferenceLoad = false, delayPreferenceLoad = false, deferProcessSave = false, initialPreferences = null, section = 'next-action', recommendationsOnly = false } = {}) {
+async function boot({ failPreferenceSave = false, failPreferenceLoad = false, delayPreferenceLoad = false, deferProcessSave = false, initialPreferences = null, section = 'next-action', recommendationsOnly = false, activityHistory } = {}) {
   const dom = new JSDOM('<button id="settings">Настройки</button>', { url: 'http://cicada.local', pretendToBeVisual: true });
   windows.add(dom.window);
   Object.assign(globalThis, {
@@ -26,7 +26,7 @@ async function boot({ failPreferenceSave = false, failPreferenceLoad = false, de
   const ui = new Map(), writes = [], calls = [];
   if (initialPreferences) ui.set('calendar_preferences_v1', JSON.stringify(initialPreferences));
   let preferenceFailures = failPreferenceLoad ? 1 : 0;
-  let resolvePreferenceLoad = null, deferredPreferenceUsed = false, resolveProcessSave = null;
+  let resolvePreferenceLoad = null, rejectPreferenceLoad = null, deferredPreferenceUsed = false, resolveProcessSave = null;
   dom.window.__TAURI__ = { core: { invoke: async (command, args = {}) => {
     calls.push(command);
     if (command === 'get_ui_state') {
@@ -34,7 +34,7 @@ async function boot({ failPreferenceSave = false, failPreferenceLoad = false, de
         if (preferenceFailures > 0) { preferenceFailures--; throw Error('preferences offline'); }
         if (delayPreferenceLoad && !deferredPreferenceUsed) {
           deferredPreferenceUsed = true;
-          return new Promise(resolve => { resolvePreferenceLoad = () => resolve(ui.get(args.key) ?? null); });
+          return new Promise((resolve,reject) => { resolvePreferenceLoad = () => resolve(ui.get(args.key) ?? null); rejectPreferenceLoad=()=>reject(Error('preferences offline')); });
         }
       }
       return ui.get(args.key) ?? null;
@@ -58,10 +58,10 @@ async function boot({ failPreferenceSave = false, failPreferenceLoad = false, de
   } } };
 
   const module = await import(`../src/hanni/js/calendar-settings.js?${Math.random()}`);
-  module.showCalendarSettings(document.querySelector('#settings'), { section, recommendationsOnly });
+  module.showCalendarSettings(document.querySelector('#settings'), { section, recommendationsOnly, activityHistory });
   await tick();
   return { dom, ui, writes, calls, modal: document.querySelector('dialog'),
-    resolvePreferenceLoad: () => resolvePreferenceLoad?.(), resolveProcessSave: () => resolveProcessSave?.() };
+    resolvePreferenceLoad: () => resolvePreferenceLoad?.(), rejectPreferenceLoad: () => rejectPreferenceLoad?.(), resolveProcessSave: () => resolveProcessSave?.() };
 }
 
 test('tab semantics, deep link and keyboard navigation preserve a preference draft', async () => {
@@ -311,4 +311,20 @@ test('saving calendar preferences preserves a pending activity connection draft'
   assert.equal(modal.querySelector('[data-close-confirmation]').hidden,false);
   modal.querySelector('[data-close-confirmation]').querySelectorAll('button')[1].click();
   assert.equal(modal.open,false);
+});
+
+
+test('late preference read failure keeps disconnected-device history open and focused', async () => {
+  const x=await boot({section:'restrictions',delayPreferenceLoad:true,activityHistory:{id:'12345678-1234-4234-9234-123456789abc',label:'Disconnected fixture'}});
+  const {modal}=x,form=modal.querySelector('[data-da-erasure]'),date=form.querySelector('[data-erasure-date]');
+  assert.equal(form.hidden,false);date.value='2026-01-15';date.focus();
+  x.rejectPreferenceLoad();await tick();
+  assert.equal(modal.querySelector('#calendar-settings-tab-restrictions').getAttribute('aria-selected'),'true');
+  assert.equal(form.hidden,false);assert.equal(date.value,'2026-01-15');
+  assert.equal(form.querySelector('[data-erasure-device]').textContent,'Disconnected fixture');
+  assert.equal(document.activeElement,date);
+  assert.equal(form.querySelector('[data-erasure-preview]').disabled,false);
+  modal.querySelector('#calendar-settings-tab-calendar').click();
+  assert.equal(modal.querySelector('[data-prefs-error]').hidden,false);
+  assert.equal(modal.querySelector('[data-prefs-retry]').hidden,false);
 });

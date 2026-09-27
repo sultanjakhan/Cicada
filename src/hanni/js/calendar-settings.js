@@ -435,8 +435,11 @@ export function showCalendarSettings(trigger, { section, returnFocus, activityHi
       prefsError.textContent = error?.message || 'Не удалось загрузить настройки календаря.';
       prefsError.hidden = false; prefsRetry.hidden = false;
       saveButton.hidden = true; saveButton.disabled = true;
-      setActive(['today', 'calendar'].includes(requestedSection) ? requestedSection : 'calendar');
-      prefsError.tabIndex = -1; prefsError.focus();
+      // Preference loading is independent of connector/history actions.
+      // Keep the user's current section and focus when an unrelated read fails.
+      if (['today', 'calendar'].some(id => !hosts[id].hidden)) {
+        prefsError.tabIndex = -1; prefsError.focus();
+      }
     }
   }
   void loadPreferences();
