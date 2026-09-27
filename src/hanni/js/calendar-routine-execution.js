@@ -12,7 +12,7 @@ export function openRecurringRun({document,invoke,id,date,start=false,returnFocu
   dialog.modal.querySelector('footer [data-dialog-close]').textContent='Закрыть';
   openDialogs.set(document,dialog);
   const notify=()=>{win.dispatchEvent(new win.Event('task-state-changed'));win.dispatchEvent(new win.Event('hanni:recurring-changed'));win.dispatchEvent(new win.Event('hanni:calendar-refresh'));};
-  const button=(label,action,index=current)=>{const node=document.createElement('button');node.type='button';node.textContent=label;node.dataset.runAction=action;node.dataset.runStep=String(index);node.addEventListener('click',()=>{if(busy)return;current=index;void perform(action,index);});return node;};
+  const button=(label,action,index=current)=>{const node=document.createElement('button');node.type='button';node.textContent=label;node.setAttribute('aria-label',`${label}: ${record.run.steps[index].title}`);node.dataset.runAction=action;node.dataset.runStep=String(index);node.addEventListener('click',()=>{if(busy)return;current=index;void perform(action,index);});return node;};
   const graph=()=>record?.snapshot?.mode==='graph';
   const available=()=>graph()?availableGraphSteps(record.snapshot,record.run):[];
   const scheduleRow=index=>rows.find(row=>String(row.id)===recurringSourceId(id,origin,index));
@@ -34,7 +34,7 @@ export function openRecurringRun({document,invoke,id,date,start=false,returnFocu
     dialog.body.replaceChildren();rendered=signature;
     dialog.modal.querySelector('h2').textContent=record.snapshot.title;
     const done=record.run.steps.filter(step=>step.status==='done').length,skipped=record.run.steps.filter(step=>step.status==='skipped').length;
-    const progress=document.createElement('p');progress.className='calendar-run-progress';progress.textContent=`Выполнено ${done} из ${record.run.steps.length}${skipped?` · пропущено ${skipped}`:''}`;dialog.body.append(progress);
+    const progress=document.createElement('p');progress.className='calendar-run-progress';progress.textContent=`Выполнено ${done} из ${record.run.steps.length}${skipped?` · пропущено ${skipped}`:''}${origin!==store.today()?` · Начато ${new Intl.DateTimeFormat('ru-RU',{day:'numeric',month:'long'}).format(new Date(origin+'T12:00:00'))}`:''}`;dialog.body.append(progress);
     const ready=graph()?available():current>=0?[current]:[];
     const next=document.createElement('section');next.className='calendar-run-ready';next.dataset.runReady='';
     const heading=document.createElement('h3');heading.textContent=ready.length>1?'Выбери следующий шаг':ready.length?'Текущий шаг':'Рутина завершена';next.append(heading);
