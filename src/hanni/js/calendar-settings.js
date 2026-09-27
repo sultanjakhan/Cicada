@@ -39,14 +39,14 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
 
   let original = null, draft = null, closed = false, disposeSync = null;
   let disposeUpdates = null, disposeSleep = null, disposeActivity = null;
-  let processSettings = null, processObserver = null;
+  let processSettings = null, processObserver = null, preferencesLoading = true, preferencesLoadBusy = false;
   const requestedSection = sectionFor(section);
   const window = document.defaultView;
 
   const api = createCalendarDialog({
     document,
     title: 'Настройки Cicada',
-    hint: 'Разделы настроек. Сохраняй каждый раздел его собственной кнопкой.',
+    hint: 'Рекомендации и вид календаря сохраняются вместе. Этапы и подключения настраиваются отдельно.',
     submitLabel: 'Сохранить календарь',
     returnFocus: () => {
       if (returnFocus) { returnFocus(); return; }
@@ -65,7 +65,7 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
   settingsDialog = api;
   api.modal.classList.add('calendar-settings-dialog');
   api.modal.querySelector('#' + api.modal.getAttribute('aria-labelledby')).textContent = 'Настройки Cicada';
-  api.modal.querySelector('#' + api.modal.getAttribute('aria-describedby')).textContent = 'Разделы настроек. Сохраняй каждый раздел его собственной кнопкой.';
+  api.modal.querySelector('#' + api.modal.getAttribute('aria-describedby')).textContent = 'Рекомендации и вид календаря сохраняются вместе. Этапы и подключения настраиваются отдельно.';
 
   const nav = document.createElement('div');
   nav.className = 'calendar-settings-tabs';
@@ -112,6 +112,17 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
   prefsError.dataset.prefsError = '';
   prefsError.setAttribute('role', 'alert');
   prefsError.hidden = true;
+  const prefsRetry = document.createElement('button');
+  prefsRetry.type = 'button'; prefsRetry.textContent = 'Повторить загрузку';
+  prefsRetry.className = 'calendar-settings-retry'; prefsRetry.hidden = true;
+  prefsRetry.dataset.prefsRetry = '';
+  const prefsLoading = document.createElement('p');
+  prefsLoading.className = 'calendar-settings-loading';
+  prefsLoading.textContent = 'Загружаем настройки календаря…';
+  prefsLoading.setAttribute('role', 'status'); prefsLoading.setAttribute('aria-live', 'polite');
+  const prefsLoadState = document.createElement('div');
+  prefsLoadState.className = 'calendar-settings-load-state';
+  prefsLoadState.append(prefsLoading, prefsError, prefsRetry);
 
   function setActive(id, focus = false) {
     if (!tabs[id]) return;
@@ -121,10 +132,23 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
       tabs[item.id].tabIndex = selected ? 0 : -1;
       hosts[item.id].hidden = !selected;
     }
+    if (id === 'today' || id === 'calendar') hosts[id].append(prefsLoadState);
     if (focus) tabs[id].focus();
   }
 
   function preferenceDirty() { return !!draft && !samePreferences(draft, original); }
+  function setPreferenceControlsEnabled(enabled) {
+    preferencesLoading = !enabled;
+    for (const root of [hosts.today, hosts.calendar]) {
+      root.setAttribute('aria-busy', String(!enabled));
+      root.querySelectorAll('input[data-key], .setting-pills [data-value]').forEach(control => { control.disabled = !enabled; });
+    }
+  }
+  function updateRecommendationSources() {
+    today.querySelector('[data-recommendation-sources]').querySelectorAll('input').forEach(source => {
+      source.disabled = preferencesLoading || !draft?.recommendationsEnabled;
+    });
+  }
   function refreshFooter() {
     const dirty = preferenceDirty();
     saveButton.hidden = !dirty;
@@ -190,13 +214,12 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
   settingsStatus.setAttribute('role', 'status');
   settingsStatus.setAttribute('aria-live', 'polite');
   settingsStatus.hidden = true;
-  today.append(settingsStatus);
+  today.querySelector('[data-next-action-settings]').append(prefsLoadState);
 
   const calendar = hosts.calendar;
   calendar.innerHTML = `<h3>Вид календаря</h3>
     <p class="calendar-setting-hint">Эти изменения сохраняются кнопкой «Сохранить календарь».</p>
     ${[['first_day','Первый день недели'],['default_view','Вид при запуске'],['density','Плотность интерфейса']].map(([key,label]) => `<fieldset class="calendar-setting"><legend>${label}</legend><div class="setting-pills" data-key="${key}">${OPTIONS[key].map(([value,text]) => `<button type="button" class="setting-pill" data-value="${value}" aria-pressed="false">${escapeHtml(text)}</button>`).join('')}</div></fieldset>`).join('')}`;
-  calendar.append(prefsError);
 
   hosts.processes.classList.add('calendar-settings-processes-host');
   hosts.connections.classList.add('calendar-settings-connections');
@@ -219,21 +242,23 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
         button.classList.toggle('active', selected); button.setAttribute('aria-pressed', String(selected));
       });
     }
+    setPreferenceControlsEnabled(true);
+    updateRecommendationSources();
     refreshFooter();
   }
 
   today.querySelectorAll('input[data-key]').forEach(input => input.addEventListener('change', () => {
+    if (!draft || preferencesLoading) return;
     lastEditedSection = 'today';
     draft[input.dataset.key] = input.checked;
-    today.querySelector('[data-recommendation-sources]').querySelectorAll('input').forEach(source => {
-      source.disabled = !draft.recommendationsEnabled;
-    });
+    updateRecommendationSources();
     prefsError.hidden = true; refreshFooter();
   }));
   for (const group of [today, calendar].flatMap(root => [...root.querySelectorAll('.setting-pills')])) {
     group.addEventListener('click', event => {
       const button = event.target.closest('[data-value]');
       if (!button) return;
+      if (!draft || preferencesLoading || button.disabled) return;
       lastEditedSection = group.closest('#calendar-settings-panel-today') ? 'today' : 'calendar';
       draft[group.dataset.key] = button.dataset.value;
       group.querySelectorAll('[data-value]').forEach(item => {
@@ -248,6 +273,7 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
     api.close({ skipBeforeClose: true });
     window.dispatchEvent(new window.CustomEvent('hanni:open-recurring-settings'));
   });
+  prefsRetry.addEventListener('click', () => { void loadPreferences(); });
 
   api.form.addEventListener('submit', async event => {
     event.preventDefault();
@@ -269,7 +295,6 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
     } catch (error) {
       if (closed) return;
       prefsError.textContent = `${error?.message || 'Ошибка сохранения.'} Сохранение календаря не подтверждено; черновик остался в форме.`;
-      hosts[lastEditedSection].append(prefsError);
       prefsError.hidden = false; setActive(lastEditedSection, true); prefsError.tabIndex = -1; prefsError.focus();
     } finally {
       if (!closed) { api.setPending(false); refreshFooter(); }
@@ -279,7 +304,11 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
   setActive(requestedSection);
   saveButton.hidden = true;
   api.open(tabs[requestedSection]);
-  processSettings = mountProcessSettings(hosts.processes, { invoke });
+  processSettings = mountProcessSettings(hosts.processes, {
+    invoke,
+    setPending: value => { api.setPending(value); refreshFooter(); },
+  });
+  hosts.processes.append(settingsStatus);
   hosts.processes.addEventListener('input', scheduleFooterRefresh);
   hosts.processes.addEventListener('click', scheduleFooterRefresh);
   processObserver = new window.MutationObserver(scheduleFooterRefresh);
@@ -288,18 +317,33 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
   disposeSleep = mountSleepSettings(sleep, { invoke, setPending: value => api.setPending(value) });
   disposeActivity = mountHealthActivitySettings(activity, { invoke, setPending: value => api.setPending(value) });
   disposeUpdates = mountAppUpdates(updates, { invoke });
-  void loadCalendarPreferences().then(value => {
-    if (closed) return;
-    original = { ...value }; draft = { ...value }; drawPreferences();
-    api.setPending(false); refreshFooter();
-  }).catch(error => {
-    if (closed) return;
-    api.setPending(false);
-    prefsError.textContent = error?.message || 'Не удалось загрузить настройки календаря.';
-    hosts[requestedSection].append(prefsError);
-    prefsError.hidden = false; prefsError.tabIndex = -1; prefsError.focus();
+  setPreferenceControlsEnabled(false);
+  async function loadPreferences() {
+    if (closed || preferencesLoadBusy) return;
+    preferencesLoadBusy = true;
+    prefsError.hidden = true; prefsRetry.hidden = true; prefsLoading.hidden = false;
     saveButton.hidden = true; saveButton.disabled = true;
-    setActive(requestedSection);
-    prefsError.focus();
-  });
+    setPreferenceControlsEnabled(false);
+    try {
+      const value = await loadCalendarPreferences();
+      if (closed) return;
+      original = { ...value }; draft = { ...value };
+      preferencesLoadBusy = false;
+      prefsLoading.hidden = true;
+      prefsError.hidden = true; prefsRetry.hidden = true;
+      preferencesLoading = false;
+      drawPreferences();
+    } catch (error) {
+      if (closed) return;
+      preferencesLoadBusy = false;
+      preferencesLoading = true;
+      prefsLoading.hidden = true;
+      prefsError.textContent = error?.message || 'Не удалось загрузить настройки календаря.';
+      prefsError.hidden = false; prefsRetry.hidden = false;
+      saveButton.hidden = true; saveButton.disabled = true;
+      setActive(['today', 'calendar'].includes(requestedSection) ? requestedSection : 'calendar');
+      prefsError.tabIndex = -1; prefsError.focus();
+    }
+  }
+  void loadPreferences();
 }

@@ -4,7 +4,7 @@ import { JSDOM } from 'jsdom';
 
 const tick = async () => { for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve)); };
 
-async function boot({ failPreferenceSave = false, failPreferenceLoad = false, section = 'next-action' } = {}) {
+async function boot({ failPreferenceSave = false, failPreferenceLoad = false, delayPreferenceLoad = false, deferProcessSave = false, initialPreferences = null, section = 'next-action' } = {}) {
   const dom = new JSDOM('<button id="settings">Настройки</button>', { url: 'http://cicada.local', pretendToBeVisual: true });
   Object.assign(globalThis, {
     window: dom.window, document: dom.window.document, localStorage: dom.window.localStorage,
@@ -16,16 +16,28 @@ async function boot({ failPreferenceSave = false, failPreferenceLoad = false, se
   globalThis.marked = { Marked: class { use() {} parse(value) { return value; } } };
 
   const ui = new Map(), writes = [], calls = [];
+  if (initialPreferences) ui.set('calendar_preferences_v1', JSON.stringify(initialPreferences));
+  let preferenceFailures = failPreferenceLoad ? 1 : 0;
+  let resolvePreferenceLoad = null, deferredPreferenceUsed = false, resolveProcessSave = null;
   dom.window.__TAURI__ = { core: { invoke: async (command, args = {}) => {
     calls.push(command);
     if (command === 'get_ui_state') {
-      if (failPreferenceLoad && args.key === 'calendar_preferences_v1') throw Error('preferences offline');
+      if (args.key === 'calendar_preferences_v1') {
+        if (preferenceFailures > 0) { preferenceFailures--; throw Error('preferences offline'); }
+        if (delayPreferenceLoad && !deferredPreferenceUsed) {
+          deferredPreferenceUsed = true;
+          return new Promise(resolve => { resolvePreferenceLoad = () => resolve(ui.get(args.key) ?? null); });
+        }
+      }
       return ui.get(args.key) ?? null;
     }
     if (command === 'get_app_setting') return null;
     if (command === 'set_ui_state') {
       writes.push(args.key);
       if (failPreferenceSave && args.key === 'calendar_preferences_v1') throw Error('preferences offline');
+      if (deferProcessSave && args.key === 'calendar_processes_v1') {
+        return new Promise(resolve => { resolveProcessSave = () => { ui.set(args.key, args.value); resolve(null); }; });
+      }
       ui.set(args.key, args.value); return null;
     }
     if (command === 'mvp_sync_status') return { configured: true, enabled: true, pending: 0, conflicts: 0, running: false };
@@ -39,7 +51,8 @@ async function boot({ failPreferenceSave = false, failPreferenceLoad = false, se
   const module = await import(`../src/hanni/js/calendar-settings.js?${Math.random()}`);
   module.showCalendarSettings(document.querySelector('#settings'), { section });
   await tick();
-  return { dom, ui, writes, calls, modal: document.querySelector('dialog') };
+  return { dom, ui, writes, calls, modal: document.querySelector('dialog'),
+    resolvePreferenceLoad: () => resolvePreferenceLoad?.(), resolveProcessSave: () => resolveProcessSave?.() };
 }
 
 test('tab semantics, deep link and keyboard navigation preserve a preference draft', async () => {
@@ -69,6 +82,30 @@ test('the process deep link selects the task-stage tab', async () => {
   const x = await boot({ section: 'processes' });
   assert.equal(x.modal.querySelector('[role="tab"][aria-selected="true"]').textContent, 'Этапы задач');
   assert.equal(x.modal.querySelector('#calendar-settings-panel-processes').hidden, false);
+});
+
+test('preference controls stay disabled during a delayed read while connections remain usable', async () => {
+  const x = await boot({ delayPreferenceLoad: true });
+  const toggle = x.modal.querySelector('[data-key="recommendTasks"]');
+  assert.equal(toggle.disabled, true);
+  assert.match(x.modal.querySelector('.calendar-settings-loading').textContent, /Загружаем/);
+  toggle.checked = false;
+  toggle.dispatchEvent(new x.dom.window.Event('change', { bubbles: true }));
+  assert.equal(x.modal.querySelector('[type="submit"]').hidden, true, 'the guarded handler does not create a draft before read completes');
+  x.modal.querySelector('#calendar-settings-tab-connections').click();
+  assert.equal(x.modal.querySelector('[role="tab"][aria-selected="true"]').textContent, 'Подключения');
+  assert.ok(x.modal.querySelector('[data-sync-now]'));
+  x.resolvePreferenceLoad();
+  await tick();
+  assert.equal(toggle.disabled, false);
+  assert.equal(toggle.checked, true, 'the loaded preference replaces an attempted synthetic edit');
+});
+
+test('recommendation sources honor a saved disabled master toggle after loading', async () => {
+  const x = await boot({ initialPreferences: { version: 1, first_day: 'mon', default_view: 'Месяц', density: 'comfortable', showCompleted: false, recommendationsEnabled: false, recommendTasks: true, recommendRoutines: false } });
+  assert.equal(x.modal.querySelector('[data-key="recommendationsEnabled"]').checked, false);
+  assert.equal(x.modal.querySelector('[data-key="recommendTasks"]').disabled, true);
+  assert.equal(x.modal.querySelector('[data-key="recommendRoutines"]').disabled, true);
 });
 
 test('Cancel guards unsaved preferences and discards only after an explicit choice', async () => {
@@ -106,8 +143,14 @@ test('connection actions remain available after preference load failure and do n
   assert.ok(x.modal.querySelector('[data-activity-walking-status]'));
   assert.ok(x.modal.querySelector('[data-update-check]'));
   assert.match(x.modal.querySelector('[data-prefs-error]').textContent, /preferences offline/);
+  assert.equal(x.modal.querySelector('[data-key="recommendTasks"]').disabled, true);
+  assert.equal(x.modal.querySelector('[data-value="sun"]').disabled, true);
   assert.equal(x.modal.querySelector('[type="submit"]').disabled, true);
   assert.ok(x.calls.includes('mvp_sync_status'));
+  x.modal.querySelector('[data-prefs-retry]').click();
+  await tick();
+  assert.equal(x.modal.querySelector('[data-key="recommendTasks"]').disabled, false);
+  assert.equal(x.modal.querySelector('[data-prefs-error]').hidden, true);
 });
 
 test('saving a connection uses its own action and does not write calendar preferences', async () => {
@@ -121,4 +164,23 @@ test('saving a connection uses its own action and does not write calendar prefer
   assert.ok(x.calls.includes('mvp_sync_set_enabled'));
   assert.equal(x.writes.includes('calendar_preferences_v1'), false);
   assert.equal(x.modal.open, true);
+});
+
+test('an in-flight process save prevents closing the settings shell', async () => {
+  const x = await boot({ deferProcessSave: true, delayPreferenceLoad: true });
+  const process = x.modal.querySelector('.calendar-processes');
+  const stage = process.querySelector('[data-stage-id="analysis"] [data-control="stage-title"]');
+  stage.value = 'Модели'; stage.dispatchEvent(new x.dom.window.Event('input', { bubbles: true }));
+  process.querySelector('[data-processes-save]').click();
+  await tick();
+  assert.equal(x.modal.querySelector('.calendar-editor-actions [data-dialog-close]').disabled, true);
+  x.resolvePreferenceLoad();
+  await tick();
+  assert.equal(x.modal.querySelector('.calendar-editor-actions [data-dialog-close]').disabled, true,
+    'finishing the independent preference load does not clear the process pending lock');
+  x.modal.dispatchEvent(new x.dom.window.Event('cancel', { cancelable: true }));
+  assert.equal(x.modal.open, true);
+  x.resolveProcessSave();
+  await tick();
+  assert.equal(x.modal.querySelector('.calendar-editor-actions [data-dialog-close]').disabled, false);
 });

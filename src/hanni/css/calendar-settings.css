@@ -17,12 +17,16 @@
   padding-bottom: 16px;
 }
 .calendar-settings-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: flex;
   gap: 4px;
   min-width: 0;
   padding: 4px;
   overflow-x: auto;
   border-bottom: 1px solid var(--border-default);
+  background: var(--bg-card);
   scrollbar-width: thin;
 }
 .calendar-settings-dialog .calendar-settings-tab {
@@ -43,6 +47,21 @@
 .calendar-settings-panel {
   min-width: 0;
   padding: 2px 2px 8px;
+}
+.calendar-settings-panel[hidden] {
+  display: none !important;
+}
+.calendar-settings-load-state {
+  margin-top: 10px;
+}
+.calendar-settings-loading {
+  margin: 8px 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.calendar-settings-retry {
+  min-height: 44px;
+  margin-top: 6px;
 }
 .calendar-settings-panel h3 {
   margin: 5px 0 8px;
