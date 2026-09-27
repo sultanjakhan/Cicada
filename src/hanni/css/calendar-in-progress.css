@@ -5,7 +5,7 @@
   --cip-running: color-mix(in srgb, var(--text-primary) 5%, var(--bg-card));
   /* Over the estimate: the amber warning token, darkened (light) or lightened (dark) for text contrast. */
   --cip-warn: color-mix(in srgb, var(--color-yellow, #cb8a05) 72%, var(--text-primary));
-  display: block; width: 100%; max-width: 660px; min-width: 0; margin: 0 0 18px; color: var(--text-primary);
+  display: block; width: 100%; min-width: 0; margin: 0 0 18px; color: var(--text-primary);
 }
 .calendar-in-progress, .calendar-in-progress * { box-sizing: border-box; }
 .calendar-in-progress [hidden] { display: none !important; }
