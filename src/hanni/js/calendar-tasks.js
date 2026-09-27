@@ -4,6 +4,14 @@ import { sphereLabel, isInstantTask, taskTime, compareTaskTime, isWorkTask } fro
 import { loadProcesses, loadStageBlocks, stageSeconds, stageTimeTitle, taskStage } from './task-processes.js';
 
 const taskKey = row => `${row.source_type}:${row.source_id}`;
+const firstIndex = (items, keyOf) => {
+  const index = new Map();
+  for (const item of items) {
+    const key = keyOf(item);
+    if (!index.has(key)) index.set(key, item);
+  }
+  return index;
+};
 const closed = row => row.completed || ['done', 'skipped', 'missed'].includes(row.status_extra);
 const dayOf = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const shiftDay = (day, delta) => { const date = new Date(`${day}T12:00:00`); date.setDate(date.getDate() + delta); return dayOf(date); };
@@ -54,7 +62,7 @@ export function mountCalendarTasks(host, dependencies) {
   if (state.sphere !== 'personal' || !PERSONAL_TABS.some(([id]) => id === state.personal)) state.personal = '';
   if (state.groupBy !== 'goal') state.groupBy = 'date';
   const prefix = `calendar-tasks-${++sequence}`;
-  let rows = [], goals = [], links = [], processes = [], stageBlocks = new Map(), ready = false, disposed = false, revision = 0, busy = false, queued = false, feedback = '';
+  let rows = [], goals = [], goalById = new Map(), linkByTask = new Map(), processes = [], stageBlocks = new Map(), ready = false, disposed = false, revision = 0, busy = false, queued = false, feedback = '';
   let adding = false, bulk = null, confirming = null, overdue = [], shown = new Set(), stageMenu = null;
   let today = dayOf(new Date());
   host.classList.add('calendar-tasks');
@@ -76,14 +84,14 @@ export function mountCalendarTasks(host, dependencies) {
   const findButton = (id, action='open') => [...host.querySelectorAll('[data-task-control]')].find(el => el.dataset.taskId === id && el.dataset.taskControl === action);
   const restore = (id, action='open') => { if(!disposed && host.isConnected)(findButton(id,action)||heading).focus({preventScroll:true}); };
   const say = (text, alert=false) => { feedback=text; message.textContent=text; message.setAttribute('role',alert?'alert':'status'); };
-  const goalFor = row => links.find(link=>taskKey(link)===taskKey(row))?.goal_id;
-  const goalChain = id => { const chain=[], seen=new Set();let goal=goals.find(g=>String(g.id)===String(id));while(goal&&!seen.has(String(goal.id))){seen.add(String(goal.id));chain.unshift(goal);goal=goals.find(g=>String(g.id)===String(goal.parent_goal_id));}return chain; };
+  const goalFor = row => linkByTask.get(taskKey(row))?.goal_id;
+  const goalChain = id => { const chain=[], seen=new Set();let goal=goalById.get(String(id));while(goal&&!seen.has(String(goal.id))){seen.add(String(goal.id));chain.unshift(goal);goal=goalById.get(String(goal.parent_goal_id));}return chain; };
   const goalParts = id => goalChain(id).map(goal=>goal.title);
   const goalPath = id => goalParts(id).join(' / ');
   function matchesGoal(row) {
     const id=goalFor(row); if(!state.goal)return true;if(state.goal==='none')return id==null;
     const seen=new Set();let value=id;
-    while(value!=null&&!seen.has(String(value))){if(String(value)===state.goal)return true;seen.add(String(value));value=goals.find(g=>String(g.id)===String(value))?.parent_goal_id;}
+    while(value!=null&&!seen.has(String(value))){if(String(value)===state.goal)return true;seen.add(String(value));value=goalById.get(String(value))?.parent_goal_id;}
     return false;
   }
   const matchesSphere = row => !state.sphere || bucketOf(row) === state.sphere && (state.sphere !== 'personal' || !state.personal || personalOf(row) === state.personal);
@@ -251,7 +259,7 @@ export function mountCalendarTasks(host, dependencies) {
       // Time per stage is context for the tooltip; a failed read leaves it empty.
       const blocks=await loadStageBlocks(invoke,nextRows.filter(row=>!closed(row)&&!isInstantTask(row)&&taskStage(row,result[3])).map(row=>row.source_id));
       if(disposed||request!==revision||canCommit&&!canCommit())return;
-      rows=nextRows;goals=result[1];links=result[2];processes=result[3];stageBlocks=blocks;ready=true;today=dayOf(new Date());
+      rows=nextRows;goals=result[1];goalById=firstIndex(goals,goal=>String(goal.id));linkByTask=firstIndex(result[2],link=>taskKey(link));processes=result[3];stageBlocks=blocks;ready=true;today=dayOf(new Date());
       goalFilter.replaceChildren(new win.Option('Любая цель',''),new win.Option('Без цели','none'),...goals.map(goal=>new win.Option(goalPath(goal.id),String(goal.id))));
       if(state.goal&&!['none',...goals.map(goal=>String(goal.id))].includes(state.goal))state.goal='';goalFilter.value=state.goal;
       message.textContent=feedback;q('retry').hidden=true;render();

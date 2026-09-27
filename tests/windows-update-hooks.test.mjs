@@ -74,7 +74,7 @@ test('NSIS hook compiles after a stock CheckIfAppIsRunning definition when maken
       '  !insertmacro CheckIfAppIsRunning "hanni-mvp.exe" "Hanni MVP"',
       'SectionEnd',
     ].join('\r\n'), 'utf8');
-    const run = spawnSync(makensis, ['/V2', script], { encoding: 'utf8', cwd:dir });
+    const run = spawnSync(makensis, ['/V2', '/INPUTCHARSET', 'UTF8', script], { encoding: 'utf8', cwd:dir });
     assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
   } finally {
     rmSync(dir, { recursive:true, force:true });

@@ -198,6 +198,7 @@ fn expected_list_record(
         "status_extra":"task","priority":3,"tracking_mode":if source=="note" {"check"}else{"track"},
         "is_active":false,"actual_minutes":0,"has_work":false});
     if source == "note" {
+        value["actual_seconds"] = json!(0);
         value["task_kind"] = json!("normal");
         value["sphere"] = Value::Null;
         value["process"] = json!("");
@@ -250,6 +251,7 @@ fn calendar_lists_preserve_payloads_filters_and_timeline_totals() {
     open["is_active"] = json!(true);
     open["has_work"] = json!(true);
     open["actual_minutes"] = json!(15);
+    open["actual_seconds"] = json!(900); // Closed legacy blocks: (7 + 8) minutes.
     let mut legacy = expected_list_record("t-legacy", "note", Some("2026-09-13"), None, Some(20));
     legacy["completed"] = json!(true);
     legacy["status_extra"] = json!("done");
@@ -382,6 +384,13 @@ fn timer_seconds_preserve_new_precision_and_legacy_minute_totals() {
         .unwrap(),
         json!(1)
     );
+    let listed = call(&view, "get_calendar_tasks", json!({})).unwrap();
+    let exact = listed.as_array().unwrap().iter().find(|row| row["source_id"] == "new-task").unwrap();
+    assert_eq!(exact["actual_seconds"], json!(180), "task seconds include blocks from multiple dates");
+    assert_eq!(exact["actual_minutes"], json!(3));
+    let mixed = listed.as_array().unwrap().iter().find(|row| row["source_id"] == "mixed-task").unwrap();
+    assert_eq!(mixed["actual_seconds"], json!(90), "legacy whole minutes and exact seconds are combined");
+    assert_eq!(mixed["actual_minutes"], json!(1), "the existing whole-minute field keeps its contract");
     let midnight = call(&view, "get_timeline_blocks", json!({"date":"2026-09-14"})).unwrap();
     assert_eq!(midnight[0]["duration_seconds"], json!(90));
     assert_eq!(

@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { build } from 'vite';
 
 const html = await readFile(new URL('../src/index.html', import.meta.url), 'utf8');
 const result = await build({
-  configFile: false, root: new URL('../src', import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'),
+  configFile: false, root: fileURLToPath(new URL('../src', import.meta.url)),
   logLevel: 'silent',
   build: { write: false, lib: { entry: 'app.js', formats: ['iife'], name: 'HanniUnderTest' },
     rolldownOptions: { output: { codeSplitting: false } } }

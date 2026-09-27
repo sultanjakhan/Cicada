@@ -227,7 +227,7 @@ fn schedule_projections(
                             snapshot["title"].as_str().unwrap_or("").to_string()
                         };
                         let status = step["status"].as_str().unwrap_or("pending");
-                        out.push(json!({"id":source_id,"source_type":"schedule","source_id":source_id,"title":title,"date":origin,"completion_date":origin,"block_id":block_id,"block_date":block_date,"completed":status!="pending","status_extra":status,"tracking_mode":"track","is_active":active,"has_work":has_work>0,"actual_minutes":seconds/60}));
+                        out.push(json!({"id":source_id,"source_type":"schedule","source_id":source_id,"title":title,"date":origin,"completion_date":origin,"block_id":block_id,"block_date":block_date,"completed":status!="pending","status_extra":status,"tracking_mode":"track","is_active":active,"has_work":has_work>0,"actual_seconds":seconds,"actual_minutes":seconds/60}));
                     }
                 }
             }
@@ -482,7 +482,7 @@ pub fn get_notes(
     state: State<'_, AppState>,
 ) -> Result<Vec<Value>, String> {
     let conn = lock(&state)?;
-    let mut q = "SELECT id FROM items WHERE kind='task'".to_string();
+    let mut q = "SELECT id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,content_blocks,status FROM items WHERE kind='task'".to_string();
     if filter.as_deref() == Some("tasks") {
         q.push_str(" AND archived=0 AND status IN ('task','done')");
     } else if filter.as_deref() == Some("tab:calendar") {
@@ -495,19 +495,27 @@ pub fn get_notes(
     }
     q.push_str(" ORDER BY completed,date,updated_at DESC");
     let mut s = conn.prepare(&q).map_err(|e| fail(e.to_string()))?;
-    let ids = match search {
-        Some(q) => s
-            .query_map([format!("%{q}%")], |r| r.get::<_, String>(0))
-            .map_err(|e| fail(e.to_string()))?
-            .collect::<Result<Vec<_>, _>>(),
-        None => s
-            .query_map([], |r| r.get::<_, String>(0))
-            .map_err(|e| fail(e.to_string()))?
-            .collect::<Result<Vec<_>, _>>(),
+    let note_from_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<Value> {
+        let item = crate::row_item(row)?;
+        Ok(item_value(
+            &item,
+            row.get(11)?,
+            row.get(12)?,
+            row.get(13)?,
+            row.get::<_, i64>(14)? != 0,
+            row.get(15)?,
+            row.get(16)?,
+            row.get(17)?,
+        ))
+    };
+    let rows = if search.as_deref().is_some_and(|v| !v.trim().is_empty()) {
+        s.query_map([format!("%{}%", search.as_deref().unwrap())], note_from_row)
+    } else {
+        s.query_map([], note_from_row)
     }
     .map_err(|e| fail(e.to_string()))?;
-    drop(s);
-    ids.into_iter().map(|id| load(&conn, &id)).collect()
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| fail(format!("read calendar notes: {e}")))
 }
 #[tauri::command(rename_all = "camelCase")]
 pub fn get_note(id: String, state: State<'_, AppState>) -> Result<Value, String> {
@@ -654,6 +662,7 @@ fn calendar_list(
                 "has_work": row.get::<_, i64>(13)? > 0,
             });
             if is_task {
+                value["actual_seconds"] = json!(row.get::<_, i64>(12)?);
                 decorate_task(&mut value, &tags);
             }
             if !tasks_only {
@@ -1599,6 +1608,198 @@ mod task_model_tests;
 mod tests {
     use super::*;
     #[test]
+    fn get_notes_keeps_archive_and_rich_metadata_beyond_200_rows() {
+        use tauri::Manager;
+        let conn = Connection::open_in_memory().unwrap();
+        crate::init_schema(&conn).unwrap();
+        for i in 0..201 {
+            let id = format!("boundary-{i:03}");
+            let archived = i == 200;
+            let blocks = if i == 3 {
+                Some(r#"{"time":8,"version":"fixture","blocks":[{"type":"paragraph","data":{"text":"rich"}}]}"#)
+            } else {
+                None
+            };
+            conn.execute(
+                "INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,content_blocks,status) VALUES(?1,'task',?2,?3,'2026-01-01',NULL,30,0,2,'created',?4,'fixture','#123456',4,?5,'calendar,fixture',?6,'note')",
+                params![id,format!("Boundary {i}"),if i == 3 { "content-3-needle".to_string() } else { format!("content-{i}") },format!("2026-01-{day:02}",day=(i%28)+1),archived as i64,blocks],
+            ).unwrap();
+        }
+        conn.execute(
+            "INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,status) VALUES('not-a-note','task','Excluded','','2026-01-01',NULL,30,0,1,'a','z','task')",
+            [],
+        ).unwrap();
+        conn.execute_batch("INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,archived,status) VALUES('active-task','task','Active task','',NULL,NULL,30,0,1,'a','a',0,'task'),('done-task','task','Done task','',NULL,NULL,30,1,1,'a','a',0,'done'),('archived-task','task','Archived task','',NULL,NULL,30,0,1,'a','a',1,'task');").unwrap();
+        let app = tauri::test::mock_builder()
+            .manage(AppState(std::sync::Mutex::new(conn)))
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let all = get_notes(None, None, app.state()).unwrap();
+        assert_eq!(all.len(), 201, "notes are not truncated at 200 and archive rows remain included");
+        assert_eq!(all[0]["updated_at"], "2026-01-28");
+        let rich = all.iter().find(|note| note["id"] == "boundary-003").unwrap();
+        assert_eq!(rich["category"], "fixture");
+        assert_eq!(rich["color"], "#123456");
+        assert_eq!(rich["priority"], 4);
+        assert_eq!(rich["tags"], "calendar,fixture");
+        let blocks: Value = serde_json::from_str(rich["content_blocks"].as_str().unwrap()).unwrap();
+        assert_eq!(blocks["version"], "fixture");
+        let archived = all.iter().find(|note| note["id"] == "boundary-200").unwrap();
+        assert_eq!(archived["archived"], true);
+        assert_eq!(get_notes(Some("tab:calendar".into()), None, app.state()).unwrap().len(), 200);
+        assert_eq!(get_notes(None, Some("needle".into()), app.state()).unwrap().len(), 1);
+        assert_eq!(get_notes(None, Some("".into()), app.state()).unwrap().len(), 201);
+        assert_eq!(get_notes(None, Some("   ".into()), app.state()).unwrap().len(), 201);
+        let tasks = get_notes(Some("tasks".into()), None, app.state()).unwrap();
+        assert_eq!(tasks.len(), 3, "task filter includes active/done and excludes archived tasks");
+        assert!(tasks.iter().any(|task| task["id"] == "active-task"));
+        assert!(tasks.iter().any(|task| task["id"] == "done-task" && task["status"] == "done"));
+        assert!(!tasks.iter().any(|task| task["id"] == "archived-task"));
+    }
+    #[test]
+    #[ignore = "diagnostic benchmark for Issues 113/114; run explicitly with --ignored --nocapture"]
+    fn notes_query_benchmark() {
+        use std::collections::HashMap as StdHashMap;
+        use std::ffi::{c_char, c_int, c_uint, c_void, CStr};
+        use std::sync::Mutex as StdMutex;
+
+        fn legacy_get_notes(
+            conn: &Connection,
+            filter: Option<&str>,
+        ) -> Result<Vec<Value>, String> {
+            let mut query = "SELECT id FROM items WHERE kind='task'".to_string();
+            if filter == Some("tasks") {
+                query.push_str(" AND archived=0 AND status IN ('task','done')");
+            } else if filter == Some("tab:calendar") {
+                query.push_str(" AND archived=0 AND status='note'");
+            } else {
+                query.push_str(" AND status='note'");
+            }
+            query.push_str(" ORDER BY completed,date,updated_at DESC");
+            let mut statement = conn.prepare(&query).map_err(|error| error.to_string())?;
+            let ids = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|error| error.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| error.to_string())?;
+            drop(statement);
+            ids.into_iter().map(|id| load(conn, &id)).collect()
+        }
+
+        unsafe extern "C" fn trace_stmt(
+            code: c_uint,
+            context: *mut c_void,
+            statement: *mut c_void,
+            _sql: *mut c_void,
+        ) -> c_int {
+            if code == rusqlite::ffi::SQLITE_TRACE_STMT as u32 {
+                let sql = unsafe {
+                    rusqlite::ffi::sqlite3_sql(statement.cast())
+                };
+                if !sql.is_null() {
+                    let sql = unsafe { CStr::from_ptr(sql as *const c_char) }
+                        .to_string_lossy()
+                        .into_owned();
+                    let statements = unsafe { &*(context as *const StdMutex<Vec<String>>) };
+                    statements.lock().unwrap().push(sql);
+                }
+            }
+            0
+        }
+
+        use tauri::Manager;
+        for count in [100, 1000] {
+            let conn = Connection::open_in_memory().unwrap();
+            crate::init_schema(&conn).unwrap();
+            for i in 0..count {
+                let id = format!("bench-{i:04}");
+                let title = format!("Synthetic note {i:04}");
+                let content = format!("Content for note {i:04}");
+                let archived = i % 7 == 0;
+                let blocks = if i % 11 == 0 {
+                    Some(r#"[{"type":"paragraph","text":"fixture"}]"#)
+                } else {
+                    None
+                };
+                conn.execute(
+                    "INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,content_blocks,status) VALUES(?1,'task',?2,?3,'2026-01-01',NULL,30,?4,1,'2026-01-01','2026-01-01','fixture','#123456',?5,?6,?7,?8,'note')",
+                    params![id,title,content,(i % 2) as i64,(i % 5) as i64,archived as i64,format!("calendar,tag-{i}"),blocks],
+                ).unwrap();
+            }
+            let traced = StdMutex::new(Vec::<String>::new());
+            let trace_context = (&traced as *const StdMutex<Vec<String>>) as *mut c_void;
+            unsafe {
+                assert_eq!(
+                    rusqlite::ffi::sqlite3_trace_v2(
+                        conn.handle(),
+                        rusqlite::ffi::SQLITE_TRACE_STMT as u32,
+                        Some(trace_stmt),
+                        trace_context,
+                    ),
+                    rusqlite::ffi::SQLITE_OK
+                );
+            }
+            let app = tauri::test::mock_builder()
+                .manage(AppState(std::sync::Mutex::new(conn)))
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
+                .unwrap();
+            let started = std::time::Instant::now();
+            let state = app.state::<AppState>();
+            let db = lock(&state).unwrap();
+            let current = legacy_get_notes(&db, Some("tab:calendar")).unwrap();
+            let recent = legacy_get_notes(&db, None).unwrap();
+            let baseline_ms = started.elapsed().as_secs_f64() * 1000.0;
+            let mut positions = StdHashMap::new();
+            let mut baseline_visible = Vec::new();
+            for note in recent.iter().chain(current.iter()) {
+                let id = note["id"].as_str().unwrap().to_string();
+                if let Some(index) = positions.get(&id).copied() {
+                    baseline_visible[index] = note.clone();
+                } else {
+                    positions.insert(id, baseline_visible.len());
+                    baseline_visible.push(note.clone());
+                }
+            }
+            let baseline_payload = serde_json::to_vec(&baseline_visible).unwrap();
+            let baseline_sql = traced.lock().unwrap().clone();
+            drop(db);
+            drop(state);
+            traced.lock().unwrap().clear();
+            let started = std::time::Instant::now();
+            let candidate = get_notes(None, None, app.state()).unwrap();
+            let candidate_ms = started.elapsed().as_secs_f64() * 1000.0;
+            let payload = serde_json::to_vec(&candidate).unwrap();
+            assert_eq!(baseline_payload, payload, "one-call payload must match the prior two-call merge");
+            let statements = traced.lock().unwrap().clone();
+            let mut hash = sha2::Sha256::new();
+            use sha2::Digest;
+            hash.update(&payload);
+            let digest = hex::encode(hash.finalize());
+            println!(
+                "NOTES_BENCH count={count} current={} recent={} baseline_sql={} baseline_ms={baseline_ms:.3} candidate_sql={} candidate_ms={candidate_ms:.3} payload_bytes={} sha256={}",
+                current.len(), recent.len(), baseline_sql.len(), statements.len(), payload.len(), digest
+            );
+            let mut sql_samples = StdHashMap::<String, usize>::new();
+            for sql in &statements {
+                *sql_samples.entry(sql.clone()).or_default() += 1;
+            }
+            for (sql, repetitions) in sql_samples {
+                println!("NOTES_SQL count={count} executions={repetitions} {sql}");
+            }
+            if let Ok(dir) = std::env::var("NOTES_BENCH_DIR") {
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::write(
+                    std::path::Path::new(&dir).join(format!("candidate-visible-{count}.json")),
+                    payload,
+                ).unwrap();
+                std::fs::write(
+                    std::path::Path::new(&dir).join(format!("baseline-visible-{count}.json")),
+                    baseline_payload,
+                ).unwrap();
+            }
+        }
+    }
+    #[test]
     fn health_events_are_readonly_in_calendar_lists_and_native_actions() {
         use tauri::Manager;
         let conn = Connection::open_in_memory().unwrap();
@@ -1719,6 +1920,7 @@ mod tests {
         assert_eq!(row["date"], "2026-09-20");
         assert_eq!(row["block_id"], 41);
         assert_eq!(row["block_date"], "2026-09-21");
+        assert_eq!(row["actual_seconds"], 720);
         assert_eq!(row["actual_minutes"], 12);
     }
     #[test]
