@@ -816,7 +816,7 @@ mod tests {
         let after = current(&c, &id).unwrap().unwrap();
         assert_eq!(after.record.v, 2);
         assert!(after.stamp > before.stamp);
-        assert!(after.stamp > remote_stamp);
+        assert!(after.stamp.as_str() > remote_stamp);
         assert_eq!(after.record.parent.as_deref(), Some(before.stamp.as_str()));
         assert_eq!(after.record.parent_writer.as_deref(), Some(before.writer.as_str()));
         assert_eq!(after.record.value["row"]["mode"], "chain");

@@ -242,7 +242,7 @@ fn initialize_upgrades_historical_local_graph_envelopes_and_queues_them() {
 
 #[test]
 fn stale_v1_recurring_edit_and_delete_are_quarantined_and_cursor_advances() {
-    let (mut receiver, _) = replica("receiver");
+    let (mut receiver, receiver_cfg) = replica("receiver");
     crate::mvp_sync_db::set_ui(
         &receiver,
         "calendar_recurring_v1",
@@ -259,7 +259,7 @@ fn stale_v1_recurring_edit_and_delete_are_quarantined_and_cursor_advances() {
     stale.f["_updated_at"] = stale.f["updated_at"].clone();
     stale.f["_device_id"] = json!("legacy-peer");
     let legacy_cfg = derive_config(&config("legacy-peer")).unwrap();
-    apply(&mut receiver, &legacy_cfg, stored(&legacy_cfg, vec![stale.clone()], 1, 1)).unwrap();
+    apply(&mut receiver, &receiver_cfg, stored(&legacy_cfg, vec![stale.clone()], 1, 1)).unwrap();
     assert_eq!(
         receiver
             .query_row("SELECT count(*) FROM mvp_sync_conflicts", [], |r| r.get::<_, i64>(0))
@@ -272,14 +272,14 @@ fn stale_v1_recurring_edit_and_delete_are_quarantined_and_cursor_advances() {
     stale.f["data"] = json!(record.to_string());
     stale.f["updated_at"] = json!("2026-09-28T12:01:00.000Z");
     stale.f["_updated_at"] = stale.f["updated_at"].clone();
-    apply(&mut receiver, &legacy_cfg, stored(&legacy_cfg, vec![stale.clone()], 2, 2)).unwrap();
+    apply(&mut receiver, &receiver_cfg, stored(&legacy_cfg, vec![stale.clone()], 2, 2)).unwrap();
 
     record["deleted"] = json!(true);
     record["value"] = Value::Null;
     stale.f["data"] = json!(record.to_string());
     stale.f["updated_at"] = json!("2026-09-28T12:02:00.000Z");
     stale.f["_updated_at"] = stale.f["updated_at"].clone();
-    apply(&mut receiver, &legacy_cfg, stored(&legacy_cfg, vec![stale], 3, 3)).unwrap();
+    apply(&mut receiver, &receiver_cfg, stored(&legacy_cfg, vec![stale], 3, 3)).unwrap();
 
     let saved: Value = serde_json::from_str(
         &crate::mvp_sync_db::read_ui(&receiver, "calendar_recurring_v1")
@@ -312,7 +312,8 @@ fn v2_is_rejected_for_unscoped_rows_before_receive_cursor_advances() {
     let mut record: Value = serde_json::from_str(incoming.f["data"].as_str().unwrap()).unwrap();
     record["v"] = json!(2);
     incoming.f["data"] = json!(record.to_string());
-    let error = apply(&mut receiver, &cfg, stored(&cfg, vec![incoming], 1, 1)).unwrap_err();
+    let peer_cfg = derive_config(&config("scope-peer")).unwrap();
+    let error = apply(&mut receiver, &cfg, stored(&peer_cfg, vec![incoming], 1, 1)).unwrap_err();
     assert_eq!(error, "content_sync_unknown_schema");
     assert_eq!(
         receiver
