@@ -16,7 +16,7 @@
 .calv-month-cell[data-outside="true"]:not([aria-pressed="true"]) { background: color-mix(in srgb, var(--bg-soft) 72%, var(--bg-card)); color: var(--text-secondary); }
 .calv-month-cell:hover { box-shadow: inset 0 0 0 1px var(--accent-green); }
 .calv-month-cell[aria-pressed="true"]:hover { box-shadow: inset 0 0 0 1px var(--accent-green); }
-.calv-month-cell[aria-current="date"] .calv-date-number { display: inline-flex; align-self: flex-start; align-items: center; justify-content: center; min-width: 24px; min-height: 24px; border-radius: 50%; background: var(--accent-green); color: var(--bg-card); }
+.calv-month-cell[aria-current="date"] .calv-date-number { display: inline-flex; align-self: flex-start; align-items: center; justify-content: center; min-width: 24px; min-height: 24px; font-weight: 750; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px; }
 .calv-date-number { font-size: 13px; font-weight: 650; }
 .calv-month-preview { display: block; min-width: 0; max-width: 100%; padding-left: 5px; border-left: 2px solid var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11px; line-height: 1.25; color: var(--text-primary); }
 .calv-month-preview[data-source-type="note"] { border-left-color: var(--accent-green); }
@@ -34,7 +34,7 @@
 .calv-day-number { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; min-height: 28px; font-size: 18px; line-height: 1; font-weight: 650; }
 .calv-day-heading[aria-pressed="true"] { color: var(--accent-green); background: var(--accent-green-soft); box-shadow: inset 0 -2px var(--accent-green); }
 .calv-day-heading[data-weekend="true"]:not([aria-pressed="true"]) { background: var(--bg-soft); }
-.calv-day-heading[aria-current="date"] .calv-day-number { border-radius: 50%; background: var(--accent-green); color: var(--bg-card); }
+.calv-day-heading[aria-current="date"] .calv-day-number { font-weight: 750; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px; }
 .calv-hours, .calv-day-column { position: relative; }
 .calv-hours { position: sticky; left: 0; z-index: 2; background: var(--bg-card); }
 .calv-time-corner { position: sticky; left: 0; z-index: 4; background: var(--bg-card); }

@@ -21,6 +21,19 @@ function mount(t, transport = null) {
   const dispose = mountSyncSettings(host, { setPending:value=>busy.push(value), invoke:async(command,args)=>{calls.push({command,args});return transport?transport(command,args):initial();} });
   t.after(()=>{dispose();dom.window.close();});return {dom,host,q,calls,busy,dispose};
 }
+
+test('unpaired settings expose connection first and retain controls when a draft is entered', async t => {
+  const x=mount(t); await tick();
+  assert.equal(x.q('connect').querySelector('summary').textContent,'Подключить устройство');
+  assert.equal(x.q('counts').hidden,true); assert.equal(x.q('success').hidden,true);
+  assert.equal(x.q('now').hidden,true); assert.equal(x.q('save').hidden,true);
+  x.q('connect').open=true; x.q('connect').dispatchEvent(new x.dom.window.Event('toggle'));
+  assert.equal(x.q('enabled').closest('label').hidden,false);
+  x.q('code').value='draft'; x.q('code').dispatchEvent(new x.dom.window.Event('input'));
+  x.q('connect').open=false; x.q('connect').dispatchEvent(new x.dom.window.Event('toggle'));
+  assert.equal(x.q('save').hidden,false); assert.equal(x.q('cancel').hidden,false);
+  assert.equal(x.calls.length,1,'presentation changes do not configure or synchronize');
+});
 test('connection code stays masked, saves only explicitly and clears after native acknowledgement', async t => {
   let release;const x=mount(t,(command)=>command==='mvp_sync_status'?initial():new Promise(resolve=>{release=resolve;}));await tick();
   const code='{"v":1,"token":"fictional-sensitive-code","enabled":true}';x.q('code').value=code;x.q('code').dispatchEvent(new x.dom.window.Event('input'));
