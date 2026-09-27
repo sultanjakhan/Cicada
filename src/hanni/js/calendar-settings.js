@@ -36,7 +36,7 @@ function sectionFor(section) {
   return SECTIONS.some(item => item.id === section) ? section : 'today';
 }
 
-export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
+export function showCalendarSettings(trigger, { section, returnFocus, activityHistory } = {}) {
   if (settingsDialog || document.querySelector('dialog[open]')) return;
 
   let original = null, draft = null, closed = false, disposeSync = null;
@@ -385,7 +385,7 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
   sync.addEventListener('click', scheduleFooterRefresh);
   disposeSleep = mountSleepSettings(sleep, { invoke, setPending: value => api.setPending(value) });
   disposeActivity = mountHealthActivitySettings(activity, { invoke, setPending: value => api.setPending(value) });
-  disposeDigitalActivity = mountDigitalActivitySettings(digitalActivity, { invoke, setPending: value => api.setPending(value) });
+  disposeDigitalActivity = mountDigitalActivitySettings(digitalActivity, { invoke, setPending: value => api.setPending(value), initialHistory:activityHistory });
   digitalActivity.addEventListener('input', scheduleFooterRefresh);
   digitalActivity.addEventListener('change', scheduleFooterRefresh);
   digitalActivity.addEventListener('click', scheduleFooterRefresh);

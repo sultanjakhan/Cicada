@@ -7,14 +7,14 @@ const fallbackPort=5600;
 function timeLabel(value){if(!value)return 'Импорт ещё не выполнялся';const time=new Date(value);return Number.isFinite(time.getTime())?`Последний успешный импорт · ${time.toLocaleString('ru-RU')}`:'Последний импорт отмечен';}
 function errorLabel(value){const known={digital_activity_invalid_config:'Проверь название и локальный порт.',digital_activity_invalid_source:'Выбери Windows или Android.',digital_activity_unredacted_title:'Источник передал заголовок окна. Убери его в настройках ActivityWatch и повтори импорт.',digital_activity_invalid_date:'Выбери корректную дату.'};return known[value]||'Импорт не завершён. Проверь, что ActivityWatch запущен на этом устройстве, и повтори попытку.';}
 
-export function mountDigitalActivitySettings(element,{invoke,setPending=()=>{}}={}){
+export function mountDigitalActivitySettings(element,{invoke,setPending=()=>{},initialHistory=null}={}){
   const window=element.ownerDocument.defaultView;
   let disposed=false,busy=false,devices=[],loadError='',message='',editingId=null,formBaseline=null,removingId=null,erasureFocusId=null;
   element.className='calendar-setting digital-activity-settings';
   element.innerHTML=`<h3>Локальный учёт приложений</h3><p class="calendar-setting-hint">Подключи ActivityWatch на этом устройстве, чтобы добавлять дневные итоги в календарь. В календарь попадут названия приложений и время, без заголовков окон и адресов страниц.</p><p data-da-error role="alert" hidden></p><p data-da-message role="status" hidden></p><div data-da-list></div><button type="button" data-da-add>Добавить устройство</button><button type="button" data-da-retry hidden>Повторить загрузку</button><section data-da-form hidden><h4 data-da-form-title>Новое устройство</h4><label>Название устройства<input data-da-label maxlength="100" autocomplete="off"></label><label>Система<select data-da-source><option value="windows">Windows</option><option value="android">Android</option></select></label><label class="digital-activity-settings__toggle"><input type="checkbox" data-da-enabled> Автоматически обновлять календарь</label><details><summary>Подключение</summary><label>Локальный порт<input type="number" data-da-port min="1" max="65535" value="${fallbackPort}"></label><p>Только локальный ActivityWatch на этом устройстве.</p></details><label>Токен, если настроен<input type="password" data-da-token autocomplete="new-password" placeholder="Оставь пустым, чтобы не менять"></label><label data-da-token-clear-wrap hidden><input type="checkbox" data-da-token-clear> Удалить сохранённый токен</label><div class="digital-activity-settings__actions"><button type="button" data-da-save>Сохранить подключение</button><button type="button" data-da-cancel>Отмена</button></div></section><section data-da-erasure hidden></section><section class="digital-activity-settings__blockers"><h3>Ограничение приложений и сайтов</h3><p>Блокировщики настраиваются в своих приложениях. Управление из Cicada ещё не подключено.</p><article><h4>Android · TimeLimit</h4><p>Стороннее приложение для правил использования приложений.</p><a href="https://codeberg.org/timelimit/opentimelimit-android" data-open-url="https://codeberg.org/timelimit/opentimelimit-android" target="_blank" rel="noopener noreferrer">Открыть исходный проект</a></article><article><h4>Браузер · LeechBlock NG</h4><p>Расширение для расписания блокировки сайтов в поддерживаемом браузере.</p><a href="https://github.com/proginosko/LeechBlockNG" data-open-url="https://github.com/proginosko/LeechBlockNG" target="_blank" rel="noopener noreferrer">Открыть исходный проект</a></article><p>Блокирование приложений Windows из Cicada пока не поддерживается.</p></section>`;
   const q=selector=>element.querySelector(selector),error=q('[data-da-error]'),statusMessage=q('[data-da-message]'),list=q('[data-da-list]'),form=q('[data-da-form]');
   const showError=value=>{error.textContent=value;error.hidden=!value;};
-  const focusErasure=id=>Array.from(element.querySelectorAll('[data-da-erase]')).find(button=>button.dataset.daErase===id)?.focus();
+  const focusErasure=id=>(Array.from(element.querySelectorAll('[data-da-erase]')).find(button=>button.dataset.daErase===id)||q('[data-da-add]')).focus();
   const erasure=mountDigitalActivityErasure(q('[data-da-erasure]'),{
     invoke,
     onPending:value=>{busy=value;setPending(value);render();if(!value&&erasureFocusId){focusErasure(erasureFocusId);erasureFocusId=null;}},
@@ -26,6 +26,10 @@ export function mountDigitalActivitySettings(element,{invoke,setPending=()=>{}}=
     },
   });
   element.addEventListener('activity-erasure-cancel',event=>focusErasure(event.detail?.deviceId));
+  function openHistory(device){
+    if(!device)return;
+    showError('');statusMessage.hidden=true;form.hidden=true;formBaseline=null;removingId=null;render();erasure.open(device);
+  }
   function render(){
     if(disposed)return;
     list.innerHTML=devices.length?devices.map(device=>`<article class="digital-activity-device" data-device-id="${esc(device.id)}"><div class="digital-activity-device__heading"><div><h4>${esc(device.label)}</h4><p>${device.source==='android'?'Android':'Windows'} · порт ${esc(device.port)}</p></div><span class="digital-activity-device__state ${device.lastError?'is-error':device.enabled?'is-enabled':'is-paused'}">${device.lastError?'Проверь подключение':device.enabled?'Автоимпорт включён':'Автоимпорт на паузе'}</span></div><p>${device.lastError?errorLabel(device.lastError):timeLabel(device.lastSuccess)}</p><p>Записей активности · ${Number(device.records)||0}</p>${device.deletedThrough?`<p>Не импортировать дни по ${esc(device.deletedThrough)} включительно.</p>`:''}<div class="digital-activity-settings__actions"><button type="button" data-da-import="${esc(device.id)}">Импортировать сейчас</button><button type="button" data-da-edit="${esc(device.id)}">Изменить</button><button type="button" data-da-toggle="${esc(device.id)}">${device.enabled?'Приостановить автоимпорт':'Включить автоимпорт'}</button><button type="button" data-da-erase="${esc(device.id)}">Очистить историю</button><button type="button" data-da-remove="${esc(device.id)}">Удалить подключение</button></div>${removingId===device.id?`<div class="digital-activity-settings__remove"><p>Убрать подключение? Дневные события останутся. Сбор данных в ActivityWatch отключается отдельно.</p><div class="digital-activity-settings__actions"><button type="button" data-da-confirm-remove="${esc(device.id)}">Удалить</button><button type="button" data-da-keep="${esc(device.id)}">Оставить</button></div></div>`:''}</article>`).join(''):'<p>Подключения пока нет. Устройство и автоимпорт настраиваются отдельно; новые профили не подключаются автоматически.</p>';
@@ -46,7 +50,7 @@ export function mountDigitalActivitySettings(element,{invoke,setPending=()=>{}}=
     if(busy||disposed)return;busy=true;render();
     try{const value=await invoke('digital_activity_status');if(disposed)return;devices=Array.isArray(value?.devices)?value.devices:[];loadError='';showError('');}
     catch(err){if(!disposed){loadError=err?.message||'Не удалось загрузить подключения.';showError(loadError);}}
-    finally{busy=false;render();}
+    finally{busy=false;render();if(initialHistory&&!disposed){const target=devices.find(device=>device.id===initialHistory.id)||initialHistory;initialHistory=null;openHistory(target);}}
   }
   async function perform(action){
     if(busy||disposed)return;busy=true;setPending(true);message='';statusMessage.hidden=true;showError('');render();
@@ -83,7 +87,7 @@ export function mountDigitalActivitySettings(element,{invoke,setPending=()=>{}}=
     else if(button.hasAttribute('data-da-cancel')){form.hidden=true;formBaseline=null;showError('');}
     else if(button.hasAttribute('data-da-retry')){loadError='';void load();}
     else if(button.dataset.daEdit)openForm(devices.find(device=>device.id===button.dataset.daEdit));
-    else if(button.dataset.daErase){showError('');statusMessage.hidden=true;form.hidden=true;formBaseline=null;removingId=null;render();erasure.open(devices.find(device=>device.id===button.dataset.daErase));}
+    else if(button.dataset.daErase)openHistory(devices.find(device=>device.id===button.dataset.daErase));
     else if(button.dataset.daImport)void importNow(button.dataset.daImport);
     else if(button.dataset.daToggle){const device=devices.find(item=>item.id===button.dataset.daToggle);if(device)void toggle(device);}
     else if(button.dataset.daRemove){erasure.close();removingId=button.dataset.daRemove;render();q('[data-da-confirm-remove]')?.focus();}

@@ -9,7 +9,7 @@ function duration(value) {
   return [hours && `${hours} ч`, minutes && `${minutes} мин`].filter(Boolean).join(' ');
 }
 
-export function appendDigitalActivityDetails(container, record) {
+export function appendDigitalActivityDetails(container, record, { onManageHistory }={}) {
   const document = container.ownerDocument, summary = record.activity_summary || {};
   const section = document.createElement('section');
   section.className = 'digital-activity-details';
@@ -31,6 +31,12 @@ export function appendDigitalActivityDetails(container, record) {
       name.textContent = app; time.textContent = duration(seconds); row.append(name, time); body.append(row);
     }
     table.append(head, body); section.append(table);
+  }
+  const identity=String(record.source_id||record.id||'').match(/^digital-activity:([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}):\d{4}-\d{2}-\d{2}$/);
+  if(identity&&onManageHistory){
+    const button=document.createElement('button');button.type='button';button.textContent='Управлять историей устройства';
+    button.addEventListener('click',()=>onManageHistory({id:identity[1],label:record.title||'Устройство из дневного итога'}));
+    section.append(button);
   }
   container.append(section);
 }

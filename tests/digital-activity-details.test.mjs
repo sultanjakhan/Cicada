@@ -15,3 +15,13 @@ test('daily activity details separate missing AFK from zero and escape applicati
   appendDigitalActivityDetails(root, { activity_summary: { foreground_seconds: 60, active_seconds: 0, apps: {} } });
   assert.match(root.textContent, /Без статуса AFK: 0 с/);
 });
+
+test('an imported event leads to management of its connection, including a disconnected source',t=>{
+  const dom=new JSDOM('<main></main>');t.after(()=>dom.window.close());
+  const root=dom.window.document.querySelector('main'),seen=[];
+  const id='550e8400-e29b-41d4-a716-446655440000';
+  appendDigitalActivityDetails(root,{source_id:`digital-activity:${id}:2026-09-20`,title:'Тестовый дневной итог'},{onManageHistory:target=>seen.push(target)});
+  root.querySelector('button').click();assert.deepEqual(seen,[{id,label:'Тестовый дневной итог'}]);
+  root.replaceChildren();appendDigitalActivityDetails(root,{id:'unrelated-event'},{onManageHistory:target=>seen.push(target)});
+  assert.equal(root.querySelector('button'),null);
+});

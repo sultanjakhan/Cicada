@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 
 const tick=async()=>{await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));};
-async function boot(t,{failFirst=false,erasureHandler}={}){
+async function boot(t,{failFirst=false,erasureHandler,initialHistory=null}={}){
   const dom=new JSDOM('<main></main>',{url:'http://fixture.invalid'}),devices=[];let failStatus=failFirst,listener=null;
   Object.assign(globalThis,{window:dom.window,document:dom.window.document,localStorage:dom.window.localStorage,CustomEvent:dom.window.CustomEvent});
   Object.defineProperty(globalThis,'navigator',{value:dom.window.navigator,configurable:true});
@@ -17,7 +17,7 @@ async function boot(t,{failFirst=false,erasureHandler}={}){
     throw Error(command);
   }},event:{listen:async(_name,handler)=>{listener=handler;return()=>{listener=null;};}}};
   const {mountDigitalActivitySettings}=await import(`../src/hanni/js/digital-activity-settings.js?${Math.random()}`);const host=dom.window.document.querySelector('main'),pending=[];
-  const dispose=mountDigitalActivitySettings(host,{invoke:(...args)=>dom.window.__TAURI__.core.invoke(...args),setPending:value=>pending.push(value)});t.after(()=>{dispose();dom.window.close();});await tick();
+  const dispose=mountDigitalActivitySettings(host,{invoke:(...args)=>dom.window.__TAURI__.core.invoke(...args),setPending:value=>pending.push(value),initialHistory});t.after(()=>{dispose();dom.window.close();});await tick();
   return{dom,host,devices,pending,failStatus:()=>{failStatus=true;},emit:()=>listener?.({payload:{changed:1,days:['2026-09-27']}})};
 }
 
@@ -35,6 +35,15 @@ test('connection form saves platform and port; token stays write-only and auto-i
   assert.equal(importButton.isConnected,true,'blur must not replace the button during its first click');
   importButton.click();assert.match(x.host.querySelector('[data-da-error]').textContent,/Сначала сохрани или отмени/);
   assert.equal(x.devices[0].label,'Телефон');
+});
+
+test('a Calendar history target opens even after the local connection was removed',async t=>{
+  let requested;
+  const x=await boot(t,{initialHistory:{id:'gone',label:'Итог отключённого устройства'},erasureHandler:async(_command,args)=>{requested=args;return{...args,count:2};}});
+  assert.equal(x.devices.length,0);assert.equal(x.host.querySelector('[data-da-erasure]').hidden,false);
+  assert.equal(x.host.querySelector('[data-erasure-device]').textContent,'Итог отключённого устройства');
+  x.host.querySelector('[data-erasure-preview]').click();await tick();assert.equal(requested.deviceId,'gone');
+  x.host.querySelector('[data-erasure-cancel]').click();assert.equal(x.dom.window.document.activeElement,x.host.querySelector('[data-da-add]'));
 });
 
 async function addErasureDevice(x) {

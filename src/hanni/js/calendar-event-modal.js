@@ -7,6 +7,7 @@ import { loadCategories } from './calendar-categories.js';
 import { showCategoryManager, showAddCategory } from './calendar-category-manager.js';
 import { createCalendarDialog } from './calendar-dialog.js';
 import { appendDigitalActivityDetails, isDigitalActivity } from './digital-activity-details.js';
+import { showCalendarSettings } from './calendar-settings.js';
 import { CREATE_TYPES, SCHEDULE_TYPES, createType, createTypeButtons } from './calendar-create-types.js';
 import { TASK_SPHERES, PERSONAL_SPHERES } from './task-model.js';
 import { DELETED_STAGE_LABEL, findProcess, loadProcesses, mountStageTime, taskProcessId } from './task-processes.js';
@@ -115,7 +116,10 @@ export async function showEventModal(eventId = null, initialDate = null, options
     const time = document.createElement('p');
     time.textContent = `${event.date || ''} · ${event.time || ''}`;
     details.body.append(time);
-    if (isDigitalActivity(event)) appendDigitalActivityDetails(details.body, event);
+    if (isDigitalActivity(event)) appendDigitalActivityDetails(details.body, event,{onManageHistory:activityHistory=>{
+      details.close({restoreFocus:false});
+      showCalendarSettings(null,{section:'restrictions',activityHistory,returnFocus:options.returnFocus});
+    }});
     details.open();
     return;
   }

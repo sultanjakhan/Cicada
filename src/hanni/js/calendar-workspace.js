@@ -202,7 +202,10 @@ async function showRecord(record, returnFocus = null, initialFocus = null) {
   if (record.readonly) { modal.querySelector('[type=submit]').hidden = true; modal.querySelector('[role=status]').textContent = 'Изменения и удаление — в приложении-источнике. Начало дня отмечается отдельно.';
     if (isDigitalActivity(record)) {
       modal.querySelector('[role=status]').textContent = 'Источник: ActivityWatch. Автоимпорт управляется в настройках → Ограничения.';
-      appendDigitalActivityDetails(modal.querySelector('.cm-fields'), record);
+      appendDigitalActivityDetails(modal.querySelector('.cm-fields'), record, {onManageHistory:activityHistory=>{
+        modal.closeForReplacement();
+        showCalendarSettings(null,{section:'restrictions',activityHistory,returnFocus:()=>modal.restoreFocus()});
+      }});
     }
     if (record.health_kind === 'sleep') {
       const details = document.createElement('p');
