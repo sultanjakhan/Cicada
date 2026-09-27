@@ -6,6 +6,14 @@
 
 Перед новой постановкой прочитай [подтверждённый контекст продукта](docs/product-context.md), затем проверь исходный код и относящиеся к задаче Issues. Не повторяй вопросы, на которые уже есть ответ в этом контексте; уточняй только новые отсутствующие факты.
 
+Owner correction, 2026-09-27: keep the current-task widget aligned to the full
+dashboard width. Restore the inline next-stage arrow; the stage label is text,
+and arbitrary stage selection remains in task details -> Edit -> Stage. Remove
+the Tasks quick-add row because the shared Create already exists. Keep overdue
+tasks in Tasks, defer routine changes, and discuss daily remaining/minimum counts
+before implementing them. This supersedes the inline stage menu and quick-add
+directions below; see docs/product-context.md.
+
 Owner iteration, 2026-09-25: stages belong only to tasks with a process. The
 built-in process «Системный анализ» has Понимание, Требования, Анализ и модели,
 Описание, Согласование, Декомпозиция, В разработке, Приёмка; processes and
