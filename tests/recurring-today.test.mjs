@@ -26,13 +26,13 @@ test('open recurring editor keeps its draft when the same plan was changed remot
 });
 
 test('routine library shows enabled and disabled plans, filters, marks rules, and creates only on submit',async t=>{
-  const dom=new JSDOM('<main></main>',{url:'https://fixture.invalid'}),host=dom.window.document.querySelector('main');const yesterday='2026-09-12',oldPlan={...plan,id:'old-run',kind:'action',mode:'activity',title:'Вчерашнее занятие'};let raw=JSON.stringify({version:1,plans:[plan,{...plan,id:'disabled',title:'Выключенная рутина',active:false},oldPlan],days:{[yesterday]:{'old-run':{snapshot:oldPlan,status:'pending',run:{steps:[{title:'Занятие',status:'pending'}]}}}}}),writes=0;
+  const dom=new JSDOM('<main></main>',{url:'https://fixture.invalid'}),host=dom.window.document.querySelector('main');const yesterday='2026-09-12',oldPlan={...plan,id:'old-run',kind:'action',mode:'activity',title:'Вчерашнее занятие'},checkPlan={...plan,id:'check-task',kind:'action',mode:'check',title:'Обычная отметка'};let raw=JSON.stringify({version:1,plans:[plan,{...plan,id:'disabled',title:'Выключенная рутина',active:false},oldPlan,checkPlan],days:{[yesterday]:{'old-run':{snapshot:oldPlan,status:'pending',run:{steps:[{title:'Занятие',status:'pending'}]}}}}}),writes=0,commands=[];
   dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;this.dispatchEvent(new dom.window.Event('close'));};
-  const invoke=async(command,args)=>{if(command==='get_ui_state')return raw;if(command==='set_ui_state'){writes++;raw=args.value;return;}throw Error(command);};
+  const invoke=async(command,args)=>{commands.push(command);if(command==='get_ui_state')return raw;if(command==='set_ui_state'){writes++;raw=args.value;return;}throw Error(command);};
   const dispose=mountCalendarRecurring(host,{invoke,now:()=>new Date(`${today}T12:00:00`),library:true});t.after(()=>{dispose();dom.window.close();});
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(host.querySelector('[data-recurring-heading]').textContent,'Рутины');
-  assert.equal(host.querySelectorAll('[data-library-title]').length,3);
+  assert.equal(host.querySelectorAll('[data-library-title]').length,4);
   assert.match(host.textContent,/выключено/);
   assert.equal(host.querySelector('[data-library-run="old-run"]').textContent,'Продолжить');
   assert.equal(host.querySelector('[data-library-run="old-run"]').dataset.libraryDate,yesterday);
@@ -52,10 +52,15 @@ test('routine library shows enabled and disabled plans, filters, marks rules, an
   assert.equal(dom.window.document.activeElement,host.querySelector('[data-library-details="rule-1"]'));
   assert.equal(host.querySelector('[data-library-id="disabled"]'),stableRow);
   assert.equal(writes,1);
+  host.querySelector('[data-library-mark="check-task"]').click();
+  await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(JSON.parse(raw).days[today]['check-task'].status,'done');
+  assert.equal(writes,2);
+  assert.equal(commands.includes('start_task_block'),false);
   dispose.create();
   const editor=dom.window.document.querySelector('dialog[open]');assert.ok(editor);
   assert.equal(editor.querySelector('[name=title]').value,'');
-  assert.equal(writes,1);
+  assert.equal(writes,2);
   editor.close();
 });
 
