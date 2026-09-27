@@ -11,6 +11,8 @@
 .calendar-main-goal.calendar-now:not(.calendar-now--compact) .calendar-now__goal { padding:14px 20px 18px; border:1px solid var(--border-default,#ddd); border-radius:14px; }
 .calendar-main-goal.calendar-now .calendar-now__goal-top { margin-bottom:6px; }
 .calendar-main-goal.calendar-now .calendar-now__eyebrow { font-size:13px; color:var(--text-primary,#252525); }
+.calendar-main-goal .calendar-now__eyebrow { display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border-radius:6px; background:var(--bg-hover,#f3f3f3); font-weight:600; }
+.calendar-main-goal .calendar-now__eyebrow svg { width:14px; height:14px; }
 .calendar-main-goal.calendar-now:not(.calendar-now--compact) .calendar-now__goal h2 { font-size:17px; line-height:1.45; }
 .calendar-main-goal.calendar-now .calendar-now__goal-tools .calendar-now__primary { background:transparent; color:var(--text-primary,#252525); border:1px solid var(--border-default,#ddd); }
 /* The title opens the goal. Today owns the single next-action recommendation. */

@@ -7,6 +7,8 @@ export const ICONS = {
   calendar: `<svg ${SVG_ATTRS}><rect x="2" y="3.5" width="12" height="10.5" rx="2"/><path d="M5 2v3M11 2v3M2 7h12"/></svg>`,
   target: `<svg ${SVG_ATTRS}><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="3"/><circle cx="8" cy="8" r=".75" fill="currentColor" stroke="none"/></svg>`,
   flag: `<svg ${SVG_ATTRS}><path d="M3.5 14V2m0 0h5l1 2h3v6h-4l-1-2h-4"/></svg>`,
+  note: `<svg ${SVG_ATTRS}><path d="M9 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6Z"/><path d="M9 2v4h4M5.5 9h5M5.5 11.5h3"/></svg>`,
+  heart: `<svg ${SVG_ATTRS}><path d="M13 3.5a3.2 3.2 0 0 0-5 1 3.2 3.2 0 0 0-5-1c-2 1.7-1.5 4.3.5 6.3L8 14l4.5-4.2c2-2 2.5-4.6.5-6.3Z"/></svg>`,
   play: `<svg ${SVG_ATTRS}><path d="m5 3 8 5-8 5Z"/></svg>`,
   pause: `<svg ${SVG_ATTRS}><path d="M5.5 3v10M10.5 3v10"/></svg>`,
   check: `<svg ${SVG_ATTRS}><path d="m3 8 3.5 3.5L13 5"/></svg>`,

@@ -57,8 +57,7 @@
 /* The top gap belongs to the pane so sticky rows meet the tabs without a seam. */
 .mobile #calendar-content.calendar-workspace .uni-pane { padding-top: 12px; }
 .mobile .calendar-workspace .uni-header-icon { display: none; }
-.mobile .calendar-workspace .uni-header-name,
-.mobile .calendar-workspace [data-calendar-create] > span {
+.mobile .calendar-workspace .uni-header-name {
   position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
   clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0;
 }
@@ -66,8 +65,9 @@
   flex: none; gap: 6px; min-height: 36px; padding: 6px 10px; font-size: 13px;
 }
 .mobile .calendar-workspace .uni-header-action svg { width: 18px; height: 18px; }
-/* «＋ Создать» is an icon button on the phone; its aria-label names every type. */
-.mobile .calendar-workspace [data-calendar-create] { justify-content: center; width: 36px; padding: 0; }
+/* Keep both workspace actions labelled, including on the phone. */
+.mobile .calendar-workspace [data-calendar-create] { justify-content:center; width:auto; padding:6px 10px; }
+.mobile .calendar-workspace [data-calendar-create]::after { display:none; }
 /* The running indicator sits at the right end of the same row. */
 .mobile .calendar-running { flex: none; margin-left: auto; }
 .mobile .calendar-running__button { min-height: 36px; padding: 0 12px 0 10px; font-size: 13px; }

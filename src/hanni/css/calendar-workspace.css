@@ -29,6 +29,19 @@
 .calendar-workspace .uni-header-action:hover { background:var(--bg-hover); border-color:var(--border-hover); }
 .calendar-workspace .uni-header-action:focus-visible { outline:2px solid var(--text-primary); outline-offset:3px; }
 .calendar-workspace .uni-header-action svg { flex:none; width:18px; height:18px; }
+.calendar-workspace [data-calendar-create] { background:var(--bg-card); padding-inline:14px; }
+.calendar-workspace [data-calendar-create]::after { content:''; width:6px; height:6px; margin:-3px 2px 0 5px; border:solid currentColor; border-width:0 1.5px 1.5px 0; transform:rotate(45deg); opacity:.65; }
+.calendar-workspace [data-calendar-create][aria-expanded="true"] { background:var(--bg-hover); border-color:var(--text-secondary); }
+.calendar-workspace [data-calendar-launch] { background:var(--text-primary); color:var(--bg-card); border-color:var(--text-primary); padding-inline:18px; }
+.calendar-workspace [data-calendar-launch]:hover { background:var(--text-secondary); border-color:var(--text-secondary); }
+.calendar-workspace [data-calendar-launch] > svg { width:16px; height:16px; fill:currentColor; }
+.calendar-create-menu { position:fixed; z-index:10020; width:296px; max-width:calc(100vw - 16px); max-height:calc(100dvh - 16px); overflow-y:auto; padding:6px; border:1px solid var(--border-default,#ddd); border-radius:12px; background:var(--bg-card,#fff); color:var(--text-primary,#252525); box-shadow:0 8px 28px #0002; box-sizing:border-box; }
+.calendar-create-menu > button { display:flex; align-items:center; gap:12px; width:100%; min-height:48px; padding:9px 10px; border:0; border-radius:7px; text-align:left; color:inherit; background:transparent; font:inherit; cursor:pointer; }
+.calendar-create-menu > button:hover, .calendar-create-menu > button:focus { background:var(--bg-hover,#f3f3f3); }
+.calendar-create-menu > button:focus-visible { outline:2px solid var(--text-primary,#252525); outline-offset:-2px; }
+.calendar-create-menu__icon { display:flex; flex:0 0 18px; justify-content:center; color:var(--text-secondary,#666); }
+.calendar-create-menu strong { display:block; font-size:14px; font-weight:550; line-height:20px; }
+.calendar-create-menu small { display:block; font-size:12px; line-height:17px; color:var(--text-muted,#777); }
 .calendar-workspace .calendar-now__card[hidden] + .calendar-now__goal { margin-top:0; }
 [data-task-launcher] .calendar-task-overview { margin:0; padding:0; border:0; border-radius:0; }
 /* Navigation to the current-task widget; the optional count is running work only. */
