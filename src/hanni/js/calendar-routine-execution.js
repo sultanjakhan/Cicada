@@ -5,10 +5,10 @@ import { startCalendarExecution, readActiveBlocks } from './calendar-execution.j
 const openDialogs = new WeakMap();
 
 /** Mounts the shared routine runner into an existing surface; it never owns or pauses other work. */
-export function mountRecurringRun(element, { document = element.ownerDocument, invoke, id, date, start = false, onClose, dialog = null } = {}) {
+export function mountRecurringRun(element, { document = element.ownerDocument, invoke, id, date, start = false, onClose, onTerminal, dialog = null } = {}) {
   const win = document.defaultView, store = createRecurringStore(invoke);
   const createRunOnRetry = start;
-  let disposed = false, busy = false, observedRun = false, origin = date || store.today(), record = null, routineTitle = '', rows = [], activeBlocks = [], current = -1, readVersion = 0, rendered = '', clockTimer = null, error = '';
+  let disposed = false, busy = false, observedRun = false, terminalNotified = false, confirmedTerminalStatus = null, origin = date || store.today(), record = null, routineTitle = '', rows = [], activeBlocks = [], current = -1, readVersion = 0, rendered = '', clockTimer = null, error = '';
   const inline = !dialog;
   if (inline) element.classList.add('calendar-routine-inline');
 
@@ -113,7 +113,7 @@ export function mountRecurringRun(element, { document = element.ownerDocument, i
       if (!ready.length) { const message = document.createElement('p'); message.textContent = 'Все шаги выполнены или пропущены. Можно вернуться к рекомендации.'; next.append(message); }
       element.append(next);
       const plan = document.createElement('details'); plan.dataset.runPlan = ''; plan.className = 'calendar-run-plan'; plan.open = expanded;
-      const summary = document.createElement('summary'); summary.textContent = `Все шаги · ${record.run.steps.length}`; plan.append(summary);
+      const summary = document.createElement('summary'); summary.textContent = `Вся рутина · ${record.run.steps.length}`; plan.append(summary);
       const list = document.createElement('ol'); list.className = 'calendar-routine-steps';
       record.run.steps.forEach((step, index) => {
         const row = scheduleRow(index), isAvailable = graph() && available().includes(index), dependencies = record.snapshot.steps?.[index]?.dependsOn || [];
@@ -152,6 +152,7 @@ export function mountRecurringRun(element, { document = element.ownerDocument, i
     }
     observedRun = true;
     record = run;
+    confirmedTerminalStatus = ['done', 'skipped'].includes(run.status) ? run.status : null;
     routineTitle = run.snapshot?.title || routineTitle;
     rows = nextRows.filter(row => record?.run.steps.some((_step, index) => String(row.id) === recurringSourceId(id, origin, index)));
     activeBlocks = nextActive;
@@ -203,11 +204,21 @@ export function mountRecurringRun(element, { document = element.ownerDocument, i
           const target = element.querySelector(`[data-run-step="${expectedStep}"][data-run-action]`) || element.querySelector('[data-run-action]') || element.querySelector('[data-run-heading]');
           target?.focus({ preventScroll: true });
         }
+        scheduleTerminalNotification();
       }
     }
   }
+  function scheduleTerminalNotification() {
+    if (terminalNotified || busy || disposed || error || !confirmedTerminalStatus || typeof onTerminal !== 'function') return;
+    const status = confirmedTerminalStatus;
+    queueMicrotask(() => {
+      if (terminalNotified || busy || disposed || error || confirmedTerminalStatus !== status) return;
+      terminalNotified = true;
+      onTerminal({ id, date: origin, status });
+    });
+  }
   const reportReadError = cause => { if (!disposed) showError(cause?.message || String(cause)); };
-  const onExternal = () => { if (!busy && !disposed) void refresh().catch(reportReadError); };
+  const onExternal = () => { if (!busy && !disposed) void refresh().then(() => scheduleTerminalNotification()).catch(reportReadError); };
   win.addEventListener('task-state-changed', onExternal); win.addEventListener('hanni:calendar-refresh', onExternal);
   if (inline) {
     element.setAttribute('aria-busy', 'true');
@@ -254,6 +265,7 @@ export function mountRecurringRun(element, { document = element.ownerDocument, i
         if (dialog?.retry) dialog.retry.disabled = false;
         setBusy(false);
         if (shouldFocusHeading) element.querySelector('[data-run-heading]')?.focus({ preventScroll: true });
+        scheduleTerminalNotification();
       }
     }
   }

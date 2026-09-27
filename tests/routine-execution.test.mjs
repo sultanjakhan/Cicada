@@ -4,19 +4,20 @@ import { JSDOM } from 'jsdom';
 import { mountRecurringRun, openRecurringRun } from '../src/hanni/js/calendar-routine-execution.js';
 import { recurringSourceId } from '../src/hanni/js/calendar-recurring-store.js';
 const settle=async()=>{for(let i=0;i<8;i++)await new Promise(resolve=>setImmediate(resolve));};
-function setup(t,{other=null,mode='chain',graphSteps=null,changingForeignSchedule=false}={}){
+function setup(t,{other=null,mode='chain',graphSteps=null,changingForeignSchedule=false,terminalStatus=null}={}){
   const dom=new JSDOM('<main></main>');t.after(()=>dom.window.close());
   dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};
   dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;this.dispatchEvent(new dom.window.Event('close'));};
   const now=new Date(),date=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`,id='test-run';
   const steps=graphSteps||[{title:'Подготовить'},{title:'Сделать'}];
   const plan={id,kind:'action',mode,title:'Практика',weekdays:[0,1,2,3,4,5,6],startsOn:'',endsOn:'',time:'',active:true,required:true,createdOn:date,steps};
-  const record={snapshot:plan,status:'pending',run:{steps:plan.steps.map(step=>mode==='graph'?{...step,dependsOn:step.dependsOn||[],trackingMode:step.trackingMode||'track',optional:step.optional??false,status:'pending'}:{title:step.title,status:'pending'})}};
-  let state={version:1,plans:[plan],days:{[date]:{[id]:record}}},active=null,hasWork=false,fail=false,onRead=null,foreignSeconds=0,holdWrite=false,releaseWrite=null;
+  const stepStatus=terminalStatus==='done'?'done':terminalStatus==='skipped'?'skipped':'pending';
+  const record={snapshot:plan,status:terminalStatus||'pending',run:{steps:plan.steps.map(step=>mode==='graph'?{...step,dependsOn:step.dependsOn||[],trackingMode:step.trackingMode||'track',optional:step.optional??false,status:stepStatus}:{title:step.title,status:stepStatus})}};
+  let state={version:1,plans:[plan],days:{[date]:{[id]:record}}},active=null,hasWork=false,fail=false,onRead=null,foreignSeconds=0,holdWrite=false,releaseWrite=null,holdRead=false,releaseRead=null;
   const calls=[];
   const invoke=async(name,args)=>{
     calls.push({name,args});
-    if(name==='get_ui_state'){const hook=onRead;onRead=null;hook?.();return JSON.stringify(state);}
+    if(name==='get_ui_state'){const hook=onRead;onRead=null;hook?.();if(holdRead){holdRead=false;return new Promise(resolve=>{releaseRead=()=>resolve(JSON.stringify(state));});}return JSON.stringify(state);}
     if(name==='set_ui_state'){
       const save=()=>{state=JSON.parse(args.value);Object.assign(record,state.days[date]?.[id]||{});};
       if(holdWrite){holdWrite=false;return new Promise(resolve=>{releaseWrite=()=>{save();resolve();};});}
@@ -29,16 +30,17 @@ function setup(t,{other=null,mode='chain',graphSteps=null,changingForeignSchedul
     if(name==='get_timeline_blocks')return [];
     if(name==='pause_task_block'){assert.notEqual(args.blockId,other?.id,'unrelated work must keep running');active=null;return;}
     if(name==='complete_recurring_step'){
-      const index=JSON.parse(args.sourceId)[2];record.run.steps[index].status='done';return;
+      const index=JSON.parse(args.sourceId)[2];record.run.steps[index].status='done';updateRunStatus();return;
     }
     if(name==='finish_task_block'||name==='skip_recurring_step'){
       const sourceId=name==='skip_recurring_step'?args.sourceId:active?.source_id,index=sourceId?JSON.parse(sourceId)[2]:record.run.steps.findIndex(step=>step.status==='pending');
-      record.run.steps[index].status=name==='finish_task_block'?'done':'skipped';if(active?.source_id===sourceId)active=null;return;
+      record.run.steps[index].status=name==='finish_task_block'?'done':'skipped';updateRunStatus();if(active?.source_id===sourceId)active=null;return;
     }
     throw Error(`Unexpected ${name}`);
   };
+  function updateRunStatus(){const statuses=record.run.steps.map(step=>step.status);record.status=statuses.includes('pending')?'pending':statuses.includes('skipped')?'skipped':'done';}
   const host=dom.window.document.querySelector('main');
-  return {document:dom.window.document,host,invoke,id,date,calls,record,open:(start=false)=>openRecurringRun({document:dom.window.document,invoke,id,date,start}),mountInline:(onClose,start=false)=>mountRecurringRun(host,{document:dom.window.document,invoke,id,date,start,onClose}),race:fn=>{onRead=fn;},fail:value=>{fail=value;},clear:()=>{state.days={};},deferWrite:()=>{holdWrite=true;},releaseWrite:()=>releaseWrite?.()};
+  return {document:dom.window.document,host,invoke,id,date,calls,record,open:(start=false)=>openRecurringRun({document:dom.window.document,invoke,id,date,start}),mountInline:(onClose,start=false,onTerminal)=>mountRecurringRun(host,{document:dom.window.document,invoke,id,date,start,onClose,onTerminal}),race:fn=>{onRead=fn;},fail:value=>{fail=value;},clear:()=>{state.days={};},setTerminal(status){record.status=status;record.run.steps.forEach(step=>{step.status=status;});},deferRead:()=>{holdRead=true;},releaseRead:()=>releaseRead?.(),deferWrite:()=>{holdWrite=true;},releaseWrite:()=>releaseWrite?.()};
 }
 test('inline runner reuses the routine steps and leaves a running step alive on return to recommendation',async t=>{
   const other={id:9,source_type:'note',source_id:'unrelated',is_active:true};
@@ -57,6 +59,58 @@ test('inline runner reuses the routine steps and leaves a running step alive on 
   dispose();dispose();
   assert.equal(x.calls.some(call=>call.name==='pause_task_block'),false,'disposing the surface never pauses work');
   assert.equal(x.host.childElementCount,0);
+});
+test('terminal callback fires once after the final confirmed step and only after busy clears',async t=>{
+  const x=setup(t);let dispose,returned=[];
+  dispose=x.mountInline(()=>{},false,details=>returned.push({...details,busy:dispose.isBusy()}));await settle();
+  x.host.querySelector('[data-run-action=skip]').click();await settle();
+  assert.deepEqual(returned,[],'a partial skip does not close the routine');
+  x.host.querySelector('[data-run-action=skip]').click();await settle();await settle();
+  assert.deepEqual(returned,[{id:x.id,date:x.date,status:'skipped',busy:false}]);
+  x.document.defaultView.dispatchEvent(new x.document.defaultView.Event('hanni:calendar-refresh'));await settle();
+  assert.equal(returned.length,1,'duplicate external refreshes do not notify twice');
+  dispose();
+});
+
+test('finishing the last check step reports done after the refreshed run snapshot',async t=>{
+  const x=setup(t,{mode:'graph',graphSteps:[{title:'Готово',dependsOn:[],trackingMode:'check'}]});let dispose,reported=[];
+  dispose=x.mountInline(()=>{},false,details=>reported.push({...details,busy:dispose.isBusy()}));await settle();
+  x.host.querySelector('[data-run-action=complete]').click();await settle();await settle();
+  assert.deepEqual(reported,[{id:x.id,date:x.date,status:'done',busy:false}]);
+  dispose();
+});
+
+test('an initially terminal run is reported once after mount returns and is not busy',async t=>{
+  const x=setup(t,{terminalStatus:'done'});let dispose,returned=[];
+  dispose=x.mountInline(()=>{},false,details=>returned.push({...details,busy:dispose.isBusy()}));
+  assert.deepEqual(returned,[],'callback is deferred until the caller has received the disposer');
+  await settle();
+  assert.deepEqual(returned,[{id:x.id,date:x.date,status:'done',busy:false}]);
+  dispose();
+});
+
+test('a failed read does not report terminal until a retry confirms the run',async t=>{
+  const x=setup(t,{terminalStatus:'done'});x.race(()=>{throw Error('Нет ответа');});let reported=0;
+  const dispose=x.mountInline(()=>{},false,()=>{reported++;});await settle();
+  assert.equal(reported,0);
+  assert.match(x.host.querySelector('[role=alert]').textContent,/Нет ответа/);
+  x.host.querySelector('[data-run-retry]').click();await settle();
+  assert.equal(reported,1);
+  dispose();
+});
+
+test('external terminal refresh notifies once, while disposal during the read suppresses a stale callback',async t=>{
+  const x=setup(t);let reported=0;const dispose=x.mountInline(()=>{},false,()=>{reported++;});await settle();
+  x.setTerminal('done');x.deferRead();
+  x.document.defaultView.dispatchEvent(new x.document.defaultView.Event('hanni:calendar-refresh'));
+  dispose();x.releaseRead();await settle();
+  assert.equal(reported,0,'a disposed surface must ignore a late terminal snapshot');
+});
+
+test('the full routine disclosure keeps its routine-level label',async t=>{
+  const x=setup(t);const dispose=x.mountInline(()=>{});await settle();
+  assert.equal(x.host.querySelector('[data-run-plan] summary').textContent,'Вся рутина · 2');
+  dispose();
 });
 test('inline runner exposes read errors and retry without implicitly starting work',async t=>{
   const x=setup(t);x.race(()=>{throw Error('Нет ответа');});
