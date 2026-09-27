@@ -13,6 +13,22 @@ const plan={id:'rule-1',kind:'rule',title:'Без телефона за стол
 const state={version:1,plans:[plan],days:{}};
 const task={source_type:'note',source_id:'task-1',status_extra:'task',title:'Подготовить SQL-запрос',date:today,duration_minutes:25};
 
+test('routine library preserves read errors through search and recovers without replacing unchanged rows',async t=>{
+  const dom=new JSDOM('<main></main>',{url:'https://fixture.invalid'}),host=dom.window.document.querySelector('main');let failed=false;
+  const invoke=async()=>{if(failed)throw Error('Read unavailable');return JSON.stringify(state);};
+  const dispose=mountCalendarRecurring(host,{invoke,library:true,now:()=>new Date(`${today}T12:00:00`)});t.after(()=>{dispose();dom.window.close();});
+  const flush=async()=>{await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));};
+  await flush();const row=host.querySelector('[data-library-id]');failed=true;
+  dom.window.dispatchEvent(new dom.window.CustomEvent('hanni:calendar-refresh'));await flush();
+  assert.equal(host.querySelector('[data-recurring-error]').hidden,false);
+  const search=host.querySelector('[data-routine-search]');search.value='unmatched';search.dispatchEvent(new dom.window.Event('input'));
+  assert.equal(host.querySelector('[data-recurring-error]').hidden,false);
+  assert.equal(host.querySelector('[data-library-no-results]').hidden,false);
+  failed=false;host.querySelector('[data-recurring-retry]').click();await flush();
+  assert.equal(host.querySelector('[data-recurring-error]').hidden,true);
+  assert.equal(host.querySelector('[data-library-id]'),row);
+});
+
 test('open recurring editor keeps its draft when the same plan was changed remotely', async t => {
   const dom=new JSDOM('<main></main>',{url:'https://fixture.invalid'}),host=dom.window.document.querySelector('main');let raw=JSON.stringify(state),writes=0;
   dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;this.dispatchEvent(new dom.window.Event('close'));};

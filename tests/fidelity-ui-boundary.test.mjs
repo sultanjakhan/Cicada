@@ -2,10 +2,11 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 const read = name => readFile(new URL(`../src/hanni/js/${name}`, import.meta.url), 'utf8');
-test('workspace keeps the approved five panes and excludes Routine', async () => {
+test('workspace has six panes and reuses the existing recurring component', async () => {
   const source = await read('calendar-workspace.js');
-  for (const pane of ['dash', 'table', 'tasks', 'goals', 'notes']) assert.match(source, new RegExp(`id:'${pane}'`));
-  assert.doesNotMatch(source, /calendar-routine\.js|id:'routine'|renderRoutine/);
+  for (const pane of ['dash', 'table', 'tasks', 'routines', 'goals', 'notes']) assert.match(source, new RegExp(`id:'${pane}'`));
+  assert.match(source, /renderRoutines:/);
+  assert.doesNotMatch(source, /calendar-routine\.js|id:'routine'/);
 });
 test('workspace has no other project or cloud Health integration', async () => {
   const text = (await Promise.all(['calendar-workspace.js', 'calendar-event-modal.js', 'health-view-refresh.js'].map(read))).join('\n');

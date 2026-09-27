@@ -97,17 +97,17 @@ async function launch(t, { mobile = false, initialSettings = [], width, userAgen
   return { w, calls, click, errors, before, settings };
 }
 
-test('bundled shell boots the five workspace panes with only Calendar in the sidebar', async t => {
+test('bundled shell boots six workspace panes with only Calendar in the sidebar', async t => {
   const { w, click, calls, errors } = await launch(t);
   assert.equal(w.document.title, 'Cicada');
   assert.ok(w.document.documentElement.classList.contains('desktop'));
   assert.deepEqual([...w.document.querySelectorAll('#tab-list [data-tab-id]')].map(el => el.dataset.tabId), ['calendar']);
-  assert.deepEqual([...w.document.querySelectorAll('.uni-tab')].map(el => el.textContent), ['Дашборд','Календарь','Задачи','Заметки','Цели']);
+  assert.deepEqual([...w.document.querySelectorAll('.uni-tab')].map(el => el.textContent), ['Дашборд','Календарь','Задачи','Рутины','Заметки','Цели']);
   assert.ok(w.document.querySelector('[data-calendar-now]'));
   assert.equal(w.document.querySelector('.calendar-now__card').hidden, true);
   assert.equal(w.document.querySelector('.calendar-now__goal').closest('[hidden]'), null);
   assertIdleHeader(w.document.querySelector('[data-calendar-running]'));
-  for (const [pane, selector] of [['table','.calendar-workspace-table'],['tasks','.calendar-tasks'],['goals','.calendar-goals'],['notes','.calendar-notes']]) {
+  for (const [pane, selector] of [['table','.calendar-workspace-table'],['tasks','.calendar-tasks'],['routines','.calendar-recurring--library'],['goals','.calendar-goals'],['notes','.calendar-notes']]) {
     await click('[data-pane="' + pane + '"]');
     assert.equal(w.document.querySelector('.uni-tab.active').dataset.pane, pane);
     if (pane !== 'table') assert.ok(w.document.querySelector(selector), selector);
@@ -117,14 +117,14 @@ test('bundled shell boots the five workspace panes with only Calendar in the sid
   assert.ok(calls.some(call => call.command === 'get_notes'));
   await click('[data-pane="table"]');
   assert.deepEqual([...w.document.querySelectorAll('.calendar-workspace .uni-header-action')].map(el => el.textContent.trim()), ['Создать', 'Начать']);
-  assert.equal(w.document.querySelector('[data-calendar-create]').getAttribute('aria-label'), 'Создать задачу, событие, цель или заметку');
+  assert.equal(w.document.querySelector('[data-calendar-create]').getAttribute('aria-label'), 'Создать');
   assert.equal(w.document.querySelector('[data-mode="list"]'), null);
   assert.deepEqual(errors, []);
 });
 
 test('persistent launcher is beside creation in every empty pane and closes back to its trigger', async t => {
   const { w, click, calls, errors } = await launch(t);
-  for (const pane of ['dash', 'table', 'tasks', 'notes', 'goals']) {
+  for (const pane of ['dash', 'table', 'tasks', 'routines', 'notes', 'goals']) {
     await click(`[data-pane="${pane}"]`);
     const launcher = w.document.querySelector('[data-calendar-launch]');
     assert.equal(launcher.textContent.trim(), 'Начать');
@@ -294,6 +294,7 @@ test('Calendar has no adjacent planning panel and Tasks creation starts without 
   assert.equal(w.document.querySelector('[data-tasks-panel]'), null);
   await click('[data-pane="tasks"]');
   await click('[data-calendar-create]');
+  await click('[data-create-kind="task"]');
   const noDate = w.document.querySelector('#evm-no-date');
   assert.ok(noDate?.checked, 'Task capture must allow an unscheduled date');
 });
@@ -344,7 +345,7 @@ test('upstream mobile mode enables its CSS and closes the drawer through its bac
   assert.equal(w.document.querySelector('.drawer-backdrop').classList.contains('visible'), false);
 });
 
-test('Today has one recommendation; full routine marks and lists belong in Tasks', async t => {
+test('Today links to a persistent routines pane; creation and launch keep explicit shared entries', async t => {
   const {w,click,errors}=await launch(t);
   assert.equal(w.document.querySelectorAll('.calendar-today').length,1);
   assert.equal(w.document.querySelectorAll('[data-calendar-next-action]').length,1);
@@ -354,24 +355,33 @@ test('Today has one recommendation; full routine marks and lists belong in Tasks
   assert.equal(w.document.querySelector('[data-undo-day]'),null);
   assert.equal(w.document.querySelector('[data-calendar-recurring] [data-recurring-add]'),null);
   await click('[data-today-routines]');
-  assert.equal(w.document.querySelectorAll('dialog[open]').length,1);
-  await click('[data-recurring-add]');
+  assert.equal(w.document.querySelector('.uni-tab.active').dataset.pane,'routines');
+  assert.ok(w.document.querySelector('.calendar-recurring--library'));
+  assert.equal(w.document.querySelectorAll('dialog[open]').length,0);
+  assert.equal(w.document.querySelector('[data-recurring-add]'),null);
+  await click('[data-calendar-create]');
+  await click('[data-create-kind="routine"]');
   assert.equal(w.document.querySelector('[data-add-kind="norm"]'),null);
   assert.equal(w.document.querySelector('[data-add-kind="task"]'), null);
   assert.ok(w.document.querySelector('[name="kind"] option[value="action"]'));
   assert.ok(w.document.querySelector('[name="kind"] option[value="rule"]'));
   assert.ok(w.document.querySelector('[name="title"]'));
   assert.equal(w.document.querySelector('[data-add-kind]'),null,'choice closes before the shared Task/Event form opens');
-  await click('dialog[open]:last-of-type footer [data-dialog-close]');
   await click('dialog[open] footer [data-dialog-close]');
+  assert.equal(w.document.activeElement,w.document.querySelector('[data-calendar-create]'));
   await click('[data-calendar-launch]');
   assert.equal(w.document.querySelector('dialog [data-overview-all]').hidden,false);
+  assert.equal(w.document.querySelector('[data-launch-section="tasks"]').hidden,true);
+  assert.equal(w.document.querySelector('[data-launch-section="routines"]').hidden,false);
+  await click('button[data-launch-scope="tasks"]');
+  assert.equal(w.document.querySelector('[data-launch-section="tasks"]').hidden,false);
+  assert.equal(w.document.querySelector('[data-launch-section="routines"]').hidden,true);
   await click('dialog footer [data-dialog-close]');
   await click('[data-pane="table"]');
   w.dispatchEvent(new w.CustomEvent('hanni:open-recurring-settings'));
   await settle();
-  assert.equal(w.document.querySelectorAll('body > .calendar-recurring[hidden]').length,1);
-  await click('dialog footer [data-dialog-close]');
+  assert.equal(w.document.querySelector('.uni-tab.active').dataset.pane,'routines');
+  assert.equal(w.document.querySelectorAll('dialog[open]').length,0);
   assert.equal(w.document.querySelectorAll('body > .calendar-recurring[hidden]').length,0);
   assert.deepEqual(errors,[]);
 });
@@ -388,13 +398,15 @@ test('one persistent action below the Calendar heading opens the shared Task/Eve
   assert.equal(trigger.closest('.uni-content'), null);
   trigger.focus();
   await click('[data-calendar-create]');
+  assert.deepEqual([...w.document.querySelectorAll('[data-create-kind]')].map(button=>button.dataset.createKind),['task','event','goal','note','wish','routine']);
+  await click('[data-create-kind="task"]');
   assert.ok(w.document.querySelector('#evm-form'));
   assert.ok(w.document.querySelector('#evm-title'));
   assert.ok(w.document.querySelector('#evm-goal'));
-  const toggle = w.document.querySelector('[data-editor-type="event"]');
-  assert.ok(toggle, 'shared event switch');
-  toggle.click();
-  await settle();
+  assert.equal(w.document.querySelector('[data-editor-type]'),null,'the selected type is not asked twice');
+  await click('#evm-close');
+  await click('[data-calendar-create]');
+  await click('[data-create-kind="event"]');
   assert.ok(w.document.querySelector('#evm-date'));
   await click('#evm-close');
   assert.equal(w.document.activeElement, trigger);
@@ -407,6 +419,7 @@ test('one persistent action below the Calendar heading opens the shared Task/Eve
   const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1);
   const date = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`;
   await click('[data-calendar-create]');
+  await click('[data-create-kind="event"]');
   assert.equal(w.document.querySelector('#evm-date').value, date, 'creation uses the viewed date');
 });
 
@@ -524,8 +537,9 @@ test('a dated task with a time of day sits at that time in the day grid', async 
 
 test('mobile creation returns to its visible action and settings return to the closed drawer opener', async t => {
   const { w, click } = await launch(t, { mobile:true });
-  assert.equal(w.document.querySelector('[data-calendar-create]').getAttribute('aria-label'), 'Создать задачу, событие, цель или заметку', 'the phone icon button keeps its name');
+  assert.equal(w.document.querySelector('[data-calendar-create]').getAttribute('aria-label'), 'Создать', 'the phone action keeps its visible name');
   const create = await click('[data-calendar-create]');
+  await click('[data-create-kind="task"]');
   assert.equal(w.document.querySelector('#tab-bar').classList.contains('drawer-open'), false);
   await click('#evm-close');
   assert.equal(w.document.activeElement, create);

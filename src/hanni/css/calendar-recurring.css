@@ -25,6 +25,7 @@
 .calendar-routine-library-row[hidden] { display:none; }
 .calendar-routine-controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
 .calendar-routine-controls input { flex:1; min-width:140px; }
+.calendar-recurring--library .calendar-routine-controls input[type=search] { box-sizing:border-box; width:100%; min-height:40px; padding:8px 10px; border:1px solid var(--border-default,#ddd); border-radius:8px; background:var(--bg-card,#fff); color:inherit; }
 .calendar-routine-controls button, .calendar-routine-library-row > button { min-height:44px; }
 .calendar-routine-steps { margin:0 0 16px; padding-left:24px; }
 .calendar-routine-steps li { padding:8px 0 8px 4px; }
@@ -40,8 +41,6 @@
 .calendar-routine-dialog .calendar-routine-controls { position:sticky; bottom:0; padding:12px 0 4px; background:var(--bg-card,#fff); border-top:1px solid var(--border-default,#ddd); box-shadow:0 12px 0 var(--bg-card,#fff); }
 @media(max-width:480px) {
   .calendar-recurring--library .calendar-recurring__card { padding:18px; }
-  .calendar-recurring--library .calendar-routine-library-row { align-items:stretch; flex-wrap:wrap; }
-  .calendar-recurring--library .calendar-routine-library-row > [data-recurring-edit] { flex-basis:100%; }
   .calendar-recurring--library .calendar-recurring__plans > p { overflow-wrap:anywhere; }
   .calendar-routine-step-choice { flex-direction:column; gap:2px; }
   .calendar-routine-step-choice > small { flex:auto; }

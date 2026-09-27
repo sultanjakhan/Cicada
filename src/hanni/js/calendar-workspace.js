@@ -749,7 +749,7 @@ export async function loadCalendarWorkspace(el) {
   routinesRouteHandler=event=>{
     if(S.activeTab!=='calendar'||!el.isConnected)return;
     const create=event.type==='hanni:open-routines-pane'&&event.detail?.create===true;
-    void openPane('routines').then(()=>{if(create&&S._unifiedPane.calendar==='routines')disposeRecurring?.create?.();});
+    void openPane('routines').then(()=>{if(create&&S._unifiedPane.calendar==='routines')disposeRecurring?.create?.({returnFocus:()=>el.querySelector('[data-calendar-create]')?.focus({preventScroll:true})});});
   };
   window.addEventListener('hanni:open-recurring-settings',routinesRouteHandler);
   window.addEventListener('hanni:open-routines-pane',routinesRouteHandler);
