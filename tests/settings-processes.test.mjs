@@ -28,15 +28,19 @@ async function boot() {
   return { dom, modal, ui, writes, input, type, submit };
 }
 
-test('the settings dialog shows «Процессы задач» and its Save stores process edits with the preferences', async () => {
+test('process changes save from their own section and never piggyback on calendar preferences', async () => {
   const x = await boot();
   const section = x.modal.querySelector('.calendar-processes');
   assert.ok(section, 'the editor is part of Calendar settings');
   assert.equal(section.querySelector('h3').textContent, 'Процессы задач');
   x.type(section.querySelector('[data-stage-id="analysis"] [data-control="stage-title"]'), 'Модели');
-  await x.submit();
-  assert.equal(x.modal.open, false, 'saved and closed');
+  assert.deepEqual(x.writes, [], 'editing a process does not write preferences');
+  assert.equal(x.modal.querySelector('[type="submit"]').hidden, true, 'the calendar Save is absent while its preferences are clean');
+  section.querySelector('[data-processes-save]').click();
+  await tick();
+  assert.equal(x.modal.open, true, 'saving processes keeps the settings panel open');
   assert.ok(x.writes.includes('calendar_processes_v1'));
+  assert.equal(x.writes.some(key => key === 'calendar_preferences_v1'), false);
   const stored = JSON.parse(x.ui.get('calendar_processes_v1'));
   assert.equal(stored.processes[0].stages.find(stage => stage.id === 'analysis').title, 'Модели');
 });
@@ -45,12 +49,34 @@ test('an invalid process keeps the dialog open at its field; Escape discards the
   const x = await boot();
   const section = x.modal.querySelector('.calendar-processes');
   x.type(section.querySelector('[data-control="process-title"]'), '');
-  await x.submit();
+  section.querySelector('[data-processes-save]').click();
+  await tick();
   assert.equal(x.modal.open, true);
   assert.deepEqual(x.writes, [], 'nothing is written');
   assert.equal(section.querySelector('[data-processes-error]').textContent, 'Назови процесс.');
   assert.equal(document.activeElement, section.querySelector('[data-control="process-title"]'));
+  x.dom.window.confirm = () => true;
   x.modal.dispatchEvent(new x.dom.window.Event('cancel', { cancelable: true }));
   assert.equal(x.modal.open, false);
   assert.deepEqual(x.writes, [], 'Escape writes nothing');
+});
+
+test('saving calendar preferences never discards a process draft', async () => {
+  const x = await boot();
+  const section = x.modal.querySelector('.calendar-processes');
+  const stage = section.querySelector('[data-stage-id="analysis"] [data-control="stage-title"]');
+  x.type(stage, 'Модели');
+  const day = x.modal.querySelector('[data-value="sun"]');
+  day.click();
+  await x.submit();
+  assert.equal(x.modal.open, true);
+  assert.equal(x.modal.querySelector('[role="tab"][aria-selected="true"]').textContent, 'Этапы задач');
+  assert.equal(section.querySelector('[data-stage-id="analysis"] [data-control="stage-title"]').value, 'Модели');
+  assert.ok(x.writes.includes('calendar_preferences_v1'));
+  assert.equal(x.writes.includes('calendar_processes_v1'), false);
+  assert.match(x.modal.querySelector('[data-settings-status]').textContent, /Черновик этапов ещё не сохранён/);
+  section.querySelector('[data-processes-save]').click();
+  await tick();
+  assert.equal(x.modal.open, true);
+  assert.ok(x.writes.includes('calendar_processes_v1'));
 });

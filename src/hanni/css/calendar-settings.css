@@ -1,0 +1,221 @@
+/* Cicada settings: one compact panel with persistent, keyboard-accessible sections. */
+.calendar-settings-dialog {
+  width: min(760px, calc(100vw - 32px));
+  max-width: 760px;
+  color: var(--text-primary);
+}
+.calendar-settings-dialog .calendar-settings-header {
+  padding-bottom: 14px;
+}
+.calendar-settings-dialog .calendar-settings-header p {
+  max-width: 58ch;
+}
+.calendar-settings-dialog .calendar-settings-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-bottom: 16px;
+}
+.calendar-settings-tabs {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  padding: 4px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border-default);
+  scrollbar-width: thin;
+}
+.calendar-settings-dialog .calendar-settings-tab {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 9px 13px;
+  border-color: transparent;
+  color: var(--text-secondary);
+  background: transparent;
+  white-space: nowrap;
+}
+.calendar-settings-dialog .calendar-settings-tab[aria-selected="true"] {
+  border-color: var(--border-default);
+  color: var(--text-primary);
+  background: var(--bg-hover);
+  font-weight: 650;
+}
+.calendar-settings-panel {
+  min-width: 0;
+  padding: 2px 2px 8px;
+}
+.calendar-settings-panel h3 {
+  margin: 5px 0 8px;
+  font-size: 16px;
+  line-height: 1.4;
+}
+.calendar-settings-panel h4 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+.calendar-settings-panel .calendar-setting-hint {
+  margin: 0 0 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.calendar-settings-dialog .calendar-setting {
+  padding: 12px 0;
+}
+.calendar-settings-dialog .calendar-settings-toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 44px;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.4;
+}
+.calendar-settings-dialog .calendar-settings-toggle input {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent-fill);
+}
+.calendar-settings-option-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 22px;
+  padding-left: 26px;
+}
+.calendar-settings-subsection {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-default);
+}
+.calendar-settings-subsection .text-button {
+  min-height: 44px;
+  margin-top: 4px;
+}
+.calendar-settings-dialog .setting-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.calendar-settings-dialog .setting-pill {
+  min-height: 44px;
+  padding: 9px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  color: var(--text-primary);
+  background: var(--bg-page);
+}
+.calendar-settings-dialog .setting-pill.active {
+  border-color: var(--text-primary);
+  color: var(--bg-card);
+  background: var(--text-primary);
+}
+.calendar-settings-error,
+.calendar-settings-status {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.calendar-settings-error {
+  color: var(--color-red);
+  background: var(--bg-hover);
+}
+.calendar-settings-status {
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+}
+.calendar-settings-actions {
+  min-height: 76px;
+}
+.calendar-settings-actions button {
+  min-width: 132px;
+}
+.calendar-settings-actions[data-dirty="true"]::before {
+  content: "Сохранение календаря не меняет подключение и этапы задач.";
+  margin-right: auto;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.calendar-settings-dialog .calendar-processes,
+.calendar-settings-dialog .calendar-sync-settings,
+.calendar-settings-dialog .calendar-app-updates,
+.calendar-settings-dialog .calendar-settings-connections > section,
+.calendar-settings-dialog .calendar-settings-about > section {
+  border-top: 0;
+  padding-top: 0;
+}
+.calendar-settings-dialog .calendar-processes-hint,
+.calendar-settings-dialog .calendar-sync-settings p,
+.calendar-settings-dialog .calendar-app-updates p {
+  line-height: 1.55;
+}
+.calendar-settings-dialog .calendar-settings-connections,
+.calendar-settings-dialog .calendar-settings-about {
+  display: grid;
+  gap: 20px;
+}
+.calendar-settings-dialog .calendar-settings-connections > section,
+.calendar-settings-dialog .calendar-settings-about > section {
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-default);
+}
+.calendar-settings-dialog .calendar-settings-connections > section:last-child,
+.calendar-settings-dialog .calendar-settings-about > section:last-child {
+  border-bottom: 0;
+}
+.calendar-settings-dialog :focus-visible {
+  outline-offset: 2px;
+}
+
+@media (max-width: 620px) {
+  .calendar-settings-dialog {
+    width: calc(100% - 24px);
+    max-width: none;
+  }
+  .calendar-settings-dialog .calendar-settings-header {
+    padding: 14px 16px 12px;
+  }
+  .calendar-settings-dialog .calendar-settings-body {
+    padding: 0 16px 12px;
+  }
+  .calendar-settings-tabs {
+    gap: 2px;
+    margin-right: -2px;
+    padding: 2px 2px 8px;
+  }
+  .calendar-settings-dialog .calendar-settings-tab {
+    min-height: 44px;
+    padding: 8px 11px;
+  }
+  .calendar-settings-dialog .calendar-editor-actions {
+    display: flex;
+    flex-wrap: wrap;
+    padding: 10px 16px;
+  }
+  .calendar-settings-actions button {
+    flex: 1 1 140px;
+    min-width: 0;
+  }
+  .calendar-settings-actions[data-dirty="true"]::before {
+    flex: 1 0 100%;
+    margin: 0;
+    order: 2;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .calendar-settings-dialog *,
+  .calendar-settings-dialog *::before,
+  .calendar-settings-dialog *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
