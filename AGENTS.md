@@ -4,7 +4,59 @@
 `https://github.com/sultanjakhan/Cicada`. Остальной интерфейс остаётся на русском;
 технические идентификаторы, ключи, package/bundle IDs и лицензии не переименовывать.
 
+Owner design rule, 2026-09-27: before designing or substantially changing UI,
+apply `hanni-ux-ui-research`; accept composition with `hanni-visual-review`.
+Show the complete relevant scenario and make the primary action, stage and time
+meaning clear. Passing tests or absence of overflow is not visual acceptance.
+Preserve agreed workspace widths and controls; do not substitute decorations for
+information hierarchy. A small copy fix does not require a full design audit.
+The Today work focus shows one task and its current stage at a time. Selection
+does not pause or finish other running tasks. The stage arrow advances the stage;
+start/pause and task completion remain separate actions. Goals may have separate
+subtasks; this does not make a task stage an independently completed subtask.
+
 Перед новой постановкой прочитай [подтверждённый контекст продукта](docs/product-context.md), затем проверь исходный код и относящиеся к задаче Issues. Не повторяй вопросы, на которые уже есть ответ в этом контексте; уточняй только новые отсутствующие факты.
+
+Owner continuation, 2026-09-27 (Today completion): recommendation settings open
+from the Today heading; remove the footer Settings and All Tasks links. A confirmed
+terminal routine returns the inline surface to the existing recommendation or empty
+state without starting anything. Defer the policy for empty Today, overdue/undated
+work and rest/sleep to private product Issue #107; do not change ranking for this fix.
+
+Owner continuation, 2026-09-27 (workspace controls): restore a dedicated Routines
+pane after Tasks, reusing existing routine records, execution and editors. Keep
+one shared Create entry, including Wishes and Routines; remove duplicate New Note
+and New Goal/Wish buttons in their panes. Preserve note drafts and explicit starts.
+Distinguish Create from Start visually, make task/routine choices easy to reach,
+and keep the selected main goal clearly marked. The separate goal below Today
+was accepted. This supersedes the older no-Routines-pane directions below.
+
+Owner continuation, 2026-09-27: keep the main goal in a separate widget; the DEV
+candidate places it below Today at matching width. Connect task recommendations to their existing goal/subgoal
+and stage; waiting tasks lead to review, never an implicit start. Import the
+owner's saved legacy routine chains into the isolated DEV only, keeping personal
+exports outside Git and the legacy source read-only. Preserve branching and
+check/track steps; launches stay explicit. This is not an authorization to copy
+legacy credentials/history or install over production.
+
+Owner approval, 2026-09-27 (later): implement one coherent Today dashboard with
+one date, a compact goal context, one explained task/routine recommendation and
+controls for running work. Full task lists and paused-today work belong in Tasks.
+The shared Start picker includes routines. Recommendations use current time and
+existing records; routines do not require fixed times. No invented user routines,
+inferred location/hunger, autonomous starts or silent pauses of parallel work.
+Offer explicit feedback and minimal recommendation settings. The approved task
+card keeps stage choice and time accessible, collapses time history and moves
+goal/date/process editing to Edit. Keep the inline next-stage arrows in lists.
+This supersedes the older routine deferral and Edit-only stage rule below.
+
+Owner correction, 2026-09-27: keep the current-task widget aligned to the full
+dashboard width. Restore the inline next-stage arrow; the stage label is text,
+and arbitrary stage selection remains in task details -> Edit -> Stage. Remove
+the Tasks quick-add row because the shared Create already exists. Keep overdue
+tasks in Tasks, defer routine changes, and discuss daily remaining/minimum counts
+before implementing them. This supersedes the inline stage menu and quick-add
+directions below; see docs/product-context.md.
 
 Owner iteration, 2026-09-25: stages belong only to tasks with a process. The
 built-in process «Системный анализ» has Понимание, Требования, Анализ и модели,

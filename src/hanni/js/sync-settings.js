@@ -6,7 +6,7 @@ export function mountSyncSettings(element, { invoke, setPending = () => {} }) {
   element.className = 'calendar-sync-settings calendar-setting';
   element.innerHTML = `<h3>Синхронизация</h3>
     <p data-sync-status role="status">Загружаем состояние…</p><p data-sync-counts></p><p data-sync-success></p>
-    <p class="calendar-sync-hint">Состояние этого устройства. Другое устройство получит изменения после своего подключения.</p>
+    <p class="calendar-sync-hint" data-sync-hint>Состояние этого устройства. Другое устройство получит изменения после своего подключения.</p>
     <p data-sync-error role="alert" hidden></p>
     <details data-sync-connect><summary>Код подключения</summary><label>Вставь код подключения устройства<input type="password" data-sync-code autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Код подключения устройства"></label><button type="button" data-sync-reveal aria-pressed="false">Показать код</button></details>
     <label class="calendar-settings-toggle"><input type="checkbox" data-sync-enabled disabled> Синхронизация включена</label>
@@ -21,6 +21,15 @@ export function mountSyncSettings(element, { invoke, setPending = () => {} }) {
   function render() {
     if (disposed) return;
     const offline = window.navigator.onLine === false;
+    const unpaired = status?.configured === false && !credentialUnavailable(status.last_error);
+    q('connect').querySelector('summary').textContent = unpaired ? 'Подключить устройство' : 'Код подключения';
+    q('counts').hidden = unpaired && !status.pending && !status.conflicts;
+    q('success').hidden = unpaired && !status.last_success;
+    q('hint').hidden = unpaired;
+    enabled.closest('label').hidden = unpaired && !q('connect').open && !dirty;
+    q('save').hidden = !dirty; q('cancel').hidden = !dirty;
+    q('now').hidden = unpaired;
+    q('conflicts').hidden = unpaired && !status.conflicts;
     q('status').textContent = !status ? 'Состояние синхронизации недоступно.' : credentialUnavailable(status.last_error) ? 'Синхронизация приостановлена: ключ подключения недоступен.' : !status.configured ? 'Устройство ещё не подключено.' : !status.enabled ? 'Синхронизация выключена.' : status.running || busy ? 'Идёт обмен изменениями…' : offline ? 'Нет сети. Изменения остаются на этом устройстве.' : status.last_error ? 'Последний обмен не завершён. Изменения ожидают повторной попытки.' : 'Подключение включено.';
     q('counts').textContent = status ? `Ожидают отправки: ${status.pending ?? 0} · Конфликты: ${status.conflicts ?? 0}` : '';
     const errors = { content_sync_network_unavailable:'Сеть недоступна. Повторим обмен после подключения.', content_sync_http_401:'Код подключения больше не принят сервером.', content_sync_http_403:'Устройство не имеет доступа к обмену.', content_sync_http_426:'Для продолжения синхронизации обнови Cicada на этом устройстве.', content_sync_http_429:'Сервер просит повторить попытку позже.', content_sync_http_507:'На сервере не хватает места для изменений.', mvp_sync_pairing_changed:'Подключение изменилось. Повтори обмен с текущим подключением.', mvp_sync_invalid_config:'Проверь код подключения.', mvp_sync_backup_failed:'Не удалось создать резервную копию перед включением синхронизации.', mvp_sync_background_schedule_failed:'Не удалось включить фоновую синхронизацию. Повтори включение синхронизации.' };
@@ -71,6 +80,7 @@ export function mountSyncSettings(element, { invoke, setPending = () => {} }) {
     } finally { configJson = undefined; busy = false; if (!disposed) { updatePending(); render(); } }
   }
   const conflicts = mountSyncConflicts(q('conflicts-host'), { invoke, isBlocked:() => busy, setPending:value => { conflictBusy = value; if (!disposed) { updatePending(); render(); } } });
+  q('connect').addEventListener('toggle', render);
   q('conflicts').addEventListener('toggle', () => { if (q('conflicts').open) void conflicts.refresh(); });
   code.addEventListener('input', () => { dirty = true; render(); });
   code.addEventListener('keydown', event => { if (event.key === 'Enter') event.preventDefault(); });
@@ -81,5 +91,7 @@ export function mountSyncSettings(element, { invoke, setPending = () => {} }) {
   const onStatus = event => { if (disposed || busy) return; try { accept(event.detail); } catch { /* Ignore incomplete status events. */ } };
   window.addEventListener('hanni:sync-status', onStatus); window.addEventListener('online', render); window.addEventListener('offline', render);
   void refresh();
-  return () => { disposed = true; ++revision; conflicts.dispose(); clearCode(); window.removeEventListener('hanni:sync-status', onStatus); window.removeEventListener('online', render); window.removeEventListener('offline', render); };
+  const dispose = () => { disposed = true; ++revision; dirty = false; conflicts.dispose(); clearCode(); window.removeEventListener('hanni:sync-status', onStatus); window.removeEventListener('online', render); window.removeEventListener('offline', render); };
+  dispose.isDirty = () => dirty;
+  return dispose;
 }

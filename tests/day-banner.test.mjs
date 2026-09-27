@@ -2,6 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {JSDOM} from 'jsdom';
 import {mountCalendarDayBanner} from '../src/hanni/js/calendar-day-banner.js';
+test('Today opens settings without starting the day and survives a quiet refresh', async t => {
+  const dom = new JSDOM('<div id="host"></div>', {pretendToBeVisual:true});
+  const host = dom.window.document.querySelector('#host'); let trigger, writes = 0;
+  const dispose = mountCalendarDayBanner(host, {invoke:async command => {if(command!=='get_ui_state') writes++;return null;},onOpenSettings:button=>{trigger=button;}});
+  t.after(()=>{dispose();dom.window.close();});
+  await new Promise(resolve=>setImmediate(resolve));
+  const button=host.querySelector('[data-today-settings]'); button.focus(); button.click();
+  assert.equal(trigger,button); assert.equal(writes,0); assert.equal(button.getAttribute('aria-haspopup'),'dialog');
+  dom.window.dispatchEvent(new dom.window.Event('hanni:calendar-refresh'));
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(host.querySelector('[data-today-settings]'),button); assert.equal(dom.window.document.activeElement,button);
+});
 test('day start stays acknowledged without offering an undo action',async t=>{
   const dom=new JSDOM('<div id="host"></div>',{url:'http://localhost',pretendToBeVisual:true});
   let saved=null,writes=0;

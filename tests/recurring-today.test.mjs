@@ -13,16 +13,107 @@ const plan={id:'rule-1',kind:'rule',title:'Без телефона за стол
 const state={version:1,plans:[plan],days:{}};
 const task={source_type:'note',source_id:'task-1',status_extra:'task',title:'Подготовить SQL-запрос',date:today,duration_minutes:25};
 
+test('routine library preserves read errors through search and recovers without replacing unchanged rows',async t=>{
+  const dom=new JSDOM('<main></main>',{url:'https://fixture.invalid'}),host=dom.window.document.querySelector('main');let failed=false;
+  const invoke=async()=>{if(failed)throw Error('Read unavailable');return JSON.stringify(state);};
+  const dispose=mountCalendarRecurring(host,{invoke,library:true,now:()=>new Date(`${today}T12:00:00`)});t.after(()=>{dispose();dom.window.close();});
+  const flush=async()=>{await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));};
+  await flush();const row=host.querySelector('[data-library-id]');failed=true;
+  dom.window.dispatchEvent(new dom.window.CustomEvent('hanni:calendar-refresh'));await flush();
+  assert.equal(host.querySelector('[data-recurring-error]').hidden,false);
+  const search=host.querySelector('[data-routine-search]');search.value='unmatched';search.dispatchEvent(new dom.window.Event('input'));
+  assert.equal(host.querySelector('[data-recurring-error]').hidden,false);
+  assert.equal(host.querySelector('[data-library-no-results]').hidden,false);
+  failed=false;host.querySelector('[data-recurring-retry]').click();await flush();
+  assert.equal(host.querySelector('[data-recurring-error]').hidden,true);
+  assert.equal(host.querySelector('[data-library-id]'),row);
+});
+
 test('open recurring editor keeps its draft when the same plan was changed remotely', async t => {
   const dom=new JSDOM('<main></main>',{url:'https://fixture.invalid'}),host=dom.window.document.querySelector('main');let raw=JSON.stringify(state),writes=0;
   dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;this.dispatchEvent(new dom.window.Event('close'));};
   const invoke=async(command,args)=>{if(command==='get_ui_state')return raw;if(command==='set_ui_state'){writes++;raw=args.value;return;}throw Error(command);};
   const dispose=mountCalendarRecurring(host,{invoke,now:()=>new Date(`${today}T12:00:00`)});t.after(()=>{dispose();dom.window.close();});
   await dispose.openManager();dom.window.document.querySelector('[data-recurring-edit="rule-1"]').click();
-  const modal=[...dom.window.document.querySelectorAll('dialog[open]')].at(-1),field=modal.querySelector('[name=title]');field.value='Local draft';
+  const modal=[...dom.window.document.querySelectorAll('dialog[open]')].at(-1),field=modal.querySelector('[data-routine-title]');field.value='Local draft';
   raw=JSON.stringify({...state,plans:[{...plan,title:'Remote title'}]});const remote=raw;modal.querySelector('form').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));
   await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
   assert.equal(modal.open,true);assert.equal(field.value,'Local draft');assert.match(modal.querySelector('[data-dialog-error]').textContent,/другом устройстве/);assert.equal(raw,remote);assert.equal(writes,0);
+});
+
+test('routine library shows enabled and disabled plans, filters, marks rules, and creates only on submit',async t=>{
+  const dom=new JSDOM('<main></main>',{url:'https://fixture.invalid'}),host=dom.window.document.querySelector('main');const yesterday='2026-09-12',oldPlan={...plan,id:'old-run',kind:'action',mode:'activity',title:'Вчерашнее занятие'},checkPlan={...plan,id:'check-task',kind:'action',mode:'check',title:'Обычная отметка'};let raw=JSON.stringify({version:1,plans:[plan,{...plan,id:'disabled',title:'Выключенная рутина',active:false},oldPlan,checkPlan],days:{[yesterday]:{'old-run':{snapshot:oldPlan,status:'pending',run:{steps:[{title:'Занятие',status:'pending'}]}}}}}),writes=0,commands=[];
+  dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;this.dispatchEvent(new dom.window.Event('close'));};
+  const invoke=async(command,args)=>{commands.push(command);if(command==='get_ui_state')return raw;if(command==='set_ui_state'){writes++;raw=args.value;return;}throw Error(command);};
+  const dispose=mountCalendarRecurring(host,{invoke,now:()=>new Date(`${today}T12:00:00`),library:true});t.after(()=>{dispose();dom.window.close();});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(host.querySelector('[data-recurring-heading]').textContent,'Рутины');
+  assert.equal(host.querySelectorAll('[data-library-title]').length,4);
+  assert.match(host.textContent,/выключено/);
+  assert.equal(host.querySelector('[data-library-run="old-run"]').textContent,'Продолжить');
+  assert.equal(host.querySelector('[data-library-run="old-run"]').dataset.libraryDate,yesterday);
+  const stableRow=host.querySelector('[data-library-id="disabled"]'),stableFocus=host.querySelector('[data-recurring-edit="disabled"]');stableFocus.focus();
+  dom.window.dispatchEvent(new dom.window.CustomEvent('hanni:calendar-refresh',{detail:{remoteSync:true}}));
+  await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(host.querySelector('[data-library-id="disabled"]'),stableRow);
+  assert.equal(dom.window.document.activeElement,stableFocus);
+  const search=host.querySelector('[data-routine-search]');search.value='выключенная';search.dispatchEvent(new dom.window.Event('input',{bubbles:true}));
+  assert.equal([...host.querySelectorAll('[data-library-title]')].filter(row=>!row.hidden).length,1);
+  search.value='';search.dispatchEvent(new dom.window.Event('input',{bubbles:true}));
+  host.querySelector('[data-library-details="rule-1"]').click();
+  const detail=dom.window.document.querySelector('dialog[open]');assert.ok(detail);
+  detail.querySelector('[data-detail-status="kept"]').click();
+  await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(JSON.parse(raw).days[today]['rule-1'].status,'kept');
+  assert.equal(dom.window.document.activeElement,host.querySelector('[data-library-details="rule-1"]'));
+  assert.equal(host.querySelector('[data-library-id="disabled"]'),stableRow);
+  assert.equal(writes,1);
+  host.querySelector('[data-library-mark="check-task"]').click();
+  await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(JSON.parse(raw).days[today]['check-task'].status,'done');
+  assert.equal(writes,2);
+  assert.equal(commands.includes('start_task_block'),false);
+  dispose.create();
+  const editor=dom.window.document.querySelector('dialog[open]');assert.ok(editor);
+  assert.equal(editor.querySelector('[data-routine-title]').value,'');
+  assert.equal(writes,2);
+  editor.close();
+});
+
+test('routine library rolls its daily marks forward after midnight',async t=>{
+  const dom=new JSDOM('<main></main>',{url:'https://fixture.invalid'}),host=dom.window.document.querySelector('main');let now=new Date(`${today}T23:59:00`),tick=null;
+  const daily={...plan,weekdays:[0,1,2,3,4,5,6]};let raw=JSON.stringify({version:1,plans:[daily],days:{[today]:{'rule-1':{snapshot:daily,status:'kept'}}}});
+  dom.window.setInterval=callback=>{tick=callback;return 1;};dom.window.clearInterval=()=>{};
+  const invoke=async command=>{if(command==='get_ui_state')return raw;throw Error(command);};
+  const dispose=mountCalendarRecurring(host,{invoke,now:()=>now,library:true});t.after(()=>{dispose();dom.window.close();});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.match(host.querySelector('[data-library-id="rule-1"]').textContent,/Соблюдено/);
+  now=new Date('2026-09-14T00:00:00');tick();
+  await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
+  assert.doesNotMatch(host.querySelector('[data-library-id="rule-1"]').textContent,/Соблюдено/);
+  assert.match(host.querySelector('[data-library-id="rule-1"]').textContent,/Отметить/);
+});
+
+test('graph editor lets imported step properties be edited without changing the plan identity',async t=>{
+  const dom=new JSDOM('<main></main>',{url:'https://fixture.invalid'}),host=dom.window.document.querySelector('main');
+  dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;this.dispatchEvent(new dom.window.Event('close'));};
+  const steps=[{title:'Умыться',dependsOn:[],trackingMode:'check',optional:false},{title:'Подготовить вещи',dependsOn:[0],trackingMode:'track',optional:true}];
+  let raw=JSON.stringify({version:1,plans:[{id:'imported-graph',kind:'action',mode:'graph',title:'Утро',steps,weekdays:[0],startsOn:today,endsOn:'',time:'',active:true,required:true,createdOn:today}],days:{}});
+  const invoke=async(command,args)=>{if(command==='get_ui_state')return raw;if(command==='set_ui_state'){raw=args.value;return;}throw Error(command);};
+  const dispose=mountCalendarRecurring(host,{invoke,now:()=>new Date(`${today}T12:00:00`)});t.after(()=>{dispose();dom.window.close();});
+  await dispose.openManager();dom.window.document.querySelector('[data-recurring-edit="imported-graph"]').click();
+  const modal=[...dom.window.document.querySelectorAll('dialog[open]')].at(-1);
+  assert.equal(modal.querySelectorAll('[data-routine-step]').length,2);
+  assert.equal(modal.querySelectorAll('[data-step-dependency]:checked').length,1);
+  modal.querySelector('[data-routine-title]').value='Утренний порядок';
+  modal.querySelectorAll('[data-step-title]')[1].value='Подготовить сумку';
+  modal.querySelectorAll('[data-step-optional]')[1].click();
+  modal.querySelector('form').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));
+  await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
+  const saved=JSON.parse(raw).plans[0];
+  assert.equal(saved.title,'Утренний порядок');assert.equal(saved.mode,'graph');
+  assert.equal(saved.steps[1].title,'Подготовить сумку');assert.equal(saved.steps[1].optional,false);
+  assert.deepEqual(saved.steps[1].dependsOn,[0]);assert.equal(saved.steps[0].trackingMode,'check');
 });
 
 test('Today combines current-date task and pending rule under one Дела heading', async t => {

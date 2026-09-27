@@ -11,8 +11,8 @@ import { isInstantTask } from './task-model.js';
 import { loadProcesses, loadStageBlocks, stageSeconds, stageTimeTitle, taskStage } from './task-processes.js';
 
 const MORE_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></svg>';
+const ARROW = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 7h9M7.5 3.5 11 7l-3.5 3.5"/></svg>';
 const WAIT_ICON = '<svg class="cip-stage-mark" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 1.5h5M3.5 10.5h5M4 1.5v1.3C4 4.1 6 4.8 6 6s-2 1.9-2 3.2v1.3M8 1.5v1.3C8 4.1 6 4.8 6 6s2 1.9 2 3.2v1.3"/></svg>';
-const ARROW = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 7h8.5M7.5 3.5 11 7l-3.5 3.5"/></svg>';
 const SCOPES = [['work', 'Работа'], ['personal', 'Личное']];
 const RUNNABLE = ['note', 'event', 'schedule'];
 // Device-local memory of «Остановить»: { sourceKey: stoppedAtISO }. Not synchronized.
@@ -57,17 +57,21 @@ export function mountCalendarInProgress(element, dependencies) {
   const prefix = `calendar-in-progress-${++sequence}`;
   let rows = null, failed = false, busy = false, disposed = false, revision = 0, queued = false, feedback = null;
   let hidden = {}, hiddenRaw = null, confirming = null, menu = null;
+  let excludedRoutine = null;
+  let selectedTaskKey = dependencies.singleSelection ? sourceKey(dependencies.selectedTask) || null : undefined;
   let day = dayOf(clock());
   element.classList.add('calendar-in-progress');
   element.innerHTML = `<section class="cip-card" aria-labelledby="${prefix}-title" data-cip-card>
-    <div class="cip-heading" data-cip-heading><h2 id="${prefix}-title" tabindex="-1" data-cip-title>В работе</h2><span class="cip-summary" data-cip-count></span></div>
+    <div class="cip-heading" data-cip-heading><h2 id="${prefix}-title" tabindex="-1" data-cip-title>Текущие задачи</h2><span class="cip-summary" data-cip-count></span></div>
     <div class="cip-lists" data-cip-list></div>
     <div class="cip-footer" data-cip-footer><button type="button" class="cip-launch" data-cip-launch aria-haspopup="dialog"><span aria-hidden="true">＋</span> Запустить ещё</button></div>
     <div class="cip-empty" data-cip-empty hidden><span class="cip-empty-text" data-cip-empty-text>Ничего не запущено</span><button type="button" class="cip-start" data-cip-launch data-cip-empty-launch aria-haspopup="dialog"><span class="cip-glyph" aria-hidden="true">${ICONS.play}</span>Запустить</button><button type="button" class="cip-start" data-cip-retry hidden>Повторить</button></div>
-    <p class="cip-message" data-cip-message role="status" aria-live="polite"></p>
+    <p class="cip-message" data-cip-message role="alert" aria-live="polite"></p>
+    <p class="cip-announcement" data-cip-announcement role="status" aria-live="polite"></p>
   </section>`;
   const q = name => element.querySelector(`[data-cip-${name}]`);
-  const card = q('card'), title = q('title'), list = q('list'), message = q('message');
+  const card = q('card'), title = q('title'), list = q('list'), message = q('message'), announcement = q('announcement');
+  if (dependencies.title) title.textContent = dependencies.title;
   const node = (tag, className, text) => { const value = doc.createElement(tag); if (className) value.className = className; if (text != null) value.textContent = text; return value; };
   const iconButton = (className, icon, label, control, row) => {
     const button = node('button', `cip-icon ${className}`); button.type = 'button';
@@ -76,9 +80,9 @@ export function mountCalendarInProgress(element, dependencies) {
     return button;
   };
   const findControl = (key, control) => [...element.querySelectorAll('[data-cip-control]')].find(button => button.dataset.cipKey === key && button.dataset.cipControl === control);
-  const focusFallback = () => { if (!disposed && element.isConnected) (rows?.length ? title : q('empty-launch')).focus({ preventScroll: true }); };
-  // After the last stage the arrow is gone: focus stays on the stage.
-  const restore = (key, control) => { if (disposed || !element.isConnected) return; const button = findControl(key, control) || (control === 'stage-next' && findControl(key, 'stage')) || findControl(key, 'open'); if (button) button.focus({ preventScroll: true }); else focusFallback(); };
+  const focusFallback = () => { if (!disposed && element.isConnected) { if (element.hidden) dependencies.onEmptyFocus?.(); else (rows?.length ? title : q('empty-launch')).focus({ preventScroll: true }); } };
+  const restore = (key, control) => { if (disposed || !element.isConnected) return; const button = findControl(key, control) || findControl(key, 'open'); if (button) button.focus({ preventScroll: true }); else focusFallback(); };
+  const rowSignatures = new WeakMap();
 
   // Total recorded time of the task (all days) plus its running block(s), live.
   function secondsOf(row, now = clock()) {
@@ -93,7 +97,9 @@ export function mountCalendarInProgress(element, dependencies) {
   }
   function paintTime(row, time, bar, now) {
     const state = timeState(row, now);
-    time.textContent = state.text; time.setAttribute('aria-label', state.label); time.title = state.label;
+    if (time.textContent !== state.text) time.textContent = state.text;
+    if (time.getAttribute('aria-label') !== state.label) time.setAttribute('aria-label', state.label);
+    if (time.title !== state.label) time.title = state.label;
     time.classList.toggle('is-over', state.over);
     if (bar) { bar.classList.toggle('is-over', state.over); bar.firstChild.style.width = `${Math.round(state.ratio * 1000) / 10}%`; }
   }
@@ -104,30 +110,33 @@ export function mountCalendarInProgress(element, dependencies) {
       const row = rows.find(value => value.key === item.dataset.contextRecord);
       if (!row?.running) continue;
       paintTime(row, item.querySelector('[data-cip-time]'), item.querySelector('[data-cip-progress]'), now);
-      const chip = item.querySelector('[data-cip-control="stage"]');
-      if (chip && row.stageState) chip.title = stageTitle(row, now);
+      const chip = item.querySelector('.cip-stage');
+      if (chip && row.stageState) chip.title = row.stageTimeAvailable ? stageTitle(row, now) : 'Время по стадиям недоступно';
+      const stageTime = item.querySelector('.cip-stage-time');
+      if (stageTime && row.stageState && row.stageTimeAvailable) {
+        const text = `Учтено на этапе ${formatAgainstEstimate(stageSeconds({ blocks: row.stageBlocks, log: row.stageLog, stage: row.stageState.stage, now }).get(row.stageState.stage) || 0, 0)}`;
+        if (stageTime.textContent !== text) stageTime.textContent = text;
+      }
     }
   }
   // Timer work of this task inside each stage period, the running block included.
   const stageTitle = (row, now = clock()) => stageTimeTitle(row.stageState, stageSeconds({ blocks: row.stageBlocks, log: row.stageLog, stage: row.stageState.stage, now }));
-  // The stage label opens the menu; «→» moves to the next stage in one tap.
+  // The stage is plain text; the adjacent arrow advances one step when available.
   function stageControl(row) {
     const state = row.stageState, group = node('span', 'cip-stage-group');
-    const chip = node('button', 'cip-stage'); chip.type = 'button';
-    chip.dataset.cipControl = 'stage'; chip.dataset.cipKey = row.key; chip.disabled = busy;
-    chip.setAttribute('aria-haspopup', 'menu'); chip.setAttribute('aria-expanded', String(menu?.key === row.key && menu.control === 'stage'));
+    const chip = node('span', 'cip-stage');
     const label = state.label;
     chip.classList.toggle('is-empty', !label && !state.waiting);
     chip.classList.toggle('is-waiting', state.waiting);
     chip.classList.toggle('is-deleted', state.deleted);
     chip.innerHTML = state.waiting ? WAIT_ICON : '';
     // «Жду ответа» is the small hourglass before the stage name.
-    chip.append(node('span', 'cip-stage-text', label || (state.waiting ? 'Жду ответа' : 'Стадия')));
-    chip.title = stageTitle(row);
-    chip.setAttribute('aria-label', `Стадия: ${label || 'не выбрана'}${state.waiting ? ', жду ответа' : ''}. Выбрать стадию: ${row.title}`);
+    chip.append(node('span', 'cip-stage-prefix', 'Этап:'), node('span', 'cip-stage-text', label || (state.waiting ? 'Жду ответа' : 'Не выбран')));
+    chip.title = row.stageTimeAvailable ? stageTitle(row) : 'Время по стадиям недоступно';
     group.append(chip);
     if (state.next) {
       const next = node('button', 'cip-stage-next'); next.type = 'button'; next.innerHTML = ARROW;
+      next.append(node('span', 'cip-stage-next-label', 'Дальше'));
       next.dataset.cipControl = 'stage-next'; next.dataset.cipKey = row.key; next.disabled = busy;
       next.title = `${state.stage ? 'Дальше' : 'Начать'}: ${state.next.title}`;
       next.setAttribute('aria-label', `Следующая стадия «${state.next.title}»: ${row.title}`);
@@ -150,51 +159,91 @@ export function mountCalendarInProgress(element, dependencies) {
     const open = node('button', 'cip-title', row.title); open.type = 'button'; open.title = row.title;
     open.dataset.cipControl = 'open'; open.dataset.cipKey = row.key;
     const time = node('span', 'cip-time'); time.dataset.cipTime = row.key;
-    const head = node('div', 'cip-line'); head.append(open, time);
+    const head = node('div', 'cip-line cip-title-line'); head.append(open);
     const content = node('div', 'cip-content'); content.append(head);
     const meta = node('div', 'cip-line cip-meta');
-    if (row.stageState) meta.append(stageControl(row));
+    meta.append(node('span', 'cip-state', row.running ? 'Идёт' : 'На паузе'));
+    if (row.stageState) {
+      meta.append(stageControl(row));
+      const elapsed = stageSeconds({ blocks: row.stageBlocks, log: row.stageLog, stage: row.stageState.stage, now: clock() }).get(row.stageState.stage) || 0;
+      const stageTime = node('span', 'cip-stage-time', row.stageTimeAvailable ? `Учтено на этапе ${formatAgainstEstimate(elapsed, 0)}` : 'Время этапа недоступно');
+      if (!row.stageTimeAvailable) stageTime.title = 'Не удалось загрузить время по стадиям';
+      meta.append(stageTime);
+    }
     if (row.goal) { const goal = node('span', 'cip-goal', row.goal); goal.title = `Цель: ${row.goal}`; meta.append(goal); }
-    if (meta.childElementCount) content.append(meta);
+    content.append(meta);
+    const meter = node('div', 'cip-time-meter');
+    meter.append(node('span', 'cip-time-label', row.estimate > 0 ? 'Всего / оценка' : 'Затрачено'), time);
     let bar = null;
-    if (row.estimate > 0) { bar = node('span', 'cip-progress'); bar.dataset.cipProgress = ''; bar.setAttribute('aria-hidden', 'true'); bar.append(node('span')); content.append(bar); }
+    if (row.estimate > 0) { bar = node('span', 'cip-progress'); bar.dataset.cipProgress = ''; bar.setAttribute('aria-hidden', 'true'); bar.append(node('span')); meter.append(bar); }
     paintTime(row, time, bar);
     const actions = node('div', 'cip-actions');
     const toggle = iconButton(`cip-toggle${row.running ? ' is-running' : ''}`, ICONS[row.running ? 'pause' : 'play'], row.running ? 'Пауза' : 'Продолжить', 'toggle', row);
     const finish = iconButton('cip-finish', ICONS.check, 'Готово', 'finish', row);
     const more = iconButton('cip-more', MORE_ICON, 'Действия', 'menu', row);
     more.setAttribute('aria-haspopup', 'menu'); more.setAttribute('aria-expanded', String(menu?.key === row.key && menu.control === 'menu'));
-    actions.append(toggle, finish, more);
-    item.append(content, actions);
+    actions.append(finish, more);
+    item.append(toggle, content, meter, actions);
     if (confirming === row.key) { item.classList.add('is-confirming'); item.append(confirmPanel(row)); }
+    rowSignatures.set(item, JSON.stringify([row, confirming === row.key]));
     return item;
+  }
+  function renderRowIfChanged(row, previous) {
+    const existing = previous.get(row.key);
+    return existing && rowSignatures.get(existing) === JSON.stringify([row, confirming === row.key]) ? existing : renderRow(row);
+  }
+  function syncChildren(parent, wanted) {
+    wanted.forEach((child, index) => {
+      const current = parent.children[index] || null;
+      if (current !== child) parent.insertBefore(child, current);
+    });
+    while (parent.children.length > wanted.length) parent.lastElementChild.remove();
   }
   function render() {
     if (disposed) return;
+    const visibleRows = (rows || []).filter(row => {
+      if (dependencies.singleSelection && row.key !== selectedTaskKey) return false;
+      if (!excludedRoutine || row.source_type !== 'schedule') return true;
+      try { return String(JSON.parse(row.source_id)[0]) !== excludedRoutine; } catch { return true; }
+    });
     const focused = doc.activeElement, focusKey = element.contains(focused) ? focused.dataset.cipKey : null, focusControl = focused?.dataset?.cipControl;
     if (confirming && !rows?.some(row => row.key === confirming && row.running)) confirming = null;
-    const empty = !rows?.length;
+    const empty = !visibleRows.length;
+    element.hidden = !!dependencies.hideWhenEmpty && rows !== null && empty && !failed && !feedback?.error;
     card.classList.toggle('is-empty', empty);
     card.setAttribute('aria-busy', String(busy || rows === null));
-    q('heading').hidden = empty; list.hidden = empty; q('footer').hidden = empty; q('empty').hidden = !empty;
+    q('heading').hidden = empty; list.hidden = empty; q('footer').hidden = empty || !!dependencies.embedded; q('empty').hidden = !empty;
     q('empty-text').textContent = rows === null ? (failed ? 'Не удалось загрузить задачи в работе.' : 'Загружаем задачи в работе…') : 'Ничего не запущено';
     q('empty-launch').hidden = rows === null; q('retry').hidden = !(rows === null && failed);
-    q('count').textContent = empty ? '' : summaryOf(rows);
+    q('count').textContent = empty ? '' : summaryOf(visibleRows);
     element.querySelectorAll('[data-cip-launch], [data-cip-retry]').forEach(button => { button.disabled = busy; });
+    element.querySelectorAll('[data-cip-control]').forEach(button => { button.disabled = busy; });
     // Work first, then personal; sub-headings only when both kinds are listed.
-    const groups = SCOPES.map(([id, label]) => ({ id, label, items: (rows || []).filter(row => row.scope === id) })).filter(group => group.items.length);
-    list.replaceChildren(...(groups.length > 1 ? groups : [{ items: rows || [] }]).flatMap(group => {
-      const ul = node('ul', 'cip-list'); ul.append(...group.items.map(renderRow));
-      if (!group.label) return [ul];
-      const heading = node('h3', 'cip-group', group.label); heading.id = `${prefix}-group-${group.id}`; heading.dataset.cipGroup = group.id;
-      ul.setAttribute('aria-labelledby', heading.id);
-      return [heading, ul];
-    }));
-    message.textContent = feedback?.text || (rows && failed ? 'Не удалось обновить список. Показано последнее состояние.' : '');
+    const groups = SCOPES.map(([id, label]) => ({ id, label, items: visibleRows.filter(row => row.scope === id) })).filter(group => group.items.length);
+    const previous = new Map([...list.querySelectorAll('.cip-row')].map(item => [item.dataset.contextRecord, item]));
+    const grouped = groups.length > 1, wantedList = [];
+    for (const group of (grouped ? groups : [{ items: visibleRows }])) {
+      const oldHeading = group.id ? [...list.querySelectorAll('[data-cip-group]')].find(item => item.dataset.cipGroup === group.id) : null;
+      const oldList = group.id
+        ? [...list.querySelectorAll('.cip-list')].find(item => item.getAttribute('aria-labelledby') === `${prefix}-group-${group.id}`)
+        : (!grouped ? list.querySelector('.cip-list:not([aria-labelledby])') : null);
+      const heading = group.label ? oldHeading || node('h3', 'cip-group') : null;
+      if (heading) { heading.textContent = group.label; heading.id = `${prefix}-group-${group.id}`; heading.dataset.cipGroup = group.id; wantedList.push(heading); }
+      const ul = oldList || node('ul', 'cip-list');
+      ul.className = 'cip-list';
+      if (heading) ul.setAttribute('aria-labelledby', heading.id); else ul.removeAttribute('aria-labelledby');
+      const wantedRows = group.items.map(row => renderRowIfChanged(row, previous));
+      syncChildren(ul, wantedRows);
+      wantedList.push(ul);
+    }
+    syncChildren(list, wantedList);
+    message.textContent = feedback?.error ? feedback.text : (rows && failed ? 'Не удалось обновить список. Показано последнее состояние.' : '');
+    announcement.textContent = feedback?.announcement || '';
     message.setAttribute('role', feedback?.error || (rows && failed) ? 'alert' : 'status');
     // An open menu follows its re-rendered trigger or closes with its row.
     if (menu) { const trigger = findControl(menu.key, menu.control); if (trigger && !busy) { menu.trigger = trigger; trigger.setAttribute('aria-expanded', 'true'); } else closeMenu(menu.menu.contains(doc.activeElement)); }
-    if (focusKey && !focused.isConnected) restore(focusKey, focusControl);
+    if (focusKey && (!focused.isConnected || doc.activeElement !== focused)) restore(focusKey, focusControl);
+    if (dependencies.singleSelection) dependencies.onSelectedTaskState?.({ key: selectedTaskKey, visible: visibleRows.some(row => row.key === selectedTaskKey), ready: rows !== null, failed });
   }
   async function load(today) {
     const [running, blocks, hiddenValue, processes] = await Promise.all([readActiveBlocks(invoke), invoke('get_timeline_blocks', { date: today }), invoke('get_ui_state', { key: HIDDEN_KEY }).catch(() => hiddenRaw), loadProcesses(invoke)]);
@@ -222,14 +271,24 @@ export function mountCalendarInProgress(element, dependencies) {
       if (!row.running && (!row.lastBlock || `${block.end_time || block.start_time}` > `${row.lastBlock.end_time || row.lastBlock.start_time}`)) { row.lastBlock = block; row.completion_date = block.completion_date || block.date; }
     }
     const types = new Set([...entries.values()].map(row => row.source_type));
+    if (dependencies.singleSelection && selectedTaskKey) types.add('note');
     const [tasks, events, schedules, links, goals] = await Promise.all([
       types.has('note') ? invoke('get_calendar_tasks', {}) : [],
       types.has('event') ? invoke('get_all_events', {}) : [],
       types.has('schedule') ? invoke('get_schedules', {}) : [],
       // The goal is context only; without it the rows still work.
-      entries.size ? invoke('get_calendar_task_goals', {}).catch(() => []) : [],
-      entries.size ? invoke('get_goals', { tabName: null }).catch(() => []) : [],
+      types.size ? invoke('get_calendar_task_goals', {}).catch(() => []) : [],
+      types.size ? invoke('get_goals', { tabName: null }).catch(() => []) : [],
     ]);
+    if (dependencies.singleSelection && selectedTaskKey && !entries.has(selectedTaskKey)) {
+      const selected = tasks.find(task => sourceKey(task) === selectedTaskKey);
+      const work = Number(selected?.actual_seconds) || Number(selected?.actual_minutes) * 60 || 0;
+      if (selected && !closedTask(selected) && (selected.has_work || work > 0)) {
+        const row = entry(selected);
+        row.title = selected.title || '';
+        row.completion_date = selected.completion_date || selected.date || null;
+      }
+    }
     // «Остановить» hides a paused task until a block starts after the stop.
     const nextHidden = readHidden(hiddenValue), horizon = clock().getTime() - HIDDEN_DAYS * 86400000;
     for (const [key, at] of Object.entries(nextHidden)) {
@@ -238,6 +297,7 @@ export function mountCalendarInProgress(element, dependencies) {
     }
     const result = [];
     for (const row of entries.values()) {
+      if (dependencies.activeOnly && !row.running && (!dependencies.singleSelection || row.key !== selectedTaskKey)) continue;
       if (!row.running && nextHidden[row.key]) continue;
       let record;
       if (row.source_type === 'note') record = tasks.find(task => task.source_type === 'note' && String(task.source_id) === row.source_id);
@@ -263,8 +323,13 @@ export function mountCalendarInProgress(element, dependencies) {
       row.goal = link ? goals.find(goal => String(goal.id) === String(link.goal_id))?.title || '' : '';
       result.push(row);
     }
-    const stageBlocks = await loadStageBlocks(invoke, result.filter(row => row.stageState).map(row => row.source_id));
-    for (const row of result) row.stageBlocks = stageBlocks.get(row.source_id) || [];
+    let stageTimeAvailable = true;
+    const stageInvoke = async (command, args) => {
+      try { return await invoke(command, args); }
+      catch (error) { if (command === 'get_calendar_task_blocks') stageTimeAvailable = false; throw error; }
+    };
+    const stageBlocks = await loadStageBlocks(stageInvoke, result.filter(row => row.stageState).map(row => row.source_id));
+    for (const row of result) { row.stageBlocks = stageBlocks.get(row.source_id) || []; row.stageTimeAvailable = stageTimeAvailable; }
     const raw = JSON.stringify(nextHidden);
     if (raw !== JSON.stringify(readHidden(hiddenValue))) void saveHidden(nextHidden).catch(() => {});
     else { hidden = nextHidden; hiddenRaw = hiddenValue ?? null; }
@@ -285,8 +350,10 @@ export function mountCalendarInProgress(element, dependencies) {
     try {
       const next = await load(today);
       if (disposed || request !== revision || busy || (canCommit && !canCommit())) return;
+      const unchanged = !!rows && !failed && JSON.stringify(rows) === JSON.stringify(next);
       rows = next; failed = false;
       dependencies.onRowsChange?.(rows.map(row => row.key));
+      if (unchanged) { renderTimes(); return; }
     } catch {
       if (disposed || request !== revision) return;
       failed = true;
@@ -298,7 +365,7 @@ export function mountCalendarInProgress(element, dependencies) {
     if (disposed || busy) return;
     closeMenu(false);
     busy = true; feedback = null; revision++; confirming = null; render();
-    let control = { finish: 'open', stop: 'open', cancel: 'open', stage: 'stage', waiting: 'stage', advance: 'stage-next' }[action.kind] || 'toggle';
+    let control = { finish: 'open', stop: 'open', cancel: 'open', advance: 'stage-next' }[action.kind] || 'toggle';
     try {
       if (action.kind === 'pause') await pauseAll(row);
       else if (action.kind === 'start') await startCalendarExecution(invoke, { source_type: row.source_type, source_id: row.source_id, completion_date: row.completion_date });
@@ -308,8 +375,8 @@ export function mountCalendarInProgress(element, dependencies) {
         await saveHidden({ ...hidden, [row.key]: clock().toISOString() });
       } else if (action.kind === 'cancel') {
         for (const blockId of row.blockIds) await invoke('cancel_task_block', { blockId });
-      } else if (action.kind === 'stage' || action.kind === 'advance' || action.kind === 'waiting') {
-        const updated = await invoke('set_calendar_task_stage', { id: row.source_id, stage: action.kind === 'waiting' ? null : action.stage, waiting: action.kind === 'waiting' ? action.waiting : null });
+      } else if (action.kind === 'advance') {
+        const updated = await invoke('set_calendar_task_stage', { id: row.source_id, stage: action.stage, waiting: null });
         if (updated && typeof updated === 'object') {
           row.record = { ...row.record, process: updated.process ?? row.stageState.processId, stage: String(updated.stage ?? ''), waiting: !!updated.waiting, stage_log: updated.stage_log ?? row.stageLog };
           row.stageState = taskStage(row.record, row.processes); row.stageLog = row.record.stage_log || [];
@@ -323,14 +390,14 @@ export function mountCalendarInProgress(element, dependencies) {
         if (!Number.isFinite(blockId)) throw new Error('Не удалось найти запись о работе. Обнови экран.');
         await invoke('finish_task_block', { blockId });
       }
-      feedback = { text: {
+      feedback = { announcement: {
         pause: 'Задача на паузе.', start: 'Задача снова в работе.', finish: 'Задача завершена.',
         stop: 'Задача остановлена и убрана из «В работе». Время сохранено.', cancel: 'Запуск отменён. Его время не учтено.',
-        stage: action.stage ? `Стадия: ${action.label}.` : 'Стадия снята.', advance: `Стадия: ${action.label}.`, waiting: action.waiting ? 'Отмечено: жду ответа.' : 'Отметка «Жду ответа» снята.',
+        advance: `Этап: ${action.label}.`,
       }[action.kind] };
     } catch (error) {
       feedback = { error: true, text: errorText(error) || 'Не удалось выполнить действие. Обнови экран и повтори.' };
-      control = { finish: 'finish', stop: 'menu', cancel: 'menu', stage: 'stage', waiting: 'stage', advance: 'stage-next' }[action.kind] || 'toggle';
+      control = { finish: 'finish', stop: 'menu', cancel: 'menu', advance: 'stage-next' }[action.kind] || 'toggle';
     } finally {
       busy = false;
       notify(row);
@@ -382,6 +449,7 @@ export function mountCalendarInProgress(element, dependencies) {
     state.scroll = event => { if (!box.contains(event.target)) closeMenu(true); };
     state.keys = event => {
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeMenu(true); return; }
+      if (event.key === 'Enter' && box.contains(event.target) && event.target.matches('button.cip-menu-item')) { event.preventDefault(); event.target.click(); return; }
       if (event.key === 'Tab') { closeMenu(true); return; }
       if (!box.contains(event.target) || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
       event.preventDefault();
@@ -395,17 +463,6 @@ export function mountCalendarInProgress(element, dependencies) {
     win.addEventListener('resize', state.dismiss);
     menu = state; trigger?.setAttribute('aria-expanded', 'true');
     (buttons.find(button => button.classList.contains('is-checked') && button.getAttribute('role') === 'menuitemradio') || buttons[0])?.focus({ preventScroll: true });
-  }
-  // The secondary path: go back, pick any stage of the task's process, or «Жду ответа».
-  function openStageMenu(row, trigger) {
-    const state = row.stageState;
-    const items = [
-      ...state.stages.map(stage => ({ id: `stage:${stage.id}`, label: stage.title, role: 'menuitemradio', checked: state.stage === stage.id, run: () => void act(row, { kind: 'stage', stage: stage.id, label: stage.title }) })),
-      { id: 'stage:', label: 'Без стадии', role: 'menuitemradio', checked: !state.stage, run: () => void act(row, { kind: 'stage', stage: '' }) },
-      { separator: true },
-      { id: 'waiting', label: 'Жду ответа', role: 'menuitemcheckbox', checked: state.waiting, run: () => void act(row, { kind: 'waiting', waiting: !state.waiting }) },
-    ];
-    openMenu(row, 'stage', trigger, items, `Стадия: ${row.title}`);
   }
   function openActionsMenu(row, trigger, point = null) {
     const items = [
@@ -427,9 +484,9 @@ export function mountCalendarInProgress(element, dependencies) {
     else if (control === 'toggle') void act(row, { kind: row.running ? 'pause' : 'start' });
     else if (control === 'finish') void act(row, { kind: 'finish' });
     else if (control === 'stage-next' && row.stageState?.next) void act(row, { kind: 'advance', stage: row.stageState.next.id, label: row.stageState.next.title });
-    else if (control === 'stage' || control === 'menu') {
+    else if (control === 'menu') {
       if (menu?.key === row.key && menu.control === control) { closeMenu(true); return; }
-      if (control === 'stage') openStageMenu(row, button); else openActionsMenu(row, button);
+      openActionsMenu(row, button);
     } else if (control === 'cancel-confirm') void act(row, { kind: 'cancel' });
     else if (control === 'cancel-keep') { confirming = null; render(); restore(row.key, 'menu'); }
   };
@@ -469,6 +526,14 @@ export function mountCalendarInProgress(element, dependencies) {
     (rows?.length ? title : q('empty-launch')).focus({ preventScroll: true });
   };
   dispose.refresh = () => refresh();
+  dispose.setExcludedRoutine = id => { excludedRoutine = id == null ? null : String(id); render(); };
+  dispose.setSelectedTask = task => {
+    const next = task == null ? null : typeof task === 'string' ? task : sourceKey(task);
+    if (!dependencies.singleSelection || next === selectedTaskKey) return;
+    selectedTaskKey = next;
+    render();
+    if (next && !rows?.some(row => row.key === next) && !busy) void refresh();
+  };
   dispose.keys = () => (rows || []).map(row => row.key);
   return dispose;
 }

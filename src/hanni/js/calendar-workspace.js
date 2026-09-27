@@ -19,40 +19,41 @@ import { startCalendarExecution, readActiveBlocks } from './calendar-execution.j
 import { mountCalendarInProgress } from './calendar-in-progress.js';
 import { mountCalendarDayBanner } from './calendar-day-banner.js';
 import { loadCalendarPreferences } from './calendar-display-preferences.js';
-import { mountGoalGlance, attachDevelopmentTask } from './calendar-development.js';
+import { attachDevelopmentTask, mountGoalGlance } from './calendar-development.js';
 import { openCalendarGoalPopup } from './calendar-goal-popup.js';
 import { sphereLabel, isInstantTask } from './task-model.js';
 import { loadProcesses, mountStageTime, taskStage } from './task-processes.js';
+import { openCalendarTaskDetails } from './calendar-task-details.js';
+import { mountCalendarTodayAction } from './calendar-today-action.js';
+import { mountCalendarRoutineChoices } from './calendar-routine-choices.js';
+import { showCalendarSettings } from './calendar-settings.js';
+import { openCalendarCreateMenu } from './calendar-create-menu.js';
 
 let disposeNow = null, disposeTable = null, disposePanel = null, disposeTasks = null;
 let disposeRecurring = null, goalPopup = null, tasksDialog = null;
-let disposeDayBanner = null, disposeInProgress = null;
+let disposeDayBanner = null, disposeInProgress = null, todayTaskSelection = null;
+let disposeNextAction = null, disposeTaskDetails = null, disposeRoutineChoices = null;
+let routinesRouteHandler = null;
 let preferences = { density:'comfortable', showCompleted:false };
 let workspaceRevision = 0;
 let dialogSequence = 0;
 const tasksPaneState = { filter:'active', search:'', goal:'', sphere:'', page:0 };
 // The Goals/Wishes choice survives pane switches within a session; it is not a stored preference.
 const goalsPaneState = { view:'goals' };
-function cleanupWorkspace() { workspaceRevision++; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeRecurring?.(); disposeDayBanner?.(); disposeInProgress?.(); goalPopup?.dispose(); tasksDialog?.dispose(); disposeInProgress = null; disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; disposeRecurring = null; disposeDayBanner = null; goalPopup = null; tasksDialog = null; }
+let closeCreateMenu = null;
+function cleanupWorkspace() { workspaceRevision++; disposeNextAction?.(); disposeTaskDetails?.(); disposeRoutineChoices?.(); disposeNextAction = disposeTaskDetails = disposeRoutineChoices = null; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeRecurring?.(); disposeDayBanner?.(); disposeInProgress?.(); goalPopup?.dispose(); tasksDialog?.dispose(); disposeInProgress = null; disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; disposeRecurring = null; disposeDayBanner = null; goalPopup = null; tasksDialog = null; }
+const nextActionPreferences = () => ({ enabled:preferences.recommendationsEnabled, includeTasks:preferences.recommendTasks, includeRoutines:preferences.recommendRoutines });
 const view = { period: 'day', mode: 'grid', date: views.iso(new Date()), firstDay:'mon' };
 let initialViewLoaded = false;
 window.addEventListener('hanni:calendar-settings-changed', event => {
   const changes = event.detail?.changes || event.detail || {};
   preferences = { ...preferences, ...changes };
+  disposeNextAction?.setPreferences(nextActionPreferences());
   document.documentElement.dataset.calendarDensity = preferences.density;
   if (!changes.first_day) return;
   view.firstDay = changes.first_day === 'sun' ? 'sun' : 'mon';
   window.dispatchEvent(new Event('hanni:calendar-refresh'));
 });
-window.addEventListener('hanni:open-recurring-settings', () => {
-  if (document.querySelector('[data-calendar-recurring]')) return;
-  const host = document.createElement('div'); host.hidden = true; document.body.append(host);
-  const dispose = mountCalendarRecurring(host, { invoke, showCompleted:preferences.showCompleted });
-  // A temporary mount supports this settings entry from Table, Goals and Notes too.
-  void dispose.openManager().finally(() => {});
-  dispose.onManagerClose = () => { dispose(); host.remove(); };
-});
-
 // Actions that leave the goal popup. Set by the workspace mount, which owns navigation.
 const goalPopupActions = { selectGoal: null };
 function createGoalTask(goal, returnFocus = null, skill = null) {
@@ -181,6 +182,16 @@ function occurrenceDialog(record, returnFocus = null) {
 }
 
 async function showRecord(record, returnFocus = null, initialFocus = null) {
+  if (record.source_type === 'note' && !record.readonly) {
+    const revision = workspaceRevision;
+    const isCurrent = () => revision === workspaceRevision && S.activeTab === 'calendar';
+    if (initialFocus === 'goal') return taskEditor(record, returnFocus, 'goal', isCurrent);
+    disposeTaskDetails?.();
+    disposeTaskDetails = openCalendarTaskDetails(record, { document, invoke, returnFocus, isCurrent,
+      onEdit:(task, restore) => taskEditor(task, restore, 'title', isCurrent),
+      onChanged:changed, executeAction:executeCalendarTaskAction });
+    return;
+  }
   const modal = dialog(record.title, returnFocus);
   const summary = [record.kind, isInstantTask(record) && 'Моментальная', sphereLabel(record.sphere), record.status].filter(Boolean).join(' · ');
   modal.querySelector('.cm-fields').innerHTML = `<p>${escapeHtml(summary)}</p><p>${escapeHtml(record.date ? views.label(record.date) : 'Без даты')} · ${escapeHtml(record.time || 'Без времени')}</p><p role="status">Загружаем цель…</p>`;
@@ -279,8 +290,9 @@ export async function mountCalendarTable(el) {
   disposeTable?.();
   let revision = 0, disposed = false, menuRecords = [], actionBusy = false;
   el.classList.add('calendar-mvp');
-  el.innerHTML = `<div class="cm-toolbar"><div class="cm-segment" role="group" aria-label="Период календаря">${[['day','День'],['week','Неделя'],['month','Месяц']].map(([id,title]) => `<button data-period="${id}" aria-pressed="${view.period === id}">${title}</button>`).join('')}</div></div>
-    <div class="cm-controls"><div class="cm-date"><button data-prev aria-label="Предыдущий период"><span class="cm-icon" aria-hidden="true">${ICONS.chevronLeft}</span></button><div class="cm-date-roller" data-date-roller><h2 data-range></h2></div><button data-next aria-label="Следующий период"><span class="cm-icon" aria-hidden="true">${ICONS.chevronRight}</span></button><button data-today>Сегодня</button></div>
+  el.innerHTML = `<div class="cm-calendar-toolbar"><div class="cm-date-roller" data-date-roller><h2 data-range></h2></div>
+    <div class="cm-date"><button data-prev aria-label="Предыдущий период"><span class="cm-icon" aria-hidden="true">${ICONS.chevronLeft}</span></button><button data-next aria-label="Следующий период"><span class="cm-icon" aria-hidden="true">${ICONS.chevronRight}</span></button><button data-today>Сегодня</button></div>
+    <div class="cm-toolbar"><div class="cm-segment" role="group" aria-label="Период календаря">${[['day','День'],['week','Неделя'],['month','Месяц']].map(([id,title]) => `<button data-period="${id}" aria-pressed="${view.period === id}">${title}</button>`).join('')}</div></div>
     </div><p data-notice role="status"></p><button data-retry hidden>Повторить загрузку</button><div data-calendar-records></div>`;
   const host = el.querySelector('[data-calendar-records]');
   host.tabIndex = -1;
@@ -465,16 +477,28 @@ export async function mountCalendarTable(el) {
 export function openCalendarCreate(button) {
   const el = document.getElementById('calendar-content');
   if (!el?.querySelector('.uni-pane') || document.querySelector('dialog[open]')) return;
+  if (closeCreateMenu) { closeCreateMenu(); return; }
   const revision = workspaceRevision;
   const isCurrent = () => revision === workspaceRevision && button.isConnected && el.isConnected && S.activeTab === 'calendar';
-  const tasksPane = S._unifiedPane.calendar === 'tasks';
-  showCalendarCreateModal(tasksPane ? null : S._unifiedPane.calendar === 'table' ? view.date : views.iso(new Date()), {
-    initialNoDate: tasksPane,
-    isCurrent, returnFocus: () => { if (isCurrent()) button.focus({ preventScroll:true }); },
+  const pane = S._unifiedPane.calendar;
+  const initialKind = pane === 'notes' ? 'note' : pane === 'goals' ? goalsPaneState.view === 'wishes' ? 'wish' : 'goal' : pane === 'routines' ? 'routine' : pane === 'table' ? 'event' : 'task';
+  const returnFocus = () => { if (isCurrent()) button.focus({ preventScroll:true }); };
+  closeCreateMenu = openCalendarCreateMenu(button, { isCurrent, initialKind,
+    onClose: () => { closeCreateMenu = null; },
+    onSelect: kind => {
+      if (!isCurrent()) return;
+      if (kind === 'routine') { window.dispatchEvent(new CustomEvent('hanni:open-routines-pane', { detail:{create:true} })); return; }
+      if (kind === 'note' && pane === 'notes' && disposePanel?.openCreate) { void disposePanel.openCreate({returnFocus}); return; }
+      if (kind === 'goal' && pane === 'goals' && disposePanel?.openGoalCreate) { disposePanel.openGoalCreate({returnFocus}); return; }
+      showCalendarCreateModal(pane === 'tasks' ? null : pane === 'table' ? view.date : views.iso(new Date()), {
+        kind, types:[kind], initialNoDate:pane === 'tasks', isCurrent, returnFocus,
+      });
+    },
   });
 }
 
 export async function loadCalendarWorkspace(el) {
+  if(routinesRouteHandler){window.removeEventListener('hanni:open-recurring-settings',routinesRouteHandler);window.removeEventListener('hanni:open-routines-pane',routinesRouteHandler);routinesRouteHandler=null;}
   startHealthViewRefresh();
   cleanupWorkspace(); tabLoaders.cleanupCalendar = cleanupWorkspace;
   const loadRevision = workspaceRevision;
@@ -507,18 +531,22 @@ export async function loadCalendarWorkspace(el) {
   };
   const taskOptions = { invoke, mountMenu:mountRecordMenu, openTask:(row,returnFocus)=>showRecord(calendarRecord(row),returnFocus), executeAction:(row,action)=>executeCalendarTaskAction(calendarRecord(row),action), notifyChange:changed };
   let renderLauncherState = null;
-  const showAllTasks = (button = null) => {
+  const showAllTasks = (button = null, initialScope = null) => {
     if(tasksDialog)return;
     const revision = workspaceRevision;
-    const dialog=createCalendarDialog({document,title:button?'Запустить задачу':'Все задачи',
+    const dialog=createCalendarDialog({document,title:'Что начнём?',
       isCurrent:()=>revision===workspaceRevision&&S.activeTab==='calendar',
       returnFocus:button?()=>{if(button.isConnected)button.focus({preventScroll:true});}:undefined,
-      onClose:()=>{disposeTasks?.();disposeTasks=null;tasksDialog=null;renderLauncherState=null;},
+      onClose:()=>{disposeTasks?.();disposeRoutineChoices?.();disposeTasks=null;disposeRoutineChoices=null;tasksDialog=null;renderLauncherState=null;},
     });
     tasksDialog=dialog;
     if (button) dialog.modal.dataset.taskLauncher = '';
     dialog.modal.querySelector('footer [data-dialog-close]').textContent='Закрыть';
-    const list = document.createElement('div');
+    const list = document.createElement('div'); list.dataset.launchSection = 'tasks';
+    const scopes = document.createElement('div'); scopes.dataset.launchScopes = '';
+    scopes.setAttribute('role','group'); scopes.setAttribute('aria-label','Что начать');
+    scopes.innerHTML = '<button type="button" data-launch-scope="all">Всё</button><button type="button" data-launch-scope="tasks">Задачи</button><button type="button" data-launch-scope="routines">Рутины</button>';
+    dialog.body.append(scopes);
     if (button) {
       const controller = disposeNow;
       const previous = document.createElement('button'); previous.type='button'; previous.dataset.launcherReturn=''; previous.hidden=true;
@@ -549,6 +577,17 @@ export async function loadCalendarWorkspace(el) {
       renderLauncherState(controller.getLauncherState());
     }
     dialog.body.append(list);
+    const routines = document.createElement('div'); routines.dataset.launchSection = 'routines'; dialog.body.append(routines);
+    const setScope = scope => {
+      list.hidden = scope === 'routines'; routines.hidden = scope === 'tasks'; dialog.modal.dataset.launchScope = scope;
+      scopes.querySelectorAll('button').forEach(button => button.setAttribute('aria-pressed',String(button.dataset.launchScope === scope)));
+    };
+    scopes.addEventListener('click', event => { const button = event.target.closest('[data-launch-scope]'); if (button) setScope(button.dataset.launchScope); });
+    setScope(initialScope || (S._unifiedPane.calendar === 'routines' ? 'routines' : S._unifiedPane.calendar === 'tasks' ? 'tasks' : 'all'));
+    disposeRoutineChoices = mountCalendarRoutineChoices(routines, { invoke, notifyChange:changed,
+      openRoutine:options => { dialog.close({restoreFocus:false}); openRecurringRun({document,invoke,...options,returnFocus:() => (button?.isConnected?button:el.querySelector('[data-calendar-launch]'))?.focus({preventScroll:true})}); },
+      openManager:() => { dialog.close(); window.dispatchEvent(new CustomEvent('hanni:open-recurring-settings')); },
+    });
     disposeTasks=mountCalendarDashboardTasks(list,taskOptions);
     disposeTasks.showAll();dialog.open();
   };
@@ -589,14 +628,15 @@ export async function loadCalendarWorkspace(el) {
   let nowHost = null;
   const config = { title:'Календарь', headerIcon:TAB_ICONS.calendar, editableHeader:false, subtitle:'События и расписание', hideDescription:true, hideMemory:true, accessibleTabs:true, beforeRender:cleanupWorkspace, isCurrent:() => S.activeTab === 'calendar',
     toolbarActions: [
-      { label:'Создать', title:'Создать задачу, событие, цель или заметку', icon:TAB_ICONS.add, onClick:openCalendarCreate },
-      { label:'Запустить задачу', title:'Выбрать существующую задачу для запуска', icon:ICONS.play, onClick:showAllTasks },
+      { label:'Создать', title:'Создать задачу, событие, цель, заметку, желание или рутину', icon:TAB_ICONS.add, onClick:openCalendarCreate },
+      { label:'Начать', title:'Выбрать задачу или рутину', icon:ICONS.play, onClick:showAllTasks },
     ],
     renderHeaderExtra: host => {
       const create = host.querySelector('.uni-header-action');
       create.dataset.calendarCreate = '';
-      create.setAttribute('aria-label', create.title);
-      create.setAttribute('aria-haspopup', 'dialog');
+      create.setAttribute('aria-label', 'Создать');
+      create.setAttribute('aria-haspopup', 'menu');
+      create.setAttribute('aria-expanded', 'false');
       const launch = host.querySelector('[data-action-idx="1"]');
       launch.dataset.calendarLaunch = '';
       launch.setAttribute('aria-haspopup', 'dialog');
@@ -606,18 +646,18 @@ export async function loadCalendarWorkspace(el) {
       host.querySelector('.uni-header').append(header);
       nowHost = document.createElement('div');
       nowHost.dataset.calendarNow = '';
+      nowHost.classList.add('calendar-main-goal');
       nowHost.hidden = true;
       host.append(nowHost);
       // Every pane shares one execution owner; Dashboard reveals its goal summary.
       disposeNow = mountCalendarNow(nowHost, {
         headerElement:header,
+        headerLabel:'Сегодня',
         hideTaskCard:true,
+        mountGoalSummary:(host, goal) => mountGoalGlance(host, {invoke, goal}),
         openTaskLauncher:() => showAllTasks(host.querySelector('[data-calendar-launch]')),
         onLauncherStateChange:state => renderLauncherState?.(state),
         openGoalDetails:(goal, { returnFocus } = {}) => openGoalPopup(goal, { primaryGoalId:goal.id, returnFocus }),
-        ...(S._unifiedPane.calendar === 'dash' ? {
-          mountGoalSummary:(element, goal) => mountGoalGlance(element, { invoke, goal }),
-        } : {}),
         openTaskDetails: (row, restore) => {
           if(row.source_type==='schedule'){
             const [id,date]=JSON.parse(row.source_id);openRecurringRun({document,invoke,id,date});
@@ -631,42 +671,79 @@ export async function loadCalendarWorkspace(el) {
         // The header indicator counts running work; the dashboard widget lists each task.
         openInProgress: async () => {
           if (S._unifiedPane.calendar !== 'dash') await openPane('dash');
-          if (S.activeTab === 'calendar' && S._unifiedPane.calendar === 'dash') disposeInProgress?.focus();
+          if (S.activeTab === 'calendar' && S._unifiedPane.calendar === 'dash') {
+            const heading = el.querySelector('[data-calendar-day-banner] h2');
+            if (heading) { heading.tabIndex = -1; heading.focus({preventScroll:true}); }
+          }
         },
         onCurrentTaskChange: value => disposeRecurring?.setCurrentTask(value),
       });
     },
-    panes: [{id:'dash',label:'Дашборд'}, {id:'table',label:'Календарь'}, {id:'tasks',label:'Задачи'}, {id:'notes',label:'Заметки'}, {id:'goals',label:'Цели'}],
+    panes: [{id:'dash',label:'Дашборд'}, {id:'table',label:'Календарь'}, {id:'tasks',label:'Задачи'}, {id:'routines',label:'Рутины'}, {id:'notes',label:'Заметки'}, {id:'goals',label:'Цели'}],
     renderDash: (pane) => {
-      pane.innerHTML = '<div data-calendar-day-banner></div><div data-calendar-in-progress></div><div data-calendar-now-slot></div><div data-calendar-recurring></div>';
+      pane.innerHTML = `<section class="calendar-today" aria-label="Сегодня">
+        <div data-calendar-day-banner></div><div data-calendar-next-action></div>
+        <div data-calendar-in-progress></div>
+      </section><div data-calendar-now-slot></div>`;
       pane.querySelector('[data-calendar-now-slot]').replaceWith(nowHost);
       nowHost.hidden = false;
-      disposeDayBanner = mountCalendarDayBanner(pane.querySelector('[data-calendar-day-banner]'),{invoke});
-      // Parallel work sits before the main goal (owner decision 2026-09-24).
+      disposeDayBanner = mountCalendarDayBanner(pane.querySelector('[data-calendar-day-banner]'), {
+        invoke,
+        onOpenSettings:button => showCalendarSettings(button, {section:'next-action',returnFocus:() => button.isConnected ? button.focus({preventScroll:true}) : disposeNextAction?.focus()}),
+      });
+      disposeNextAction = mountCalendarTodayAction(pane.querySelector('[data-calendar-next-action]'), {
+        invoke, preferences:nextActionPreferences(), notifyChange:changed, compactRunning:true,
+        taskOptions, openRoutines:() => void openPane('routines'),
+        onCurrentTaskChange:task => {
+          const key = value => value ? `task:${value.source_type}:${String(value.source_id)}` : '';
+          const previousKey = key(todayTaskSelection), nextKey = key(task);
+          // Update first: clearing old focus can synchronously rerender NextAction
+          // and call back into this handler.
+          todayTaskSelection = task;
+          if (previousKey && previousKey !== nextKey) disposeNextAction?.setFocusedTaskVisible(previousKey,false);
+          disposeInProgress?.setSelectedTask(task);
+        },
+        onRoutineFocusChange:options => disposeInProgress?.setExcludedRoutine(options?.id || null),
+        openTask:task => showRecord(calendarRecord(task), () => disposeNextAction?.focus()),
+        executeTask:(task,action) => executeCalendarTaskAction(calendarRecord(task),action),
+      });
       disposeInProgress = mountCalendarInProgress(pane.querySelector('[data-calendar-in-progress]'), {
-        invoke, notifyChange:changed,
+        invoke, notifyChange:changed, title:'Идёт сейчас', activeOnly:true, hideWhenEmpty:true, embedded:true,
+        singleSelection:true, selectedTask:todayTaskSelection,
+        onSelectedTaskState:state => {
+          if (!todayTaskSelection || state.key !== `${todayTaskSelection.source_type}:${String(todayTaskSelection.source_id)}`) return;
+          disposeNextAction?.setFocusedTaskVisible(`task:${todayTaskSelection.source_type}:${String(todayTaskSelection.source_id)}`,state.visible);
+        },
+        onEmptyFocus:() => disposeNextAction?.focus(),
         openLauncher:button => showAllTasks(button),
-        onRowsChange:keys => disposeRecurring?.setInProgress?.(keys),
         openTask:(row, restore) => {
-          if (row.source_type === 'schedule') { const [id, date] = JSON.parse(row.source_id); openRecurringRun({ document, invoke, id, date }); }
+          if (row.source_type === 'schedule') { const [id, date] = JSON.parse(row.source_id); disposeNextAction?.openRoutine({id,date,start:false}); }
           else showRecord(calendarRecord({ ...row, date: row.date || null }), restore);
         },
       });
-      disposeRecurring = mountCalendarRecurring(pane.querySelector('[data-calendar-recurring]'), {
-        invoke, showCompleted:preferences.showCompleted,
-        mountTasks:host=>mountCalendarDashboardTasks(host,{...taskOptions,embedded:true,onShowAll:showAllTasks}),
-      });
-      disposeRecurring.setInProgress(disposeInProgress.keys());
+      disposeInProgress.setSelectedTask(todayTaskSelection);
     },
     renderTable: pane => mountCalendarTable(pane),
     renderTasks: pane => {
       const revision = workspaceRevision;
-      disposePanel = mountCalendarTasks(pane, {
+      pane.innerHTML = `<div data-workspace-task-list></div><details class="calendar-task-history"><summary>Запущено и на паузе сегодня</summary><div data-calendar-in-progress></div></details>`;
+      disposePanel = mountCalendarTasks(pane.querySelector('[data-workspace-task-list]'), {
         invoke, state:tasksPaneState, mountMenu:mountRecordMenu, notifyChange:changed,
         openTask:(row,restore) => showRecord(calendarRecord(row),restore),
         editDate:(row,restore) => taskEditor(calendarRecord(row),restore,'date',()=>revision===workspaceRevision && pane.isConnected),
         executeAction:(row,action) => executeCalendarTaskAction(calendarRecord(row),action),
       });
+      disposeInProgress = mountCalendarInProgress(pane.querySelector('[data-calendar-in-progress]'), {
+        invoke, notifyChange:changed, title:'Запущено и на паузе', openLauncher:showAllTasks,
+        openTask:(row,restore) => {
+          if (row.source_type === 'schedule') { const [id,date] = JSON.parse(row.source_id); openRecurringRun({document,invoke,id,date,start:false}); }
+          else showRecord(calendarRecord(row),restore);
+        },
+      });
+    },
+    renderRoutines: pane => {
+      pane.innerHTML='<div data-calendar-routines></div>';
+      disposeRecurring=mountCalendarRecurring(pane.querySelector('[data-calendar-routines]'),{invoke,showCompleted:preferences.showCompleted,library:true});
     },
     renderGoals: async (pane) => {
       const revision = workspaceRevision;
@@ -685,6 +762,13 @@ export async function loadCalendarWorkspace(el) {
       if (revision !== workspaceRevision) dispose?.(); else disposePanel = dispose;
     },
   };
+  routinesRouteHandler=event=>{
+    if(S.activeTab!=='calendar'||!el.isConnected)return;
+    const create=event.type==='hanni:open-routines-pane'&&event.detail?.create===true;
+    void openPane('routines').then(()=>{if(create&&S._unifiedPane.calendar==='routines')disposeRecurring?.create?.({returnFocus:()=>el.querySelector('[data-calendar-create]')?.focus({preventScroll:true})});});
+  };
+  window.addEventListener('hanni:open-recurring-settings',routinesRouteHandler);
+  window.addEventListener('hanni:open-routines-pane',routinesRouteHandler);
   await renderUnifiedLayout(el, 'calendar', config);
   const create = document.querySelector('[data-calendar-create]');
   if (create && el.isConnected && el.querySelector('.uni-pane')) create.disabled = false;

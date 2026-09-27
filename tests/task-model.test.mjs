@@ -54,17 +54,16 @@ test('the start picker and Now recommendation never offer an instant task', () =
   assert.deepEqual(ranked.map(row => row.source_id).sort(), ['legacy', 'normal']);
 });
 
-test('Create puts the title first, offers four types and switches the fields by type', async t => {
+test('Create puts the title first, offers five types and switches the fields by type', async t => {
   const x = useWindow(t);
   const { showCalendarCreateModal } = await modal();
   await showCalendarCreateModal('2026-09-24', {}); await settle();
-  assert.deepEqual([...x.w.document.querySelectorAll('[data-editor-type]')].map(el => el.textContent), ['Задача', 'Событие', 'Цель', 'Заметка']);
+  assert.deepEqual([...x.w.document.querySelectorAll('[data-editor-type]')].map(el => el.textContent), ['Задача', 'Событие', 'Цель', 'Заметка', 'Желание']);
   assert.equal(x.q('.evm-title-field').nextElementSibling, x.q('.evm-type-picker'), 'the type choice follows the title');
-  assert.equal(x.q('[data-editor-type="wish"]'), null, 'no placeholder for the later wishlist');
   const pressed = () => x.q('[data-editor-type][aria-pressed="true"]').dataset.editorType;
   assert.equal(pressed(), 'task'); assert.equal(x.q('#evm-heading').textContent, 'Новая задача');
   for (const selector of ['#evm-date', '#evm-task-time', '#evm-no-date', '[name="evm-task-kind"]', '#evm-sphere', '#evm-task-estimate', '#evm-goal', '#evm-important']) assert.ok(x.shown(selector), selector);
-  for (const selector of ['#evm-time', '#evm-desc', '#evm-goal-description', '#evm-note-text']) assert.equal(x.shown(selector), false, selector);
+  for (const selector of ['#evm-time', '#evm-desc', '#evm-goal-description', '#evm-note-text', '#evm-wish-category']) assert.equal(x.shown(selector), false, selector);
 
   x.q('[data-editor-type="event"]').click();
   assert.equal(pressed(), 'event'); assert.equal(x.q('#evm-heading').textContent, 'Новое событие');
@@ -80,6 +79,10 @@ test('Create puts the title first, offers four types and switches the fields by 
   assert.equal(x.q('#evm-heading').textContent, 'Новая заметка'); assert.equal(x.q('#evm-title-label').textContent, 'Название · необязательно');
   assert.ok(x.shown('#evm-note-text')); assert.equal(x.shown('#evm-goal-description'), false);
 
+  x.q('[data-editor-type="wish"]').click();
+  assert.equal(x.q('#evm-heading').textContent, 'Новое желание'); assert.equal(x.q('#evm-save').textContent, 'Сохранить желание');
+  assert.ok(x.shown('#evm-wish-category')); assert.equal(x.shown('#evm-note-text'), false);
+
   x.q('[data-editor-type="task"]').click();
   assert.equal(x.q('#evm-title-label').textContent, 'Название'); assert.ok(x.shown('#evm-task-time'));
   x.key('#evm-title', 'Escape');
@@ -92,6 +95,42 @@ test('a skill-linked task keeps only the Task and Event choice', async t => {
   const { showCalendarCreateModal } = await modal();
   await showCalendarCreateModal(null, { initialNoDate: true, goalId: 'g', onTaskSaved: async () => {} }); await settle();
   assert.deepEqual([...x.w.document.querySelectorAll('[data-editor-type]')].map(el => el.textContent), ['Задача', 'Событие']);
+});
+
+test('shared Create saves a wish through the synced wish store and announces it to open lists', async t => {
+  let raw = null;
+  const x = useWindow(t, {
+    get_ui_state: args => { assert.equal(args.key, 'calendar_wishes_v1'); return raw; },
+    set_ui_state: args => { assert.equal(args.key, 'calendar_wishes_v1'); assert.equal(args.expectedValue, raw ?? ''); raw = args.value; },
+  });
+  let announced = 0; x.w.addEventListener('hanni:wishes-changed', () => announced++);
+  const { showCalendarCreateModal } = await modal();
+  await showCalendarCreateModal(null, { kind: 'wish' }); await settle();
+  assert.equal(x.q('#evm-heading').textContent, 'Новое желание');
+  assert.equal(x.q('#evm-wish-category').value, 'other', 'a title alone does not assume a purchase category');
+  assert.equal(x.q('.evm-wish-details').open, false, 'optional fields do not obstruct quick capture');
+  x.q('#evm-title').value = 'Поездка в горы';
+  x.q('#evm-wish-category').value = 'travel'; x.q('#evm-wish-price').value = '45 000';
+  x.q('#evm-wish-currency').value = 'KZT'; x.q('#evm-wish-url').value = 'https://example.com/trip';
+  x.q('#evm-wish-note').value = 'На выходные';
+  x.q('#evm-form').dispatchEvent(new x.w.Event('submit', { bubbles: true, cancelable: true })); await settle();
+  const saved = JSON.parse(raw);
+  assert.equal(saved.version, 1); assert.equal(saved.wishes.length, 1);
+  assert.deepEqual({ title: saved.wishes[0].title, category: saved.wishes[0].category, price: saved.wishes[0].price, url: saved.wishes[0].url, note: saved.wishes[0].note, status: saved.wishes[0].status },
+    { title: 'Поездка в горы', category: 'travel', price: 45000, url: 'https://example.com/trip', note: 'На выходные', status: 'want' });
+  assert.equal(announced, 1); assert.equal(x.q('#evm-form'), null, 'success closes the modal');
+  assert.equal(x.saved('set_ui_state').length, 1, 'one CAS write to the existing wishes store');
+});
+
+test('wish validation reveals a bad optional link before focusing it, without persisting', async t => {
+  const x = useWindow(t, { get_ui_state:null });
+  const { showCalendarCreateModal } = await modal();
+  await showCalendarCreateModal(null, { kind:'wish', types:['wish'] }); await settle();
+  x.q('#evm-title').value = 'Идея поездки'; x.q('#evm-wish-url').value = 'javascript:alert(1)';
+  x.q('#evm-form').dispatchEvent(new x.w.Event('submit', { bubbles:true, cancelable:true })); await settle();
+  assert.equal(x.q('.evm-wish-details').open,true);
+  assert.equal(x.w.document.activeElement,x.q('#evm-wish-url'));
+  assert.equal(x.saved('set_ui_state').length,0);
 });
 
 test('Enter saves a task with its time, kind and sphere; an instant task skips the hidden estimate', async t => {

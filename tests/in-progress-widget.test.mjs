@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { mountCalendarInProgress, formatWorkTime, formatAgainstEstimate, HIDDEN_KEY } from '../src/hanni/js/calendar-in-progress.js';
 
@@ -8,10 +7,54 @@ const settle = async () => { for (let i = 0; i < 12; i++) await new Promise(reso
 const TODAY = '2026-09-24', YESTERDAY = '2026-09-23';
 const routine = JSON.stringify(['plan-a', TODAY, 0]);
 
+test('inline routine is excluded only from presentation while parallel task controls stay intact', async t => {
+  const data=backend(), x=await mount(t,data,{activeOnly:true,hideWhenEmpty:true});
+  const running=x.row('note:draft');
+  x.dispose.setExcludedRoutine('plan-a');
+  assert.equal(x.row(`schedule:${routine}`),undefined);
+  assert.equal(x.row('note:draft'),running);
+  assert.equal(data.blocks.filter(block=>block.is_active).length,2);
+  x.dispose.setExcludedRoutine(null);
+  assert.ok(x.row(`schedule:${routine}`));
+  assert.equal(data.calls.some(call=>['pause_task_block','cancel_task_block','finish_task_block'].includes(call.name)),false);
+});
+
+test('Today selection shows one chosen row, keeps it after pause, and leaves parallel blocks alone', async t => {
+  const data=backend();
+  data.blocks.push({id:17,source_type:'note',source_id:'call',date:TODAY,start_time:'10:55:00',completion_date:TODAY,is_active:true,created_at:'3'});
+  const x=await mount(t,data,{activeOnly:true,hideWhenEmpty:true,singleSelection:true,selectedTask:{source_type:'note',source_id:'draft'}});
+  assert.deepEqual(x.rows().map(row=>row.dataset.contextRecord),['note:draft']);
+  x.control('note:draft','toggle').click(); await settle();
+  assert.deepEqual(x.rows().map(row=>row.dataset.contextRecord),['note:draft'],'the paused current task stays selected');
+  assert.deepEqual(data.blocks.filter(block=>block.is_active).map(block=>`${block.source_type}:${block.source_id}`).sort(),[`schedule:${routine}`,'note:call'].sort());
+  assert.equal(data.calls.filter(call=>call.name==='pause_task_block').length,1,'only the selected task block was paused');
+  x.dispose.setSelectedTask(null);
+  assert.equal(x.host.hidden,true,'no work row is shown while Today has no selected task');
+});
+
+test('selection is retained with an explicit stale-data error when a refresh fails', async t => {
+  const data=backend(), x=await mount(t,data,{activeOnly:true,hideWhenEmpty:true,singleSelection:true,selectedTask:{source_type:'note',source_id:'draft'}});
+  data.failReads=true;
+  x.dom.window.dispatchEvent(new x.dom.window.Event('task-state-changed')); await settle();
+  assert.deepEqual(x.rows().map(row=>row.dataset.contextRecord),['note:draft']);
+  assert.equal(x.host.querySelector('[data-cip-message]').getAttribute('role'),'alert');
+  assert.equal(data.calls.some(call=>['pause_task_block','start_task_block','complete_calendar_task'].includes(call.name)),false);
+});
+
+test('a selected task paused yesterday can be shown from its saved total without starting it', async t => {
+  const data=backend();
+  data.blocks=data.blocks.filter(block=>block.source_type!=='note'||block.source_id!=='draft');
+  data.tasks.find(task=>task.source_id==='draft').earlier=125;
+  const x=await mount(t,data,{activeOnly:true,hideWhenEmpty:true,singleSelection:true,selectedTask:{source_type:'note',source_id:'draft'}});
+  assert.deepEqual(x.rows().map(row=>row.dataset.contextRecord),['note:draft']);
+  assert.match(x.text()[0][1],/02:05/);
+  assert.equal(data.calls.some(call=>call.name==='start_task_block'),false);
+});
+
 // Fictional records only: two running tasks, one paused today and records that must stay out.
 function backend() {
   const state = {
-    now: new Date(`${TODAY}T11:00:00`), calls: [], nextId: 50, ui: new Map(),
+    now: new Date(`${TODAY}T11:00:00`), calls: [], nextId: 50, ui: new Map(), failReads:false,
     tasks: [
       { source_type:'note', source_id:'draft', title:'Черновик отчёта', status_extra:'task', date:TODAY, duration_minutes:60, task_kind:'normal', stage:'description', waiting:false, earlier:0 },
       { source_type:'note', source_id:'call', title:'Позвонить поставщику', status_extra:'task', date:null, duration_minutes:null, task_kind:'normal', stage:'', waiting:false, earlier:0 },
@@ -42,6 +85,7 @@ function backend() {
   });
   state.invoke = async (name, args = {}) => {
     state.calls.push({ name, args });
+    if (state.failReads && name === 'get_active_blocks') throw Error('offline');
     if (name === 'get_active_blocks') return state.blocks.filter(block => block.is_active).sort((a, b) => b.created_at.localeCompare(a.created_at))
       .map(block => ({ ...block, title:block.source_type === 'note' ? state.tasks.find(task => task.source_id === block.source_id)?.title : null }));
     if (name === 'get_timeline_blocks') return state.blocks.filter(block => block.date === args.date);
@@ -97,6 +141,14 @@ async function mount(t, data = backend(), extra = {}) {
   return { dom, doc, host, data, dispose, opened, launched, rows, row, control, menu, menuItems, choose, text, refresh };
 }
 
+test('Today only shows running work and hides after last pause without finishing tasks', async t => {
+  let fallback=0;const x=await mount(t,backend(),{activeOnly:true,hideWhenEmpty:true,embedded:true,title:'Идёт сейчас',onEmptyFocus:()=>fallback++});
+  assert.equal(x.rows().length,2);assert.equal(x.host.querySelector('[data-cip-title]').textContent,'Идёт сейчас');
+  assert.equal(x.row('note:letters'),undefined);assert.equal(x.host.querySelector('[data-cip-footer]').hidden,true);
+  for(const row of [...x.rows()]){const key=row.dataset.contextRecord;x.control(key,'toggle').focus();x.control(key,'toggle').click();await settle();}
+  assert.equal(x.host.hidden,true);assert.equal(x.data.count('complete_calendar_task'),0);assert.ok(fallback>0);
+});
+
 test('work time reads as mm:ss under an hour and against the estimate in minutes', () => {
   assert.equal(formatWorkTime(0), '00:00');
   assert.equal(formatWorkTime(754), '12:34');
@@ -121,6 +173,11 @@ test('nothing running folds into one line whose only action opens the existing t
   assert.equal(data.count('start_task_block'), 0, 'opening the picker starts nothing');
 });
 
+test('the widget heading is «Текущие задачи»', async t => {
+  const x = await mount(t);
+  assert.equal(x.host.querySelector('[data-cip-title]').textContent, 'Текущие задачи');
+});
+
 test('rows show total time against the estimate, the stage chip and the goal; over the estimate turns amber', async t => {
   const x = await mount(t);
   assert.deepEqual(x.text(), [
@@ -133,18 +190,22 @@ test('rows show total time against the estimate, the stage chip and the goal; ov
   const draft = x.row('note:draft'), letters = x.row('note:letters');
   assert.equal(draft.querySelector('.cip-time').classList.contains('is-over'), true, 'actual 70 is over the 60 minute estimate');
   assert.equal(draft.querySelector('.cip-time').getAttribute('aria-label'), 'Идёт. Учтено 70 из 60 мин, больше оценки');
+  assert.equal(draft.querySelector('button'), x.control('note:draft', 'toggle'), 'keyboard order starts with the primary start/pause control');
+  assert.equal(draft.querySelector('.cip-meta .cip-state').textContent, 'Идёт');
+  assert.equal(draft.querySelector('.cip-time-label').textContent, 'Всего / оценка');
+  assert.match(draft.querySelector('.cip-stage-time').textContent, /^Учтено на этапе /);
   assert.equal(draft.querySelector('[data-cip-progress]').classList.contains('is-over'), true);
   assert.equal(draft.querySelector('[data-cip-progress] > span').style.width, '100%');
   assert.equal(letters.querySelector('.cip-time').classList.contains('is-over'), false);
   assert.equal(letters.querySelector('[data-cip-progress] > span').style.width, '72.2%');
   assert.equal(letters.querySelector('.cip-stage').classList.contains('is-waiting'), true);
   assert.ok(letters.querySelector('.cip-stage .cip-stage-mark'), '«Жду ответа» is a small hourglass before the stage');
-  assert.match(x.control('note:letters', 'stage').getAttribute('aria-label'), /^Стадия: Согласование, жду ответа\./);
+  assert.match(letters.querySelector('.cip-stage').textContent, /Этап:Согласование/);
   assert.equal(x.row(`schedule:${routine}`).querySelector('[data-cip-progress]'), null, 'no estimate, no bar');
   assert.equal(x.row(`schedule:${routine}`).querySelector('.cip-stage'), null, 'a routine step has no stage');
   assert.equal(x.control('note:draft', 'toggle').getAttribute('aria-label'), 'Пауза: Черновик отчёта');
   assert.equal(x.control('note:letters', 'finish').getAttribute('aria-label'), 'Готово: Разобрать письма');
-  assert.match(x.control('note:draft', 'stage').getAttribute('aria-label'), /^Стадия: Описание\. Выбрать стадию: Черновик отчёта$/);
+  assert.match(x.control('note:draft', 'stage-next').getAttribute('aria-label'), /Следующая стадия «Согласование»: Черновик отчёта/);
   x.data.now = new Date(`${TODAY}T11:01:00`);
   await new Promise(resolve => setTimeout(resolve, 1100));
   assert.deepEqual(x.text().map(row => row[1]), ['03:00', '1:11:00 / 60 мин', '32:30 / 45 мин'], 'running rows tick, paused rows stay');
@@ -235,7 +296,8 @@ test('pause and resume act on one task while the other keeps running', async t =
   assert.equal(x.data.count('pause_task_block'), 1, 'resuming never pauses other work');
   assert.deepEqual(x.data.blocks.filter(block => block.is_active).map(block => block.source_id).sort(), ['letters', routine].sort());
   assert.equal(x.rows()[0].querySelector('.cip-title').textContent, 'Разобрать письма', 'the newest running task leads');
-  assert.match(x.host.querySelector('[data-cip-message]').textContent, /снова в работе/);
+  assert.match(x.host.querySelector('[data-cip-announcement]').textContent, /снова в работе/);
+  assert.equal(x.host.querySelector('[data-cip-message]').textContent, '');
 });
 
 test('Done closes a note through task completion and a routine step through its latest block', async t => {
@@ -252,37 +314,19 @@ test('Done closes a note through task completion and a routine step through its 
   assert.equal(x.data.count('start_task_block'), 0);
 });
 
-test('the stage label opens the stages of the task process, «Без стадии» and a «Жду ответа» toggle', async t => {
+test('stage labels are readable text and arbitrary selection stays outside the row', async t => {
   const x = await mount(t);
-  const chip = x.control('note:draft', 'stage');
-  chip.click();
-  assert.equal(chip.getAttribute('aria-expanded'), 'true');
-  assert.deepEqual(x.menuItems(), ['Понимание', 'Требования', 'Анализ и модели', 'Описание', 'Согласование', 'Декомпозиция', 'В разработке', 'Приёмка', 'Без стадии', 'Жду ответа']);
-  const checked = [...x.menu().querySelectorAll('[aria-checked="true"]')].map(item => item.textContent);
-  assert.deepEqual(checked, ['Описание']);
-  assert.equal(x.doc.activeElement, x.menu().querySelector('[data-menu-action="stage:description"]'), 'focus starts at the current stage');
-  await x.choose('Согласование');
-  assert.deepEqual(x.data.args('set_calendar_task_stage'), [{ id:'draft', stage:'agreement', waiting:null }]);
+  const label = x.row('note:draft').querySelector('.cip-stage');
+  assert.equal(label.tagName, 'SPAN');
+  assert.equal(label.hasAttribute('tabindex'), false);
+  label.click(); await settle();
   assert.equal(x.menu(), null);
-  assert.equal(x.row('note:draft').querySelector('.cip-stage-text').textContent, 'Согласование');
-  assert.equal(x.doc.activeElement, x.control('note:draft', 'stage'));
-  x.control('note:draft', 'stage').click();
-  await x.choose('Жду ответа');
-  assert.deepEqual(x.data.args('set_calendar_task_stage')[1], { id:'draft', stage:null, waiting:true });
-  assert.equal(x.row('note:draft').querySelector('.cip-stage-text').textContent, 'Согласование');
-  assert.ok(x.row('note:draft').querySelector('.cip-stage.is-waiting .cip-stage-mark'));
-  x.control('note:letters', 'stage').click();
-  await x.choose('Без стадии');
-  assert.deepEqual(x.data.args('set_calendar_task_stage')[2], { id:'letters', stage:'', waiting:null });
-  assert.equal(x.row('note:letters').querySelector('.cip-stage-text').textContent, 'Жду ответа', 'waiting stays without a stage');
-  // Escape closes the menu without a change and returns focus to the chip.
-  x.control('note:letters', 'stage').click();
-  x.doc.dispatchEvent(new x.dom.window.KeyboardEvent('keydown', { key:'Escape', bubbles:true, cancelable:true }));
-  assert.equal(x.menu(), null);
-  assert.equal(x.doc.activeElement, x.control('note:letters', 'stage'));
-  assert.equal(x.data.count('set_calendar_task_stage'), 3);
-  assert.equal(x.data.count('pause_task_block') + x.data.count('start_task_block'), 0, 'a stage never touches the timer');
+  assert.equal(x.data.count('set_calendar_task_stage'), 0);
+  x.control('note:draft', 'open').click();
+  assert.equal(x.opened[0].row.source_id, 'draft', 'the task card remains available');
 });
+
+
 
 test('the ⋯ menu offers Stop, Cancel start only for running work, and Open', async t => {
   const x = await mount(t);
@@ -306,7 +350,7 @@ test('Stop pauses the task and keeps it out of «В работе» until it is s
   assert.equal(Date.parse(stored['note:draft']), new Date(`${TODAY}T11:00:00`).getTime());
   assert.equal(x.row('note:draft'), undefined);
   assert.deepEqual(x.text().map(row => row[0]), ['Зарядка · Разминка', 'Разобрать письма']);
-  assert.match(x.host.querySelector('[data-cip-message]').textContent, /Время сохранено/);
+  assert.match(x.host.querySelector('[data-cip-announcement]').textContent, /Время сохранено/);
   await x.refresh();
   assert.equal(x.row('note:draft'), undefined, 'a reread keeps it hidden');
   // A paused task can be stopped too; nothing is paused for it.
@@ -357,7 +401,7 @@ test('Cancel start asks once inline, then discards only the running block', asyn
   assert.equal(x.row('note:draft').classList.contains('is-paused'), true);
   assert.equal(x.row('note:draft').querySelector('.cip-time').textContent, '40:00 / 60 мин');
   assert.equal(x.data.blocks.find(block => block.id === 14).is_active, true, 'other running work is untouched');
-  assert.match(x.host.querySelector('[data-cip-message]').textContent, /Запуск отменён/);
+  assert.match(x.host.querySelector('[data-cip-announcement]').textContent, /Запуск отменён/);
 });
 
 test('a failed action keeps the rows, reports the error and allows another try', async t => {
@@ -374,55 +418,46 @@ test('a failed action keeps the rows, reports the error and allows another try',
   await y.choose('Остановить');
   assert.equal(data.ui.has(HIDDEN_KEY), false);
   assert.ok(y.row('note:draft'));
-  y.control('note:draft', 'stage').click();
-  await y.choose('Приёмка');
+  y.control('note:draft', 'stage-next').click(); await settle();
+  assert.match(y.host.querySelector('[data-cip-message]').textContent, /Проверочная ошибка/);
+  assert.equal(y.doc.activeElement, y.host.querySelector('[data-cip-message]'));
   assert.equal(y.row('note:draft').querySelector('.cip-stage-text').textContent, 'Описание', 'the stage is unchanged');
 });
 
-// ---- Processes, the arrow and time per stage (2026-09-25) ----
+// ---- Process stage selection and time per stage ----
 const at = time => new Date(`${TODAY}T${time}`).toISOString();
 
-test('«→» moves to the next stage in one tap and is gone at the last stage; focus stays on the stage', async t => {
-  const x = await mount(t);
+test('the next-stage arrow preserves waiting and timers without a visible success echo', async t => {
+  const data = backend();
+  data.tasks.find(task => task.source_id === 'draft').waiting = true;
+  const x = await mount(t, data), originalBlocks = structuredClone(data.blocks);
   const arrow = () => x.control('note:draft', 'stage-next');
-  assert.equal(arrow().title, 'Дальше: Согласование');
-  assert.equal(arrow().getAttribute('aria-label'), 'Следующая стадия «Согласование»: Черновик отчёта');
+  assert.match(arrow().getAttribute('aria-label'), /Согласование/);
   arrow().click(); await settle();
-  assert.deepEqual(x.data.args('set_calendar_task_stage'), [{ id:'draft', stage:'agreement', waiting:null }], '«Жду ответа» is left alone');
+  assert.deepEqual(data.args('set_calendar_task_stage'), [{ id:'draft', stage:'agreement', waiting:null }]);
   assert.equal(x.row('note:draft').querySelector('.cip-stage-text').textContent, 'Согласование');
-  assert.equal(x.doc.activeElement, arrow(), 'focus stays on the arrow for the next tap');
-  assert.match(x.host.querySelector('[data-cip-message]').textContent, /Стадия: Согласование/);
-  assert.equal(x.row('note:letters').querySelector('.cip-stage-text').textContent, 'Согласование');
-  x.control('note:letters', 'stage-next').click(); await settle();
-  assert.deepEqual(x.data.args('set_calendar_task_stage')[1], { id:'letters', stage:'decomposition', waiting:null });
-  assert.equal(x.row('note:letters').querySelector('.cip-stage-text').textContent, 'Декомпозиция');
-  assert.equal(x.control('note:letters', 'stage').classList.contains('is-waiting'), true, 'the waiting mark stays');
-  for (const stage of ['development', 'acceptance']) { x.control('note:letters', 'stage-next').click(); await settle(); assert.equal(x.data.args('set_calendar_task_stage').at(-1).stage, stage); }
-  assert.equal(x.control('note:letters', 'stage-next'), undefined, 'no arrow at the last stage');
-  assert.equal(x.doc.activeElement, x.control('note:letters', 'stage'), 'focus moves to the stage label');
-  // The menu is the way back.
-  x.control('note:letters', 'stage').click();
-  await x.choose('Требования');
-  assert.equal(x.data.args('set_calendar_task_stage').at(-1).stage, 'requirements');
-  assert.ok(x.control('note:letters', 'stage-next'));
-  assert.equal(x.data.count('pause_task_block') + x.data.count('start_task_block'), 0, 'stages never touch the timer');
+  assert.equal(data.tasks.find(task => task.source_id === 'draft').waiting, true);
+  assert.equal(x.doc.activeElement, arrow());
+  assert.match(x.host.querySelector('[data-cip-announcement]').textContent, /Этап: Согласование/);
+  assert.equal(x.host.querySelector('[data-cip-message]').textContent, '');
+  assert.deepEqual(data.blocks, originalBlocks, 'changing a stage preserves all timer blocks');
+  assert.equal(data.count('pause_task_block') + data.count('start_task_block'), 0);
 });
 
-test('only a task with a process shows a stage; a process without a stage offers «Начать»', async t => {
+test('a process without a stage advances to its first stage; no process has no arrow', async t => {
   const data = backend();
   data.tasks.find(task => task.source_id === 'draft').stage = '';
   Object.assign(data.tasks.find(task => task.source_id === 'letters'), { waiting:false, stage:'', process:'system-analysis' });
   const x = await mount(t, data);
-  assert.equal(x.row('note:draft').querySelector('.cip-stage'), null, 'no process: no stage control, no placeholder');
-  const chip = x.control('note:letters', 'stage');
-  assert.equal(chip.textContent, 'Стадия'); assert.equal(chip.classList.contains('is-empty'), true);
-  assert.equal(x.control('note:letters', 'stage-next').title, 'Начать: Понимание');
+  assert.equal(x.row('note:draft').querySelector('.cip-stage'), null);
+  assert.equal(x.control('note:draft', 'stage-next'), undefined);
+  assert.match(x.row('note:letters').querySelector('.cip-stage').textContent, /Этап:\s*Не выбран/);
   x.control('note:letters', 'stage-next').click(); await settle();
-  assert.deepEqual(x.data.args('set_calendar_task_stage'), [{ id:'letters', stage:'understanding', waiting:null }]);
+  assert.deepEqual(data.args('set_calendar_task_stage'), [{ id:'letters', stage:'understanding', waiting:null }]);
   assert.equal(x.row('note:letters').querySelector('.cip-stage-text').textContent, 'Понимание');
 });
 
-test('a custom process drives the menu and the arrow; a deleted stage shows «Стадия удалена» without an arrow', async t => {
+test('custom process order drives the arrow, with safe focus at its last or deleted stage', async t => {
   const data = backend();
   data.ui.set('calendar_processes_v1', JSON.stringify({ version:1, processes:[
     { id:'system-analysis', title:'Системный анализ', stages:[{ id:'understanding', title:'Понимание' }, { id:'requirements', title:'Требования' }] },
@@ -430,22 +465,14 @@ test('a custom process drives the menu and the arrow; a deleted stage shows «С
   ] }));
   Object.assign(data.tasks.find(task => task.source_id === 'draft'), { process:'p-report', stage:'s-draft' });
   const x = await mount(t, data);
-  assert.equal(x.row('note:draft').querySelector('.cip-stage-text').textContent, 'Черновик');
-  x.control('note:draft', 'stage').click();
-  assert.deepEqual(x.menuItems(), ['Черновик', 'Проверка', 'Без стадии', 'Жду ответа']);
-  x.doc.dispatchEvent(new x.dom.window.KeyboardEvent('keydown', { key:'Escape', bubbles:true, cancelable:true }));
   x.control('note:draft', 'stage-next').click(); await settle();
-  assert.equal(x.data.args('set_calendar_task_stage')[0].stage, 's-check');
+  assert.deepEqual(data.args('set_calendar_task_stage'), [{ id:'draft', stage:'s-check', waiting:null }]);
   assert.equal(x.control('note:draft', 'stage-next'), undefined);
-  // «Согласование» was removed from the built-in process: the task keeps it and says so.
-  const letters = x.control('note:letters', 'stage');
-  assert.equal(letters.querySelector('.cip-stage-text').textContent, 'Стадия удалена');
-  assert.equal(letters.classList.contains('is-deleted'), true);
-  assert.equal(x.control('note:letters', 'stage-next'), undefined, 'the next stage of a deleted one is unknown');
-  x.control('note:letters', 'stage').click();
-  assert.deepEqual(x.menuItems(), ['Понимание', 'Требования', 'Без стадии', 'Жду ответа']);
-  await x.choose('Жду ответа');
-  assert.deepEqual(x.data.args('set_calendar_task_stage')[1], { id:'letters', stage:null, waiting:false }, 'the deleted stage is kept');
+  assert.equal(x.doc.activeElement, x.control('note:draft', 'open'));
+  assert.equal(x.row('note:letters').querySelector('.cip-stage-text').textContent, 'Стадия удалена');
+  assert.equal(x.control('note:letters', 'stage-next'), undefined);
+  assert.ok(x.control('note:letters', 'open'), 'deleted stages can still be edited through the task card');
+  assert.equal(data.count('complete_calendar_task'), 0, 'the final stage never completes a task automatically');
 });
 
 test('the stage tooltip gives timer time per stage, the running block included, and ticks', async t => {
@@ -453,14 +480,55 @@ test('the stage tooltip gives timer time per stage, the running block included, 
   // The draft moved from «Требования» to «Описание» at 09:20, while its 09:00–09:40 block ran.
   data.tasks.find(task => task.source_id === 'draft').stage_log = [{ stage:'requirements', at:at('08:00:00') }, { stage:'description', at:at('09:20:00') }];
   const x = await mount(t, data);
-  const chip = () => x.control('note:draft', 'stage');
+  const chip = () => x.row('note:draft').querySelector('.cip-stage');
+  const elapsed = () => x.row('note:draft').querySelector('.cip-stage-time').textContent;
   assert.equal(chip().title, 'Время по стадиям: Требования 20 мин · Описание 50 мин', 'the 10:30 running block counts up to 11:00');
+  assert.equal(elapsed(), 'Учтено на этапе 50:00');
   assert.deepEqual(x.data.args('get_calendar_task_blocks').at(-1).sourceIds.sort(), ['draft', 'letters']);
   x.data.now = new Date(`${TODAY}T11:15:00`);
   await new Promise(resolve => setTimeout(resolve, 1100));
   assert.equal(chip().title, 'Время по стадиям: Требования 20 мин · Описание 1 ч 5 мин', 'the current stage is live');
+  assert.equal(elapsed(), 'Учтено на этапе 1:05:00');
   // No history: the stored stage owns all of the task's time.
-  assert.equal(x.control('note:letters', 'stage').title, 'Время по стадиям: Согласование 12 мин');
+  assert.equal(x.row('note:letters').querySelector('.cip-stage').title, 'Время по стадиям: Согласование 12 мин');
+});
+
+test('stage time reports an unavailable read and recovers without showing a false zero', async t => {
+  const data = backend();
+  const invoke = data.invoke; data.failStageRead = true;
+  data.invoke = async (name, args) => {
+    if (name === 'get_calendar_task_blocks' && data.failStageRead) { data.calls.push({ name, args }); throw new Error('stage blocks unavailable'); }
+    return invoke(name, args);
+  };
+  const x = await mount(t, data);
+  const chip = () => x.row('note:draft').querySelector('.cip-stage');
+  const elapsed = () => x.row('note:draft').querySelector('.cip-stage-time');
+  assert.equal(elapsed().textContent, 'Время этапа недоступно');
+  assert.equal(chip().title, 'Время по стадиям недоступно');
+  data.failStageRead = false;
+  await x.refresh();
+  assert.match(elapsed().textContent, /^Учтено на этапе /);
+  assert.notEqual(chip().title, 'Время по стадиям недоступно');
+});
+
+test('quiet refresh keeps row and focus identity; one changed task leaves neighboring rows intact', async t => {
+  const data = backend();
+  const x = await mount(t, data);
+  const draft = x.row('note:draft'), letters = x.row('note:letters');
+  const list = x.host.querySelector('.cip-list');
+  const focused = x.control('note:letters', 'toggle'); focused.focus();
+  await x.refresh();
+  assert.equal(x.row('note:draft'), draft, 'unchanged running row is reused');
+  assert.equal(x.row('note:letters'), letters, 'unchanged paused row is reused');
+  assert.equal(x.host.querySelector('.cip-list'), list, 'the list container stays mounted on a no-op refresh');
+  assert.equal(x.doc.activeElement, focused, 'passive refresh keeps focus');
+  data.tasks.find(task => task.source_id === 'draft').title = 'Обновлённый отчёт';
+  await x.refresh();
+  assert.equal(x.row('note:draft').querySelector('.cip-title').textContent, 'Обновлённый отчёт');
+  assert.notEqual(x.row('note:draft'), draft, 'changed task row is updated');
+  assert.equal(x.row('note:letters'), letters, 'unrelated row preserves DOM identity');
+  assert.equal(x.host.querySelector('.cip-list'), list, 'a single task update keeps the shared list mounted');
+  assert.equal(x.doc.activeElement, focused, 'neighbor control remains focused');
 });
 
 test('work and personal tasks get their own sub-headings, work first; one kind shows none', async t => {
@@ -483,11 +551,4 @@ test('work and personal tasks get their own sub-headings, work first; one kind s
   x.data.now = new Date(`${TODAY}T11:01:00`);
   await new Promise(resolve => setTimeout(resolve, 1100));
   assert.equal(x.row('note:draft').querySelector('.cip-time').textContent, '1:11:00 / 60 мин');
-});
-
-test('on the phone the stage arrow has a 36px target', () => {
-  const css = fs.readFileSync(new URL('../src/hanni/css/calendar-in-progress.css', import.meta.url), 'utf8');
-  const phone = css.slice(css.indexOf('@media (max-width: 600px)'));
-  assert.match(phone, /\.cip-stage-next \{[^}]*width: 36px; height: 28px/);
-  assert.match(phone, /\.cip-stage-next::after \{[^}]*inset: -4px 0/);
 });

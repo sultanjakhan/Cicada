@@ -19,12 +19,18 @@
 @import url('./hanni/css/task-control-surface.css');
 @import url('./hanni/css/mvp-palette.css');
 @import url('./hanni/css/calendar-settings-v7.css');
+@import url('./hanni/css/calendar-settings.css');
 @import url('./hanni/css/calendar-development.css');
 @import url('./hanni/css/calendar-recurring.css');
+@import url('./hanni/css/calendar-routine-execution.css');
+@import url('./hanni/css/calendar-routine-editor.css');
 @import url('./hanni/css/calendar-tasks.css');
 @import url('./hanni/css/task-importance.css');
+@import url('./hanni/css/calendar-next-action.css');
+@import url('./hanni/css/calendar-task-details.css');
+@import url('./hanni/css/calendar-today.css');
 
-/* Approved Hanni mark: keep branding separate from Calendar navigation. */
+/* Approved Hanni mark. Today and task details share the native Calendar shell. */
 .hanni-brand { display:flex; align-items:center; justify-content:center; flex-shrink:0; padding:19px 0 10px; }
 .hanni-brand img { display:block; width:32px; height:32px; }
 /* Follow the Calendar heading's smaller top inset in narrow desktop windows. */

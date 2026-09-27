@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {createRecurringStore,recurringItems,parseRecurring} from '../src/hanni/js/calendar-recurring-store.js';
+import {createRecurringStore,recurringItems,parseRecurring,availableGraphSteps} from '../src/hanni/js/calendar-recurring-store.js';
 function setup(){let raw=null,fail=false,now=new Date(2026,8,13,12),sequence=0;const invoke=async(command,args)=>{if(command==='get_ui_state')return raw;if(fail)throw Error('offline');raw=args.value;};return {store:createRecurringStore(invoke,{now:()=>now,uuid:()=>String(++sequence)}),second:()=>createRecurringStore(invoke,{now:()=>now,uuid:()=>String(++sequence)}),raw:()=>raw,fail:()=>{fail=true;},advance:()=>{now=new Date(2026,8,14,12);}};}
 const action={kind:'action',title:'Учебный курс',weekdays:[0,1,2,3,4,5,6],startsOn:'2026-09-13',endsOn:'2026-09-15'};
 test('native runtime fixtures match actual frontend activity and chain payloads',async()=>{
@@ -58,4 +58,67 @@ test('a plan editor baseline permits independent remote plans to merge',async()=
   const store=createRecurringStore(invoke,{now:()=>new Date(2026,8,13,12),uuid:()=> 'plan-a'});await store.savePlan(action);const expectedPlan=(await store.read()).plans[0];
   const remote=await store.read();remote.plans.push({...expectedPlan,id:'plan-b',title:'Remote B'});raw=JSON.stringify(remote);
   await store.savePlan({...action,title:'Local A'},'plan-a',{expectedPlan});assert.deepEqual((await store.read()).plans.map(plan=>plan.title),['Local A','Remote B']);
+});
+
+test('graph runs preserve check, optional and dependency metadata and unlock joins after done or skipped',async()=>{
+  const {store}=setup(),steps=[
+    {title:'A',dependsOn:[],trackingMode:'track',optional:false},
+    {title:'B',dependsOn:[0],trackingMode:'track',optional:false},
+    {title:'C',dependsOn:[0],trackingMode:'check',optional:true},
+    {title:'D',dependsOn:[1,2],trackingMode:'track',optional:false},
+  ];
+  const {result:id,state:saved}=await store.savePlan({...action,mode:'graph',steps});
+  const {state:started}=await store.ensureRun(id),record=started.days['2026-09-13'][id];
+  assert.deepEqual(record.snapshot.steps,steps);
+  assert.deepEqual(record.run.steps.map(({title,dependsOn,trackingMode,optional})=>({title,dependsOn,trackingMode,optional})),steps);
+  assert.deepEqual(availableGraphSteps(record.snapshot,record.run),[0]);
+  record.run.steps[0].status='skipped';
+  assert.deepEqual(availableGraphSteps(record.snapshot,record.run),[1,2]);
+  record.run.steps[1].status='done';
+  assert.deepEqual(availableGraphSteps(record.snapshot,record.run),[2]);
+  record.run.steps[2].status='done';
+  assert.deepEqual(availableGraphSteps(record.snapshot,record.run),[3]);
+  assert.equal(saved.plans[0].steps[3].dependsOn.length,2);
+});
+
+test('graph validation rejects invalid, duplicate, self and cyclic dependencies and more than 50 nodes',async()=>{
+  const {store}=setup(),base={...action,mode:'graph'};
+  for(const steps of [
+    [{title:'Missing',dependsOn:[1]}],
+    [{title:'Self',dependsOn:[0]}],
+    [{title:'Duplicate',dependsOn:[]},{title:'Duplicate edges',dependsOn:[0,0]}],
+    [{title:'A',dependsOn:[1]},{title:'B',dependsOn:[0]}],
+    [{title:'Bad mode',dependsOn:[],trackingMode:'timer'}],
+    [{title:'Bad optional flag',dependsOn:[],optional:'yes'}],
+    Array.from({length:51},(_,index)=>({title:`Step ${index}`,dependsOn:[]})),
+  ]) await assert.rejects(store.savePlan({...base,steps}));
+  await assert.rejects(store.savePlan({...base,steps:[{title:'No dependencies',dependsOn:null}]}));
+});
+
+test('editing graph schedule fields keeps structure in both plan and original run snapshot',async()=>{
+  const {store}=setup(),steps=[{title:'Root',dependsOn:[],trackingMode:'check',optional:false},{title:'Leaf',dependsOn:[0],trackingMode:'track',optional:true}];
+  const {result:id}=await store.savePlan({...action,mode:'graph',steps});await store.ensureRun(id);
+  await store.savePlan({...action,title:'Renamed graph',mode:'graph',steps:undefined,weekdays:[1,2]},id);
+  const state=await store.read(),today=state.days['2026-09-13'][id];
+  assert.deepEqual(state.plans[0].steps,steps);
+  assert.deepEqual(today.snapshot.steps,steps);
+  assert.deepEqual(today.run.steps.map(step=>step.dependsOn),[[],[0]]);
+  assert.equal(state.plans[0].title,'Renamed graph');
+});
+
+test('changing a graph plan to one action preserves the already-started run snapshot',async()=>{
+  const {store}=setup(),steps=[{title:'Root',dependsOn:[],trackingMode:'check',optional:false},{title:'Leaf',dependsOn:[0],trackingMode:'track',optional:true}];
+  const {result:id}=await store.savePlan({...action,mode:'graph',steps});
+  await store.ensureRun(id);
+  const before=(await store.read()).days['2026-09-13'][id];
+  await store.savePlan({...action,title:'One future action',mode:'activity',steps:[]},id);
+  const after=(await store.read()).days['2026-09-13'][id];
+  assert.equal((await store.read()).plans[0].mode,'activity');
+  assert.deepEqual(after.snapshot,before.snapshot);
+  assert.deepEqual(after.run,before.run);
+});
+
+test('stored graph run whose dependencies differ from its snapshot fails closed',()=>{
+  const source={version:1,plans:[],days:{'2026-09-13':{graph:{snapshot:{...action,id:'graph',mode:'graph',steps:[{title:'A',dependsOn:[]},{title:'B',dependsOn:[0]}]},status:'pending',run:{steps:[{title:'A',dependsOn:[],status:'pending'},{title:'B',dependsOn:[],status:'pending'}]}}}}};
+  assert.throws(()=>parseRecurring(JSON.stringify(source)),/Не удалось прочитать/);
 });

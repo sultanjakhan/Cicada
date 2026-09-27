@@ -51,7 +51,7 @@ function wireHeaderEdit(el, tabId, config, meta, defaults, revision) {
   });
 }
 async function renderActivePane(pane, activePane, config) {
-  const renderer = { dash: config.renderDash, table: config.renderTable, tasks: config.renderTasks, goals: config.renderGoals, notes: config.renderNotes }[activePane];
+  const renderer = { dash: config.renderDash, table: config.renderTable, tasks: config.renderTasks, routines: config.renderRoutines, goals: config.renderGoals, notes: config.renderNotes }[activePane];
   if (renderer) await renderer(pane);
 }
 

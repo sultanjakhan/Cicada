@@ -14,6 +14,15 @@ const result = await build({
 });
 const bundle = (Array.isArray(result) ? result[0] : result).output.find(file => file.type === 'chunk').code;
 const settle = async () => { for (let i = 0; i < 12; i++) await new Promise(resolve => setImmediate(resolve)); };
+function assertIdleHeader(header) {
+  assert.equal(header.hidden, false, 'the current-task navigation remains available after a successful snapshot');
+  const action = header.querySelector('[data-header-action="in-progress"]');
+  assert.equal(action.querySelector('[data-header-label]').textContent, 'Сегодня');
+  assert.equal(action.getAttribute('aria-label'), 'Сегодня · запущено: 0');
+  assert.equal(action.title, 'Сегодня · запущено: 0');
+  assert.equal(action.querySelector('[data-header-count]').hidden, true, 'zero running tasks has no count');
+  assert.equal(action.querySelector('.calendar-running__dot').hidden, true, 'zero running tasks has no dot');
+}
 
 async function launch(t, { mobile = false, initialSettings = [], width, userAgent, taskState = null } = {}) {
   const dom = new JSDOM(html, { url: 'http://localhost/', runScripts: 'outside-only', pretendToBeVisual: true });
@@ -31,6 +40,7 @@ async function launch(t, { mobile = false, initialSettings = [], width, userAgen
   w.__TAURI__ = { core: { invoke: async (command, args = {}) => {
     calls.push({ command, args });
     if (before.has(command)) await before.get(command)(args);
+    if (command === 'get_calendar_task') return taskState?.tasks.find(task => task.source_id === args.id) || null;
     if (command === 'get_note') return taskState?.tasks.find(task => task.source_id === args.id) || null;
     if (command === 'get_goals') return taskState?.goals || [];
     if (command === 'get_calendar_task_goals') return taskState?.links || [];
@@ -87,41 +97,41 @@ async function launch(t, { mobile = false, initialSettings = [], width, userAgen
   return { w, calls, click, errors, before, settings };
 }
 
-test('bundled shell boots the five workspace panes with only Calendar in the sidebar', async t => {
+test('bundled shell boots six workspace panes with only Calendar in the sidebar', async t => {
   const { w, click, calls, errors } = await launch(t);
   assert.equal(w.document.title, 'Cicada');
   assert.ok(w.document.documentElement.classList.contains('desktop'));
   assert.deepEqual([...w.document.querySelectorAll('#tab-list [data-tab-id]')].map(el => el.dataset.tabId), ['calendar']);
-  assert.deepEqual([...w.document.querySelectorAll('.uni-tab')].map(el => el.textContent), ['Дашборд','Календарь','Задачи','Заметки','Цели']);
+  assert.deepEqual([...w.document.querySelectorAll('.uni-tab')].map(el => el.textContent), ['Дашборд','Календарь','Задачи','Рутины','Заметки','Цели']);
   assert.ok(w.document.querySelector('[data-calendar-now]'));
   assert.equal(w.document.querySelector('.calendar-now__card').hidden, true);
   assert.equal(w.document.querySelector('.calendar-now__goal').closest('[hidden]'), null);
-  assert.equal(w.document.querySelector('[data-calendar-running]').hidden, true);
-  for (const [pane, selector] of [['table','.calendar-workspace-table'],['tasks','.calendar-tasks'],['goals','.calendar-goals'],['notes','.calendar-notes']]) {
+  assertIdleHeader(w.document.querySelector('[data-calendar-running]'));
+  for (const [pane, selector] of [['table','.calendar-workspace-table'],['tasks','.calendar-tasks'],['routines','.calendar-recurring--library'],['goals','.calendar-goals'],['notes','.calendar-notes']]) {
     await click('[data-pane="' + pane + '"]');
     assert.equal(w.document.querySelector('.uni-tab.active').dataset.pane, pane);
     if (pane !== 'table') assert.ok(w.document.querySelector(selector), selector);
-    assert.equal(w.document.querySelector('[data-calendar-running]').hidden, true);
+    assertIdleHeader(w.document.querySelector('[data-calendar-running]'));
   }
   assert.ok(calls.some(call => call.command === 'get_calendar_records'));
   assert.ok(calls.some(call => call.command === 'get_notes'));
   await click('[data-pane="table"]');
-  assert.deepEqual([...w.document.querySelectorAll('.calendar-workspace .uni-header-action')].map(el => el.textContent.trim()), ['Создать', 'Запустить задачу']);
-  assert.equal(w.document.querySelector('[data-calendar-create]').getAttribute('aria-label'), 'Создать задачу, событие, цель или заметку');
+  assert.deepEqual([...w.document.querySelectorAll('.calendar-workspace .uni-header-action')].map(el => el.textContent.trim()), ['Создать', 'Начать']);
+  assert.equal(w.document.querySelector('[data-calendar-create]').getAttribute('aria-label'), 'Создать');
   assert.equal(w.document.querySelector('[data-mode="list"]'), null);
   assert.deepEqual(errors, []);
 });
 
 test('persistent launcher is beside creation in every empty pane and closes back to its trigger', async t => {
   const { w, click, calls, errors } = await launch(t);
-  for (const pane of ['dash', 'table', 'tasks', 'notes', 'goals']) {
+  for (const pane of ['dash', 'table', 'tasks', 'routines', 'notes', 'goals']) {
     await click(`[data-pane="${pane}"]`);
     const launcher = w.document.querySelector('[data-calendar-launch]');
-    assert.equal(launcher.textContent.trim(), 'Запустить задачу');
+    assert.equal(launcher.textContent.trim(), 'Начать');
     assert.equal(launcher.disabled, false);
     assert.equal(launcher.closest('[hidden]'), null);
     assert.equal(launcher.previousElementSibling, w.document.querySelector('[data-calendar-create]'));
-    assert.equal(w.document.querySelector('[data-calendar-running]').hidden, true);
+    assertIdleHeader(w.document.querySelector('[data-calendar-running]'));
     assert.equal(w.document.querySelector('.calendar-now__card').hidden, true);
     launcher.focus(); await click('[data-calendar-launch]');
     const chooser = w.document.querySelector('[data-task-launcher]');
@@ -145,9 +155,9 @@ test('automatic recommendation remains visible in Today while the header preview
   const saved = { version:1, goalId:'main-goal', selectionMode:'auto', selection:null, execution:null, completed:null, observedBlockId:null };
   const { w, calls, errors } = await launch(t, { taskState, initialSettings:[['calendar_now_v1',JSON.stringify(saved)]] });
   assert.equal(w.document.querySelector('[data-calendar-now]').dataset.taskKey, 'note:suggested', 'the controller has an automatic candidate');
-  assert.equal(w.document.querySelector('[data-calendar-running]').hidden, true);
+  assertIdleHeader(w.document.querySelector('[data-calendar-running]'));
   assert.equal(w.document.querySelector('.calendar-now__card').hidden, true);
-  const today = w.document.querySelector('[data-calendar-recurring] [data-overview-task="note:suggested"]');
+  const today = w.document.querySelector('[data-next-action-key="task:note:suggested"]');
   assert.ok(today, 'Today must not exclude an invisible automatic recommendation');
   assert.equal(today.closest('[hidden]'), null);
   assert.equal(calls.filter(call => call.command === 'start_task_block').length, 0);
@@ -167,10 +177,10 @@ test('launcher previews goal-free undated tasks without starting and only its ex
   const preview = w.document.querySelector('[data-task-launcher] [data-overview-task="note:unscheduled"]');
   assert.ok(preview);
   preview.focus(); await click('[data-task-launcher] [data-overview-task="note:unscheduled"]');
-  assert.equal(w.document.querySelector('.calendar-mvp-dialog h2').textContent, 'Проверить пример');
+  assert.equal(w.document.querySelector('.calendar-task-details h2').textContent, 'Проверить пример');
   assert.equal(calls.filter(call => call.command === 'start_task_block').length, 0);
-  assert.equal(w.document.querySelector('[data-calendar-running]').hidden, true);
-  await click('.calendar-mvp-dialog [data-close]');
+  assertIdleHeader(w.document.querySelector('[data-calendar-running]'));
+  await click('.calendar-task-details [data-dialog-close]');
   assert.equal(w.document.activeElement, preview);
   await click('[data-task-launcher] [data-overview-execute="note:unscheduled"]');
   assert.equal(calls.filter(call => call.command === 'start_task_block').length, 1);
@@ -179,7 +189,9 @@ test('launcher previews goal-free undated tasks without starting and only its ex
   assert.equal(taskState.blocks.filter(block => block.is_active).length, 1);
   const indicator = w.document.querySelector('[data-calendar-running]');
   assert.equal(indicator.hidden, false);
-  assert.equal(indicator.querySelector('[data-header-action="in-progress"]').getAttribute('aria-label'), 'В работе: 1');
+  assert.equal(indicator.querySelector('[data-header-action="in-progress"]').getAttribute('aria-label'), 'Сегодня · запущено: 1');
+  assert.equal(indicator.querySelector('[data-header-count]').hidden, false);
+  assert.equal(indicator.querySelector('.calendar-running__dot').hidden, false);
   assert.equal(w.document.querySelector('.calendar-now__card').hidden, true);
   assert.equal(w.document.activeElement, w.document.querySelector('[data-task-launcher] [data-overview-execute="note:unscheduled"]'));
   await click('[data-task-launcher] footer [data-dialog-close]');
@@ -189,7 +201,7 @@ test('launcher previews goal-free undated tasks without starting and only its ex
   assert.equal(w.document.querySelector('.uni-tab.active').dataset.pane, 'dash');
   await click('[data-calendar-in-progress] [data-cip-control="toggle"]'); await settle();
   assert.equal(calls.filter(call => call.command === 'pause_task_block').length, 1);
-  assert.equal(w.document.querySelector('[data-calendar-running]').hidden, true, 'paused work is not counted');
+  assertIdleHeader(w.document.querySelector('[data-calendar-running]'));
   assert.deepEqual(errors, []);
 });
 
@@ -206,7 +218,7 @@ test('Done in the widget finishes current work and the launcher returns to the p
   assert.deepEqual([...widget.querySelectorAll('.cip-title')].map(title => title.textContent), ['Вторая задача']);
   await click('[data-calendar-in-progress] [data-cip-control="finish"]');
   assert.deepEqual(calls.filter(call => call.command === 'complete_calendar_task').map(call => call.args.id), ['second-task']);
-  assert.equal(indicator.hidden, true);
+  assertIdleHeader(indicator);
   await click('[data-calendar-launch]');
   const previous = w.document.querySelector('[data-launcher-return]');
   assert.equal(previous.hidden, false, '«Вернуться к предыдущей задаче» stays in the launcher');
@@ -233,7 +245,7 @@ test('one running indicator follows all panes and leads to the dashboard widget'
   const panes = ['dash', 'table', 'tasks', 'notes', 'goals'];
   for (const pane of panes) {
     await click(`[data-pane="${pane}"]`);
-    assert.equal(w.document.querySelector('[data-calendar-running]').hidden, true, 'paused work is not counted');
+    assertIdleHeader(w.document.querySelector('[data-calendar-running]'));
     assert.equal(w.document.querySelectorAll('[data-calendar-now]').length, 1);
     assert.equal(w.document.querySelector('[data-calendar-now]').hidden, pane !== 'dash');
   }
@@ -245,11 +257,11 @@ test('one running indicator follows all panes and leads to the dashboard widget'
     const indicator = w.document.querySelector('[data-calendar-running]');
     assert.equal(indicator.hidden, false);
     assert.equal(indicator.closest('.uni-header'), w.document.querySelector('#calendar-content > .uni-header'));
-    assert.equal(indicator.querySelector('[data-header-action="in-progress"]').title, 'В работе: 1');
+    assert.equal(indicator.querySelector('[data-header-action="in-progress"]').title, 'Сегодня · запущено: 1');
   }
   await click('[data-header-action="in-progress"]'); await settle();
   assert.equal(w.document.querySelector('.uni-tab.active').dataset.pane, 'dash');
-  assert.equal(w.document.activeElement, w.document.querySelector('[data-calendar-in-progress] [data-cip-title]'));
+  assert.equal(w.document.activeElement, w.document.querySelector('[data-calendar-day-banner] h2'));
   assert.equal(calls.filter(call => call.command === 'start_task_block').length, 1);
   assert.equal(calls.filter(call => call.command === 'pause_task_block').length, 0);
   assert.deepEqual(errors, []);
@@ -268,7 +280,7 @@ test('unknown current work stays hidden on read failure and launcher keeps error
   assert.equal(w.document.querySelector('[data-task-launcher] [data-dialog-retry]').hidden, false);
   before.delete('get_ui_state');
   await click('[data-task-launcher] [data-dialog-retry]');
-  assert.equal(header.hidden, true);
+  assertIdleHeader(header);
   assert.equal(w.document.querySelector('[data-task-launcher] [data-dialog-error]').hidden, true);
   await click('[data-task-launcher] footer [data-dialog-close]');
   assert.equal(w.document.activeElement, launcher);
@@ -282,6 +294,7 @@ test('Calendar has no adjacent planning panel and Tasks creation starts without 
   assert.equal(w.document.querySelector('[data-tasks-panel]'), null);
   await click('[data-pane="tasks"]');
   await click('[data-calendar-create]');
+  await click('[data-create-kind="task"]');
   const noDate = w.document.querySelector('#evm-no-date');
   assert.ok(noDate?.checked, 'Task capture must allow an unscheduled date');
 });
@@ -332,32 +345,51 @@ test('upstream mobile mode enables its CSS and closes the drawer through its bac
   assert.equal(w.document.querySelector('.drawer-backdrop').classList.contains('visible'), false);
 });
 
-test('Today has one task list and creation stays in the routine manager', async t => {
+test('Today links to a persistent routines pane; creation and launch keep explicit shared entries', async t => {
   const {w,click,errors}=await launch(t);
-  assert.equal(w.document.querySelectorAll('.calendar-recurring__card').length,1);
+  assert.equal(w.document.querySelectorAll('.calendar-today').length,1);
+  assert.equal(w.document.querySelectorAll('[data-calendar-next-action]').length,1);
+  assert.equal(w.document.querySelectorAll('.calendar-recurring__card').length,0);
   assert.equal(w.document.querySelector('[data-calendar-tasks]'),null);
-  assert.ok(w.document.querySelector('[data-calendar-recurring] [data-overview-embedded]'));
+  assert.equal(w.document.querySelector('[data-overview-embedded]'),null);
   assert.equal(w.document.querySelector('[data-undo-day]'),null);
   assert.equal(w.document.querySelector('[data-calendar-recurring] [data-recurring-add]'),null);
-  await click('[data-recurring-manage]');
-  assert.equal(w.document.querySelectorAll('dialog[open]').length,1);
-  await click('[data-recurring-add]');
+  await click('[data-today-choose]');
+  assert.equal(w.document.querySelector('.uni-tab.active').dataset.pane,'dash');
+  assert.equal(w.document.querySelector('[data-today-task-choices]').hidden,true);
+  assert.equal(w.document.querySelector('[data-today-routines]').hidden,false);
+  assert.equal(w.document.querySelectorAll('dialog[open]').length,0);
+  await click('[data-today-choose]');
+  assert.equal(w.document.activeElement,w.document.querySelector('[data-today-choose]'));
+  await click('[data-today-choose]');
+  await click('[data-routine-manager]');
+  assert.equal(w.document.querySelector('.uni-tab.active').dataset.pane,'routines');
+  assert.ok(w.document.querySelector('.calendar-recurring--library'));
+  assert.equal(w.document.querySelectorAll('dialog[open]').length,0);
+  assert.equal(w.document.querySelector('[data-recurring-add]'),null);
+  await click('[data-calendar-create]');
+  await click('[data-create-kind="routine"]');
   assert.equal(w.document.querySelector('[data-add-kind="norm"]'),null);
   assert.equal(w.document.querySelector('[data-add-kind="task"]'), null);
-  assert.ok(w.document.querySelector('[name="kind"] option[value="action"]'));
-  assert.ok(w.document.querySelector('[name="kind"] option[value="rule"]'));
-  assert.ok(w.document.querySelector('[name="title"]'));
+  assert.ok(w.document.querySelector('[data-routine-kind] option[value="action"]'));
+  assert.ok(w.document.querySelector('[data-routine-kind] option[value="rule"]'));
+  assert.ok(w.document.querySelector('[data-routine-title]'));
   assert.equal(w.document.querySelector('[data-add-kind]'),null,'choice closes before the shared Task/Event form opens');
-  await click('dialog[open]:last-of-type footer [data-dialog-close]');
   await click('dialog[open] footer [data-dialog-close]');
-  await click('[data-recurring-all]');
+  assert.equal(w.document.activeElement,w.document.querySelector('[data-calendar-create]'));
+  await click('[data-calendar-launch]');
   assert.equal(w.document.querySelector('dialog [data-overview-all]').hidden,false);
+  assert.equal(w.document.querySelector('[data-launch-section="tasks"]').hidden,true);
+  assert.equal(w.document.querySelector('[data-launch-section="routines"]').hidden,false);
+  await click('button[data-launch-scope="tasks"]');
+  assert.equal(w.document.querySelector('[data-launch-section="tasks"]').hidden,false);
+  assert.equal(w.document.querySelector('[data-launch-section="routines"]').hidden,true);
   await click('dialog footer [data-dialog-close]');
   await click('[data-pane="table"]');
   w.dispatchEvent(new w.CustomEvent('hanni:open-recurring-settings'));
   await settle();
-  assert.equal(w.document.querySelectorAll('body > .calendar-recurring[hidden]').length,1);
-  await click('dialog footer [data-dialog-close]');
+  assert.equal(w.document.querySelector('.uni-tab.active').dataset.pane,'routines');
+  assert.equal(w.document.querySelectorAll('dialog[open]').length,0);
   assert.equal(w.document.querySelectorAll('body > .calendar-recurring[hidden]').length,0);
   assert.deepEqual(errors,[]);
 });
@@ -374,13 +406,15 @@ test('one persistent action below the Calendar heading opens the shared Task/Eve
   assert.equal(trigger.closest('.uni-content'), null);
   trigger.focus();
   await click('[data-calendar-create]');
+  assert.deepEqual([...w.document.querySelectorAll('[data-create-kind]')].map(button=>button.dataset.createKind),['task','event','goal','note','wish','routine']);
+  await click('[data-create-kind="task"]');
   assert.ok(w.document.querySelector('#evm-form'));
   assert.ok(w.document.querySelector('#evm-title'));
   assert.ok(w.document.querySelector('#evm-goal'));
-  const toggle = w.document.querySelector('[data-editor-type="event"]');
-  assert.ok(toggle, 'shared event switch');
-  toggle.click();
-  await settle();
+  assert.equal(w.document.querySelector('[data-editor-type]'),null,'the selected type is not asked twice');
+  await click('#evm-close');
+  await click('[data-calendar-create]');
+  await click('[data-create-kind="event"]');
   assert.ok(w.document.querySelector('#evm-date'));
   await click('#evm-close');
   assert.equal(w.document.activeElement, trigger);
@@ -393,6 +427,7 @@ test('one persistent action below the Calendar heading opens the shared Task/Eve
   const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1);
   const date = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`;
   await click('[data-calendar-create]');
+  await click('[data-create-kind="event"]');
   assert.equal(w.document.querySelector('#evm-date').value, date, 'creation uses the viewed date');
 });
 
@@ -404,11 +439,12 @@ test('modal settings save without replacing the current calendar pane and return
   const scroll = w.document.querySelector('.uni-content'); scroll.scrollTop = 87;
   const trigger = w.document.querySelector('[data-calendar-settings]'); trigger.focus();
   await click('#tab-bar-bottom [aria-label="\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438"]');
-  assert.equal(w.document.querySelector('.calendar-settings-dialog h2').textContent, 'Настройки календаря');
+  assert.equal(w.document.querySelector('.calendar-settings-dialog h2').textContent, 'Настройки Cicada');
   assert.equal(w.document.querySelector('.uni-pane'), pane);
   assert.equal(w.document.querySelectorAll('.setting-pills').length, 3);
   assert.equal(w.document.querySelector('[data-theme-setting]'), null);
   assert.equal(w.document.querySelector('#mvp-settings'), null);
+  await click('#calendar-settings-tab-calendar');
   await click('[data-key="first_day"] [data-value="sun"]');
   assert.equal(calls.some(call => call.command === 'set_ui_state' && call.args.key === 'calendar_preferences_v1'), false);
   await click('.calendar-settings-dialog [type=submit]');
@@ -443,11 +479,13 @@ test('settings save failure keeps the old selection and a retry can persist it',
   const { w, click, before, settings } = await launch(t);
   await click('[data-calendar-settings]');
   before.set('set_ui_state', () => { throw Error('offline'); });
+  await click('#calendar-settings-tab-calendar');
   await click('[data-key="first_day"] [data-value="sun"]');
   await click('.calendar-settings-dialog [type=submit]');
   assert.equal(w.document.querySelector('[data-value="mon"]').getAttribute('aria-pressed'), 'false');
   assert.equal(w.document.querySelector('[data-value="sun"]').getAttribute('aria-pressed'), 'true');
-  assert.equal(w.document.querySelector('[data-dialog-error]').hidden, false);
+  assert.equal(w.document.querySelector('[data-prefs-error]').hidden, false);
+  assert.equal(w.document.querySelector('#calendar-settings-panel-calendar').hidden, false);
   assert.equal(settings.has('calendar_preferences_v1'), false);
   before.delete('set_ui_state');
   await click('.calendar-settings-dialog [type=submit]');
@@ -460,6 +498,7 @@ test('settings wait for acknowledgement before closing and ignore late loading a
   await click('[data-calendar-settings]');
   let resolveSave;
   before.set('set_ui_state', () => new Promise(resolve => { resolveSave = resolve; }));
+  await click('#calendar-settings-tab-calendar');
   await click('[data-key="first_day"] [data-value="sun"]');
   await click('.calendar-settings-dialog [type=submit]');
   const modal = w.document.querySelector('.calendar-settings-dialog');
@@ -510,8 +549,9 @@ test('a dated task with a time of day sits at that time in the day grid', async 
 
 test('mobile creation returns to its visible action and settings return to the closed drawer opener', async t => {
   const { w, click } = await launch(t, { mobile:true });
-  assert.equal(w.document.querySelector('[data-calendar-create]').getAttribute('aria-label'), 'Создать задачу, событие, цель или заметку', 'the phone icon button keeps its name');
+  assert.equal(w.document.querySelector('[data-calendar-create]').getAttribute('aria-label'), 'Создать', 'the phone action keeps its visible name');
   const create = await click('[data-calendar-create]');
+  await click('[data-create-kind="task"]');
   assert.equal(w.document.querySelector('#tab-bar').classList.contains('drawer-open'), false);
   await click('#evm-close');
   assert.equal(w.document.activeElement, create);
@@ -537,7 +577,7 @@ test('two tasks run at once from Tasks and the launcher; the header count leads 
   await click('[data-task-control="execute"][data-task-id="note:first"]');
   // Navigation renders the shared header again, so the indicator is read each time.
   const header = () => w.document.querySelector('[data-calendar-running]');
-  const count = () => header().hidden ? 0 : Number(header().querySelector('[data-header-count]').textContent);
+  const count = () => header().querySelector('[data-header-count]').hidden ? 0 : Number(header().querySelector('[data-header-count]').textContent);
   assert.equal(count(), 1);
   await click('[data-calendar-launch]');
   await click('[data-task-launcher] [data-overview-execute="note:second"]');
@@ -545,22 +585,30 @@ test('two tasks run at once from Tasks and the launcher; the header count leads 
   assert.equal(calls.filter(call => call.command === 'pause_task_block').length, 0, 'starting never pauses the other task');
   assert.equal(taskState.blocks.filter(block => block.is_active).length, 2);
   assert.equal(count(), 2);
-  assert.equal(header().querySelector('[data-header-action="in-progress"]').getAttribute('aria-label'), 'В работе: 2');
+  assert.equal(header().querySelector('[data-header-action="in-progress"]').getAttribute('aria-label'), 'Сегодня · запущено: 2');
   await click('[data-header-action="in-progress"]');
   await settle();
   assert.equal(w.document.querySelector('.uni-tab.active').dataset.pane, 'dash');
-  const titles = () => [...widget().querySelectorAll('.cip-row')].map(row => [row.querySelector('.cip-title').textContent, row.classList.contains('is-running')]);
-  assert.deepEqual(titles(), [['Вторая задача', true], ['Первая задача', true]]);
-  assert.equal(w.document.activeElement, widget().querySelector('[data-cip-title]'));
-  [...widget().querySelectorAll('[data-cip-control="toggle"]')].find(button => button.dataset.cipKey === 'note:second').click();
+  const rows = () => [...widget().querySelectorAll('.cip-row')];
+  assert.equal(rows().length, 1, 'Today shows only the currently selected running task');
+  const selectedKey = rows()[0].querySelector('[data-cip-control="toggle"]').dataset.cipKey;
+  assert.ok(['note:first','note:second'].includes(selectedKey));
+  assert.equal(rows()[0].classList.contains('is-running'), true);
+  const otherKey = selectedKey === 'note:first' ? 'note:second' : 'note:first';
+  assert.equal(w.document.activeElement, w.document.querySelector('[data-calendar-day-banner] h2'));
+  [...widget().querySelectorAll('[data-cip-control="toggle"]')].find(button => button.dataset.cipKey === selectedKey).click();
   await settle();
-  assert.deepEqual(calls.filter(call => call.command === 'pause_task_block').map(call => call.args.blockId), [2], 'only the chosen task pauses');
-  assert.deepEqual(titles(), [['Первая задача', true], ['Вторая задача', false]]);
+  const selectedBlockId = taskState.blocks.find(block => `note:${block.source_id}` === selectedKey).id;
+  assert.deepEqual(calls.filter(call => call.command === 'pause_task_block').map(call => call.args.blockId), [selectedBlockId], 'only the chosen task pauses');
+  assert.deepEqual(taskState.blocks.filter(block => block.is_active).map(block => `note:${block.source_id}`), [otherKey], 'the other timer continues unchanged');
+  assert.equal(rows().length, 1, 'the paused selected task stays visible as Today focus');
+  assert.equal(rows()[0].querySelector('[data-cip-control="toggle"]').dataset.cipKey, selectedKey);
+  assert.equal(rows()[0].classList.contains('is-running'), false);
   await settle();
   assert.equal(count(), 1);
   // Resuming from the Tasks pane also runs beside the other task.
   await click('[data-pane="tasks"]');
-  await click('[data-task-control="execute"][data-task-id="note:second"]');
+  await click(`[data-task-control="execute"][data-task-id="${selectedKey}"]`);
   assert.equal(calls.filter(call => call.command === 'pause_task_block').length, 1);
   assert.deepEqual(taskState.blocks.filter(block => block.is_active).map(block => block.source_id).sort(), ['first', 'second']);
   assert.equal(count(), 2);

@@ -16,6 +16,84 @@ fn recurring_raw(conn: &Connection) -> Result<String, String> {
     crate::mvp_sync_db::read_ui(conn, RECURRING_KEY)?
         .ok_or_else(|| fail("recurring state not found"))
 }
+fn recurring_steps(mode: &str, snapshot_title: &str, snapshot: &Value) -> Result<Vec<Value>, String> {
+    let steps = match mode {
+        "activity" => vec![json!({"title": snapshot_title})],
+        "chain" | "graph" => snapshot["steps"]
+            .as_array()
+            .filter(|steps| (1..=50).contains(&steps.len()))
+            .cloned()
+            .ok_or_else(|| fail("schedule steps are invalid"))?,
+        _ => return Err(fail("schedule is not runnable")),
+    };
+    for step in &steps {
+        validate_title(
+            step["title"]
+                .as_str()
+                .ok_or_else(|| fail("schedule step title is invalid"))?,
+        )?;
+    }
+    if mode == "graph" {
+        graph_dependencies(&steps)?;
+        for step in &steps {
+            if step.get("trackingMode").is_some_and(|mode| {
+                !matches!(mode.as_str(), Some("check" | "track"))
+            }) || step.get("optional").is_some_and(|optional| !optional.is_boolean())
+            {
+                return Err(fail("schedule graph step metadata is invalid"));
+            }
+        }
+    }
+    Ok(steps)
+}
+
+/// Validate a graph's prerequisite indices and return them in stable input order.
+fn graph_dependencies(steps: &[Value]) -> Result<Vec<Vec<usize>>, String> {
+    let mut dependencies = Vec::with_capacity(steps.len());
+    let mut indegree = vec![0usize; steps.len()];
+    let mut dependents = vec![Vec::<usize>::new(); steps.len()];
+    for (index, step) in steps.iter().enumerate() {
+        let raw = step["dependsOn"]
+            .as_array()
+            .ok_or_else(|| fail("schedule graph dependencies are invalid"))?;
+        let mut seen = std::collections::HashSet::new();
+        let mut current = Vec::with_capacity(raw.len());
+        for dependency in raw {
+            let dependency = dependency
+                .as_u64()
+                .and_then(|value| usize::try_from(value).ok())
+                .filter(|value| *value < steps.len())
+                .ok_or_else(|| fail("schedule graph dependency index is invalid"))?;
+            if dependency == index || !seen.insert(dependency) {
+                return Err(fail("schedule graph dependency is duplicated or self-referential"));
+            }
+            current.push(dependency);
+            indegree[index] += 1;
+            dependents[dependency].push(index);
+        }
+        dependencies.push(current);
+    }
+    let mut ready: std::collections::VecDeque<usize> = indegree
+        .iter()
+        .enumerate()
+        .filter_map(|(index, degree)| (*degree == 0).then_some(index))
+        .collect();
+    let mut visited = 0usize;
+    while let Some(index) = ready.pop_front() {
+        visited += 1;
+        for dependent in &dependents[index] {
+            indegree[*dependent] -= 1;
+            if indegree[*dependent] == 0 {
+                ready.push_back(*dependent);
+            }
+        }
+    }
+    if visited != steps.len() {
+        return Err(fail("schedule graph contains a cycle"));
+    }
+    Ok(dependencies)
+}
+
 fn schedule_context(
     conn: &Connection,
     source_id: &str,
@@ -61,25 +139,14 @@ fn schedule_context(
         return Err(fail("schedule snapshot is not runnable"));
     }
     let mode = snapshot["mode"].as_str().unwrap_or("check");
-    if !matches!(mode, "activity" | "chain") {
+    if !matches!(mode, "activity" | "chain" | "graph") {
         return Err(fail("schedule is not runnable"));
     }
     let snapshot_title = snapshot["title"]
         .as_str()
         .ok_or_else(|| fail("schedule title is invalid"))?;
     validate_title(snapshot_title)?;
-    let activity_steps = vec![json!({"title": snapshot_title})];
-    let snapshot_steps = if mode == "activity" { Some(&activity_steps) } else { snapshot["steps"]
-        .as_array()
-        .filter(|steps| (1..=50).contains(&steps.len())) }
-        .ok_or_else(|| fail("schedule steps are invalid"))?;
-    for step in snapshot_steps {
-        validate_title(
-            step["title"]
-                .as_str()
-                .ok_or_else(|| fail("schedule step title is invalid"))?,
-        )?;
-    }
+    let snapshot_steps = recurring_steps(mode, snapshot_title, &snapshot)?;
     let steps = record["run"]["steps"]
         .as_array()
         .ok_or_else(|| fail("schedule run has no steps"))?;
@@ -91,22 +158,17 @@ fn schedule_context(
         .ok_or_else(|| fail("schedule run timestamp is invalid"))?;
     chrono::DateTime::parse_from_rfc3339(created_at)
         .map_err(|_| fail("schedule run timestamp is invalid"))?;
-    for step in steps {
+    for (index, step) in steps.iter().enumerate() {
         if !matches!(step["status"].as_str(), Some("pending" | "done" | "skipped")) {
             return Err(fail("schedule step status is invalid"));
         }
-        validate_title(
-            step["title"]
-                .as_str()
-                .ok_or_else(|| fail("schedule step title is invalid"))?,
-        )?;
-    }
-    let first_pending = steps
-        .iter()
-        .position(|step| step["status"] == "pending")
-        .ok_or_else(|| fail("schedule run is complete"))?;
-    if index != first_pending {
-        return Err(fail("schedule step is not current"));
+        let title = step["title"]
+            .as_str()
+            .ok_or_else(|| fail("schedule step title is invalid"))?;
+        validate_title(title)?;
+        if mode == "graph" && title != snapshot_steps[index]["title"] {
+            return Err(fail("schedule run steps do not match snapshot"));
+        }
     }
     let step = steps
         .get(index)
@@ -114,7 +176,23 @@ fn schedule_context(
     if step["status"] != "pending" {
         return Err(fail("schedule step is not pending"));
     }
-    let title = if mode == "chain" {
+    if mode == "graph" {
+        let dependencies = graph_dependencies(&snapshot_steps)?;
+        if dependencies[index].iter().any(|dependency| {
+            !matches!(steps[*dependency]["status"].as_str(), Some("done" | "skipped"))
+        }) {
+            return Err(fail("schedule graph step is not ready"));
+        }
+    } else {
+        let first_pending = steps
+            .iter()
+            .position(|step| step["status"] == "pending")
+            .ok_or_else(|| fail("schedule run is complete"))?;
+        if index != first_pending {
+            return Err(fail("schedule step is not current"));
+        }
+    }
+    let title = if matches!(mode, "chain" | "graph") {
         format!(
             "{} · {}",
             snapshot["title"].as_str().unwrap_or(""),
@@ -126,6 +204,26 @@ fn schedule_context(
     validate_title(&title)?;
     Ok((plan_id, origin, index, state, title))
 }
+
+fn recurring_step_tracking_mode(conn: &Connection, source_id: &str) -> Result<String, String> {
+    let parts: Vec<Value> = serde_json::from_str(source_id).map_err(|_| fail("invalid schedule source"))?;
+    if parts.len() != 3 {
+        return Err(fail("invalid schedule source"));
+    }
+    let plan_id = parts[0].as_str().ok_or_else(|| fail("invalid schedule source"))?;
+    let origin = parts[1].as_str().ok_or_else(|| fail("invalid schedule source"))?;
+    let index = parts[2].as_u64().and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| fail("invalid schedule source"))?;
+    let state: Value = serde_json::from_str(&recurring_raw(conn)?)
+        .map_err(|_| fail("invalid recurring state"))?;
+    let snapshot = &state["days"][origin][plan_id]["snapshot"];
+    if snapshot["mode"] == "graph" {
+        Ok(snapshot["steps"][index]["trackingMode"].as_str().unwrap_or("track").to_string())
+    } else {
+        Ok("track".to_string())
+    }
+}
+
 fn set_schedule_step(
     tx: &rusqlite::Transaction<'_>,
     source_id: &str,
@@ -208,16 +306,23 @@ fn schedule_projections(
                     };
                     let snapshot = &record["snapshot"];
                     let mode = snapshot["mode"].as_str().unwrap_or("check");
-                    if !matches!(mode, "activity" | "chain") {
+                    if !matches!(mode, "activity" | "chain" | "graph") {
                         continue;
                     }
+                    let graph_steps = if mode == "graph" {
+                        let Some(title) = snapshot["title"].as_str() else { continue };
+                        let Ok(validated) = recurring_steps(mode, title, snapshot) else { continue };
+                        Some(validated)
+                    } else {
+                        None
+                    };
                     for (index, step) in steps.iter().enumerate() {
                         let source_id = json!([plan_id, origin, index]).to_string();
                         let (active, seconds, has_work, block_id, block_date) = aggregates
                             .get(&source_id)
                             .cloned()
                             .unwrap_or((false, 0, 0, None, None));
-                        let title = if mode == "chain" {
+                        let title = if matches!(mode, "chain" | "graph") {
                             format!(
                                 "{} · {}",
                                 snapshot["title"].as_str().unwrap_or(""),
@@ -227,7 +332,21 @@ fn schedule_projections(
                             snapshot["title"].as_str().unwrap_or("").to_string()
                         };
                         let status = step["status"].as_str().unwrap_or("pending");
-                        out.push(json!({"id":source_id,"source_type":"schedule","source_id":source_id,"title":title,"date":origin,"completion_date":origin,"block_id":block_id,"block_date":block_date,"completed":status!="pending","status_extra":status,"tracking_mode":"track","is_active":active,"has_work":has_work>0,"actual_seconds":seconds,"actual_minutes":seconds/60}));
+                        let tracking_mode = graph_steps
+                            .as_ref()
+                            .and_then(|graph_steps| graph_steps.get(index))
+                            .and_then(|step| step["trackingMode"].as_str())
+                            .unwrap_or("track");
+                        let optional = graph_steps
+                            .as_ref()
+                            .and_then(|graph_steps| graph_steps.get(index))
+                            .and_then(|step| step["optional"].as_bool())
+                            .unwrap_or(false);
+                        let mut projection = json!({"id":source_id,"source_type":"schedule","source_id":source_id,"title":title,"date":origin,"completion_date":origin,"block_id":block_id,"block_date":block_date,"completed":status!="pending","status_extra":status,"tracking_mode":tracking_mode,"is_active":active,"has_work":has_work>0,"actual_seconds":seconds,"actual_minutes":seconds/60});
+                        if mode == "graph" {
+                            projection["optional"] = json!(optional);
+                        }
+                        out.push(projection);
                     }
                 }
             }
@@ -1354,6 +1473,9 @@ pub fn start_task_block(
     let conn = lock(&state)?;
     if source_type == "schedule" {
         let (_, origin, _, _, title) = schedule_context(&conn, &source_id)?;
+        if recurring_step_tracking_mode(&conn, &source_id)? == "check" {
+            return Err(fail("schedule check step does not use a timer"));
+        }
         // A routine step may run beside other tasks, but never twice at once.
         if let Some(id) = active_block_for(&conn, "schedule", &source_id)? {
             return Ok(id);
@@ -1530,6 +1652,31 @@ pub fn skip_recurring_step(source_id: String, state: State<'_, AppState>) -> Res
         stop(&tx, block_id, false)?;
     }
     set_schedule_step(&tx, &source_id, "skipped")?;
+    tx.commit().map_err(|e| fail(e.to_string()))
+}
+
+/// Completes a ready graph check step without opening a timer block.
+#[tauri::command(rename_all = "camelCase")]
+pub fn complete_recurring_step(source_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let mut conn = lock(&state)?;
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| fail(e.to_string()))?;
+    let _ = schedule_context(&tx, &source_id)?;
+    if recurring_step_tracking_mode(&tx, &source_id)? != "check" {
+        return Err(fail("schedule step is not a check"));
+    }
+    let active: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM timeline_blocks WHERE source_type='schedule' AND source_id=?1 AND is_active=1)",
+            [&source_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| fail(e.to_string()))?;
+    if active {
+        return Err(fail("schedule check step has an active timer"));
+    }
+    set_schedule_step(&tx, &source_id, "done")?;
     tx.commit().map_err(|e| fail(e.to_string()))
 }
 fn calendar_task_seconds(
@@ -1879,6 +2026,110 @@ mod tests {
         )
         .unwrap();
     }
+    fn recurring_graph_state(dependencies: &[Vec<usize>]) -> Value {
+        let mut state: Value = serde_json::from_str(include_str!("../../tests/fixtures/recurring-chain.json")).unwrap();
+        let steps: Vec<Value> = dependencies
+            .iter()
+            .enumerate()
+            .map(|(index, dependencies)| {
+                json!({
+                    "title": format!("Step {index}"),
+                    "dependsOn": dependencies,
+                    "trackingMode": if index == 0 { "check" } else { "track" },
+                    "optional": index == 3
+                })
+            })
+            .collect();
+        state["plans"][0]["mode"] = json!("graph");
+        state["plans"][0]["steps"] = json!(steps);
+        state["days"]["2026-09-20"]["p"]["snapshot"]["mode"] = json!("graph");
+        state["days"]["2026-09-20"]["p"]["snapshot"]["steps"] = json!(steps);
+        state["days"]["2026-09-20"]["p"]["run"]["steps"] = json!(dependencies
+            .iter()
+            .enumerate()
+            .map(|(index, _)| json!({"title":format!("Step {index}"),"status":"pending"}))
+            .collect::<Vec<_>>());
+        state
+    }
+
+    fn set_recurring_state(conn: &Connection, state: &Value) {
+        conn.execute(
+            "UPDATE ui_state SET value=?1 WHERE key='calendar_recurring_v1'",
+            [state.to_string()],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn graph_steps_allow_ready_forks_and_skip_unlocks_a_join() {
+        let conn = Connection::open_in_memory().unwrap();
+        recurring_fixture(&conn);
+        let mut state = recurring_graph_state(&[vec![], vec![0], vec![0], vec![1, 2]]);
+        set_recurring_state(&conn, &state);
+        let source = |index| json!(["p", "2026-09-20", index]).to_string();
+        assert_eq!(schedule_context(&conn, &source(0)).unwrap().4, "Chain · Step 0");
+        assert_eq!(schedule_context(&conn, &source(1)).unwrap_err(), "schedule graph step is not ready");
+        {
+            let tx = conn.unchecked_transaction().unwrap();
+            set_schedule_step(&tx, &source(0), "done").unwrap();
+            tx.commit().unwrap();
+        }
+        assert!(schedule_context(&conn, &source(1)).is_ok());
+        assert!(schedule_context(&conn, &source(2)).is_ok(), "any ready pending branch may run");
+        assert_eq!(schedule_context(&conn, &source(3)).unwrap_err(), "schedule graph step is not ready");
+        {
+            let tx = conn.unchecked_transaction().unwrap();
+            set_schedule_step(&tx, &source(1), "skipped").unwrap();
+            set_schedule_step(&tx, &source(2), "done").unwrap();
+            tx.commit().unwrap();
+        }
+        assert!(schedule_context(&conn, &source(3)).is_ok(), "done and skipped parents unlock the join");
+        let rows = schedule_projections(&conn, Some("2026-09-20"), Some("2026-09-20")).unwrap();
+        let row = rows.iter().find(|row| row["source_id"] == source(3)).unwrap();
+        assert_eq!(row["id"], source(3), "the source identity remains [plan, date, index]");
+        assert_eq!(row["title"], "Chain · Step 3");
+        assert_eq!(row["tracking_mode"], "track");
+        assert_eq!(row["optional"], true);
+        state = serde_json::from_str(&recurring_raw(&conn).unwrap()).unwrap();
+        assert_eq!(state["days"]["2026-09-20"]["p"]["run"]["steps"][1]["status"], "skipped");
+    }
+
+    #[test]
+    fn graph_rejects_cycles_and_invalid_dependency_indices() {
+        for dependencies in [
+            vec![vec![1], vec![0]],
+            vec![vec![0]],
+            vec![vec![1, 1], vec![]],
+            vec![vec![8]],
+        ] {
+            let conn = Connection::open_in_memory().unwrap();
+            recurring_fixture(&conn);
+            set_recurring_state(&conn, &recurring_graph_state(&dependencies));
+            assert!(schedule_context(&conn, &json!(["p", "2026-09-20", 0]).to_string()).is_err());
+        }
+    }
+
+    #[test]
+    fn graph_check_completion_never_creates_a_timer_block() {
+        use tauri::Manager;
+        let conn = Connection::open_in_memory().unwrap();
+        recurring_fixture(&conn);
+        set_recurring_state(&conn, &recurring_graph_state(&[vec![], vec![0]]));
+        let app = tauri::test::mock_builder()
+            .manage(AppState(std::sync::Mutex::new(conn)))
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let source = json!(["p", "2026-09-20", 0]).to_string();
+        assert_eq!(start_task_block("schedule".into(), source.clone(), None, None, app.state()).unwrap_err(), "schedule check step does not use a timer");
+        complete_recurring_step(source.clone(), app.state()).unwrap();
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM timeline_blocks WHERE source_type='schedule'", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+        let raw = crate::mvp_sync_db::read_ui(&conn, RECURRING_KEY).unwrap().unwrap();
+        let saved: Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(saved["days"]["2026-09-20"]["p"]["run"]["steps"][0]["status"], "done");
+    }
+
     #[test]
     fn schedule_step_is_filtered_by_run_and_updates_one_step_atomically() {
         let conn = Connection::open_in_memory().unwrap();

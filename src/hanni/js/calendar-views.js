@@ -61,6 +61,8 @@ import { isInstantTask } from './task-model.js';
     shell.dataset.contextRecord = record.id;
     shell.dataset.recordSource = `${record.source_type}:${record.source_id}`;
     shell.dataset.recordDate = record.date || '';
+    shell.dataset.sourceType = record.source_type || 'other';
+    shell.dataset.recordActive = String(record.is_active === true);
     const node = button('calv-record', '', () => options.onChooseRecord?.(record.id));
     node.dataset.recordId = record.id;
     const time = record.time ? `${record.time}${record.durationMinutes ? `–${record.displayEnd || hhmm(minutes(record.time) + record.durationMinutes)}` : ''}` : 'Без времени';
@@ -151,7 +153,7 @@ import { isInstantTask } from './task-model.js';
       function renderItems() {
         const expanded = state.untimedExpanded[date] === true;
         list.replaceChildren(...(expanded ? items : items.slice(0, untimedPreviewLimit)).map(record => recordButton(record, options, 'calv-untimed-record')));
-        more.textContent = expanded ? 'Свернуть' : 'Показать';
+        more.textContent = expanded ? 'Свернуть' : `Показать · ${items.length}`;
         more.setAttribute('aria-expanded', String(expanded)); more.hidden = items.length <= untimedPreviewLimit;
       }
       renderItems(); column.append(heading, list, more); band.append(column);
@@ -223,21 +225,47 @@ import { isInstantTask } from './task-model.js';
       const cellCount = Math.ceil((offset + dates.length) / 7) * 7;
       for (let i = 0; i < cellCount; i++) {
         const date = add(first, i);
-        const dayRecords = available.filter((record) => record.date === date).sort((a, b) => (a.time || "99").localeCompare(b.time || "99"));
+        const sourceOrder = { note: 0, event: 1, schedule: 2 };
+        const dayRecords = available.filter((record) => record.date === date).sort((a, b) =>
+          (a.time || '99').localeCompare(b.time || '99') ||
+          (sourceOrder[a.source_type] ?? 3) - (sourceOrder[b.source_type] ?? 3) ||
+          String(a.title || '').localeCompare(String(b.title || ''), 'ru'));
         const cell = button('calv-month-cell', '', () => options.onChooseDate?.(date));
         cell.dataset.calendarDate = date;
         cell.dataset.outside = String(date.slice(0, 7) !== options.date.slice(0, 7));
+        cell.dataset.weekend = String([0, 6].includes(parse(date).getDay()));
         cell.setAttribute('aria-pressed', String(date === options.date));
         if (date === today) cell.setAttribute('aria-current', 'date');
-        cell.setAttribute('aria-label', `${label(date, { day: 'numeric', month: 'long', year: 'numeric' })}, пунктов: ${dayRecords.length}`);
+        const dayLabel = `${label(date, { day: 'numeric', month: 'long', year: 'numeric' })}, пунктов: ${dayRecords.length}`;
+        cell.setAttribute('aria-label', dayLabel);
         cell.append(el('span', 'calv-date-number', String(parse(date).getDate())));
         for (const marker of startsOn(date)) cell.append(renderDayStartMarker(marker, { compact: true }));
         if (startsOn(date).length) cell.setAttribute('aria-label', `${cell.getAttribute('aria-label')}. Начало дня: ${startsOn(date).map(marker => marker.time).join(', ')}`);
-        const preview = dayRecords.filter(record => record.time).slice(0, 2);
-        for (const record of preview) cell.append(el('span', 'calv-month-preview', `${record.time} ${record.title}`));
-        if (dayRecords.length) {
-          const count = el('span', 'calv-day-count', 'Показать');
+        const preview = dayRecords.slice(0, 2);
+        for (const record of preview) {
+          const type = { note: 'Задача', event: 'Событие', schedule: 'Рутина' }[record.source_type] || record.kind || 'Запись';
+          const line = el('span', 'calv-month-preview', `${record.time ? `${record.time} · ` : ''}${record.title}`);
+          line.dataset.sourceType = record.source_type || 'other';
+          line.title = `${type}: ${record.title}${record.time ? `, ${record.time}` : ', без времени'}`;
+          cell.append(line);
+        }
+        const overflow = dayRecords.length - preview.length;
+        if (overflow > 0) {
+          const count = el('span', 'calv-day-count calv-day-count--overflow', `+${overflow}`);
+          count.setAttribute('aria-hidden', 'true');
           cell.append(count);
+        }
+        if (dayRecords.length) {
+          const total = el('span', 'calv-day-count calv-day-count--total', String(dayRecords.length));
+          total.setAttribute('aria-hidden', 'true');
+          cell.append(total);
+        }
+        if (preview.length) {
+          const previewLabel = preview.map(record => {
+            const type = { note: 'Задача', event: 'Событие', schedule: 'Рутина' }[record.source_type] || record.kind || 'Запись';
+            return `${type}: ${record.title}${record.time ? `, ${record.time}` : ', без времени'}`;
+          }).join('; ');
+          cell.setAttribute('aria-label', `${cell.getAttribute('aria-label')}. ${previewLabel}${overflow ? `; ещё ${overflow}` : ''}`);
         }
         grid.append(cell);
       }
@@ -266,6 +294,7 @@ import { isInstantTask } from './task-model.js';
         const steps = records.find(record => record.date === date && record.health_kind === 'steps');
         if (steps && steps.steps_count !== undefined && steps.steps_count !== null) day.append(el('span', 'calv-day-health', `Шаги: ${steps.steps_count}`));
         day.dataset.calendarDate = date;
+        day.dataset.weekend = String([0, 6].includes(parse(date).getDay()));
         day.setAttribute('aria-label', `${label(date, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}${steps?.steps_count != null ? `. Шагов: ${steps.steps_count}` : ''}`);
         day.setAttribute('aria-pressed', String(date === options.date));
         if (date === today) day.setAttribute('aria-current', 'date');
@@ -295,6 +324,7 @@ import { isInstantTask } from './task-model.js';
       body.append(hours);
       for (const date of dates) {
         const column = el('div', 'calv-day-column');
+        column.dataset.weekend = String([0, 6].includes(parse(date).getDay()));
         const isFoldedMinute = minute => date === options.date && foldPlan.folds.some(fold => minute >= fold.start && minute < fold.end);
         if (options.onCreateEvent) {
           const requestedHour = state.slotFocus[date] ?? (date === today ? (options.now || new Date()).getHours() : 9);

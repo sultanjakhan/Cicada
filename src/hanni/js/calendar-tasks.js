@@ -12,6 +12,10 @@ const firstIndex = (items, keyOf) => {
   }
   return index;
 };
+const stableJson = value => JSON.stringify(value, (_key, item) => {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
+  return Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]]));
+});
 const closed = row => row.completed || ['done', 'skipped', 'missed'].includes(row.status_extra);
 const dayOf = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const shiftDay = (day, delta) => { const date = new Date(`${day}T12:00:00`); date.setDate(date.getDate() + delta); return dayOf(date); };
@@ -30,7 +34,7 @@ const personalOf = row => ['home','health','growth','personal'].includes(row.sph
 const WAIT_ICON = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 1.5h5M3.5 10.5h5M4 1.5v1.3C4 4.1 6 4.8 6 6s-2 1.9-2 3.2v1.3M8 1.5v1.3C8 4.1 6 4.8 6 6s2 1.9 2 3.2v1.3"/></svg>';
 const ARROW_ICON = '<svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 7h8.5M7.5 3.5 11 7l-3.5 3.5"/></svg>';
 const plural = (count, forms) => { const n = Math.abs(count) % 100, d = n % 10; return forms[n > 10 && n < 20 ? 2 : d === 1 ? 0 : d >= 2 && d <= 4 ? 1 : 2]; };
-const EMPTY = { search:'Ничего не нашлось. Измени поиск, цель или сферу.', sphere:'В этой сфере задач нет. Выбери другую сферу или добавь задачу строкой выше.', completed:'Завершённых задач пока нет.', undated:'Все задачи распределены по дням.', today:'На сегодня задач нет.', active:'Задач пока нет. Добавь первую строкой выше.' };
+const EMPTY = { search:'Ничего не нашлось. Измени поиск, цель или сферу.', sphere:'В этой сфере задач нет. Выбери другую сферу или создай задачу через «+ Создать».', completed:'Завершённых задач пока нет.', undated:'Все задачи распределены по дням.', today:'На сегодня задач нет.', active:'Задач пока нет. Создай первую через «+ Создать».' };
 // Overdue cleanup acts on every task of the group through the task save path.
 const BULK = {
   today: { label:'Перенести на сегодня', ask:n => `Перенести ${n} ${plural(n,['задачу','задачи','задач'])}?`, confirm:'Перенести', pending:'Переносим…', verb:'перенести',
@@ -40,7 +44,6 @@ const BULK = {
 };
 const MORE_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></svg>';
 const SEARCH_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>';
-const PLUS_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg>';
 let sequence = 0;
 
 // The fresh record keeps title, estimate, goal, importance, kind and sphere; a new
@@ -62,8 +65,8 @@ export function mountCalendarTasks(host, dependencies) {
   if (state.sphere !== 'personal' || !PERSONAL_TABS.some(([id]) => id === state.personal)) state.personal = '';
   if (state.groupBy !== 'goal') state.groupBy = 'date';
   const prefix = `calendar-tasks-${++sequence}`;
-  let rows = [], goals = [], goalById = new Map(), linkByTask = new Map(), processes = [], stageBlocks = new Map(), ready = false, disposed = false, revision = 0, busy = false, queued = false, feedback = '';
-  let adding = false, bulk = null, confirming = null, overdue = [], shown = new Set(), stageMenu = null;
+  let rows = [], goals = [], goalById = new Map(), linkByTask = new Map(), processes = [], stageBlocks = new Map(), readSignature = null, ready = false, disposed = false, revision = 0, busy = false, queued = false, feedback = '';
+  let bulk = null, confirming = null, overdue = [], shown = new Set();
   let today = dayOf(new Date());
   host.classList.add('calendar-tasks');
   host.innerHTML = `<section aria-labelledby="${prefix}-title"><div class="ct-heading"><h2 id="${prefix}-title" tabindex="-1">Задачи <span data-tasks-count></span></h2>
@@ -72,12 +75,11 @@ export function mountCalendarTasks(host, dependencies) {
     <div class="ct-search-row"><label class="ct-search"><span class="ct-search-icon">${SEARCH_ICON}</span><input type="search" data-tasks-search placeholder="Найти задачу" aria-label="Найти задачу"></label><span class="ct-select"><select data-tasks-goal aria-label="Фильтр по цели"><option value="">Любая цель</option></select></span></div></div>
     <div class="ct-spheres" role="group" aria-label="Рабочие или личные задачи">${SPHERE_TABS.map(([id,label])=>`<button type="button" data-tasks-sphere="${id}" aria-pressed="false"><span>${label}</span><span class="ct-sphere-count" data-tasks-sphere-count></span></button>`).join('')}</div>
     <div class="ct-subspheres" role="group" aria-label="Сфера личных задач" data-tasks-personal hidden></div>
-    <form class="ct-add" data-tasks-add-form novalidate><span class="ct-add-icon">${PLUS_ICON}</span><input type="text" data-tasks-add placeholder="Добавить задачу…" aria-label="Добавить задачу" autocomplete="off" enterkeyhint="done"><p class="ct-add-status" data-tasks-add-status aria-live="polite" hidden></p></form>
-    <p data-tasks-message role="status" aria-live="polite"></p><button type="button" data-tasks-retry hidden>Повторить загрузку</button>
+    <p data-tasks-message role="status" aria-live="polite"></p><p class="ct-visually-hidden" data-tasks-stage-announcement role="status" aria-live="polite"></p><button type="button" data-tasks-retry hidden>Повторить загрузку</button>
     <div data-tasks-list></div><div class="ct-pages" data-tasks-pages hidden><button type="button" data-tasks-prev>Назад</button><span data-tasks-page></span><button type="button" data-tasks-next>Далее</button></div></section>`;
   const q = name => host.querySelector(`[data-tasks-${name}]`);
   const heading = host.querySelector('h2'), message = q('message'), list = q('list'), search = q('search'), goalFilter = q('goal');
-  const addForm = q('add-form'), addInput = q('add'), addStatus = q('add-status'), grouping = q('grouping');
+  const grouping = q('grouping');
   search.value = state.search || '';
   const node = (tag, cls, text) => { const el = doc.createElement(tag); if(cls)el.className=cls; if(text!=null)el.textContent=text; return el; };
   const control = (cls,text,action) => { const el=node('button',cls,text);el.type='button';el.addEventListener('click',action);return el; };
@@ -134,16 +136,12 @@ export function mountCalendarTasks(host, dependencies) {
     const stage=!done&&!instant?taskStage(row,processes):null;
     if(stage){
       const group=node('span','ct-stage-group');
-      const chip=control('ct-stage',null,()=>openStageMenu(id,chip));
-      if(stage.label)chip.append(node('span','ct-stage-label',stage.label));
+      const chip=node('span','ct-stage');chip.dataset.taskId=id;chip.title=stageTitleOf(row,stage);
+      chip.append(node('span','ct-stage-prefix','Этап:'),node('span','ct-stage-label',stage.label||(stage.waiting?'Жду ответа':'Не выбран')));
       // «Жду ответа»: a small hourglass after the stage name.
       if(stage.waiting){const mark=node('span','ct-waiting');mark.innerHTML=WAIT_ICON;mark.append(node('span','ct-visually-hidden','жду ответа'));chip.append(mark);}
-      if(!stage.label&&!stage.waiting){chip.textContent='Стадия';chip.classList.add('is-empty');}
       chip.classList.toggle('is-deleted',stage.deleted);
-      chip.title=stageTitleOf(row,stage);chip.setAttribute('aria-label',`Стадия: ${stage.label||'не выбрана'}${stage.waiting?', жду ответа':''}. Выбрать стадию`);
-      chip.setAttribute('aria-haspopup','menu');chip.setAttribute('aria-expanded','false');chip.disabled=busy;chip.dataset.taskId=id;chip.dataset.taskControl='stage';
       group.append(chip);
-      // One tap to the next stage; at the last stage there is no arrow.
       if(stage.next){
         const next=control('ct-stage-next',null,()=>void advance(id));next.innerHTML=ARROW_ICON;
         next.title=`${stage.stage?'Дальше':'Начать'}: ${stage.next.title}`;next.setAttribute('aria-label',`Следующая стадия «${stage.next.title}»: ${row.title}`);
@@ -227,7 +225,7 @@ export function mountCalendarTasks(host, dependencies) {
     host.querySelectorAll('[data-tasks-filter]').forEach(el=>el.setAttribute('aria-pressed',String(el.dataset.tasksFilter===state.filter)));
     host.querySelectorAll('[data-tasks-sphere]').forEach(el=>{const id=el.dataset.tasksSphere,count=String(counts.get(id));el.setAttribute('aria-pressed',String(id===state.sphere));el.querySelector('[data-tasks-sphere-count]').textContent=count;el.setAttribute('aria-label',`${SPHERE_TABS.find(([tab])=>tab===id)[1]}: ${count}`);});
     host.querySelectorAll('[data-tasks-group-by]').forEach(el=>el.setAttribute('aria-pressed',String(el.dataset.tasksGroupBy===state.groupBy)));
-    grouping.hidden=state.filter==='completed';addForm.hidden=state.filter==='completed';
+    grouping.hidden=state.filter==='completed';
     state.page=Math.max(0,Math.min(state.page||0,Math.ceil(visible.length/50)-1));
     const totals=new Map();for(const {section} of visible)totals.set(section.id,(totals.get(section.id)||0)+1);
     overdue=visible.filter(({section})=>section.id==='overdue').map(({row})=>row);if(!overdue.length&&!bulk)confirming=null;
@@ -244,7 +242,6 @@ export function mountCalendarTasks(host, dependencies) {
     if(!visible.length)list.append(node('p','ct-empty',query||state.goal?EMPTY.search:state.sphere&&counts.get('')?EMPTY.sphere:EMPTY[state.filter]||EMPTY.active));
     q('pages').hidden=visible.length<=50;q('prev').disabled=state.page===0;q('next').disabled=(state.page+1)*50>=visible.length;
     q('page').textContent=`${state.page*50+1}–${Math.min((state.page+1)*50,visible.length)} из ${visible.length}`;
-    if(stageMenu){const trigger=findButton(stageMenu.id,'stage');if(trigger){stageMenu.trigger=trigger;trigger.setAttribute('aria-expanded','true');}else closeStageMenu(false);}
     if(focusId&&!focused.isConnected)restore(focusId,focusAction);
     if(focusedBulk&&!focused.isConnected)focusBulk(focusedBulk);
   }
@@ -259,10 +256,14 @@ export function mountCalendarTasks(host, dependencies) {
       // Time per stage is context for the tooltip; a failed read leaves it empty.
       const blocks=await loadStageBlocks(invoke,nextRows.filter(row=>!closed(row)&&!isInstantTask(row)&&taskStage(row,result[3])).map(row=>row.source_id));
       if(disposed||request!==revision||canCommit&&!canCommit())return;
-      rows=nextRows;goals=result[1];goalById=firstIndex(goals,goal=>String(goal.id));linkByTask=firstIndex(result[2],link=>taskKey(link));processes=result[3];stageBlocks=blocks;ready=true;today=dayOf(new Date());
+      const nextToday=dayOf(new Date());
+      const nextSignature=stableJson([nextToday,nextRows,result[1],result[2],result[3],[...blocks].sort(([a],[b])=>String(a).localeCompare(String(b)))]);
+      ready=true;
+      if(nextSignature===readSignature){message.textContent=feedback;q('retry').hidden=true;return;}
+      rows=nextRows;goals=result[1];goalById=firstIndex(goals,goal=>String(goal.id));linkByTask=firstIndex(result[2],link=>taskKey(link));processes=result[3];stageBlocks=blocks;today=nextToday;
       goalFilter.replaceChildren(new win.Option('Любая цель',''),new win.Option('Без цели','none'),...goals.map(goal=>new win.Option(goalPath(goal.id),String(goal.id))));
       if(state.goal&&!['none',...goals.map(goal=>String(goal.id))].includes(state.goal))state.goal='';goalFilter.value=state.goal;
-      message.textContent=feedback;q('retry').hidden=true;render();
+      message.textContent=feedback;q('retry').hidden=true;render();readSignature=nextSignature;
     }catch{if(!disposed&&request===revision){message.textContent=ready?'Не удалось обновить задачи. Показан предыдущий список.':'Не удалось загрузить задачи. Это не означает, что список пуст.';q('retry').hidden=false;}}
     finally{if(!disposed&&request===revision)host.removeAttribute('aria-busy');}
   }
@@ -289,96 +290,24 @@ export function mountCalendarTasks(host, dependencies) {
     }
     render();focusBulk(failed.length?kind:'none');
   }
-  function showAdd(text, alert=false){addStatus.textContent=text;addStatus.hidden=!text;addStatus.setAttribute('role',alert?'alert':'status');addStatus.classList.toggle('is-error',alert);}
-  // Quick add: title only, in the chosen sphere; «Сегодня» plans it for today.
-  async function add() {
-    if(adding||disposed)return;
-    const title=addInput.value.trim();
-    if(!title){addInput.value='';showAdd('');return;}
-    if(title.length>500){showAdd('Сократи название задачи до 500 символов.',true);return;}
-    const sphere=state.sphere==='work'?'work':state.sphere!=='personal'?'':state.personal==='none'?'':state.personal||'personal', dueDate=state.filter==='today'?dayOf(new Date()):null;
-    adding=true;addForm.setAttribute('aria-busy','true');addInput.readOnly=true;showAdd('');
-    try{
-      const id=await invoke('save_calendar_task',{id:null,title,dueDate,time:'',estimateMinutes:null,goalId:null,expectedVersion:null,important:false,taskKind:'normal',sphere});
-      if(disposed)return;
-      addInput.value='';adding=false;notifyChange();await refresh();if(disposed)return;
-      const key=`note:${id}`;
-      showAdd(id!=null&&ready&&!busy&&!shown.has(key)?'Задача добавлена, но скрыта поиском или фильтром цели.':state.filter==='active'&&state.groupBy==='date'?'Задача добавлена в «Без даты».':'Задача добавлена.');
-    }catch(error){if(!disposed)showAdd(`Не удалось добавить задачу: ${String(error?.message??error??'').trim()||'повтори попытку'}. Текст остался в строке.`,true);}
-    finally{adding=false;if(!disposed){addForm.removeAttribute('aria-busy');addInput.readOnly=false;}}
-  }
-  function closeStageMenu(returnFocus=true) {
-    if(!stageMenu)return;
-    const current=stageMenu;stageMenu=null;current.cleanup();current.menu.remove();
-    if(current.trigger.isConnected)current.trigger.setAttribute('aria-expanded','false');
-    if(returnFocus&&!disposed)restore(current.id,'stage');
-  }
-  // The arrow: the next stage of the task's process in one tap.
   async function advance(id) {
-    const row=rows.find(item=>taskKey(item)===id), stage=row&&taskStage(row,processes);
-    if(!stage?.next||busy||disposed)return;
-    closeStageMenu(false);busy=true;revision++;feedback='';message.textContent='';render();
-    let ok=false;
+    const row=rows.find(item=>taskKey(item)===id), stage=row&&taskStage(row,processes), next=stage?.next;
+    if(!next||busy||disposed)return;
+    busy=true;revision++;feedback='';message.textContent='';render();
+    let succeeded=false;
     try{
-      const result=await invoke('set_calendar_task_stage',{id:String(row.source_id),stage:stage.next.id,waiting:null});
+      const result=await invoke('set_calendar_task_stage',{id:String(row.source_id),stage:next.id,waiting:null});
       if(disposed)return;
-      rows=rows.map(item=>taskKey(item)===id?{...item,process:result?.process??item.process,stage:typeof result?.stage==='string'?result.stage:stage.next.id,waiting:typeof result?.waiting==='boolean'?result.waiting:item.waiting,stage_log:result?.stage_log??item.stage_log}:item);
-      ok=true;
+      rows=rows.map(item=>taskKey(item)===id?{...item,process:result?.process??item.process,stage:typeof result?.stage==='string'?result.stage:next.id,waiting:typeof result?.waiting==='boolean'?result.waiting:item.waiting,stage_log:result?.stage_log??item.stage_log}:item);
+      succeeded=true;
     }catch{}
     finally{
       if(!disposed){
         busy=false;render();
-        if(ok){say(`Стадия: ${stage.next.title}.`);notifyChange();}else say('Не удалось перейти к следующей стадии. Повтори.',true);
-        restore(id,findButton(id,'stage-next')?'stage-next':'stage');
+        if(succeeded){host.querySelector('[data-tasks-stage-announcement]').textContent=`Этап: ${taskStage(rows.find(item=>taskKey(item)===id),processes)?.label||next.title}.`;notifyChange();}
+        else say('Не удалось перейти к следующему этапу. Повтори.',true);
+        restore(id,findButton(id,'stage-next')?'stage-next':'open');
       }
-    }
-  }
-  // Stage menu (secondary path): the stages of the task's process, «Без стадии» and «Жду ответа».
-  function openStageMenu(id, trigger) {
-    const current=stageMenu?.id===id;closeStageMenu(false);if(current)return;
-    const row=rows.find(item=>taskKey(item)===id), state=row&&taskStage(row,processes);if(!state||busy)return;
-    const menu=node('div','ct-stage-menu');menu.setAttribute('role','menu');menu.setAttribute('aria-label',`Стадия: ${row.title}`);menu.dataset.tasksStageMenu='';
-    // A deleted stage is kept when only «Жду ответа» changes (its stage is sent as null).
-    const stage=state.stage, waiting=state.waiting, items=[];
-    const option=(label,role,checked,values)=>{const button=control('ct-stage-option',label,()=>void setStage(id,values));button.setAttribute('role',role);button.setAttribute('aria-checked',String(checked));button.tabIndex=-1;menu.append(button);items.push(button);return button;};
-    menu.append(node('p','ct-stage-menu-title',state.processTitle));
-    for(const item of state.stages)option(item.title,'menuitemradio',stage===item.id,{stage:item.id,waiting}).dataset.stage=item.id;
-    option('Без стадии','menuitemradio',!stage,{stage:'',waiting}).dataset.stage='';
-    const line=node('div','ct-stage-separator');line.setAttribute('role','separator');menu.append(line);
-    option('Жду ответа','menuitemcheckbox',waiting,{stage:null,waiting:!waiting}).dataset.stageWaiting='';
-    const error=node('p','ct-stage-error');error.setAttribute('role','alert');error.hidden=true;menu.append(error);
-    doc.body.append(menu);trigger.setAttribute('aria-expanded','true');
-    const place=trigger.getBoundingClientRect(), size=menu.getBoundingClientRect();
-    menu.style.left=`${Math.max(8,Math.min(place.left,win.innerWidth-size.width-8))}px`;
-    const below=place.bottom+4, above=place.top-size.height-4;
-    menu.style.top=`${Math.max(8,Math.min(below+size.height+8>win.innerHeight&&above>=8?above:below,win.innerHeight-size.height-8))}px`;
-    const keys=event=>{
-      if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeStageMenu(true);return;}
-      if(event.key==='Tab'){closeStageMenu(false);return;}
-      if(!['ArrowDown','ArrowUp','Home','End'].includes(event.key))return;
-      event.preventDefault();const index=items.indexOf(doc.activeElement);
-      items[event.key==='Home'?0:event.key==='End'?items.length-1:(index+(event.key==='ArrowDown'?1:-1)+items.length)%items.length].focus();
-    };
-    const outside=event=>{if(!menu.contains(event.target)&&!stageMenu?.trigger.contains(event.target))closeStageMenu(!event.target.closest?.('button, a, input, textarea, select, [tabindex]'));};
-    const away=event=>{if(!menu.contains(event.target))closeStageMenu(false);};
-    const resize=()=>closeStageMenu(false);
-    menu.addEventListener('keydown',keys);doc.addEventListener('pointerdown',outside,true);doc.addEventListener('scroll',away,true);win.addEventListener('resize',resize);
-    stageMenu={id,menu,trigger,error,items,busy:false,cleanup:()=>{doc.removeEventListener('pointerdown',outside,true);doc.removeEventListener('scroll',away,true);win.removeEventListener('resize',resize);}};
-    (items.find(item=>item.getAttribute('aria-checked')==='true'&&item.dataset.stage!=null)||items[0]).focus();
-  }
-  async function setStage(id, values) {
-    const current=stageMenu;if(!current||current.busy||disposed)return;
-    current.busy=true;current.menu.setAttribute('aria-busy','true');current.items.forEach(item=>{item.disabled=true;});current.error.hidden=true;
-    try{
-      const sourceId=rows.find(row=>taskKey(row)===id)?.source_id??id.slice(id.indexOf(':')+1);
-      const result=await invoke('set_calendar_task_stage',{id:String(sourceId),stage:values.stage,waiting:values.waiting});
-      if(disposed)return;
-      rows=rows.map(row=>taskKey(row)===id?{...row,stage:typeof result?.stage==='string'?result.stage:values.stage??row.stage,waiting:typeof result?.waiting==='boolean'?result.waiting:values.waiting,
-        ...(result?.process!=null?{process:result.process}:{}),...(Array.isArray(result?.stage_log)?{stage_log:result.stage_log}:{})}:row);
-      if(stageMenu===current)closeStageMenu(false);
-      render();restore(id,'stage');notifyChange();
-    }catch{
-      if(stageMenu===current){current.busy=false;current.menu.removeAttribute('aria-busy');current.items.forEach(item=>{item.disabled=false;});current.error.textContent='Не удалось изменить стадию. Повтори.';current.error.hidden=false;current.items[0].focus();}
     }
   }
   const disposeMenu=mountMenu?.(host,{getRecord:item=>rows.find(row=>taskKey(row)===item.dataset.contextRecord),restoreFocus:(item,trigger)=>restore(item.dataset.contextRecord,'recordMenu' in trigger.dataset?'menu':'open')});
@@ -388,18 +317,12 @@ export function mountCalendarTasks(host, dependencies) {
   q('personal').addEventListener('click',event=>{const button=event.target.closest('[data-tasks-personal-option]');if(button){choose('personal',button.dataset.tasksPersonalOption);q('personal').querySelector(`[data-tasks-personal-option="${button.dataset.tasksPersonalOption}"]`)?.focus({preventScroll:true});}});
   host.querySelectorAll('[data-tasks-group-by]').forEach(el=>el.addEventListener('click',()=>choose('groupBy',el.dataset.tasksGroupBy)));
   search.addEventListener('input',()=>choose('search',search.value));goalFilter.addEventListener('change',()=>choose('goal',goalFilter.value));
-  addForm.addEventListener('submit',event=>{event.preventDefault();void add();});
-  addInput.addEventListener('keydown',event=>{
-    if(event.key==='Enter'&&!event.isComposing&&event.keyCode!==229){event.preventDefault();void add();}
-    else if(event.key==='Escape'&&(addInput.value||!addStatus.hidden)&&!adding){event.preventDefault();event.stopPropagation();addInput.value='';showAdd('');}
-  });
-  addInput.addEventListener('input',()=>{if(!addStatus.classList.contains('is-error'))showAdd('');});
   q('retry').addEventListener('click',()=>void refresh());for(const [name,delta]of[['prev',-1],['next',1]])q(name).addEventListener('click',()=>{state.page+=delta;render();heading.focus();});
   const onChange=event=>{if(queued||disposed)return;queued=true;queueMicrotask(()=>{queued=false;void refresh(event.detail?.remoteSync?event.detail.canCommit:null);});};
   win.addEventListener('task-state-changed',onChange);win.addEventListener('hanni:calendar-refresh',onChange);win.addEventListener('hanni:processes-changed',onChange);win.addEventListener('focus',onChange);
   // Stage tooltips of running tasks follow their timer.
-  const updateStageTitles=()=>host.querySelectorAll('[data-task-control="stage"]').forEach(chip=>{const row=rows.find(item=>taskKey(item)===chip.dataset.taskId),stage=row?.is_active&&taskStage(row,processes);if(stage)chip.title=stageTitleOf(row,stage);});
+  const updateStageTitles=()=>host.querySelectorAll('.ct-stage[data-task-id]').forEach(chip=>{const row=rows.find(item=>taskKey(item)===chip.dataset.taskId),stage=row?.is_active&&taskStage(row,processes);if(stage)chip.title=stageTitleOf(row,stage);});
   const timer=win.setInterval(()=>{if(dayOf(new Date())!==today)void refresh();else updateStageTitles();},30000);
   void refresh();
-  return ()=>{disposed=true;revision++;closeStageMenu(false);disposeMenu?.();win.clearInterval(timer);win.removeEventListener('task-state-changed',onChange);win.removeEventListener('hanni:calendar-refresh',onChange);win.removeEventListener('hanni:processes-changed',onChange);win.removeEventListener('focus',onChange);};
+  return ()=>{disposed=true;revision++;disposeMenu?.();win.clearInterval(timer);win.removeEventListener('task-state-changed',onChange);win.removeEventListener('hanni:calendar-refresh',onChange);win.removeEventListener('hanni:processes-changed',onChange);win.removeEventListener('focus',onChange);};
 }

@@ -33,6 +33,55 @@ test('remote refresh rereads saved goal without writing the old cached selection
   assert.match(x.ui('goal-title').textContent,/Гардероб/);assert.equal(x.data.count('set_ui_state'),before);assert.equal(JSON.parse(x.data.stored).goalId,'goal-b');
 });
 
+test('a quiet remote read keeps action styling and replays one still-valid click after current data arrives', async t => {
+  const x=await mount(t); let release;
+  const gate=new Promise(resolve=>{release=resolve;});
+  x.data.before.set('get_ui_state',()=>gate);
+  x.dom.window.dispatchEvent(new x.dom.window.CustomEvent('task-state-changed',{detail:{remoteSync:true,canCommit:()=>true}}));
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(x.ui('card').getAttribute('aria-busy'),'true');
+  assert.equal(x.action('start').disabled,false,'quiet sync does not flash the action disabled');
+  x.action('start').click(); x.action('start').click();
+  assert.equal(x.data.count('start_task_block'),0,'the action waits for the current snapshot');
+  release(); await x.settle();
+  await new Promise(resolve=>setImmediate(resolve)); await x.settle();
+  assert.equal(x.action('start').disabled,false);
+  assert.equal(x.data.count('start_task_block'),1,'a deferred click runs once despite a double click');
+});
+
+test('choosing a goal during an unchanged background refresh opens the picker without changing execution', async t => {
+  const x=await mount(t); let release;
+  const gate=new Promise(resolve=>{release=resolve;});
+  x.data.before.set('get_ui_state',()=>gate);
+  x.dom.window.dispatchEvent(new x.dom.window.CustomEvent('task-state-changed',{detail:{remoteSync:true,canCommit:()=>true}}));
+  await new Promise(resolve=>setImmediate(resolve));
+  const writes=x.data.count('set_ui_state');
+  x.action('open-goal').click();
+  assert.equal(x.dom.window.document.querySelector('.calendar-goal-picker'),null);
+  release(); await x.settle(); await new Promise(resolve=>setImmediate(resolve)); await x.settle();
+  assert.equal(x.dom.window.document.querySelector('.calendar-goal-picker')?.open,true);
+  assert.equal(x.data.count('set_ui_state'),writes);
+  assert.equal(x.data.count('start_task_block'),0);
+});
+
+test('a queued goal action is discarded with feedback when remote goal changes but the task stays the same', async t => {
+  const initial={...blank(),selectionMode:'manual',selection:{source_type:'event',source_id:'event-a',title:'Вопросы к интервью',duration_minutes:25,date:'2026-09-05',completion_date:'2026-09-05'}};
+  const data=backend(initial); data.links.push({source_type:'event',source_id:'event-a',goal_id:'goal-b'});
+  const x=await mount(t,data); let release;
+  const gate=new Promise(resolve=>{release=resolve;});
+  x.data.before.set('get_ui_state',()=>gate);
+  x.data.stored=JSON.stringify({...initial,goalId:'goal-b'});
+  x.dom.window.dispatchEvent(new x.dom.window.CustomEvent('task-state-changed',{detail:{remoteSync:true,canCommit:()=>true}}));
+  await new Promise(resolve=>setImmediate(resolve));
+  const taskTitle=x.ui('title').textContent;
+  assert.equal(taskTitle,'Вопросы к интервью','the manually selected task is stable across the goal change');
+  x.action('goal-details').click();
+  release(); await x.settle(); await new Promise(resolve=>setImmediate(resolve)); await x.settle();
+  assert.equal(x.dom.window.document.querySelector('dialog'),null,'the click cannot open details for the newly selected goal');
+  assert.equal(x.ui('live').textContent,'Состояние обновилось. Проверь задачу перед действием.');
+  assert.equal(x.ui('title').textContent,taskTitle);
+});
+
 test('remote refresh waits for an open picker and never overwrites its draft', async t => {
   const x=await mount(t);await x.click('open-goal');const picker=x.dom.window.document.querySelector('.calendar-goal-picker');
   const search=picker.querySelector('[data-goal-search]');search.value='draft query';search.dispatchEvent(new x.dom.window.Event('input',{bubbles:true}));
@@ -254,29 +303,43 @@ async function mount(t, data = backend(), dependencies ={
       };
 
   }
-// Owner decision 2026-09-24: the shared header shows only «● N» running tasks.
-test('the header indicator counts running work only and never starts, pauses or selects anything', async t => {
+test('the header always navigates to current tasks and counts only running work', async t => {
   let opened = 0;
   const x = await mount(t, backend(), { header:true, openInProgress:() => opened++ });
   const button = x.header.querySelector('[data-header-action="in-progress"]');
-  assert.equal(x.header.querySelectorAll('button').length, 1, 'no task title, toggle, time or menu in the header');
-  assert.equal(x.header.hidden, true, 'an automatic suggestion is not running work');
+  const dot = button.querySelector('.calendar-running__dot');
+  const count = button.querySelector('[data-header-count]');
+  assert.equal(x.header.querySelectorAll('button').length, 1);
+  assert.equal(x.header.hidden, false, 'navigation is available after a successful snapshot');
+  assert.equal(button.querySelector('[data-header-label]').textContent, 'Текущие задачи');
+  assert.equal(button.textContent, 'Текущие задачи');
+  assert.equal(dot.hidden, true, 'no running work hides the green dot');
+  assert.equal(count.hidden, true, 'no running work hides the numeric count');
+  assert.equal(button.getAttribute('aria-label'), 'Текущие задачи · запущено: 0');
+  assert.equal(button.title, 'Текущие задачи · запущено: 0');
   await x.choose('task', 'note:task-a');
-  assert.equal(x.header.hidden, true, 'a selected task is not running work');
+  assert.equal(x.header.hidden, false, 'a selected task does not hide navigation');
   await x.click('start');
   assert.equal(x.header.hidden, false);
-  assert.equal(button.textContent, '1');
-  assert.equal(button.getAttribute('aria-label'), 'В работе: 1');
-  assert.equal(button.title, 'В работе: 1');
-  assert.ok(button.querySelector('.calendar-running__dot[aria-hidden="true"]'));
+  assert.equal(button.textContent, 'Текущие задачи1');
+  assert.equal(count.textContent, '1');
+  assert.equal(count.hidden, false);
+  assert.equal(button.getAttribute('aria-label'), 'Текущие задачи · запущено: 1');
+  assert.equal(button.title, 'Текущие задачи · запущено: 1');
+  assert.equal(dot.hidden, false);
   const calls = x.data.calls.length;
   button.click();
   assert.equal(opened, 1);
-  assert.equal(x.data.calls.length, calls, 'the indicator only navigates');
+  assert.equal(x.data.calls.length, calls, 'navigation never changes execution or selection');
   await x.click('pause');
-  assert.equal(x.header.hidden, true, 'paused work is not counted');
+  assert.equal(x.header.hidden, false, 'paused work keeps navigation available');
+  assert.equal(button.textContent, 'Текущие задачи');
+  assert.equal(dot.hidden, true);
+  assert.equal(count.hidden, true, 'paused work is not included in the running count');
+  assert.equal(button.getAttribute('aria-label'), 'Текущие задачи · запущено: 0');
   const empty = await mount(t, backend({ ...blank(), goalId:null }), { header:true });
-  assert.equal(empty.header.hidden, true);
+  assert.equal(empty.header.hidden, false, 'an empty successful snapshot still shows navigation');
+  assert.equal(empty.header.querySelector('[data-header-count]').hidden, true);
 });
 
 test('unknown current work stays hidden on read failure while launcher exposes safe retry', async t => {
@@ -286,8 +349,28 @@ test('unknown current work stays hidden on read failure while launcher exposes s
   assert.equal(x.header.hidden, true);
   assert.match(x.cleanup.getLauncherState().error, /Не удалось обновить/);
   await x.cleanup.retry(); await x.settle();
-  assert.equal(x.header.hidden, true, 'nothing runs after a successful load');
+  assert.equal(x.header.hidden, false, 'navigation appears after the first successful snapshot');
+  assert.equal(x.header.querySelector('[data-header-count]').hidden, true);
   assert.equal(data.count('start_task_block'), 0);
+});
+
+test('a paused task keeps the current-task link through later read failure', async t => {
+  const initial = {
+    ...blank(), goalId:null,
+    execution:{ blockId:81, date:'2026-09-05', task:{ source_type:'note', source_id:'task-a', title:'Заметки по API' } }
+  };
+  const data = backend(initial);
+  data.blocks.push({ id:81, source_type:'note', source_id:'task-a', date:'2026-09-05', start_time:'09:00', duration_seconds:90, duration_minutes:1, is_active:false });
+  const x = await mount(t, data, { header:true });
+  const button = x.header.querySelector('[data-header-action="in-progress"]');
+  assert.equal(x.header.hidden, false);
+  assert.equal(button.querySelector('[data-header-label]').textContent, 'Текущие задачи');
+  assert.equal(button.querySelector('.calendar-running__dot').hidden, true);
+  assert.equal(button.querySelector('[data-header-count]').hidden, true);
+  data.onceFail('get_goals');
+  await x.refresh();
+  assert.equal(x.ui('error').hidden, false, 'the read failure remains visible on the task surface');
+  assert.equal(x.header.hidden, false, 'a failed refresh preserves navigation from the last good snapshot');
 });
 
 test('the task card preserves routine step identity and occurrence across pause and resume', async t => {
@@ -302,7 +385,8 @@ test('the task card preserves routine step identity and occurrence across pause 
   assert.equal(opened[0].completion_date, '2026-09-04');
   await x.click('pause');
   assert.equal(x.action('start').textContent, 'Продолжить');
-  assert.equal(x.header.hidden, true);
+  assert.equal(x.header.hidden, false, 'navigation remains available while this task is paused');
+  assert.equal(x.header.querySelector('[data-header-count]').hidden, true);
   await x.click('start');
   assert.equal(data.blocks.at(-1).source_id, sourceId);
   assert.equal(data.blocks.at(-1).completion_date, '2026-09-04');
@@ -568,7 +652,50 @@ test('a deleted paused event clears stale execution and retains its closed histo
    await x.refresh();
    assert.equal(JSON.parse(data.stored).execution, null);
 
-  });test('global active task on another date blocks goal switching and a different task starts beside it without stopping it', async t =>{
+  });
+
+test('refresh adopts a valid latest task when its previous return note was deleted', async t => {
+  const initial = blank();
+  initial.execution = { blockId: 88, date: '2026-09-05', task: { source_type: 'note', source_id: 'qa-note', title: 'QA note' } };
+  initial.observedBlockId = 88;
+  const data = backend(initial);
+  data.blocks.push({ id: 99, date: '2026-09-05', start_time: '09:30', source_type: 'note', source_id: 'task-a', is_active: false, duration_minutes: 15 });
+  data.before.set('get_note', args => {
+    if (args.id === 'qa-note') throw 'item not found';
+  });
+  const x = await mount(t, data);
+  assert.equal(x.host.dataset.taskKey, 'note:task-a');
+  assert.equal(x.host.dataset.state, 'paused');
+  assert.equal(x.ui('error').hidden, true, 'a deleted optional return target must not fail refresh');
+  assert.equal(JSON.parse(data.stored).execution.task.source_id, 'task-a');
+  assert.equal(JSON.parse(data.stored).returnTo, null);
+});
+
+test('a paused note whose record is gone clears stale execution but retains its history', async t => {
+  const initial = blank();
+  initial.execution = { blockId: 88, date: '2026-09-05', task: { source_type: 'note', source_id: 'qa-note', title: 'QA note' } };
+  initial.selection = { source_type: 'note', source_id: 'qa-note' }; initial.selectionMode = 'manual';
+  const data = backend(initial);
+  data.blocks.push({ id: 88, date: '2026-09-05', start_time: '09:30', source_type: 'note', source_id: 'qa-note', is_active: false, duration_minutes: 15 });
+  data.before.set('get_note', () => { throw 'item not found'; });
+  const x = await mount(t, data);
+  assert.equal(JSON.parse(data.stored).execution, null);
+  assert.equal(JSON.parse(data.stored).selection, null);
+  assert.equal(data.blocks[0].duration_minutes, 15, 'closed history is not deleted');
+  assert.equal(x.ui('error').hidden, true);
+});
+
+test('a return-note read failure other than not-found remains visible', async t => {
+  const initial = { ...blank(), returnTo: { source_type: 'note', source_id: 'task-a', title: 'API notes' } };
+  const data = backend(initial);
+  data.onceFail('get_note');
+  const x = await mount(t, data);
+  assert.equal(x.ui('error').hidden, false, 'non-missing read errors remain visible');
+  assert.notEqual(x.ui('error-text').textContent, '', 'the refresh failure has visible feedback');
+  assert.equal(JSON.parse(data.stored).returnTo.source_id, 'task-a');
+});
+
+test('global active task on another date blocks goal switching and a different task starts beside it without stopping it', async t =>{
    const data = backend();
    data.blocks.push({
      id: 90, date: '2026-09-04', start_time: '23:58', source_type: 'note', source_id: 'task-a', is_active: true, duration_minutes: 0
@@ -1568,14 +1695,14 @@ test('Now does not hide real seconds-command errors behind the legacy fallback',
 test('parallel running tasks update the header count and the return target without pausing anything', async t => {
   let opened = 0;
   const x = await mount(t, backend({ ...blank(), goalId:null }), { header:true, hideTaskCard:true, openInProgress:() => opened++ });
-  const header = x.header, count = () => header.hidden ? 0 : Number(header.querySelector('[data-header-count]').textContent);
+  const header = x.header, count = () => header.hidden || header.querySelector('[data-header-count]').hidden ? 0 : Number(header.querySelector('[data-header-count]').textContent);
   await x.data.invoke('start_task_block', { sourceType:'note', sourceId:'task-a', completionDate:'2026-09-05' });
   await x.refresh();
   assert.equal(count(), 1);
   await x.data.invoke('start_task_block', { sourceType:'event', sourceId:'event-a', completionDate:'2026-09-05' });
   await x.refresh();
   assert.equal(count(), 2);
-  assert.equal(header.querySelector('[data-header-action="in-progress"]').getAttribute('aria-label'), 'В работе: 2');
+  assert.equal(header.querySelector('[data-header-action="in-progress"]').getAttribute('aria-label'), 'Текущие задачи · запущено: 2');
   header.querySelector('[data-header-action="in-progress"]').click();
   assert.equal(opened, 1);
   assert.equal(x.data.count('pause_task_block'), 0);

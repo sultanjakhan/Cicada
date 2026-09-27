@@ -159,14 +159,14 @@ export async function mountCalendarGoals(element, dependencies = {}) {
   let goals = [], goalsLoaded = false, development = readDevelopmentState(null), selectedId = null, active = null, creationDialog = null, wishes = null;
   const collapsedGoalIds = new Set();
   element.classList.add('calendar-panels', 'calendar-goals');
-  element.innerHTML = `<header class="cp-heading"><div><h2>Цели</h2><p data-goals-hint></p></div><button type="button" class="cp-primary" data-new></button></header>
+  element.innerHTML = `<header class="cp-heading"><div><h2>Цели</h2><p data-goals-hint></p></div></header>
     <div class="cp-goals-switch" role="group" aria-label="Что показать"><button type="button" data-goals-view="goals">Цели</button><button type="button" data-goals-view="wishes">Желания</button></div>
     <div data-goals-panel><p class="cp-message" data-message role="status" aria-live="polite"></p><button type="button" data-retry hidden>Повторить загрузку</button><div class="cp-goal-list" data-list aria-busy="true"></div></div>
     <div data-wishes-panel hidden></div>`;
   const list = element.querySelector('[data-list]'), message = element.querySelector('[data-message]');
   const goalById = id => goals.find(goal => String(goal.id) === String(id));
   const rowButton = (id, selector) => list.querySelector(`[data-goal-id="${String(id).replace(/["\\]/g, '\\$&')}"] ${selector}`);
-  const focusMenu = id => (rowButton(id, '[data-record-menu]') || element.querySelector('[data-new]'))?.focus();
+  const focusMenu = id => (rowButton(id, '[data-record-menu]') || element.querySelector('[data-goals-view="goals"]'))?.focus();
   function showView(view, focus = false) {
     viewState.view = view === 'wishes' ? 'wishes' : 'goals';
     const wishesView = viewState.view === 'wishes';
@@ -174,11 +174,10 @@ export async function mountCalendarGoals(element, dependencies = {}) {
     element.querySelector('[data-goals-panel]').hidden = wishesView;
     const panel = element.querySelector('[data-wishes-panel]'); panel.hidden = !wishesView;
     element.querySelector('[data-goals-hint]').textContent = wishesView ? 'Покупки, поездки и впечатления без плана. Если нужно накопить — преврати желание в цель.' : 'Сохрани то, к чему хочешь прийти. Задачи можно добавить позже.';
-    element.querySelector('[data-new]').textContent = wishesView ? 'Новое желание' : 'Новая цель';
     if (wishesView && !wishes) {
       wishes = mountCalendarWishes(panel, { invoke: api, mountMenu: mountCalendarContextMenu, getGoals: () => goalsLoaded ? goals : null,
         openGoal: dependencies.onOpenGoal ? (goal, returnFocus) => dependencies.onOpenGoal(goal, { primaryGoalId: selectedId, returnFocus }) : null, openUrl: dependencies.openUrl,
-        returnFocus: () => element.querySelector('[data-new]')?.focus(),
+        returnFocus: () => element.querySelector('[data-goals-view="wishes"]')?.focus(),
         convertToGoal: (wish, done, restore) => openCreation(null, null, { draft: wishGoalDraft(wish), onSaved: done, returnFocus: restore }) });
     }
     if (focus) element.querySelector(`[data-goals-view="${viewState.view}"]`)?.focus();
@@ -199,7 +198,7 @@ export async function mountCalendarGoals(element, dependencies = {}) {
     restoreFocus: row => focusMenu(row.dataset.contextRecord),
   });
   function openGoal(goal) {
-    const id = String(goal.id), returnFocus = () => (rowButton(id, '[data-goal-open]') || element.querySelector('[data-new]'))?.focus();
+    const id = String(goal.id), returnFocus = () => (rowButton(id, '[data-goal-open]') || element.querySelector('[data-goals-view="goals"]'))?.focus();
     if (dependencies.onOpenGoal) dependencies.onOpenGoal(goal, { primaryGoalId: selectedId, returnFocus });
     else openCreation(goal, null, { returnFocus });
   }
@@ -295,7 +294,7 @@ export async function mountCalendarGoals(element, dependencies = {}) {
     if (creationDialog || disposed) return;
     creationDialog = openCalendarGoalEditor({ document, invoke: api, goal, parent: initialParent, draft, goals,
       isCurrent: () => !disposed && element.isConnected,
-      returnFocus: returnFocus || (() => (goal ? rowButton(goal.id, '[data-record-menu]') : element.querySelector('[data-new]'))?.focus()),
+      returnFocus: returnFocus || (() => (goal ? rowButton(goal.id, '[data-record-menu]') : element.querySelector('[data-goals-view="goals"]'))?.focus()),
       onSavingChange: value => { creating = value; },
       onClose: () => { creationDialog = null; },
       onSaved: async id => { await onSaved?.(id); if (!disposed) await refresh(draft ? 'Цель создана из желания.' : 'Цель сохранена. Можно выбрать её главной, когда будешь готов.'); } });
@@ -303,17 +302,16 @@ export async function mountCalendarGoals(element, dependencies = {}) {
   function openDeletion(goal, restore = null) {
     if (creationDialog || disposed) return;
     creationDialog = openCalendarGoalDeletion({ document, invoke: api, goal, isCurrent: () => !disposed && element.isConnected,
-      returnFocus: () => (rowButton(goal.id, '[data-record-menu]') ? (restore || (() => focusMenu(goal.id)))() : element.querySelector('[data-new]')?.focus()),
+      returnFocus: () => (rowButton(goal.id, '[data-record-menu]') ? (restore || (() => focusMenu(goal.id)))() : element.querySelector('[data-goals-view="goals"]')?.focus()),
       onSavingChange: value => { creating = value; }, onClose: () => { creationDialog = null; },
       onDeleted: async () => {
         if (disposed) return;
         await refresh('Цель удалена. Задачи сохранены.');
         // The deleted row took the restored focus with it.
         const focused = document.activeElement;
-        if (!disposed && (!focused || focused === document.body || !focused.isConnected)) element.querySelector('[data-new]')?.focus();
+        if (!disposed && (!focused || focused === document.body || !focused.isConnected)) element.querySelector('[data-goals-view="goals"]')?.focus();
       } });
   }
-  element.querySelector('[data-new]').onclick = () => viewState.view === 'wishes' ? wishes?.openCreate() : openCreation();
   element.querySelectorAll('[data-goals-view]').forEach(button => { button.onclick = () => showView(button.dataset.goalsView, true); });
   element.querySelector('[data-retry]').onclick = () => refresh();
   const onChange = event => { if (!busy && !creating && !disposed) void refresh('', event.detail?.remoteSync ? event.detail.canCommit : null); };
@@ -322,5 +320,8 @@ export async function mountCalendarGoals(element, dependencies = {}) {
   window.addEventListener('hanni:development-changed', onDevelopment);
   showView(viewState.view);
   await refresh();
-  return () => { disposed = true; revision++; creationDialog?.dispose(); wishes?.dispose(); disposeMenu(); window.removeEventListener('task-state-changed', onChange); window.removeEventListener('hanni:development-changed', onDevelopment); };
+  const dispose = () => { disposed = true; revision++; creationDialog?.dispose(); wishes?.dispose(); disposeMenu(); window.removeEventListener('task-state-changed', onChange); window.removeEventListener('hanni:development-changed', onDevelopment); };
+  dispose.openGoalCreate = ({ returnFocus = null } = {}) => { showView('goals'); openCreation(null, null, { returnFocus }); };
+  dispose.openWishCreate = ({ returnFocus = null } = {}) => { showView('wishes'); return wishes?.openCreate({ returnFocus }) || null; };
+  return dispose;
 }

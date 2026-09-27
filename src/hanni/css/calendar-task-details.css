@@ -1,0 +1,39 @@
+/* Compact operational card for a task title click. Import after the shared editor shell. */
+.calendar-native-dialog.calendar-task-details {
+  width: min(calc(100vw - 24px), 520px);
+  max-width: 520px;
+}
+.calendar-task-details .calendar-editor-header { padding-bottom: 12px; }
+.calendar-task-details .calendar-editor-header h2 { margin-bottom: 4px; }
+.calendar-task-details .calendar-editor-body { padding-bottom: 16px; }
+.calendar-task-details__fields { min-width: 0; }
+.task-details-card { display: grid; gap: 14px; min-width: 0; }
+.task-details-total { color: var(--text-primary); font-size: 28px; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.task-details-meta { display: flex; flex-wrap: wrap; gap: 8px 16px; color: var(--text-secondary); font-size: 13px; }
+.task-details-meta-item { display: inline-flex; align-items: flex-start; gap: 7px; min-width: 0; overflow-wrap: anywhere; }
+.task-details-icon { display: inline-flex; flex: 0 0 16px; width: 16px; height: 16px; color: currentColor; }
+.task-details-icon svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.task-details-goal:not([hidden]) { color: var(--text-secondary); font-size: 13px; }
+.task-details-stage-row { display: grid; grid-template-columns: minmax(92px, auto) minmax(0, 1fr); align-items: center; gap: 12px; color: var(--text-secondary); font-size: 13px; }
+.task-details-stage-caption { display: inline-flex; align-items: center; gap: 7px; }
+.task-details-stage { box-sizing: border-box; width: 100%; min-width: 0; min-height: 44px; padding: 8px 10px; border: 1px solid var(--border-default); border-radius: 8px; color: var(--text-primary); background: var(--bg-page); font: inherit; }
+.task-details-waiting { color: var(--text-secondary); font-size: 13px; }
+.task-details-history { border-top: 1px solid var(--border-default); padding-top: 12px; color: var(--text-secondary); font-size: 13px; }
+.task-details-history summary { display: flex; align-items: center; gap: 8px; min-height: 36px; cursor: pointer; color: var(--text-primary); }
+.task-details-history summary::after { content:'⌄'; margin-left:auto; font-size:16px; }
+.task-details-history[open] summary::after { transform:rotate(180deg); }
+.task-details-history-content { padding-top: 6px; line-height: 1.6; overflow-wrap: anywhere; }
+.task-details-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.calendar-task-details .calendar-editor-actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); }
+.calendar-task-details .calendar-editor-actions button { min-width: 0; }
+.task-details-button-label { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.task-details-button-icon { display: inline-flex; width: 16px; height: 16px; }
+.task-details-button-icon svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+@media (max-width: 420px) {
+  .calendar-task-details .calendar-editor-header { gap: 8px; padding: 14px 14px 10px; }
+  .calendar-task-details .calendar-editor-body { padding: 0 14px 12px; }
+  .task-details-card { gap: 12px; }
+  .task-details-stage-row { grid-template-columns: 1fr; gap: 6px; }
+  .calendar-task-details .calendar-editor-actions { gap: 8px; padding: 10px 14px; }
+  .calendar-task-details .calendar-editor-actions button { padding: 8px; }
+}

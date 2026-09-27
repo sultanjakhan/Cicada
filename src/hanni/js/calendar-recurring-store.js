@@ -5,6 +5,25 @@ export const dateKey = date => `${date.getFullYear()}-${String(date.getMonth()+1
 export function validDate(value) { return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && dateKey(new Date(value+'T12:00:00')) === value; }
 const empty = () => ({version:1, plans:[], days:{}});
 const allowed = kind => kind === 'rule' ? ['pending','kept','broken'] : ['pending','done','skipped'];
+function validatedGraphSteps(steps) {
+  if (!Array.isArray(steps) || !steps.length || steps.length > 50) throw Error('В графе должно быть от 1 до 50 шагов.');
+  const normalized = steps.map((step,index) => {
+    const title=String(step?.title||'').trim(), dependencies=step?.dependsOn;
+    if (!title || title.length > 160) throw Error('Укажи название каждого шага (до 160 символов).');
+    if (!Array.isArray(dependencies) || dependencies.some(value=>!Number.isInteger(value)||value<0||value>=steps.length||value===index) || new Set(dependencies).size!==dependencies.length) throw Error('Проверь зависимости шагов графа.');
+    const trackingMode=step?.trackingMode??'track',optional=step?.optional??false;
+    if(!['check','track'].includes(trackingMode)||typeof optional!=='boolean')throw Error('Проверь способ учёта шага.');
+    return {title,dependsOn:[...dependencies],trackingMode,optional};
+  });
+  const visiting=new Set(),visited=new Set();
+  function visit(index){if(visiting.has(index))throw Error('В графе шагов нельзя создавать цикл.');if(visited.has(index))return;visiting.add(index);for(const dependency of normalized[index].dependsOn)visit(dependency);visiting.delete(index);visited.add(index);}
+  normalized.forEach((_step,index)=>visit(index));
+  return normalized;
+}
+export function availableGraphSteps(snapshot,run) {
+  if (snapshot?.mode!=='graph' || !Array.isArray(snapshot.steps) || !Array.isArray(run?.steps)) return [];
+  return snapshot.steps.flatMap((step,index)=>run.steps[index]?.status==='pending'&&step.dependsOn.every(dependency=>['done','skipped'].includes(run.steps[dependency]?.status))?[index]:[]);
+}
 function planFields(fields, old, today, id) {
   const plan = {id, kind:fields.kind, title:String(fields.title||'').trim(), weekdays:[...new Set(fields.weekdays||[])],
     startsOn:String(fields.startsOn||''), endsOn:String(fields.endsOn||''), time:String(fields.time||''),
@@ -15,9 +34,10 @@ function planFields(fields, old, today, id) {
   for (const date of [plan.startsOn,plan.endsOn,plan.createdOn]) if (date && !validDate(date)) throw Error('Проверь дату.');
   if (plan.endsOn && plan.endsOn < (plan.startsOn || plan.createdOn)) throw Error('Конец курса должен быть не раньше начала.');
   if (plan.time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(plan.time)) throw Error('Проверь время.');
-  plan.mode = fields.mode || 'check';
-  if (!['check','activity','chain'].includes(plan.mode) || plan.kind==='rule' && plan.mode!=='check') throw Error('Правило можно только отмечать.');
-  plan.steps = plan.mode==='chain' ? (fields.steps || []).map(step=>({title:String(step.title||'').trim()})) : [];
+  plan.mode = fields.mode || old?.mode || 'check';
+  if (!['check','activity','chain','graph'].includes(plan.mode) || plan.kind==='rule' && plan.mode!=='check') throw Error('Правило можно только отмечать.');
+  const stepSource=fields.steps ?? (plan.mode==='graph'?old?.steps:undefined) ?? [];
+  plan.steps = plan.mode==='graph' ? validatedGraphSteps(stepSource) : plan.mode==='chain' ? stepSource.map(step=>({title:String(step.title||'').trim()})) : [];
   if (plan.mode==='chain' && (!plan.steps.length || plan.steps.length>50 || plan.steps.some(step=>!step.title || step.title.length>160))) throw Error('Укажи от 1 до 50 шагов, до 160 символов каждый.');
   return plan;
 }
@@ -36,8 +56,9 @@ export function parseRecurring(raw) {
       if (!validDate(day) || !records || typeof records!=='object' || Array.isArray(records)) throw Error();
       for (const [id,record] of Object.entries(records)) {
         if (record.snapshot.id!==id || !allowed(record.snapshot.kind).includes(record.status)) throw Error();
-        planFields(record.snapshot,record.snapshot,day,id);
+        const snapshot=planFields(record.snapshot,record.snapshot,day,id);
         if (record.run && (!Array.isArray(record.run.steps) || !record.run.steps.length || record.run.steps.length>50 || record.run.steps.some(step=>typeof step.title!=='string'||!step.title.trim()||step.title.length>160||!['pending','done','skipped'].includes(step.status)))) throw Error();
+        if (record.run&&snapshot.mode==='graph'&&(record.run.steps.length!==snapshot.steps.length||record.run.steps.some((step,index)=>step.title!==snapshot.steps[index].title||!Array.isArray(step.dependsOn)||JSON.stringify(step.dependsOn)!==JSON.stringify(snapshot.steps[index].dependsOn)||(step.trackingMode??'track')!==snapshot.steps[index].trackingMode||(step.optional??false)!==snapshot.steps[index].optional))) throw Error();
       }
     }
   } catch { throw Error('Не удалось прочитать дела и правила. Сохранённые данные не изменены.'); }
@@ -95,9 +116,10 @@ export function createRecurringStore(invoke,{now=()=>new Date(),uuid=()=>crypto.
       if(previous?.run || previous && previous.status!=='pending') throw Error('Это выполнение уже отмечено. История сохранена.');
       if(date!==dateKey(now()))throw Error('Новое выполнение начинается сегодня.');
       const plan=state.plans.find(item=>item.id===id);
-      if(!plan?.active || plan.kind!=='action' || !['activity','chain'].includes(plan.mode))throw Error('Это занятие недоступно для запуска.');
+      if(!plan?.active || plan.kind!=='action' || !['activity','chain','graph'].includes(plan.mode))throw Error('Это занятие недоступно для запуска.');
       const snapshot=clone(plan);
-      const steps=(plan.mode==='chain'?plan.steps:[{title:plan.title}]).map(step=>({title:step.title,status:'pending'}));
+      const sourceSteps=plan.mode==='chain'||plan.mode==='graph'?plan.steps:[{title:plan.title}];
+      const steps=sourceSteps.map(step=>plan.mode==='graph'?{title:step.title,dependsOn:[...step.dependsOn],trackingMode:step.trackingMode,optional:step.optional,status:'pending'}:{title:step.title,status:'pending'});
       state.days[date]||={};state.days[date][id]={snapshot,status:'pending',run:{steps,createdAt:now().toISOString()}};
       return {id,date};
     }); },
