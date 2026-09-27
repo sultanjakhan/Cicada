@@ -44,6 +44,16 @@ test('ranking favors today-bound work, but current-period routines beat ordinary
   assert.match(old.reason, /более ранний день/);
 });
 
+test('a meal graph is offered in meal hours, requires explicit start and completed runs are excluded', () => {
+  const meal={...plan('meal',{title:'Еда',mode:'graph',steps:[{title:'Первый шаг',dependsOn:[],trackingMode:'check'}]}),status:'pending'};
+  const tasks=[task('old',{date:'2026-09-26'})];
+  const selected=rankNextAction({now:now(),tasks,routines:[meal]});
+  assert.equal(selected.type,'routine'); assert.equal(selected.action,'start');
+  assert.match(selected.reason,/перерыв на еду/);
+  assert.equal(rankNextAction({now:new Date(`${today}T03:00:00`),tasks,routines:[meal]}).type,'task');
+  assert.equal(rankNextAction({now:now(),tasks,routines:[{...meal,status:'done'}]}).type,'task');
+});
+
 test('routine timing cues use existing title/steps and only apply in their time window', () => {
   const lunch = { ...plan('lunch', { title: 'Пообедать' }), status: 'pending' };
   assert.equal(rankNextAction({ now: now(), routines: [lunch] }).key, 'routine:lunch:2026-09-27');

@@ -18,6 +18,7 @@ function routinePeriod(item) {
   if (/\b(morning|breakfast)\b|утр(?:о|ом|а|ен\p{L}*)|завтрак/u.test(text)) return 'morning';
   if (/\b(lunch|noon)\b|обед\p{L}*/u.test(text)) return 'lunch';
   if (/\b(evening|dinner|supper)\b|вечер\p{L}*|ужин\p{L}*/u.test(text)) return 'evening';
+  if (/^(еда|поесть|приём пищи|прием пищи|meal)$/iu.test(String(item.title || '').trim())) return 'meal';
   return '';
 }
 
@@ -78,6 +79,7 @@ function explainRoutine(item, now, today) {
   if (period === 'morning' && hour >= 5 && hour < 12) return { score: 560, reason: 'Утро — рутина ещё не отмечена.' };
   if (period === 'lunch' && hour >= 11 && hour < 16) return { score: 560, reason: 'Время обеда — рутина ещё не отмечена.' };
   if (period === 'evening' && hour >= 17 && hour < 24) return { score: 560, reason: 'Вечер — рутина ещё не отмечена.' };
+  if (period === 'meal' && (hour >= 7 && hour < 11 || hour >= 12 && hour < 16 || hour >= 18 && hour < 22)) return { score: 560, reason: 'Можно сделать перерыв на еду — рутина ещё не отмечена.' };
   return { score: 250, reason: item.required === false ? 'Необязательное дело на сегодня.' : 'Повторяющееся дело на сегодня.' };
 }
 
@@ -104,7 +106,7 @@ export function rankNextAction({ now = new Date(), tasks = [], routines = [], ac
     const date = item.runDate || today;
     if (active) { activeRoutines.push({ key: keyOfRoutine(item.id, date), type: 'routine', title: safeText(item.title) || 'Повторяющееся дело', reason: 'Выполнение уже запущено.', action: 'open', routine: item, date, run }); continue; }
     // Only actual routine activities can be launched; a check-only action is explicitly marked done.
-    if (!['check', 'activity', 'chain'].includes(item.mode)) continue;
+    if (!['check', 'activity', 'chain', 'graph'].includes(item.mode)) continue;
     const urgency = explainRoutine(item, instant, today);
     candidates.push({ key: keyOfRoutine(item.id, date), type: 'routine', title: safeText(item.title) || 'Повторяющееся дело', reason: run ? `На паузе. ${urgency.reason}` : urgency.reason, action: item.mode === 'check' ? 'done' : 'start', routine: item, date, run, score: urgency.score + (run ? 90 : 0) });
   }
@@ -175,7 +177,7 @@ export function mountCalendarNextAction(element, dependencies) {
       const card = document.createElement('div'); card.className = 'calendar-next-action__item'; card.dataset.nextActionKey = selected.key;
       const title = document.createElement('h3'); title.textContent = selected.title; if (!compactRunning) card.append(title);
       const why = document.createElement('p'); why.className = 'calendar-next-action__reason'; why.textContent = compactRunning ? 'Время начатых дел учитывается.' : selected.reason; card.append(why);
-      if (selected.type === 'task' && (selected.context?.goal || selected.context?.stage || selected.context?.waiting)) {
+      if (!compactRunning && selected.type === 'task' && (selected.context?.goal || selected.context?.stage || selected.context?.waiting)) {
         const context = document.createElement('p'); context.className = 'calendar-next-action__context'; context.dataset.nextActionContext = '';
         const parts = [];
         if (selected.context.goal) parts.push(`Цель: ${selected.context.goal}`);

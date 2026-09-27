@@ -6,6 +6,14 @@
 
 Перед новой постановкой прочитай [подтверждённый контекст продукта](docs/product-context.md), затем проверь исходный код и относящиеся к задаче Issues. Не повторяй вопросы, на которые уже есть ответ в этом контексте; уточняй только новые отсутствующие факты.
 
+Owner continuation, 2026-09-27: keep the main goal in a separate widget; the DEV
+candidate places it below Today at matching width. Connect task recommendations to their existing goal/subgoal
+and stage; waiting tasks lead to review, never an implicit start. Import the
+owner's saved legacy routine chains into the isolated DEV only, keeping personal
+exports outside Git and the legacy source read-only. Preserve branching and
+check/track steps; launches stay explicit. This is not an authorization to copy
+legacy credentials/history or install over production.
+
 Owner approval, 2026-09-27 (later): implement one coherent Today dashboard with
 one date, a compact goal context, one explained task/routine recommendation and
 controls for running work. Full task lists and paused-today work belong in Tasks.
