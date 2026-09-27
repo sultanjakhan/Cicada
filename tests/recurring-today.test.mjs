@@ -26,14 +26,21 @@ test('open recurring editor keeps its draft when the same plan was changed remot
 });
 
 test('routine library shows enabled and disabled plans, filters, marks rules, and creates only on submit',async t=>{
-  const dom=new JSDOM('<main></main>',{url:'https://fixture.invalid'}),host=dom.window.document.querySelector('main');let raw=JSON.stringify({version:1,plans:[plan,{...plan,id:'disabled',title:'Выключенная рутина',active:false}],days:{}}),writes=0;
+  const dom=new JSDOM('<main></main>',{url:'https://fixture.invalid'}),host=dom.window.document.querySelector('main');const yesterday='2026-09-12',oldPlan={...plan,id:'old-run',kind:'action',mode:'activity',title:'Вчерашнее занятие'};let raw=JSON.stringify({version:1,plans:[plan,{...plan,id:'disabled',title:'Выключенная рутина',active:false},oldPlan],days:{[yesterday]:{'old-run':{snapshot:oldPlan,status:'pending',run:{steps:[{title:'Занятие',status:'pending'}]}}}}}),writes=0;
   dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;this.dispatchEvent(new dom.window.Event('close'));};
   const invoke=async(command,args)=>{if(command==='get_ui_state')return raw;if(command==='set_ui_state'){writes++;raw=args.value;return;}throw Error(command);};
   const dispose=mountCalendarRecurring(host,{invoke,now:()=>new Date(`${today}T12:00:00`),library:true});t.after(()=>{dispose();dom.window.close();});
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(host.querySelector('[data-recurring-heading]').textContent,'Рутины');
-  assert.equal(host.querySelectorAll('[data-library-title]').length,2);
+  assert.equal(host.querySelectorAll('[data-library-title]').length,3);
   assert.match(host.textContent,/выключено/);
+  assert.equal(host.querySelector('[data-library-run="old-run"]').textContent,'Продолжить');
+  assert.equal(host.querySelector('[data-library-run="old-run"]').dataset.libraryDate,yesterday);
+  const stableRow=host.querySelector('[data-library-id="disabled"]'),stableFocus=host.querySelector('[data-recurring-edit="disabled"]');stableFocus.focus();
+  dom.window.dispatchEvent(new dom.window.CustomEvent('hanni:calendar-refresh',{detail:{remoteSync:true}}));
+  await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(host.querySelector('[data-library-id="disabled"]'),stableRow);
+  assert.equal(dom.window.document.activeElement,stableFocus);
   const search=host.querySelector('[data-routine-search]');search.value='выключенная';search.dispatchEvent(new dom.window.Event('input',{bubbles:true}));
   assert.equal([...host.querySelectorAll('[data-library-title]')].filter(row=>!row.hidden).length,1);
   search.value='';search.dispatchEvent(new dom.window.Event('input',{bubbles:true}));
@@ -42,12 +49,28 @@ test('routine library shows enabled and disabled plans, filters, marks rules, an
   detail.querySelector('[data-detail-status="kept"]').click();
   await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
   assert.equal(JSON.parse(raw).days[today]['rule-1'].status,'kept');
+  assert.equal(dom.window.document.activeElement,host.querySelector('[data-library-details="rule-1"]'));
+  assert.equal(host.querySelector('[data-library-id="disabled"]'),stableRow);
   assert.equal(writes,1);
   dispose.create();
   const editor=dom.window.document.querySelector('dialog[open]');assert.ok(editor);
   assert.equal(editor.querySelector('[name=title]').value,'');
   assert.equal(writes,1);
   editor.close();
+});
+
+test('routine library rolls its daily marks forward after midnight',async t=>{
+  const dom=new JSDOM('<main></main>',{url:'https://fixture.invalid'}),host=dom.window.document.querySelector('main');let now=new Date(`${today}T23:59:00`),tick=null;
+  const daily={...plan,weekdays:[0,1,2,3,4,5,6]};let raw=JSON.stringify({version:1,plans:[daily],days:{[today]:{'rule-1':{snapshot:daily,status:'kept'}}}});
+  dom.window.setInterval=callback=>{tick=callback;return 1;};dom.window.clearInterval=()=>{};
+  const invoke=async command=>{if(command==='get_ui_state')return raw;throw Error(command);};
+  const dispose=mountCalendarRecurring(host,{invoke,now:()=>now,library:true});t.after(()=>{dispose();dom.window.close();});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.match(host.querySelector('[data-library-id="rule-1"]').textContent,/Соблюдено/);
+  now=new Date('2026-09-14T00:00:00');tick();
+  await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
+  assert.doesNotMatch(host.querySelector('[data-library-id="rule-1"]').textContent,/Соблюдено/);
+  assert.match(host.querySelector('[data-library-id="rule-1"]').textContent,/Отметить/);
 });
 
 test('graph editor keeps dependency structure read-only while saving schedule edits',async t=>{
