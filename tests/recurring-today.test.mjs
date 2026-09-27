@@ -119,6 +119,19 @@ test('library opens dated reflection, keeps drafts across dates and does not tre
   detail.querySelector('[data-save-reflection]').click();await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
   saved=JSON.parse(raw).days[today].reflection;assert.equal(saved.status,'pending');assert.equal(saved.reflection.ruleOutcome,'kept');assert.equal(saved.reflection.trigger,'Черновик сегодня');assert.equal(writes,2);
   detail.close();assert.equal(dom.window.document.activeElement,host.querySelector('[data-library-reflection="reflection"]'));
+  host.querySelector('[data-library-reflection="reflection"]').click();
+  const history=dom.window.document.querySelector('dialog[open]'),beforeStart=history.querySelector('[data-reflection-date]');
+  beforeStart.value='2026-09-11';beforeStart.dispatchEvent(new dom.window.Event('change',{bubbles:true}));
+  assert.match(history.textContent,/рефлексия не запланирована/);
+  history.querySelector('[data-detail-edit]').click();
+  const editor=dom.window.document.querySelector('dialog[open]');
+  assert.equal(editor.querySelector('[data-routine-reflection]').checked,true);
+  assert.equal(editor.querySelector('[data-routine-reflection-prompt]').value,'Мой вопрос');
+  editor.querySelector('[data-routine-title]').value='Новое название';
+  editor.querySelector('form').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));
+  await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(JSON.parse(raw).plans[0].title,'Новое название');assert.equal(writes,3);
+  assert.equal(JSON.parse(raw).days[today].reflection.reflection.trigger,'Черновик сегодня');
 });
 
 test('graph editor lets imported step properties be edited without changing the plan identity',async t=>{

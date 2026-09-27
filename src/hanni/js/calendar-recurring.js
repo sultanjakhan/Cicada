@@ -88,7 +88,7 @@ export function mountCalendarRecurring(element,{invoke=defaultInvoke,showComplet
     dialog.body.addEventListener('click',async event=>{
       const button=event.target.closest('button');
       if(button?.dataset.detailStatus){void mark(item.id,button.dataset.detailStatus).then(()=>dialog.close());}
-      else if(button?.hasAttribute('data-detail-edit')){dialog.close();edit(item);}
+      else if(button?.hasAttribute('data-detail-edit')){const plan=state?.plans?.find(value=>value.id===initialItem.id);if(!plan){dialog.showError('Рутина удалена. Её история остаётся доступна.');return;}dialog.close();edit(plan);}
       else if(button?.hasAttribute('data-save-reflection')){
         const ruleOutcome=dialog.body.querySelector('[data-reflection-rule]')?.value,restoration=dialog.body.querySelector('[data-reflection-restoration]')?.value;
         if(!ruleOutcome||!restoration){dialog.showError('Выбери ответ на оба вопроса. Если не хочешь отвечать, выбери «Нет ответа».',!ruleOutcome?dialog.body.querySelector('[data-reflection-rule]'):dialog.body.querySelector('[data-reflection-restoration]'));return;}
