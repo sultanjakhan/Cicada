@@ -23,6 +23,19 @@ tracker remains the operational source of truth.
 - Rust CI caching uses a pinned action revision and the actual Cargo target
   directory. Windows tests decode file URLs correctly and compile NSIS test
   input as UTF-8.
+- The checkpoint expiry test explicitly expires its old lease in a test-only
+  Durable Object fixture. A 100 ms real lease made the succeeding upload expire
+  on busy Windows CI hosts. Production lease rules and service code are unchanged.
+  The manual GC test also disables scheduling only in its fixture so a real
+  alarm cannot remove a page during restart before the asserted manual calls.
+  Automatic alarm recovery remains covered by its separate unchanged test.
+- Invalid routes still have GET and empty-POST HTTP checks. POST-body rejection
+  runs against the same Worker through Miniflare's service proxy because its
+  loopback HTTP bridge intermittently resets early responses to unread bodies
+  ([upstream report](https://github.com/cloudflare/workers-sdk/issues/15819)).
+  This was reproduced on the pinned runtime; no retry, skipped assertion or
+  production body-draining workaround was introduced. The proxy check does not
+  prove that the upstream HTTP transport defect is fixed.
 
 ## Local checks
 
@@ -61,11 +74,31 @@ paint or overall application speed. IPC readings include serialization and
 transport. The first of six repeated observations is warm-up; these are local
 synthetic measurements, not a device-wide latency promise.
 
+Additional native samples with the same 100-goal relationship pattern:
+
+| Tasks | Search median before / after | Goal filter before / after |
+| --- | --- | --- |
+| 100 | 10.4 / 13.8 ms | 1.6 / 1.1 ms |
+| 1,000 | 76.9 / 14.1 ms | 34.4 / 1.9 ms |
+| 5,000, reverse-order confirmation | 1,619.6 / 16.9 ms | 763.2 / 8.9 ms |
+
+The 100-task sample shows no search benefit; its timings overlap at roughly
+one frame. This optimization pays off on larger lists. Task IPC itself is not
+optimized here. Exact IDs/order on two pages and the goal-filtered result were
+verified; changing a relation through real IPC changed the filter from 10 to 11
+records, and restoring it returned the original 10 IDs.
+
 The candidate shows all 1,000 active notes, the archived note and the earliest
 note found through search, without the false warning. Both native note payloads
 are 706,379 bytes. The separate Rust diagnostic compared complete merged JSON
 payloads byte-for-byte: 372 to 1 SQL statements at 100 notes and 3,716 to 1 at
 1,000 notes, with identical data.
+
+At 100 native notes (99 active, one archived), the read median changed from
+9.7 to 7.2 ms and opening from 45.5 to 36 ms; both payloads were 65,270 bytes.
+Separate native profiles with 199, 200 and 201 total notes each retained one
+archived record, found the oldest record, preserved rich blocks and version,
+and showed no false warning. SQLite, IPC and visible/filter counts agreed.
 
 Native Continue and Pause changed the fixture from 100 to 103 seconds. Closing
 and restarting the process preserved `01:43`, an unfinished task and no running
