@@ -26,3 +26,10 @@
 .calendar-routine-steps li > span { overflow-wrap:anywhere; }
 .calendar-routine-steps small { display:block; margin-top:3px; color:var(--text-secondary); }
 .calendar-routine-steps [aria-current] { font-weight:600; }
+.calendar-routine-step-choice { display:flex; width:100%; justify-content:space-between; align-items:flex-start; gap:12px; border:1px solid var(--border-subtle,#e9e9e9); border-radius:8px; padding:10px 12px; background:var(--bg-card,#fff); color:inherit; text-align:left; cursor:pointer; }
+.calendar-routine-step-choice:disabled { cursor:default; opacity:.78; }
+.calendar-routine-step-choice[aria-pressed=true] { border-color:var(--accent,#4c8); }
+.calendar-routine-step-choice:focus-visible { outline:2px solid var(--accent,#4c8); outline-offset:2px; }
+.calendar-recurring__graph-summary { margin:0 0 12px; padding-left:22px; }
+.calendar-recurring__graph-summary li { padding:4px 0; }
+.calendar-recurring__graph-summary small { display:block; color:var(--text-secondary,#666); }

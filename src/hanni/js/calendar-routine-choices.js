@@ -14,7 +14,7 @@ export function mountCalendarRoutineChoices(element, { invoke, openRoutine, open
     const values = recurringItems(state, date).filter(item => item.kind === 'action' && item.active && item.status === 'pending');
     // An unfinished chain remains resumable even on its next non-scheduled day.
     for (const plan of state.plans) if (plan.active && plan.kind === 'action' && !values.some(item => item.id === plan.id) && unfinishedRun(state, plan.id)) values.push(plan);
-    return values.map(item => { const run = unfinishedRun(state, item.id); return { ...item, date:run?.date || date, resumable:!!run, runnable:['activity','chain'].includes(item.mode) || !!run }; });
+    return values.map(item => { const run = unfinishedRun(state, item.id); return { ...item, date:run?.date || date, resumable:!!run, runnable:['activity','chain','graph'].includes(item.mode) || !!run }; });
   };
   function paint() {
     if (disposed) return;
@@ -23,7 +23,7 @@ export function mountCalendarRoutineChoices(element, { invoke, openRoutine, open
       const focused = document.activeElement?.dataset?.routineChoice;
       list.replaceChildren(...items.map(item => {
         const row = document.createElement('li'), info = document.createElement('span'), title = document.createElement('span'), kind = document.createElement('small'), button = document.createElement('button');
-        title.textContent = item.title; kind.textContent = item.mode === 'chain' ? `${item.steps?.length || 0} шагов` : item.runnable ? 'С учётом времени' : 'Отметка без таймера';
+        title.textContent = item.title; kind.textContent = item.mode === 'graph' ? `${item.steps?.length || 0} связанных шагов` : item.mode === 'chain' ? `${item.steps?.length || 0} шагов` : item.runnable ? 'С учётом времени' : 'Отметка без таймера';
         info.append(title, kind); button.type = 'button'; button.dataset.routineChoice = item.id;
         button.textContent = item.resumable ? 'Продолжить' : item.runnable ? 'Начать' : 'Готово';
         button.setAttribute('aria-label', `${button.textContent}: ${item.title}`); row.append(info, button); return row;
