@@ -123,3 +123,21 @@ test('switching graph to one action warns and switching back restores unsaved st
   assert.deepEqual([...dialog.body.querySelectorAll('[data-step-title]')].map(input => input.value), ['One', 'Two']);
   assert.equal(calls.length, 0);
 });
+
+test('multi to single to multi preserves fork, join, and forward-edge dependencies', async t => {
+  const plan = { id: 'graph-roundtrip', kind: 'action', mode: 'graph', title: 'Routine', steps: [
+    { title: 'A', dependsOn: [4], trackingMode: 'track', optional: false },
+    { title: 'B', dependsOn: [0], trackingMode: 'track', optional: false },
+    { title: 'C', dependsOn: [0], trackingMode: 'check', optional: true },
+    { title: 'D', dependsOn: [1, 2], trackingMode: 'track', optional: false },
+    { title: 'E', dependsOn: [], trackingMode: 'track', optional: false },
+  ], weekdays: [0], startsOn: '', endsOn: '', time: '', active: true, required: true, createdOn: '2026-01-01' };
+  const { dialog, calls } = setup(t, plan);
+  dialog.body.querySelector('[data-layout="single"]').click();
+  dialog.body.querySelector('[data-confirm-collapse]').click();
+  dialog.body.querySelector('[data-layout="multi"]').click();
+  await submit(dialog);
+  assert.deepEqual(calls[0][0].steps.map(step => step.dependsOn), [[4], [0], [0], [1, 2], []]);
+  assert.equal(calls[0][0].steps[2].trackingMode, 'check');
+  assert.equal(calls[0][0].steps[2].optional, true);
+});

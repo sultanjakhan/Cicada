@@ -28,7 +28,12 @@ function cyclic(steps) {
   };
   return steps.some(step => visit(step.id));
 }
-function cloneSteps(steps) { return steps.map(step => makeStep(step.title, step.trackingMode, step.optional, step.dependsOn)); }
+function cloneSteps(steps) {
+  const copies = steps.map(step => ({ ...step, dependsOn: new Set() }));
+  const ids = new Map(steps.map((step, index) => [step.id, copies[index].id]));
+  copies.forEach((copy, index) => { copy.dependsOn = new Set([...steps[index].dependsOn].map(id => ids.get(id)).filter(Boolean)); });
+  return copies;
+}
 
 /** A short-form routine editor; store.savePlan's expectedPlan keeps concurrent edits safe. */
 export function openCalendarRoutineEditor({ document, store, plan = null, kind = 'action', returnFocus, isCurrent = () => true, onSaved = () => {}, onClose = () => {} }) {
