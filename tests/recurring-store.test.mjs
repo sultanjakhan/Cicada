@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {createRecurringStore,recurringItems,parseRecurring,availableGraphSteps} from '../src/hanni/js/calendar-recurring-store.js';
+import {createRecurringStore as nativeStore,recurringItems,parseRecurring,availableGraphSteps} from '../src/hanni/js/calendar-recurring-store.js';
+import {withRecurringBundle} from './fixtures/recurring-bundle.mjs';
+const createRecurringStore=(invoke,options)=>nativeStore(withRecurringBundle(invoke),options);
+
 function setup(){let raw=null,fail=false,now=new Date(2026,8,13,12),sequence=0;const invoke=async(command,args)=>{if(command==='get_ui_state')return raw;if(fail)throw Error('offline');raw=args.value;};return {store:createRecurringStore(invoke,{now:()=>now,uuid:()=>String(++sequence)}),second:()=>createRecurringStore(invoke,{now:()=>now,uuid:()=>String(++sequence)}),raw:()=>raw,fail:()=>{fail=true;},advance:()=>{now=new Date(2026,8,14,12);}};}
 const action={kind:'action',title:'Учебный курс',weekdays:[0,1,2,3,4,5,6],startsOn:'2026-09-13',endsOn:'2026-09-15'};
 test('native runtime fixtures match actual frontend activity and chain payloads',async()=>{

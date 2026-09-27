@@ -1,8 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { mountRecurringRun, openRecurringRun } from '../src/hanni/js/calendar-routine-execution.js';
+import { mountRecurringRun as basemountRecurringRun, openRecurringRun as baseopenRecurringRun } from '../src/hanni/js/calendar-routine-execution.js';
 import { recurringSourceId } from '../src/hanni/js/calendar-recurring-store.js';
+import {withRecurringBundle} from './fixtures/recurring-bundle.mjs';
+const mountRecurringRun=(element,options)=>basemountRecurringRun(element,{...options,invoke:withRecurringBundle(options.invoke)});
+const openRecurringRun=options=>baseopenRecurringRun({...options,invoke:withRecurringBundle(options.invoke)});
+
 const settle=async()=>{for(let i=0;i<8;i++)await new Promise(resolve=>setImmediate(resolve));};
 function setup(t,{other=null,mode='chain',graphSteps=null,changingForeignSchedule=false,terminalStatus=null}={}){
   const dom=new JSDOM('<main></main>');t.after(()=>dom.window.close());

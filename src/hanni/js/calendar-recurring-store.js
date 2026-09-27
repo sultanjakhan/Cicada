@@ -83,15 +83,40 @@ export function recurringItems(state,date) {
   for (const [id,record] of Object.entries(records)) plans.set(id,{...record.snapshot,status:record.status,run:record.run,reflectionAnswer:record.reflection});
   return [...plans.values()].sort((a,b)=>(a.time||'99').localeCompare(b.time||'99')||a.title.localeCompare(b.title,'ru'));
 }
+// Overlay the canonical owner without adding removed plans back to the list.
+// Missing legacy days remain readable from their immutable reflection snapshot.
+export function mergeRecurringBundle(bundle) {
+  const state=parseRecurring(bundle.recurring);
+  const sidecar=bundle.reflections?JSON.parse(bundle.reflections):{version:1,plans:{},days:{}};
+  if(sidecar.version!==1||!sidecar.plans||Array.isArray(sidecar.plans)||!sidecar.days||Array.isArray(sidecar.days))throw Error('Не удалось прочитать рефлексию. Данные не изменены.');
+  for(const plan of state.plans){
+    delete plan.reflection;
+    const saved=sidecar.plans[plan.id];
+    if(saved?.enabled&&plan.kind==='action'&&(plan.mode||'check')==='check')plan.reflection={prompt:saved.prompt};
+  }
+  for(const records of Object.values(state.days))for(const record of Object.values(records)){
+    delete record.reflection; delete record.snapshot.reflection;
+  }
+  for(const [date,records] of Object.entries(sidecar.days))for(const [id,saved] of Object.entries(records)){
+    if(!validDate(date)||saved.snapshot?.id!==id||typeof saved.prompt!=='string'||(saved.answer!==null&&!validReflection(saved.answer)))throw Error('Не удалось прочитать рефлексию. Данные не изменены.');
+    state.days[date]||={};
+    const record=state.days[date][id]||={snapshot:clone(saved.snapshot),status:saved.status,_reflectionOnly:true};
+    if(record.snapshot.kind==='action'&&(record.snapshot.mode||'check')==='check')record.snapshot.reflection={prompt:saved.prompt};
+    if(saved.answer!==null)record.reflection=clone(saved.answer);
+  }
+  return state;
+}
+
 export function createRecurringStore(invoke,{now=()=>new Date(),uuid=()=>crypto.randomUUID()}={}) {
-  const read = async () => parseRecurring(await invoke('get_ui_state',{key:RECURRING_KEY}));
-  function update(change) {
+  const read = async () => mergeRecurringBundle(await invoke('recurring_get_bundle'));
+  function update(change,intent) {
     const job=(queues.get(invoke)||Promise.resolve()).catch(()=>{}).then(async()=>{
-      const raw=await invoke('get_ui_state',{key:RECURRING_KEY});
-      const state=parseRecurring(raw); const result=change(state);
-      try { await invoke('set_ui_state',{key:RECURRING_KEY,value:JSON.stringify(state),expectedValue:raw??''}); }
-      catch(error) { if((error?.message||error)==='mvp_sync_stale_ui_state')throw Error('Расписание изменено на другом устройстве. Обнови его и повтори действие.');throw error; }
-      return {state,result};
+      const bundle=await invoke('recurring_get_bundle');
+      const state=mergeRecurringBundle(bundle); const result=change(state);
+      let saved;
+      try { saved=await invoke('recurring_save_bundle',{value:JSON.stringify(state),expectedRecurring:bundle.recurring??'',expectedReflections:bundle.reflections??'',reflectionChange:intent?intent(state,result):null}); }
+      catch(error) { if((error?.message||error)==='mvp_sync_stale_ui_state')throw Error('Данные изменены на другом устройстве. Черновик сохранён в форме. Обнови список и повтори.');throw error; }
+      return {state:mergeRecurringBundle(saved),result};
     });
     queues.set(invoke,job); return job;
   }
@@ -106,7 +131,7 @@ export function createRecurringStore(invoke,{now=()=>new Date(),uuid=()=>crypto.
       const record=state.days[dateKey(now())]?.[plan.id];
       if (record && !record.run && record.status==='pending') record.snapshot=clone(plan);
       return plan.id;
-    }); },
+    },(_state,id)=>fields.reflection===undefined?null:{kind:'plan',id,prompt:fields.reflection?.prompt?.trim()??null}); },
     setStatus(id,status,date=dateKey(now())) { return update(state=>{
       if (!validDate(date)||date>dateKey(now())) throw Error('Отметить можно только наступивший день.');
       const record=state.days[date]?.[id];
@@ -116,6 +141,7 @@ export function createRecurringStore(invoke,{now=()=>new Date(),uuid=()=>crypto.
       if (record?.run) throw Error('Открой выполнение, чтобы завершить или пропустить его шаг.');
       state.days[date]||={};
       state.days[date][id]={...(record||{}),snapshot:clone(plan),status};
+      delete state.days[date][id]._reflectionOnly;
     }); },
     setReflection(id,reflection,date=dateKey(now())) { return update(state=>{
       if (!validDate(date)||date>dateKey(now())) throw Error('Заполнить рефлексию можно только за наступивший день.');
@@ -126,7 +152,7 @@ export function createRecurringStore(invoke,{now=()=>new Date(),uuid=()=>crypto.
       if(!validReflection(value))throw Error('Выбери оба ответа. Если не хочешь отвечать, выбери «Нет ответа».');
       state.days[date]||={};
       state.days[date][id]={...(record||{snapshot:clone(plan),status:'pending'}),reflection:value};
-    }); },
+    },state=>({kind:'answer',id,date,answer:state.days[date][id].reflection})); },
     ensureRun(id,date=dateKey(now())) { return update(state=>{
       if (!validDate(date) || date>dateKey(now())) throw Error('Запустить можно только наступившее занятие.');
       const unfinished=Object.entries(state.days).find(([,records])=>records[id]?.run&&records[id].status==='pending');

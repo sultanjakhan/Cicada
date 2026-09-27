@@ -670,3 +670,62 @@ fn checkpoint_abandoned_upload_without_successor_retires_only_transfer_cache() {
         assert!(!capture(&mut source, &cfg, 0).unwrap());
     }
 }
+
+#[test]
+fn reflection_checkpoint_restores_canonical_disable_over_late_legacy_seed() {
+    let cfg = config("reflection-source");
+    let mut source = connection(&cfg);
+    let plan = json!({"id":"plan","kind":"action","mode":"check","title":"Question fixture","weekdays":[0,1,2,3,4,5,6],"startsOn":"2026-01-01","endsOn":"","createdOn":"2026-01-01","time":"","active":true,"required":true,"steps":[]});
+    let core = json!({"version":1,"plans":[plan.clone()],"days":{}});
+    crate::recurring_reflections::save_bundle(
+        &mut source,
+        &core.to_string(),
+        "",
+        "",
+        Some(
+            serde_json::from_value(
+                json!({"kind":"plan","id":"plan","prompt":"Protected question"}),
+            )
+            .unwrap(),
+        ),
+    )
+    .unwrap();
+    let mut answered = core.clone();
+    answered["days"]["2026-01-15"] = json!({"plan":{"snapshot":plan,"status":"pending"}});
+    let bundle = crate::recurring_reflections::get_bundle(&mut source).unwrap();
+    crate::recurring_reflections::save_bundle(&mut source,&answered.to_string(),bundle.recurring.as_deref().unwrap(),bundle.reflections.as_deref().unwrap(),Some(serde_json::from_value(json!({"kind":"answer","id":"plan","date":"2026-01-15","answer":{"ruleOutcome":"kept","restoration":"better","trigger":"Protected answer"}})).unwrap())).unwrap();
+    let bundle = crate::recurring_reflections::get_bundle(&mut source).unwrap();
+    crate::recurring_reflections::save_bundle(
+        &mut source,
+        &answered.to_string(),
+        bundle.recurring.as_deref().unwrap(),
+        bundle.reflections.as_deref().unwrap(),
+        Some(serde_json::from_value(json!({"kind":"plan","id":"plan","prompt":null})).unwrap()),
+    )
+    .unwrap();
+    let key = crate::recurring_reflections::KEY;
+    let expected = crate::mvp_sync_db::read_ui(&source, key).unwrap();
+    let mut seq = 0;
+    drain_local(&mut source, &cfg, &mut seq);
+    assert!(capture(&mut source, &cfg, 0).unwrap());
+    let peer_cfg = config("reflection-peer");
+    let mut peer = connection(&peer_cfg);
+    // Simulates migration after a long-offline clock advanced beyond authored data.
+    peer.execute("UPDATE mvp_sync_meta SET clock=4102444800000", [])
+        .unwrap();
+    crate::mvp_sync_db::write_reflection_record(
+        &peer,
+        vec![json!(key), json!("plans"), json!("plan")],
+        json!({"legacy":true,"enabled":true,"prompt":"Stale seed"}),
+    )
+    .unwrap();
+    let descriptor = descriptor(&source, &cfg, &peer);
+    install(&mut peer, &peer_cfg, &descriptor).unwrap();
+    assert_eq!(crate::mvp_sync_db::read_ui(&peer, key).unwrap(), expected);
+    crate::recurring_reflections::initialize(&peer).unwrap();
+    assert_eq!(crate::mvp_sync_db::read_ui(&peer, key).unwrap(), expected);
+    assert_eq!(
+        scalar(&peer, "SELECT receive_seq FROM content_sync_state").unwrap(),
+        descriptor.base_seq
+    );
+}

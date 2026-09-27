@@ -152,6 +152,11 @@ fn incoming_allowed(
         if record.kind == "timeline_blocks" && current.record.identity != record.identity {
             return Err("mvp_sync_conflict_identity".into());
         }
+        let incoming_priority = crate::recurring_reflections::priority(&record.key, &record.value, record.deleted);
+        let current_priority = crate::recurring_reflections::priority(&current.record.key, &current.record.value, current.record.deleted);
+        if incoming_priority.is_some() && incoming_priority < current_priority {
+            return Err("reflection_legacy_seed_superseded".into());
+        }
         if record.kind == "day" && current.record.value != record.value {
             return Err("mvp_sync_conflict_identity".into());
         }
@@ -426,6 +431,13 @@ fn preview(
             rows.push(json!({"label":"Выбранная задача","value":shortened(text,160)}));
         }
         rows.push(json!({"label":"Выбор задачи","value":if value["selectionMode"]=="manual"{"Вручную"}else{"Автоматически"}}));
+    }
+    if record.kind == "ui" && record.key.first().and_then(Value::as_str) == Some(crate::recurring_reflections::KEY) {
+        if let Some(prompt) = value["prompt"].as_str() { rows.push(json!({"label":"Вопрос","value":shortened(prompt,160)})); }
+        if let Some(enabled) = value["enabled"].as_bool() { rows.push(json!({"label":"Рефлексия","value":if enabled {"Включена"}else{"Выключена"}})); }
+        for (field,label) in [("ruleOutcome","Правило"),("restoration","Восстановление"),("trigger","Заметка")] {
+            if let Some(text) = value["answer"][field].as_str() { rows.push(json!({"label":label,"value":shortened(text,500)})); }
+        }
     }
     // Two versions of a process usually differ only in their stages.
     if record.kind == "ui" && record.key.first().and_then(Value::as_str) == Some("calendar_processes_v1") {
@@ -1075,4 +1087,75 @@ mod tests {
         initialize(&c).unwrap();
         assert!(!checkpoint_publishable(&c).unwrap());
     }
+    #[test]
+    fn reflection_conflict_resolution_cannot_restore_seed_and_legacy_day_does_not_erase_sidecar() {
+        let mut c = fixture();
+        let key_name = crate::recurring_reflections::KEY;
+        let keys = vec![json!(key_name), json!("plans"), json!("plan")];
+        crate::mvp_sync_db::write_reflection_record(
+            &c,
+            keys.clone(),
+            json!({"legacy":false,"enabled":false,"prompt":null}),
+        )
+        .unwrap();
+        let id = key("ui", &keys);
+        let mut seed = current(&c, &id).unwrap().unwrap().record;
+        seed.value = json!({"legacy":true,"enabled":true,"prompt":"Stale seed"});
+        c.execute(
+            "INSERT INTO mvp_sync_conflicts VALUES(?1,'2099-01-01T00:00:00.000Z','offline',?2)",
+            params![id, serde_json::to_string(&seed).unwrap()],
+        )
+        .unwrap();
+        let entry = list(&c, 0, 50).unwrap()["entries"][0].clone();
+        assert_eq!(entry["can_use_incoming"], false);
+        assert_eq!(entry["reason"], "reflection_legacy_seed_superseded");
+        assert_eq!(
+            choose(&mut c, &entry, "incoming").unwrap_err(),
+            "reflection_legacy_seed_superseded"
+        );
+        choose(&mut c, &entry, "current").unwrap();
+        let expected = crate::mvp_sync_db::read_ui(&c, key_name).unwrap();
+        let plan = json!({"id":"plan","kind":"action","mode":"check","title":"Fixture","weekdays":[0,1,2,3,4,5,6],"startsOn":"2026-01-01","endsOn":"","createdOn":"2026-01-01","time":"","active":true,"required":true,"steps":[]});
+        let day_keys = vec![
+            json!(key_name),
+            json!("days"),
+            json!("2026-01-15"),
+            json!("plan"),
+        ];
+        let protected_day = json!({"legacy":false,"prompt":"Protected question","snapshot":plan.clone(),"status":"pending","answer":{"ruleOutcome":"kept","restoration":"better","trigger":"Protected answer"}});
+        crate::mvp_sync_db::write_reflection_record(&c, day_keys, protected_day.clone()).unwrap();
+        let state = json!({"version":1,"plans":[plan.clone()],"days":{"2026-01-15":{"plan":{"snapshot":plan,"status":"pending"}}}});
+        crate::mvp_sync_db::set_ui(&c, "calendar_recurring_v1", &state.to_string(), None).unwrap();
+        let day_id = key(
+            "ui",
+            &[
+                json!("calendar_recurring_v1"),
+                json!("days"),
+                json!("2026-01-15"),
+                json!("plan"),
+            ],
+        );
+        let mut old = current(&c, &day_id).unwrap().unwrap().record;
+        old.value["status"] = json!("done");
+        old.value["snapshot"]["reflection"] = json!({"prompt":"Old embedded question"});
+        c.execute(
+            "INSERT INTO mvp_sync_conflicts VALUES(?1,'2099-01-02T00:00:00.000Z','offline',?2)",
+            params![day_id, serde_json::to_string(&old).unwrap()],
+        )
+        .unwrap();
+        let entry = list(&c, 0, 50).unwrap()["entries"][0].clone();
+        choose(&mut c, &entry, "incoming").unwrap();
+        let protected: Value = serde_json::from_str(
+            crate::mvp_sync_db::read_ui(&c, key_name)
+                .unwrap()
+                .as_ref()
+                .unwrap(),
+        )
+        .unwrap();
+        let expected: Value = serde_json::from_str(expected.as_ref().unwrap()).unwrap();
+        assert_eq!(protected["plans"], expected["plans"]);
+        assert_eq!(protected["plans"]["plan"]["enabled"], false);
+        assert_eq!(protected["days"]["2026-01-15"]["plan"], protected_day);
+    }
+
 }

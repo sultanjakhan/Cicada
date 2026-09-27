@@ -29,6 +29,7 @@ mod window_placement_macos;
 mod mvp_sync;
 mod mvp_sync_crypto;
 mod mvp_sync_db;
+mod recurring_reflections;
 #[cfg(test)]
 mod workspace_ipc_tests;
 
@@ -244,6 +245,7 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
     conn.execute("INSERT OR IGNORE INTO event_categories(id,name,color,icon,sort_order,created_at) VALUES('general','general','#9B9B9B','',0,?1)", [Utc::now().to_rfc3339()])
         .map_err(|e| fail(format!("seed generic category: {e}")))?;
     mvp_sync_db::initialize(conn)?;
+    recurring_reflections::initialize(conn)?;
     health_sleep::initialize(conn)?;
     health_activity::initialize(conn)?;
     digital_activity::initialize(conn)?;
@@ -629,6 +631,8 @@ pub fn run() {
             calendar_compat::get_calendar_records,
             calendar_compat::get_ui_state,
             calendar_compat::set_ui_state,
+            recurring_reflections::recurring_get_bundle,
+            recurring_reflections::recurring_save_bundle,
             external_url::open_url,
             calendar_compat::get_goals,
             calendar_compat::save_calendar_goal,

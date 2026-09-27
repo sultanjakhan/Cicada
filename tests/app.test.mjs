@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { build } from 'vite';
+import {withRecurringBundle} from './fixtures/recurring-bundle.mjs';
 
 const html = await readFile(new URL('../src/index.html', import.meta.url), 'utf8');
 const result = await build({
@@ -85,6 +86,7 @@ async function launch(t, { mobile = false, initialSettings = [], width, userAgen
     if (command === 'get_calendar_task_minutes') return 0;
     throw new Error('Unexpected IPC: ' + command);
   } }, event: { listen: async () => () => {}, emit: async () => {} } };
+  w.__TAURI__.core.invoke=withRecurringBundle(w.__TAURI__.core.invoke);
   for (const name of ['highlight.min.js','marked.min.js','vendor/purify.min.js']) w.eval(await readFile(new URL('../src/public/' + name, import.meta.url), 'utf8'));
   w.eval(bundle);
   await settle();

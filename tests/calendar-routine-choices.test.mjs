@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {JSDOM} from 'jsdom';
-import {mountCalendarRoutineChoices} from '../src/hanni/js/calendar-routine-choices.js';
+import {mountCalendarRoutineChoices as basemountCalendarRoutineChoices} from '../src/hanni/js/calendar-routine-choices.js';
+import {withRecurringBundle} from './fixtures/recurring-bundle.mjs';
+const mountCalendarRoutineChoices=(element,options)=>basemountCalendarRoutineChoices(element,{...options,invoke:withRecurringBundle(options.invoke)});
+
 const tick=async()=>{for(let i=0;i<6;i++)await new Promise(resolve=>setImmediate(resolve));};
 async function boot(t){
   const dom=new JSDOM('<main></main>');const host=dom.window.document.querySelector('main');

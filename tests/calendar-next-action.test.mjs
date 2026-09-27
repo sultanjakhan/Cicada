@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { mountCalendarNextAction, rankNextAction } from '../src/hanni/js/calendar-next-action.js';
+import { mountCalendarNextAction as basemountCalendarNextAction, rankNextAction } from '../src/hanni/js/calendar-next-action.js';
+
+import {withRecurringBundle} from './fixtures/recurring-bundle.mjs';
+const mountCalendarNextAction=(element,options)=>basemountCalendarNextAction(element,{...options,invoke:withRecurringBundle(options.invoke)});
 
 const today = '2026-09-27';
 const now = () => new Date(`${today}T12:00:00`);

@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { mountCalendarTodayAction } from '../src/hanni/js/calendar-today-action.js';
+import { mountCalendarTodayAction as basemountCalendarTodayAction } from '../src/hanni/js/calendar-today-action.js';
+
+import {withRecurringBundle} from './fixtures/recurring-bundle.mjs';
+const mountCalendarTodayAction=(element,options)=>basemountCalendarTodayAction(element,{...options,invoke:withRecurringBundle(options.invoke)});
 
 const settle = async () => { for (let i=0;i<12;i++) await new Promise(resolve=>setImmediate(resolve)); };
 async function setup(t, {nextTask=false,activeTask=false,extraTasks=[]}={}) {

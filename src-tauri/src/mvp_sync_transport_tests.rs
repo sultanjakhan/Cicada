@@ -777,3 +777,72 @@ fn capacity_error_and_outbox_survive_independent_pull_backoff() {
         None
     );
 }
+
+#[test]
+fn reflection_encrypted_legacy_outbox_survives_upgrade_without_erasing_answer() {
+    let (mut old, old_cfg) = replica("old-device");
+    let (mut target, target_cfg) = replica("new-device");
+    let mut legacy = crate::recurring_reflections::tests::fixture_state();
+    legacy["plans"][0]["reflection"] = json!({"prompt":"Old question"});
+    legacy["days"]["2026-01-15"] = json!({"plan":{"snapshot":legacy["plans"][0],"status":"done"}});
+    crate::mvp_sync_db::set_ui(&old, "calendar_recurring_v1", &legacy.to_string(), None).unwrap();
+    assert!(enqueue(&mut old, &old_cfg).unwrap());
+    let queued: String = old
+        .query_row("SELECT body FROM content_sync_outbox LIMIT 1", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    let batch: Batch = serde_json::from_str(&queued).unwrap();
+    crate::recurring_reflections::initialize(&old).unwrap();
+    assert_eq!(
+        old.query_row("SELECT body FROM content_sync_outbox LIMIT 1", [], |r| {
+            r.get::<_, String>(0)
+        })
+        .unwrap(),
+        queued,
+        "upgrade must not rewrite encrypted queue"
+    );
+    let state = crate::recurring_reflections::tests::fixture_state();
+    let saved = crate::recurring_reflections::save_bundle(
+        &mut target,
+        &state.to_string(),
+        "",
+        "",
+        Some(
+            serde_json::from_value(json!({"kind":"plan","id":"plan","prompt":"New question"}))
+                .unwrap(),
+        ),
+    )
+    .unwrap();
+    let mut answered = state.clone();
+    answered["days"]["2026-01-15"] =
+        json!({"plan":{"snapshot":state["plans"][0],"status":"pending"}});
+    let saved=crate::recurring_reflections::save_bundle(&mut target,&answered.to_string(),saved.recurring.as_deref().unwrap(),saved.reflections.as_deref().unwrap(),Some(serde_json::from_value(json!({"kind":"answer","id":"plan","date":"2026-01-15","answer":{"ruleOutcome":"kept","restoration":"better","trigger":"Protected answer"}})).unwrap())).unwrap();
+    let saved = crate::recurring_reflections::save_bundle(
+        &mut target,
+        &answered.to_string(),
+        saved.recurring.as_deref().unwrap(),
+        saved.reflections.as_deref().unwrap(),
+        Some(serde_json::from_value(json!({"kind":"plan","id":"plan","prompt":null})).unwrap()),
+    )
+    .unwrap();
+    let item = Stored {
+        seq: 1,
+        client_seq: batch.client_seq,
+        sender_device_id: old_cfg.device_id.clone(),
+        batch_id: batch.batch_id,
+        envelope_sha256: envelope_hash(&batch.envelope).unwrap(),
+        envelope: batch.envelope,
+    };
+    apply(&mut target, &target_cfg, item).unwrap();
+    assert_eq!(
+        crate::recurring_reflections::get_bundle(&mut target)
+            .unwrap()
+            .reflections,
+        saved.reflections
+    );
+    assert_eq!(
+        scalar(&target, "SELECT receive_seq FROM content_sync_state").unwrap(),
+        1
+    );
+}

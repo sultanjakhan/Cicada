@@ -21,6 +21,7 @@ const TABLES: &[(&str, &[&str])] = &[
 const UI_KEYS: &[&str] = &[
     "calendar_development_v1",
     "calendar_recurring_v1",
+    crate::recurring_reflections::KEY,
     "calendar_now_v1",
     "calendar_wishes_v1",
     // Task processes (2026-09-25), one record per process. Older versions pause
@@ -195,6 +196,47 @@ pub(crate) fn initialize(conn: &Connection) -> Result<(), String> {
     sql(tx.execute("UPDATE mvp_sync_meta SET initialized=1 WHERE id=1", []))?;
     sql(tx.pragma_update(None, "user_version", crate::SCHEMA_VERSION))?;
     sql(tx.commit())
+}
+
+pub(crate) fn write_reflection_record(
+    conn: &Connection,
+    keys: Vec<Value>,
+    value: Value,
+) -> Result<(), String> {
+    let key_strings: Vec<_> = keys.iter().map(|v| v.as_str().unwrap_or("")).collect();
+    if !crate::recurring_reflections::valid_row(&key_strings, &value, false) {
+        return Err("reflection_invalid_data".into());
+    }
+    let id = key("ui", &keys);
+    let prior: Option<String> = sql(conn
+        .query_row("SELECT data FROM mvp_records WHERE id=?1", [&id], |r| {
+            r.get(0)
+        })
+        .optional())?;
+    if let Some(raw) = prior {
+        let prior: Record = serde_json::from_str(&raw).map_err(|_| "reflection_invalid_data")?;
+        if !prior.deleted && prior.value == value {
+            return Ok(());
+        }
+    }
+    record_local(conn, "ui", keys.clone(), value.clone(), false)?;
+    sql(conn.execute(
+        "INSERT OR IGNORE INTO content_sync_dirty(table_name,row_id) VALUES('mvp_records',?1)",
+        [&id],
+    ))?;
+    apply_ui_record(
+        conn,
+        &Record {
+            v: 1,
+            kind: "ui".into(),
+            key: keys,
+            value,
+            deleted: false,
+            identity: None,
+            parent: None,
+            parent_writer: None,
+        },
+    )
 }
 
 fn sql_json(value: SqlValue) -> Value {
@@ -471,18 +513,25 @@ pub(crate) fn apply_record(conn: &Connection, fields: &Map<String, Value>) -> Re
             }
             return Ok(false);
         }
+        let local_priority = crate::recurring_reflections::priority(&local.key, &local.value, local.deleted);
+        let incoming_priority = crate::recurring_reflections::priority(&record.key, &record.value, record.deleted);
+        let reflection_priority = incoming_priority.is_some() && local_priority != incoming_priority;
         let follows = record.parent.as_deref() == Some(&local_stamp)
             && record.parent_writer.as_deref() == Some(&local_writer);
         let precedes = local.parent.as_deref() == Some(&stamp)
             && local.parent_writer.as_deref() == Some(&writer);
-        let wins =
-            (stamp.as_str(), writer.as_str()) > (local_stamp.as_str(), local_writer.as_str());
-        if different && !follows && !precedes {
+        let wins = if reflection_priority { incoming_priority > local_priority } else {
+            (stamp.as_str(), writer.as_str()) > (local_stamp.as_str(), local_writer.as_str())
+        };
+        if different && !follows && !precedes && !reflection_priority {
             if wins {
                 keep_conflict(conn, &id, &local_stamp, &local_writer, &local)?;
             } else {
                 keep_conflict(conn, &id, &stamp, &writer, &record)?;
             }
+        }
+        if wins && local.kind == "ui" {
+            crate::recurring_reflections::migrate_record(conn,&local.key,&local.value,local.deleted)?;
         }
         if !wins {
             return Ok(false);
@@ -519,7 +568,10 @@ fn materialize(conn: &Connection, record: &Record) -> Result<(), String> {
             ))?;
             write_day_projection(conn)?;
         }
-        "ui" => apply_ui_record(conn, record)?,
+        "ui" => {
+            apply_ui_record(conn,record)?;
+            crate::recurring_reflections::migrate_record(conn,&record.key,&record.value,record.deleted)?;
+        },
         table => {
             check_relations(conn, record)?;
             let (_, keys) = TABLES
@@ -717,6 +769,9 @@ pub(crate) fn set_ui_in_transaction(
     value: &str,
     expected: Option<&str>,
 ) -> Result<(), String> {
+    if key == crate::recurring_reflections::KEY {
+        return Err("reflection_use_bundle_command".into());
+    }
     let prior = read_ui(&tx, key)?;
     if let Some(expected) = expected {
         if prior.as_deref().unwrap_or("") != expected {
@@ -828,6 +883,19 @@ fn split_ui(name: &str, value: &Value) -> Result<BTreeMap<String, Value>, String
                 return Err("mvp_sync_invalid_snapshot".into());
             }
         }
+    } else if name == crate::recurring_reflections::KEY {
+        for (id,row) in object(&value["plans"])? {
+            let keys = [name,"plans",id.as_str()];
+            if !crate::recurring_reflections::valid_row(&keys,row,false) { return Err("reflection_invalid_data".into()); }
+            out.insert(json!(keys).to_string(),row.clone());
+        }
+        for (day,rows) in object(&value["days"])? {
+            for (id,row) in object(rows)? {
+                let keys = [name,"days",day.as_str(),id.as_str()];
+                if !crate::recurring_reflections::valid_row(&keys,row,false) { return Err("reflection_invalid_data".into()); }
+                out.insert(json!(keys).to_string(),row.clone());
+            }
+        }
     } else if name == "calendar_recurring_v1" {
         for (position, row) in array(&value["plans"])?.iter().enumerate() {
             let id = row["id"]
@@ -915,6 +983,7 @@ fn validate_ui_record(record: &Record) -> Result<(), String> {
                 && !id.is_empty()
                 && (record.deleted || record.value["snapshot"]["id"] == *id)
         }
+        [crate::recurring_reflections::KEY,..] => crate::recurring_reflections::valid_row(&keys,&record.value,record.deleted),
         _ => false,
     };
     if valid {
@@ -936,6 +1005,8 @@ fn apply_ui_record(conn: &Connection, record: &Record) -> Result<(), String> {
         json!({"version":1,"wishes":[]})
     } else if name == "calendar_processes_v1" {
         json!({"version":1,"processes":[]})
+    } else if name == crate::recurring_reflections::KEY {
+        json!({"version":1,"plans":{},"days":{}})
     } else {
         json!({"version":1,"plans":[],"days":{}})
     };
@@ -966,7 +1037,13 @@ fn apply_ui_record(conn: &Connection, record: &Record) -> Result<(), String> {
     });
     for row in records {
         let keys: Vec<_> = row.key.iter().map(|v| v.as_str().unwrap_or("")).collect();
-        if name == "calendar_development_v1" {
+        if name == crate::recurring_reflections::KEY {
+            if keys[1] == "plans" { state["plans"][keys[2]]=row.value.clone(); }
+            else {
+                if state["days"].get(keys[2]).is_none() { state["days"][keys[2]]=json!({}); }
+                state["days"][keys[2]][keys[3]]=row.value.clone();
+            }
+        } else if name == "calendar_development_v1" {
             let goal = keys[1];
             if state["goals"].get(goal).is_none() {
                 state["goals"][goal] =

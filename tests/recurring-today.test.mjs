@@ -6,7 +6,11 @@ import { mountCalendarDashboardTasks } from '../src/hanni/js/calendar-dashboard-
 const bootstrap=new JSDOM('<!doctype html><main></main>',{url:'http://127.0.0.1/'});
 globalThis.window=bootstrap.window; globalThis.document=bootstrap.window.document; globalThis.CustomEvent=bootstrap.window.CustomEvent; globalThis.localStorage=bootstrap.window.localStorage;
 globalThis.marked={Marked:class { use(){} parse(value){return value;} }};
-const { mountCalendarRecurring }=await import('../src/hanni/js/calendar-recurring.js');
+const { mountCalendarRecurring: basemountCalendarRecurring }=await import('../src/hanni/js/calendar-recurring.js');
+
+import {mergeRecurringBundle} from '../src/hanni/js/calendar-recurring-store.js';
+import {withRecurringBundle} from './fixtures/recurring-bundle.mjs';
+const mountCalendarRecurring=(element,options)=>basemountCalendarRecurring(element,{...options,invoke:withRecurringBundle(options.invoke)});
 
 const today='2026-09-13';
 const plan={id:'rule-1',kind:'rule',title:'Без телефона за столом',weekdays:[0],startsOn:today,endsOn:'',time:'09:00',active:true,required:true,createdOn:today};
@@ -113,11 +117,11 @@ test('library opens dated reflection, keeps drafts across dates and does not tre
   assert.equal(detail.querySelector('fieldset').disabled,true);
   await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
   assert.equal(detail.querySelector('fieldset').disabled,false);
-  let saved=JSON.parse(raw).days[yesterday].reflection;assert.equal(saved.status,'pending');assert.equal(saved.reflection.ruleOutcome,'no_answer');assert.equal(saved.reflection.restoration,'no_answer');assert.equal(saved.reflection.trigger,'');assert.equal(writes,1);
+  let saved=mergeRecurringBundle(await withRecurringBundle(invoke)('recurring_get_bundle')).days[yesterday].reflection;assert.equal(saved.status,'pending');assert.equal(saved.reflection.ruleOutcome,'no_answer');assert.equal(saved.reflection.restoration,'no_answer');assert.equal(saved.reflection.trigger,'');assert.equal(writes,1);
   dateInput=detail.querySelector('[data-reflection-date]');dateInput.value=today;dateInput.dispatchEvent(new dom.window.Event('change',{bubbles:true}));
   assert.equal(detail.querySelector('[data-reflection-rule]').value,'kept');assert.equal(detail.querySelector('[data-reflection-restoration]').value,'better');assert.equal(detail.querySelector('[data-reflection-trigger]').value,'Черновик сегодня');
   detail.querySelector('[data-save-reflection]').click();await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
-  saved=JSON.parse(raw).days[today].reflection;assert.equal(saved.status,'pending');assert.equal(saved.reflection.ruleOutcome,'kept');assert.equal(saved.reflection.trigger,'Черновик сегодня');assert.equal(writes,2);
+  saved=mergeRecurringBundle(await withRecurringBundle(invoke)('recurring_get_bundle')).days[today].reflection;assert.equal(saved.status,'pending');assert.equal(saved.reflection.ruleOutcome,'kept');assert.equal(saved.reflection.trigger,'Черновик сегодня');assert.equal(writes,2);
   detail.close();assert.equal(dom.window.document.activeElement,host.querySelector('[data-library-reflection="reflection"]'));
   host.querySelector('[data-library-reflection="reflection"]').click();
   const history=dom.window.document.querySelector('dialog[open]'),beforeStart=history.querySelector('[data-reflection-date]');
@@ -131,7 +135,7 @@ test('library opens dated reflection, keeps drafts across dates and does not tre
   editor.querySelector('form').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));
   await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
   assert.equal(JSON.parse(raw).plans[0].title,'Новое название');assert.equal(writes,3);
-  assert.equal(JSON.parse(raw).days[today].reflection.reflection.trigger,'Черновик сегодня');
+  assert.equal(mergeRecurringBundle(await withRecurringBundle(invoke)('recurring_get_bundle')).days[today].reflection.reflection.trigger,'Черновик сегодня');
 });
 
 test('graph editor lets imported step properties be edited without changing the plan identity',async t=>{
