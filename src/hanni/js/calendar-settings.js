@@ -46,7 +46,7 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
   const api = createCalendarDialog({
     document,
     title: 'Настройки Cicada',
-    hint: 'Рекомендации и вид календаря сохраняются вместе. Этапы и подключения настраиваются отдельно.',
+    hint: '',
     submitLabel: 'Сохранить календарь',
     returnFocus: () => {
       if (returnFocus) { returnFocus(); return; }
@@ -65,7 +65,7 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
   settingsDialog = api;
   api.modal.classList.add('calendar-settings-dialog');
   api.modal.querySelector('#' + api.modal.getAttribute('aria-labelledby')).textContent = 'Настройки Cicada';
-  api.modal.querySelector('#' + api.modal.getAttribute('aria-describedby')).textContent = 'Рекомендации и вид календаря сохраняются вместе. Этапы и подключения настраиваются отдельно.';
+  api.modal.querySelector('#' + api.modal.getAttribute('aria-describedby')).textContent = '';
 
   const nav = document.createElement('div');
   nav.className = 'calendar-settings-tabs';
@@ -281,12 +281,11 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
   hosts.processes.classList.add('calendar-settings-processes-host');
   hosts.connections.classList.add('calendar-settings-connections');
   hosts.about.classList.add('calendar-settings-about');
-  const connectionsIntro = document.createElement('p');
-  connectionsIntro.className = 'calendar-setting-hint';
-  connectionsIntro.textContent = 'Каждое подключение применяется своими кнопками. Кнопка сохранения календаря на них не влияет.';
-  hosts.connections.append(connectionsIntro);
   const sync = document.createElement('section'), sleep = document.createElement('section'), activity = document.createElement('section');
-  hosts.connections.append(sync, sleep, activity);
+  const health = document.createElement('details'); health.className = 'calendar-settings-health';
+  const healthTitle = document.createElement('summary'); healthTitle.textContent = 'Здоровье: сон, прогулки и шаги';
+  health.append(healthTitle, sleep, activity);
+  hosts.connections.append(sync, health);
   const updates = document.createElement('section');
   hosts.about.append(updates);
 
