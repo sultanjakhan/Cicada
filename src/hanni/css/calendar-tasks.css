@@ -61,16 +61,6 @@
 .ct-subspheres button:focus-visible { outline-offset: -2px; }
 
 /* Quick add reads as the first row of the list. */
-.ct-add { display: grid; grid-template-columns: 20px minmax(0,1fr); align-items: center; column-gap: 12px; margin: 8px 0 0; padding: 0 4px 0 12px; border-bottom: 1px solid var(--border-subtle); transition: border-color .12s; }
-.ct-add:focus-within { border-bottom-color: var(--border-focus); }
-.ct-add-icon { display: flex; justify-content: center; color: var(--text-faint); }
-.ct-add:focus-within .ct-add-icon { color: var(--text-secondary); }
-.ct-add input { width: 100%; min-width: 0; height: 44px; margin: 0; padding: 0; border: 0; background: transparent; font-size: 14px; }
-.ct-add input::placeholder { color: var(--text-faint); }
-.calendar-tasks .ct-add input:focus-visible { outline: 0; }
-.ct-add input:read-only { color: var(--text-muted); }
-.ct-add-status { grid-column: 2; margin: -6px 0 8px; font-size: 12px; line-height: 16px; color: var(--text-muted); }
-.ct-add-status.is-error { color: var(--ct-danger); }
 
 .calendar-tasks [data-tasks-message] { font-size: 13px; color: var(--text-secondary); margin: 12px 0; }
 .calendar-tasks [data-tasks-message]:empty { display: none; }
@@ -126,25 +116,26 @@
 .ct-kind { color: var(--text-secondary); }
 .ct-sphere { color: var(--text-secondary); }
 .ct-date { padding: 0 0 0 13px; border: 0; background: transparent; color: var(--text-muted) !important; font-size: 12px !important; line-height: 16px; cursor: pointer; }
-.ct-stage { position: relative; padding: 0; border: 0; background: transparent; color: var(--text-muted) !important; font-size: 12px !important; line-height: 16px; cursor: pointer; }
+.ct-stage { position: relative; padding: 0; border: 0; background: transparent; color: var(--text-muted) !important; font-size: 12px !important; line-height: 16px; cursor: default; }
 .ct-date { font-variant-numeric: tabular-nums; }
 /* The hit area fills the padding band of the meta line (it clips anything larger). */
 .ct-date::after { content: ''; position: absolute; inset: -3px -3px -3px 9px; }
-.ct-stage::after { content: ''; position: absolute; inset: -3px -2px; }
-.ct-date:hover:not(:disabled), .ct-stage:hover:not(:disabled) { color: var(--text-primary) !important; text-decoration: underline; text-underline-offset: 2px; }
+.ct-date:hover:not(:disabled) { color: var(--text-primary) !important; text-decoration: underline; text-underline-offset: 2px; }
 .ct-date.is-overdue { color: var(--ct-danger) !important; font-weight: 500; }
-.ct-date:disabled, .ct-stage:disabled { cursor: default; }
-.calendar-tasks .ct-date:focus-visible, .calendar-tasks .ct-stage:focus-visible { outline: 0; text-decoration: underline 2px; text-underline-offset: 3px; color: var(--text-primary) !important; }
-/* Stage of a task with a process: one explicit selector with its waiting state. */
+.ct-date:disabled { cursor: default; }
+.calendar-tasks .ct-date:focus-visible { outline: 0; text-decoration: underline 2px; text-underline-offset: 3px; color: var(--text-primary) !important; }
+/* Plain stage label with a separate next-stage arrow. */
 .ct-stage-group { display: inline-flex; align-items: center; gap: 6px; }
 .ct-stage { display: inline-flex; align-items: center; gap: 5px; }
 .ct-stage.is-deleted .ct-stage-label { font-style: italic; }
 .ct-stage-label { color: var(--text-secondary); }
+.ct-stage-next { display: inline-grid; place-items: center; flex: none; width: 26px; height: 22px; padding: 0; border: 1px solid var(--border-default); border-radius: 11px; background: transparent; color: var(--text-secondary); cursor: pointer; }
+.ct-stage-next svg { display: block; }
+.ct-stage-next:hover:not(:disabled) { background: var(--ct-hover-strong); border-color: var(--border-hover); }
+.ct-stage-next:disabled { opacity: .5; cursor: default; }
+.ct-stage-next:focus-visible { outline: 2px solid var(--ct-focus); outline-offset: 1px; }
 .ct-stage-prefix { color: var(--text-muted); }
-.ct-stage-chevron { display: block; flex: none; }
-.ct-stage-settings-hint { display: block; color: var(--text-muted); font-size: 11px; line-height: 15px; }
-.ct-stage:hover .ct-stage-label { color: var(--text-primary); }
-.ct-stage.is-empty { color: var(--text-faint) !important; text-decoration: underline dotted 1px; text-underline-offset: 3px; }
+.ct-stage.is-empty { color: var(--text-muted) !important; }
 .ct-waiting { position: relative; display: inline-flex; align-items: center; color: var(--text-secondary); }
 .ct-waiting svg { display: block; }
 
@@ -175,19 +166,6 @@
 .ct-pages button:disabled { opacity: .45; cursor: default; }
 
 /* The stage menu lives in <body> like the record menu, so it uses global tokens only. */
-.ct-stage-menu { position: fixed; z-index: 12000; width: 216px; max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); overflow-y: auto; box-sizing: border-box; padding: 4px; border: 1px solid var(--border-default); border-radius: 10px; background: var(--bg-card); color: var(--text-primary); box-shadow: 0 8px 30px rgb(0 0 0 / 18%); font-size: 13px; }
-.ct-stage-menu * { box-sizing: border-box; }
-.ct-stage-menu-title { margin: 0; padding: 6px 10px 4px 32px; font-size: 11px; line-height: 16px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); }
-.ct-stage-option { position: relative; display: block; width: 100%; min-height: 32px; padding: 6px 10px 6px 32px; border: 0; border-radius: 6px; background: transparent; font: inherit; font-size: 13px; line-height: 20px; color: inherit; text-align: left; cursor: pointer; }
-.ct-stage-option:hover, .ct-stage-option:focus { outline: 0; background: color-mix(in srgb, var(--text-primary) 7%, var(--bg-card)); }
-.ct-stage-option:focus-visible { outline: 2px solid var(--text-secondary); outline-offset: -2px; }
-.ct-stage-option[aria-checked="true"] { font-weight: 600; }
-.ct-stage-option[aria-checked="true"]::before { content: ''; position: absolute; left: 13px; top: 50%; width: 8px; height: 4px; margin-top: -4px; border-left: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); }
-.ct-stage-option[role="menuitemcheckbox"]::after { content: ''; position: absolute; left: 9px; top: 50%; width: 14px; height: 14px; margin-top: -7px; border: 1.5px solid var(--text-faint); border-radius: 4px; }
-.ct-stage-option[role="menuitemcheckbox"][aria-checked="true"]::after { border-color: currentColor; }
-.ct-stage-option:disabled { opacity: .5; cursor: wait; }
-.ct-stage-separator { height: 1px; margin: 4px 6px; background: var(--border-subtle); }
-.ct-stage-error { margin: 4px 0; padding: 4px 10px; font-size: 12px; line-height: 1.5; color: var(--text-primary); }
 
 @media (max-width: 600px) {
   .calendar-tasks { padding-top: 4px; }
@@ -203,17 +181,13 @@
   .ct-spheres { margin-top: 10px; }
   .ct-spheres button { height: 36px; padding: 0 12px; }
   .ct-subspheres button { height: 36px; padding: 0 10px; }
-  .ct-stage { min-height: 36px; }
-  .ct-stage::after { inset: 0 -3px; }
+  .ct-stage-next { width: 36px; height: 36px; border-radius: 18px; }
   /* Stage + estimate can wrap to three lines on a narrow pane; never clip its touch target. */
   .ct-meta { max-height: none; overflow: visible; }
-  .ct-add { padding-left: 10px; column-gap: 10px; }
-  .ct-add input { height: 48px; font-size: 15px; }
   .ct-group { padding-left: 10px; padding-right: 0; }
   .ct-group-action { height: 36px; padding: 0 10px; }
   .ct-row { column-gap: 10px; min-height: 56px; padding: 7px 0 7px 10px; }
   .ct-actions { gap: 0; }
   .ct-icon-button { width: 36px; height: 36px; }
   .ct-goal { flex: 1 1 0; min-width: 56px; max-width: 100%; }
-  .ct-stage-option { min-height: 40px; padding-top: 10px; padding-bottom: 10px; }
 }
