@@ -10,21 +10,23 @@ const plan = (id, fields = {}) => ({ id, kind: 'action', mode: 'check', title: i
 const state = (plans = [], days = {}) => JSON.stringify({ version: 1, plans, days });
 const settle = async () => { for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve)); };
 
-function setup(t, { tasks = [], plans = [], days = {}, active = [], failTasks = false } = {}) {
+function setup(t, { tasks = [], plans = [], days = {}, active = [], failTasks = false, failGoals = false, links = [], goals = [], processes = null } = {}) {
   const dom = new JSDOM('<main></main>'); t.after(() => dom.window.close());
   let timerCallback = null; dom.window.setInterval = callback => { timerCallback = callback; return 1; };
   const host = dom.window.document.querySelector('main'), calls = [];
-  let currentTasks = tasks, currentState = state(plans, days), activeBlocks = active, readFailure = failTasks;
+  let currentTasks = tasks, currentState = state(plans, days), activeBlocks = active, readFailure = failTasks, goalFailure = failGoals;
   const invoke = async (name, args) => {
     calls.push({ name, args });
     if (name === 'get_calendar_tasks') { if (readFailure) throw Error('offline'); return currentTasks; }
+    if (name === 'get_calendar_task_goals') { if (goalFailure) throw Error('goal links offline'); return links; }
+    if (name === 'get_goals') { if (goalFailure) throw Error('goals offline'); return goals; }
     if (name === 'get_active_blocks') return activeBlocks;
     if (name === 'get_active_block') return activeBlocks[0] || null;
-    if (name === 'get_ui_state') return currentState;
+    if (name === 'get_ui_state') return args?.key === 'calendar_processes_v1' ? (processes ? JSON.stringify({ version: 1, processes }) : null) : currentState;
     if (name === 'set_ui_state') { currentState = args.value; return null; }
     throw Error(name);
   };
-  return { dom, host, calls, invoke, tick() { timerCallback?.(); }, get tasks() { return currentTasks; }, set tasks(value) { currentTasks = value; }, get currentState() { return currentState; }, set active(value) { activeBlocks = value; }, set fail(value) { readFailure = value; } };
+  return { dom, host, calls, invoke, tick() { timerCallback?.(); }, get tasks() { return currentTasks; }, set tasks(value) { currentTasks = value; }, get currentState() { return currentState; }, set active(value) { activeBlocks = value; }, set fail(value) { readFailure = value; }, set failGoals(value) { goalFailure = value; } };
 }
 
 test('ranking favors today-bound work, but current-period routines beat ordinary old backlog', () => {
@@ -80,6 +82,53 @@ test('an already-running task remains the primary recommendation over new work',
   const selected = rankNextAction({ now: now(), tasks: [task('active', { is_active: true }), task('overdue', { date: '2026-09-26' })] });
   assert.equal(selected.task.source_id, 'active');
   assert.equal(selected.action, 'open');
+});
+
+test('goal association is display context only and never changes task ranking', () => {
+  const linked = task('linked', { date: today }), unlinked = task('unlinked', { priority: 5 });
+  const goals = [{ id: 'parent', title: 'Главная цель', parent_goal_id: null }, { id: 'child', title: 'Подцель', parent_goal_id: 'parent' }];
+  const links = [{ source_type: 'note', source_id: 'linked', goal_id: 'child' }];
+  const selected = rankNextAction({ now: now(), tasks: [linked, unlinked], links, goals });
+  assert.equal(selected.task.source_id, 'unlinked', 'adding a goal link does not alter the existing priority rules');
+  const linkedOnly = rankNextAction({ now: now(), tasks: [linked], links, goals });
+  assert.equal(linkedOnly.context.goal, 'Главная цель / Подцель');
+  assert.equal(rankNextAction({ now: now(), tasks: [unlinked], links, goals }).context.goal, '');
+});
+
+test('waiting task shows goal and stage context and offers review without starting or changing state', async t => {
+  const row = task('waiting', { process: 'work', stage: 'requirements', waiting: true });
+  const x = setup(t, {
+    tasks: [row],
+    links: [{ source_type: 'note', source_id: 'waiting', goal_id: 'child' }],
+    goals: [{ id: 'parent', title: 'Главная цель' }, { id: 'child', title: 'Подцель', parent_goal_id: 'parent' }],
+    processes: [{ id: 'work', title: 'Работа', stages: [{ id: 'requirements', title: 'Сбор требований' }] }],
+  });
+  const opened = [], executed = [];
+  const dispose = mountCalendarNextAction(x.host, { invoke: x.invoke, clock: now, openTask: value => opened.push(value), executeTask: (_value, action) => executed.push(action) });
+  t.after(dispose); await settle();
+  assert.match(x.host.querySelector('[data-next-action-context]').textContent, /Главная цель \/ Подцель/);
+  assert.match(x.host.querySelector('[data-next-action-context]').textContent, /Этап: Сбор требований/);
+  assert.match(x.host.querySelector('[data-next-action-context]').textContent, /Жду ответа/);
+  const review = x.host.querySelector('[data-next-action-action="review"]');
+  assert.equal(review.textContent, 'Проверить задачу'); review.click(); await settle();
+  assert.deepEqual(opened, [row]);
+  assert.deepEqual(executed, []);
+  assert.equal(x.calls.some(call => ['start_task_block', 'pause_task_block', 'set_calendar_task_stage', 'save_calendar_task'].includes(call.name)), false);
+});
+
+test('a waiting task with a running timer remains an open current task', () => {
+  const selected = rankNextAction({ now: now(), tasks: [task('active-waiting', { is_active: true, waiting: true, stage: 'requirements' })] });
+  assert.equal(selected.action, 'open');
+  assert.equal(selected.context.waiting, true);
+});
+
+test('a goal read failure is visible instead of being treated as an unlinked task', async t => {
+  const x = setup(t, { tasks: [task('linked')], failGoals: true });
+  const dispose = mountCalendarNextAction(x.host, { invoke: x.invoke, clock: now });
+  t.after(dispose); await settle();
+  assert.match(x.host.textContent, /Не удалось загрузить рекомендации/);
+  assert.equal(x.host.querySelector('[data-next-action-context]'), null);
+  assert.ok(x.host.querySelector('[data-next-action-retry]'));
 });
 
 test('an unfinished routine from a non-applicable day stays primary and opens its original run', async t => {
@@ -148,8 +197,9 @@ test('changing preferences invalidates an older in-flight snapshot', async t => 
   let calls = 0;
   const invoke = async name => {
     if (name === 'get_calendar_tasks') { calls++; if (calls === 1) { await gate; return [task('stale-task')]; } return []; }
+    if (name === 'get_calendar_task_goals' || name === 'get_goals') return [];
     if (name === 'get_active_blocks') return [];
-    if (name === 'get_ui_state') return state();
+    if (name === 'get_ui_state') return null;
     throw Error(name);
   };
   const dispose = mountCalendarNextAction(host, { invoke, clock: now }); t.after(dispose);

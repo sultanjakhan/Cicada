@@ -8,6 +8,7 @@
 .calendar-next-action__surface button:disabled{opacity:.55;cursor:default}
 .calendar-next-action__item{margin-top:12px;min-width:0}
 .calendar-next-action__reason{max-width:65ch}
+.calendar-next-action__context{max-width:90ch;color:var(--text-tertiary,var(--text-secondary,#666))!important;font-size:12px!important;line-height:1.45!important;overflow-wrap:anywhere}
 .calendar-next-action__actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
 .calendar-next-action__actions button:first-child{font-weight:600}
 .calendar-next-action__feedback{color:var(--text-primary,#242424)!important}

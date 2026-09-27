@@ -1,6 +1,7 @@
 import { isInstantTask, taskTime } from './task-model.js';
 import { createRecurringStore, recurringItems, unfinishedRun, dateKey, recurringSourceId } from './calendar-recurring-store.js';
 import { readActiveBlocks } from './calendar-execution.js';
+import { readProcessState, taskStage } from './task-processes.js';
 
 const deferred = new Map();
 const keyOfTask = task => `task:${task.source_type}:${String(task.source_id)}`;
@@ -26,6 +27,26 @@ function activeRoutineId(block) {
     const parsed = JSON.parse(String(block.source_id));
     return Array.isArray(parsed) && parsed.length === 3 ? String(parsed[0]) : null;
   } catch { return null; }
+}
+
+function taskGoalPath(task, links, goals) {
+  const link = links.find(item => item.source_type === task.source_type && String(item.source_id) === String(task.source_id));
+  if (!link || link.goal_id == null) return '';
+  const chain = [], seen = new Set();
+  let goal = goals.find(item => String(item.id) === String(link.goal_id));
+  while (goal && !seen.has(String(goal.id))) {
+    seen.add(String(goal.id)); chain.unshift(goal); goal = goals.find(item => String(item.id) === String(goal.parent_goal_id));
+  }
+  return chain.map(item => safeText(item.title).trim()).filter(Boolean).join(' / ');
+}
+
+function taskContext(task, links = [], goals = [], processes = []) {
+  const stage = taskStage(task, processes);
+  return {
+    goal: taskGoalPath(task, links, goals),
+    stage: stage && (stage.label || stage.waiting) ? stage.label : '',
+    waiting: Boolean(stage?.waiting),
+  };
 }
 
 function explainTask(task, now, today) {
@@ -61,7 +82,7 @@ function explainRoutine(item, now, today) {
 }
 
 /** Pure ranking function for a snapshot. It never starts work or changes routine status. */
-export function rankNextAction({ now = new Date(), tasks = [], routines = [], activeBlocks = [], deferredKeys = new Set() } = {}) {
+export function rankNextAction({ now = new Date(), tasks = [], routines = [], activeBlocks = [], deferredKeys = new Set(), links = [], goals = [], processes = [] } = {}) {
   const instant = now instanceof Date ? now : new Date(now);
   if (!Number.isFinite(instant.getTime())) throw new TypeError('now must be a valid date');
   const today = dateKey(instant), candidates = [], activeTasks = [], activeRoutines = [];
@@ -70,10 +91,11 @@ export function rankNextAction({ now = new Date(), tasks = [], routines = [], ac
   for (const task of tasks) {
     if (!task || task.source_type !== 'note' || task.completed || task.archived || task.readonly || task.status_extra && task.status_extra !== 'task') continue;
     const key = keyOfTask(task), active = Boolean(task.is_active || activeTaskKeys.has(key));
-    if (active) { activeTasks.push({ key, type: 'task', title: safeText(task.title) || 'Задача', reason: 'Задача уже выполняется.', action: 'open', task }); continue; }
+    const context = taskContext(task, links, goals, processes);
+    if (active) { activeTasks.push({ key, type: 'task', title: safeText(task.title) || 'Задача', reason: 'Задача уже выполняется.', action: 'open', task, context }); continue; }
     const progress = Boolean(task.has_work || Number(task.actual_seconds) > 0 || Number(task.actual_minutes) > 0);
     const urgency = explainTask(task, instant, today);
-    candidates.push({ key, type: 'task', title: safeText(task.title) || 'Задача', reason: progress ? `На паузе. ${urgency.reason}` : urgency.reason, action: isInstantTask(task) ? 'finish' : 'start', task, score: urgency.score + (progress ? 80 : 0) });
+    candidates.push({ key, type: 'task', title: safeText(task.title) || 'Задача', reason: progress ? `На паузе. ${urgency.reason}` : urgency.reason, action: context.waiting ? 'review' : isInstantTask(task) ? 'finish' : 'start', task, context, score: urgency.score + (progress ? 80 : 0) });
   }
   for (const item of routines) {
     if (!item || item.kind !== 'action' || item.status !== 'pending') continue;
@@ -124,7 +146,7 @@ export function mountCalendarNextAction(element, dependencies) {
         if (unfinished) routines.set(id, { ...(routines.get(id) || unfinished.record.snapshot), status: 'pending', run: unfinished.record.run, runDate: unfinished.date });
       }
     }
-    return rankNextAction({ now, tasks: preferences.includeTasks ? data.tasks : [], routines: preferences.includeRoutines ? [...routines.values()] : [], activeBlocks: data.activeBlocks, deferredKeys: getDeferred(now) });
+    return rankNextAction({ now, tasks: preferences.includeTasks ? data.tasks : [], routines: preferences.includeRoutines ? [...routines.values()] : [], activeBlocks: data.activeBlocks, deferredKeys: getDeferred(now), links: data.links, goals: data.goals, processes: data.processes });
   };
 
   function render() {
@@ -132,7 +154,7 @@ export function mountCalendarNextAction(element, dependencies) {
     const selected = recommendation;
     const compactRunning = dependencies.compactRunning && selected?.action === 'open';
     element.dataset.running = String(!!compactRunning);
-    const signature = JSON.stringify([preferences, selected && [selected.key, selected.type, selected.title, selected.reason, selected.action], Boolean(error), feedback, Boolean(snapshot), busy]);
+    const signature = JSON.stringify([preferences, selected && [selected.key, selected.type, selected.title, selected.reason, selected.action, selected.context], Boolean(error), feedback, Boolean(snapshot), busy]);
     if (signature === renderedKey) {
       const retry = element.querySelector('[data-next-action-retry]'); if (retry) retry.disabled = busy;
       element.querySelectorAll('[data-next-action-action]').forEach(button => { button.disabled = busy; });
@@ -153,11 +175,23 @@ export function mountCalendarNextAction(element, dependencies) {
       const card = document.createElement('div'); card.className = 'calendar-next-action__item'; card.dataset.nextActionKey = selected.key;
       const title = document.createElement('h3'); title.textContent = selected.title; if (!compactRunning) card.append(title);
       const why = document.createElement('p'); why.className = 'calendar-next-action__reason'; why.textContent = compactRunning ? 'Время начатых дел учитывается.' : selected.reason; card.append(why);
+      if (selected.type === 'task' && (selected.context?.goal || selected.context?.stage || selected.context?.waiting)) {
+        const context = document.createElement('p'); context.className = 'calendar-next-action__context'; context.dataset.nextActionContext = '';
+        const parts = [];
+        if (selected.context.goal) parts.push(`Цель: ${selected.context.goal}`);
+        if (selected.context.stage) parts.push(`Этап: ${selected.context.stage}`);
+        if (selected.context.waiting) parts.push('Жду ответа');
+        context.textContent = parts.join(' · ');
+        if (selected.context.goal) context.title = `Цель: ${selected.context.goal}`;
+        card.append(context);
+      }
       const actions = document.createElement('div'); actions.className = 'calendar-next-action__actions';
       if (selected.action === 'open') {
         const open = button('Открыть текущее', 'open', () => activate('open')); actions.append(open);
       } else if (selected.action === 'done' || selected.action === 'finish') {
         actions.append(button('Отметить выполненным', 'done', () => activate('done')));
+      } else if (selected.action === 'review') {
+        actions.append(button('Проверить задачу', 'review', () => activate('review')));
       } else {
         actions.append(button(selected.action === 'start' && (selected.task?.has_work || selected.task?.actual_seconds > 0 || selected.task?.actual_minutes > 0 || selected.run) ? 'Продолжить' : 'Начать', 'start', () => activate('start')));
         if (selected.type === 'task' || selected.run) actions.append(button('Открыть', 'open', () => activate('details')));
@@ -182,13 +216,16 @@ export function mountCalendarNextAction(element, dependencies) {
 
   async function readSnapshot() {
     const now = getNow(), today = dateKey(now);
-    const [tasks, activeBlocks, state] = await Promise.all([
+    const [taskRows, links, goals, processes, activeBlocks, state] = await Promise.all([
       preferences.includeTasks ? invoke('get_calendar_tasks', {}) : Promise.resolve([]),
+      preferences.includeTasks ? invoke('get_calendar_task_goals') : Promise.resolve([]),
+      preferences.includeTasks ? invoke('get_goals', { tabName: null }) : Promise.resolve([]),
+      preferences.includeTasks ? readProcessState(invoke).then(result => result.state.processes) : Promise.resolve([]),
       preferences.includeTasks || preferences.includeRoutines ? readActiveBlocks(invoke) : Promise.resolve([]),
       preferences.includeRoutines ? store.read() : Promise.resolve({ version: 1, plans: [], days: {} }),
     ]);
-    if (!Array.isArray(tasks) || !Array.isArray(activeBlocks)) throw new Error('Некорректный ответ сервера.');
-    return { now, today, tasks: tasks.filter(task => task?.source_type === 'note' && !task.completed && !task.archived && !task.readonly && (!task.status_extra || task.status_extra === 'task')), activeBlocks, state, routines: recurringItems(state, today) };
+    if (!Array.isArray(taskRows) || !Array.isArray(links) || !Array.isArray(goals) || !Array.isArray(processes) || !Array.isArray(activeBlocks)) throw new Error('Некорректный ответ сервера.');
+    return { now, today, tasks: taskRows.filter(task => task?.source_type === 'note' && !task.completed && !task.archived && !task.readonly && (!task.status_extra || task.status_extra === 'task')), links, goals, processes, activeBlocks, state, routines: recurringItems(state, today) };
   }
 
   async function refresh() {
@@ -222,7 +259,7 @@ export function mountCalendarNextAction(element, dependencies) {
       if (!current || current.key !== expected.key || current.action !== expected.action) {
         snapshot = fresh; recommendation = current; feedback = 'Список изменился. Проверь новую рекомендацию.'; return;
       }
-      if (kind === 'open' || kind === 'details') {
+      if (kind === 'open' || kind === 'details' || kind === 'review') {
         if (current.type === 'task') openTask?.(current.task);
         else if (current.action === 'open' || current.action === 'start') openRoutine?.({ id: current.routine.id, date: current.date, start: false });
         return;
