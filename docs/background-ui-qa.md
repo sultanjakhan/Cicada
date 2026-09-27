@@ -74,6 +74,8 @@ The local Codex server is named `hanni-mvp-ui`. Its stdio command is Python with
 ```
 
 Use absolute paths in the machine-local config; do not commit that config.
+For a DEV build with a distinct native window title, also pass
+`--expected-title "<exact DEV title>"`; the default is `Cicada`.
 The launcher verifies binary identity, starts the background instance, verifies
 the loopback CDP listener belongs to its child WebView2, and delegates stdio to
 the unmodified official MCP. Client disconnection closes the background app and

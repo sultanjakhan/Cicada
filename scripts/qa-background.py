@@ -43,6 +43,8 @@ def main():
     parser.add_argument('--exe', type=Path, required=True)
     parser.add_argument('--expected-sha256', required=True,
                         help='Explicitly verified installed debug-with-embedded-assets binary')
+    parser.add_argument('--expected-title', default='Cicada',
+                        help='Exact window title of the verified binary; DEV may use a distinct title')
     parser.add_argument('--mcp-cli', type=Path, required=True)
     parser.add_argument('--node', default=shutil.which('node'))
     parser.add_argument('--session', help='Reuse only a named QA profile, for restart checks')
@@ -158,7 +160,7 @@ def main():
             raise RuntimeError('CDP ownership or loopback-only binding could not be verified')
         app_windows = [int(hwnd) for hwnd in desktop.EnumDesktopWindows()
                        if win32process.GetWindowThreadProcessId(int(hwnd))[1] == pid
-                       and win32gui.GetWindowText(int(hwnd)) == 'Cicada']
+                       and win32gui.GetWindowText(int(hwnd)) == args.expected_title]
         if len(app_windows) != 1 or input_desktop() == desktop_name:
             raise RuntimeError('Background desktop isolation failed')
         database = data / 'calendar.db'
