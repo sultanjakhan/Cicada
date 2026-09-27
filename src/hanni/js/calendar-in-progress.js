@@ -11,8 +11,8 @@ import { isInstantTask } from './task-model.js';
 import { loadProcesses, loadStageBlocks, stageSeconds, stageTimeTitle, taskStage } from './task-processes.js';
 
 const MORE_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></svg>';
+const ARROW = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 7h9M7.5 3.5 11 7l-3.5 3.5"/></svg>';
 const WAIT_ICON = '<svg class="cip-stage-mark" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 1.5h5M3.5 10.5h5M4 1.5v1.3C4 4.1 6 4.8 6 6s-2 1.9-2 3.2v1.3M8 1.5v1.3C8 4.1 6 4.8 6 6s2 1.9 2 3.2v1.3"/></svg>';
-const CHEVRON = '<svg class="cip-stage-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 4.5 3 3 3-3"/></svg>';
 const SCOPES = [['work', 'Работа'], ['personal', 'Личное']];
 const RUNNABLE = ['note', 'event', 'schedule'];
 // Device-local memory of «Остановить»: { sourceKey: stoppedAtISO }. Not synchronized.
@@ -51,7 +51,7 @@ function readHidden(raw) {
 }
 
 export function mountCalendarInProgress(element, dependencies) {
-  const { invoke, openTask, openLauncher, openProcessSettings, notifyChange } = dependencies;
+  const { invoke, openTask, openLauncher, notifyChange } = dependencies;
   const clock = dependencies.now || (() => new Date());
   const doc = element.ownerDocument, win = doc.defaultView;
   const prefix = `calendar-in-progress-${++sequence}`;
@@ -107,7 +107,7 @@ export function mountCalendarInProgress(element, dependencies) {
       const row = rows.find(value => value.key === item.dataset.contextRecord);
       if (!row?.running) continue;
       paintTime(row, item.querySelector('[data-cip-time]'), item.querySelector('[data-cip-progress]'), now);
-      const chip = item.querySelector('[data-cip-control="stage"]');
+      const chip = item.querySelector('.cip-stage');
       if (chip && row.stageState) chip.title = row.stageTimeAvailable ? stageTitle(row, now) : 'Время по стадиям недоступно';
       const stageTime = item.querySelector('.cip-stage-time');
       if (stageTime && row.stageState && row.stageTimeAvailable) {
@@ -118,23 +118,26 @@ export function mountCalendarInProgress(element, dependencies) {
   }
   // Timer work of this task inside each stage period, the running block included.
   const stageTitle = (row, now = clock()) => stageTimeTitle(row.stageState, stageSeconds({ blocks: row.stageBlocks, log: row.stageLog, stage: row.stageState.stage, now }));
-  // The stage chip is the single visible route to choose a process stage.
+  // The stage is plain text; the adjacent arrow advances one step when available.
   function stageControl(row) {
     const state = row.stageState, group = node('span', 'cip-stage-group');
-    const chip = node('button', 'cip-stage'); chip.type = 'button';
-    chip.dataset.cipControl = 'stage'; chip.dataset.cipKey = row.key; chip.disabled = busy;
-    chip.setAttribute('aria-haspopup', 'menu'); chip.setAttribute('aria-expanded', String(menu?.key === row.key && menu.control === 'stage'));
+    const chip = node('span', 'cip-stage');
     const label = state.label;
     chip.classList.toggle('is-empty', !label && !state.waiting);
     chip.classList.toggle('is-waiting', state.waiting);
     chip.classList.toggle('is-deleted', state.deleted);
     chip.innerHTML = state.waiting ? WAIT_ICON : '';
     // «Жду ответа» is the small hourglass before the stage name.
-    chip.append(node('span', 'cip-stage-prefix', 'Этап:'), node('span', 'cip-stage-text', label || (state.waiting ? 'Жду ответа' : 'Выбрать')));
-    chip.insertAdjacentHTML('beforeend', CHEVRON);
+    chip.append(node('span', 'cip-stage-prefix', 'Этап:'), node('span', 'cip-stage-text', label || (state.waiting ? 'Жду ответа' : 'Не выбран')));
     chip.title = row.stageTimeAvailable ? stageTitle(row) : 'Время по стадиям недоступно';
-    chip.setAttribute('aria-label', `Этап: ${label || 'не выбран'}${state.waiting ? ', жду ответа' : ''}. Выбрать этап для задачи: ${row.title}`);
     group.append(chip);
+    if (state.next) {
+      const next = node('button', 'cip-stage-next'); next.type = 'button'; next.innerHTML = ARROW;
+      next.dataset.cipControl = 'stage-next'; next.dataset.cipKey = row.key; next.disabled = busy;
+      next.title = `${state.stage ? 'Дальше' : 'Начать'}: ${state.next.title}`;
+      next.setAttribute('aria-label', `Следующая стадия «${state.next.title}»: ${row.title}`);
+      group.append(next);
+    }
     return group;
   }
   function confirmPanel(row) {
@@ -340,7 +343,7 @@ export function mountCalendarInProgress(element, dependencies) {
     if (disposed || busy) return;
     closeMenu(false);
     busy = true; feedback = null; revision++; confirming = null; render();
-    let control = { finish: 'open', stop: 'open', cancel: 'open', stage: 'stage', waiting: 'stage', advance: 'stage' }[action.kind] || 'toggle';
+    let control = { finish: 'open', stop: 'open', cancel: 'open', advance: 'stage-next' }[action.kind] || 'toggle';
     try {
       if (action.kind === 'pause') await pauseAll(row);
       else if (action.kind === 'start') await startCalendarExecution(invoke, { source_type: row.source_type, source_id: row.source_id, completion_date: row.completion_date });
@@ -350,8 +353,8 @@ export function mountCalendarInProgress(element, dependencies) {
         await saveHidden({ ...hidden, [row.key]: clock().toISOString() });
       } else if (action.kind === 'cancel') {
         for (const blockId of row.blockIds) await invoke('cancel_task_block', { blockId });
-      } else if (action.kind === 'stage' || action.kind === 'advance' || action.kind === 'waiting') {
-        const updated = await invoke('set_calendar_task_stage', { id: row.source_id, stage: action.kind === 'waiting' ? null : action.stage, waiting: action.kind === 'waiting' ? action.waiting : null });
+      } else if (action.kind === 'advance') {
+        const updated = await invoke('set_calendar_task_stage', { id: row.source_id, stage: action.stage, waiting: null });
         if (updated && typeof updated === 'object') {
           row.record = { ...row.record, process: updated.process ?? row.stageState.processId, stage: String(updated.stage ?? ''), waiting: !!updated.waiting, stage_log: updated.stage_log ?? row.stageLog };
           row.stageState = taskStage(row.record, row.processes); row.stageLog = row.record.stage_log || [];
@@ -368,11 +371,11 @@ export function mountCalendarInProgress(element, dependencies) {
       feedback = { announcement: {
         pause: 'Задача на паузе.', start: 'Задача снова в работе.', finish: 'Задача завершена.',
         stop: 'Задача остановлена и убрана из «В работе». Время сохранено.', cancel: 'Запуск отменён. Его время не учтено.',
-        stage: action.stage ? `Стадия: ${action.label}.` : 'Стадия снята.', advance: `Стадия: ${action.label}.`, waiting: action.waiting ? 'Отмечено: жду ответа.' : 'Отметка «Жду ответа» снята.',
+        advance: `Этап: ${action.label}.`,
       }[action.kind] };
     } catch (error) {
       feedback = { error: true, text: errorText(error) || 'Не удалось выполнить действие. Обнови экран и повтори.' };
-      control = { finish: 'finish', stop: 'menu', cancel: 'menu', stage: 'stage', waiting: 'stage', advance: 'stage' }[action.kind] || 'toggle';
+      control = { finish: 'finish', stop: 'menu', cancel: 'menu', advance: 'stage-next' }[action.kind] || 'toggle';
     } finally {
       busy = false;
       notify(row);
@@ -439,18 +442,6 @@ export function mountCalendarInProgress(element, dependencies) {
     menu = state; trigger?.setAttribute('aria-expanded', 'true');
     (buttons.find(button => button.classList.contains('is-checked') && button.getAttribute('role') === 'menuitemradio') || buttons[0])?.focus({ preventScroll: true });
   }
-  // Choose a stage (or waiting state); settings are delegated only when the caller supplies a route.
-  function openStageMenu(row, trigger) {
-    const state = row.stageState;
-    const items = [
-      ...state.stages.map(stage => ({ id: `stage:${stage.id}`, label: stage.title, role: 'menuitemradio', checked: state.stage === stage.id, run: () => void act(row, { kind: 'stage', stage: stage.id, label: stage.title }) })),
-      { id: 'stage:', label: 'Без стадии', role: 'menuitemradio', checked: !state.stage, run: () => void act(row, { kind: 'stage', stage: '' }) },
-      { separator: true },
-      { id: 'waiting', label: 'Жду ответа', role: 'menuitemcheckbox', checked: state.waiting, run: () => void act(row, { kind: 'waiting', waiting: !state.waiting }) },
-      ...(typeof openProcessSettings === 'function' ? [{ separator: true }, { id: 'process-settings', label: 'Настроить этапы…', hint: 'Общий список этапов процесса', run: () => { closeMenu(false); openProcessSettings(trigger); } }] : []),
-    ];
-    openMenu(row, 'stage', trigger, items, `Этап: ${row.title}`);
-  }
   function openActionsMenu(row, trigger, point = null) {
     const items = [
       { id: 'stop', label: 'Остановить', hint: row.running ? 'Пауза, время сохранится' : 'Убрать из «В работе»', run: () => void act(row, { kind: 'stop' }) },
@@ -470,9 +461,10 @@ export function mountCalendarInProgress(element, dependencies) {
     if (control === 'open') openTask?.(row.record, () => restore(row.key, 'open'));
     else if (control === 'toggle') void act(row, { kind: row.running ? 'pause' : 'start' });
     else if (control === 'finish') void act(row, { kind: 'finish' });
-    else if (control === 'stage' || control === 'menu') {
+    else if (control === 'stage-next' && row.stageState?.next) void act(row, { kind: 'advance', stage: row.stageState.next.id, label: row.stageState.next.title });
+    else if (control === 'menu') {
       if (menu?.key === row.key && menu.control === control) { closeMenu(true); return; }
-      if (control === 'stage') openStageMenu(row, button); else openActionsMenu(row, button);
+      openActionsMenu(row, button);
     } else if (control === 'cancel-confirm') void act(row, { kind: 'cancel' });
     else if (control === 'cancel-keep') { confirming = null; render(); restore(row.key, 'menu'); }
   };
