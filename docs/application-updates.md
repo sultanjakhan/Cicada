@@ -16,6 +16,26 @@ The black cicada/hourglass mark on white is shared by the app and Android launch
 The product display name is Cicada. Technical application identity and both
 signing keys remain stable.
 
+## Routine compatibility in 0.4.0
+
+Update all synchronized devices to 0.4.0 before sharing branching routines.
+Graph plans and daily graph snapshots use MVP record envelope version 2. Earlier
+published clients reject that envelope and pause incoming synchronization without
+advancing the receive cursor or partially installing a checkpoint. Receiving can
+resume after the client is updated; this is not uninterrupted mixed-version sync.
+Existing non-graph routines continue to use version 1.
+
+Once a recurring identity uses version 2, edits and deletion retain that version.
+Conflicting version 1 edits are retained for explicit resolution rather than
+overwriting the upgraded record. Choosing an incoming edit retains version 2 and
+the original conflict archive; it cannot restore an already deleted routine.
+
+The supported upgrade starts from published 0.3.35, which never emitted graph
+routines. Startup also upgrades stored graph records from earlier isolated DEV
+builds, but this does not rewrite already sealed or uploaded experimental version
+1 graph batches. Such DEV synchronization histories are outside this release's
+compatibility guarantee and must not be mixed into a production sync profile.
+
 ## Installation behavior
 
 Starting with 0.3.14, the native updater checks after startup and every six hours,
