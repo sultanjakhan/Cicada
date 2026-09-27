@@ -59,6 +59,7 @@ export function mountCalendarRecurring(element,{invoke=defaultInvoke,showComplet
   function openDetails(initialItem,returnFocus){
     if(details||disposed)return;
     const dialog=createCalendarDialog({document,title:initialItem.title,returnFocus,onClose:()=>{details=null;},isCurrent:()=>!disposed});details=dialog;
+    dialog.modal.querySelector('footer [data-dialog-close]').textContent='Закрыть';
     const rule=initialItem.kind==='rule',hasReflection=Boolean(initialItem.reflection),drafts=new Map();
     let item=initialItem,pending=item.status==='pending',reflectionDate=date,saveNotice='';
     const forDate=day=>{
