@@ -125,7 +125,7 @@ export function mountCalendarNextAction(element, dependencies) {
   const document = element.ownerDocument, window = document.defaultView;
   const clock = dependencies.clock || (() => new Date());
   const store = createRecurringStore(invoke, { now: clock });
-  let preferences = normalizedPreferences(dependencies.preferences), disposed = false, revision = 0, busy = false, preferencesChangedWhileBusy = false, snapshot = null, recommendation = null, renderedKey = '', error = '', feedback = '', lastDay = '', focusTarget = null, refreshQueued = false;
+  let preferences = normalizedPreferences(dependencies.preferences), disposed = false, revision = 0, busy = false, preferencesChangedWhileBusy = false, snapshot = null, recommendation = null, currentTaskKey = '', focusedTaskKey = '', renderedKey = '', error = '', feedback = '', lastDay = '', focusTarget = null, refreshQueued = false;
 
   element.classList.add('calendar-next-action');
   if (!dependencies.hideHeading) element.setAttribute('aria-labelledby', 'calendar-next-action-title');
@@ -140,6 +140,20 @@ export function mountCalendarNextAction(element, dependencies) {
   };
   const selection = data => {
     const now = getNow();
+    if (currentTaskKey && preferences.includeTasks) {
+      const currentTask = data.tasks.find(task => task.source_type === 'note' && !task.completed && !task.archived && !task.readonly && (!task.status_extra || task.status_extra === 'task') && keyOfTask(task) === currentTaskKey);
+      if (currentTask) {
+        const active = Boolean(currentTask.is_active || data.activeBlocks.some(block => keyOfTask(block) === currentTaskKey));
+        const context = taskContext(currentTask, data.links, data.goals, data.processes);
+        const urgency = explainTask(currentTask, now, data.today);
+        const hasWork = Boolean(currentTask.has_work || Number(currentTask.actual_seconds) > 0 || Number(currentTask.actual_minutes) > 0);
+        return { key: currentTaskKey, type: 'task', title: safeText(currentTask.title) || 'Задача',
+          reason: active ? 'Задача уже выполняется.' : hasWork ? `На паузе. ${urgency.reason}` : urgency.reason,
+          action: active ? 'open' : context.waiting ? 'review' : isInstantTask(currentTask) ? 'finish' : 'start', task: currentTask, context };
+      }
+      // A confirmed successful snapshot no longer contains the selected open task.
+      currentTaskKey = '';
+    }
     const routines = new Map(data.routines.map(item => [item.id, item]));
     if (preferences.includeRoutines) {
       const ids = new Set([...data.state.plans.map(plan => plan.id), ...Object.values(data.state.days).flatMap(records => Object.keys(records))]);
@@ -148,18 +162,24 @@ export function mountCalendarNextAction(element, dependencies) {
         if (unfinished) routines.set(id, { ...(routines.get(id) || unfinished.record.snapshot), status: 'pending', run: unfinished.record.run, runDate: unfinished.date });
       }
     }
-    return rankNextAction({ now, tasks: preferences.includeTasks ? data.tasks : [], routines: preferences.includeRoutines ? [...routines.values()] : [], activeBlocks: data.activeBlocks, deferredKeys: getDeferred(now), links: data.links, goals: data.goals, processes: data.processes });
+    const selected = rankNextAction({ now, tasks: preferences.includeTasks ? data.tasks : [], routines: preferences.includeRoutines ? [...routines.values()] : [], activeBlocks: data.activeBlocks, deferredKeys: getDeferred(now), links: data.links, goals: data.goals, processes: data.processes });
+    // Once an active task is the current recommendation, keep that identity
+    // through a pause. This is view state only; ranking and timer records stay untouched.
+    if (selected?.type === 'task' && selected.action === 'open') currentTaskKey = selected.key;
+    return selected;
   };
 
   function render() {
     if (disposed) return;
     const selected = recommendation;
-    const compactRunning = dependencies.compactRunning && selected?.action === 'open';
+    const hasWork = Boolean(selected?.type === 'task' && (selected.task?.has_work || Number(selected.task?.actual_seconds) > 0 || Number(selected.task?.actual_minutes) > 0));
+    const compactRunning = Boolean(dependencies.compactRunning && selected?.type === 'task' && (selected.action === 'open' || hasWork) && focusedTaskKey === selected.key);
     element.dataset.running = String(!!compactRunning);
-    const signature = JSON.stringify([preferences, selected && [selected.key, selected.type, selected.title, selected.reason, selected.action, selected.context], Boolean(error), feedback, Boolean(snapshot), busy]);
+    const signature = JSON.stringify([preferences, selected && [selected.key, selected.type, selected.title, selected.reason, selected.action, selected.context], compactRunning, Boolean(error), feedback, Boolean(snapshot), busy]);
     if (signature === renderedKey) {
       const retry = element.querySelector('[data-next-action-retry]'); if (retry) retry.disabled = busy;
       element.querySelectorAll('[data-next-action-action]').forEach(button => { button.disabled = busy; });
+      dependencies.onSelectionChange?.(selected?.type === 'task' ? { key: selected.key, type: 'task', action: selected.action, task: selected.task } : null);
       return;
     }
     const active = element.contains(document.activeElement) ? document.activeElement.dataset.nextActionAction || document.activeElement.dataset.nextActionSetting || document.activeElement.hasAttribute('data-next-action-retry') && 'retry' : focusTarget;
@@ -176,7 +196,7 @@ export function mountCalendarNextAction(element, dependencies) {
     } else if (selected) {
       const card = document.createElement('div'); card.className = 'calendar-next-action__item'; card.dataset.nextActionKey = selected.key;
       const title = document.createElement('h3'); title.textContent = selected.title; if (!compactRunning) card.append(title);
-      const why = document.createElement('p'); why.className = 'calendar-next-action__reason'; why.textContent = compactRunning ? 'Время начатых дел учитывается.' : selected.reason; card.append(why);
+      const why = document.createElement('p'); why.className = 'calendar-next-action__reason'; why.textContent = selected.reason; if (!compactRunning) card.append(why);
       if (!compactRunning && selected.type === 'routine') {
         const context = document.createElement('p'); context.className = 'calendar-next-action__context';
         const count = selected.routine.steps?.length || 0;
@@ -205,7 +225,7 @@ export function mountCalendarNextAction(element, dependencies) {
         if (selected.type === 'task' || selected.run) actions.append(button('Открыть', 'open', () => activate('details')));
       }
       actions.append(button('Не предлагать час', 'later', () => deferCurrent()));
-      if (!compactRunning) card.append(actions); section.append(card);
+      if (!compactRunning) { card.append(actions); section.append(card); }
     } else if (snapshot) {
       const copy = document.createElement('p'); copy.textContent = 'Подходящей задачи или дела сейчас нет.'; section.append(copy);
     }
@@ -217,6 +237,7 @@ export function mountCalendarNextAction(element, dependencies) {
       const target = active === 'retry' ? section.querySelector('[data-next-action-retry]') : section.querySelector(`[data-next-action-action="${active}"]`) || section.querySelector(`[data-next-action-setting="${active}"]`);
       (target || section.querySelector('h2'))?.focus({ preventScroll: true });
     }
+    dependencies.onSelectionChange?.(selected?.type === 'task' ? { key: selected.key, type: 'task', action: selected.action, task: selected.task } : null);
   }
   function button(label, action, handler) {
     const node = document.createElement('button'); node.type = 'button'; node.dataset.nextActionAction = action; node.textContent = label; node.disabled = busy; node.addEventListener('click', handler); return node;
@@ -253,6 +274,7 @@ export function mountCalendarNextAction(element, dependencies) {
     if (!recommendation) return;
     const now = getNow(), key = recommendation.key, title = recommendation.title;
     deferred.set(key, { until: now.getTime() + 60 * 60 * 1000, day: dateKey(now) });
+    if (currentTaskKey === key) currentTaskKey = '';
     focusTarget = 'later'; recommendation = snapshot ? selection(snapshot) : null; feedback = `«${title}» не будет предлагаться в течение часа.`; render();
   }
 
@@ -307,7 +329,23 @@ export function mountCalendarNextAction(element, dependencies) {
   if (preferences.enabled) void refresh(); else render();
 
   const dispose = () => { if (disposed) return; disposed = true; revision++; window.clearInterval(timer); window.removeEventListener('task-state-changed', onChanged); window.removeEventListener('hanni:calendar-refresh', onChanged); window.removeEventListener('hanni:recurring-changed', onChanged); };
-  dispose.setPreferences = next => { preferences = normalizedPreferences(next); if (busy) preferencesChangedWhileBusy = true; else revision++; if (!preferences.enabled) recommendation = null; else if (snapshot) { recommendation = selection(snapshot); if (!busy) void refresh(); } else if (!busy) void refresh(); render(); };
+  dispose.setPreferences = next => { preferences = normalizedPreferences(next); if (!preferences.includeTasks) currentTaskKey = ''; if (busy) preferencesChangedWhileBusy = true; else revision++; if (!preferences.enabled) recommendation = null; else if (snapshot) { recommendation = selection(snapshot); if (!busy) void refresh(); } else if (!busy) void refresh(); render(); };
+  dispose.setCurrentTask = task => {
+    currentTaskKey = task == null ? '' : typeof task === 'string' ? task : keyOfTask(task);
+    if (snapshot) { recommendation = selection(snapshot); render(); }
+    if (!busy) void refresh();
+  };
+  dispose.setFocusedTaskVisible = (key, visible) => {
+    const target = String(key || '');
+    if (visible) {
+      if (focusedTaskKey === target) return;
+      focusedTaskKey = target;
+    } else {
+      if (focusedTaskKey !== target) return;
+      focusedTaskKey = '';
+    }
+    render();
+  };
   dispose.refresh = refresh;
   dispose.focus = () => element.querySelector('h2')?.focus({ preventScroll: true });
   return dispose;

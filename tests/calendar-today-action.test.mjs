@@ -4,17 +4,17 @@ import { JSDOM } from 'jsdom';
 import { mountCalendarTodayAction } from '../src/hanni/js/calendar-today-action.js';
 
 const settle = async () => { for (let i=0;i<12;i++) await new Promise(resolve=>setImmediate(resolve)); };
-async function setup(t, {nextTask=false}={}) {
+async function setup(t, {nextTask=false,activeTask=false}={}) {
   const dom = new JSDOM('<main></main>'), host = dom.window.document.querySelector('main');
   const now = new Date(), date = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
   const plan = {id:'routine',title:'Проверка',kind:'action',mode:'graph',active:true,required:true,createdOn:date,startsOn:'',endsOn:'',time:'',weekdays:[0,1,2,3,4,5,6],steps:[{title:'Первая ветка',dependsOn:[],trackingMode:'check'},{title:'Вторая ветка',dependsOn:[],trackingMode:'check'}]};
   let state = JSON.stringify({version:1,plans:[plan],days:{}}), failCompletion=false;
-  const calls = [], selected = [];
+  const calls = [], selected = [], currentTasks=[];
   const invoke = async (name,args) => {
     calls.push({name,args});
     if (name==='get_ui_state') return args?.key==='calendar_recurring_v1'?state:null;
     if (name==='set_ui_state') { assert.equal(args.expectedValue,state); state=args.value; return; }
-    if (name==='get_calendar_tasks' && nextTask) return [{source_type:'note',source_id:'99',title:'Следующая задача',status_extra:'task',date,completed:false}];
+    if (name==='get_calendar_tasks' && nextTask) return [{source_type:'note',source_id:'99',title:'Следующая задача',status_extra:'task',date,completed:false,is_active:activeTask,has_work:activeTask,actual_seconds:activeTask?90:0}];
     if (name==='complete_recurring_step' || name==='skip_recurring_step') {
       if(failCompletion) throw Error('Не удалось сохранить шаг');
       const data=JSON.parse(state), [id,day,index]=JSON.parse(args.sourceId), run=data.days[day][id];
@@ -25,10 +25,22 @@ async function setup(t, {nextTask=false}={}) {
     if (['get_calendar_tasks','get_calendar_task_goals','get_goals','get_active_blocks','get_schedules'].includes(name)) return [];
     throw Error(name);
   };
-  const dispose = mountCalendarTodayAction(host, {invoke,taskOptions:{invoke},onRoutineFocusChange:value=>selected.push(value)});
+  const dispose = mountCalendarTodayAction(host, {invoke,taskOptions:{invoke},onRoutineFocusChange:value=>selected.push(value),onCurrentTaskChange:value=>currentTasks.push(value)});
   t.after(()=>{dispose();dom.window.close();}); await settle();
-  return {dom,host,calls,selected,dispose,date,state:()=>JSON.parse(state),failCompletion:value=>{failCompletion=value;}};
+  return {dom,host,calls,selected,currentTasks,dispose,date,state:()=>JSON.parse(state),failCompletion:value=>{failCompletion=value;}};
 }
+
+test('one selected running task becomes the current work row, and choices hide it without timer writes',async t=>{
+  const x=await setup(t,{nextTask:true,activeTask:true});
+  assert.equal(x.currentTasks.at(-1).source_id,'99');
+  assert.equal(x.host.querySelector('[data-today-title]').textContent,'Сейчас');
+  x.host.querySelector('[data-today-choose]').click();await settle();
+  assert.equal(x.currentTasks.at(-1),null);
+  assert.equal(x.host.querySelector('[data-today-title]').textContent,'Что сделать сейчас');
+  x.dispose.openRoutine({id:'routine',date:x.date,start:false});await settle();
+  assert.equal(x.currentTasks.at(-1),null);
+  assert.equal(x.calls.some(call=>['pause_task_block','cancel_task_block','finish_task_block','start_task_block'].includes(call.name)),false);
+});
 
 test('routine recommendation opens branches inline and quiet refresh keeps the same controls', async t => {
   const x=await setup(t);

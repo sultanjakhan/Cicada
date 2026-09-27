@@ -6,7 +6,7 @@ import { mountRecurringRun } from './calendar-routine-execution.js';
 // Presentation only: recommendation, selection and execution share the existing stores.
 export function mountCalendarTodayAction(element, dependencies) {
   const document = element.ownerDocument;
-  let disposed = false, mode = 'recommendation', disposeRun = null, disposeChoices = null, disposeTasks = null;
+  let disposed = false, mode = 'recommendation', disposeRun = null, disposeChoices = null, disposeTasks = null, currentRecommendation = null;
   element.classList.add('calendar-today-action');
   element.innerHTML = `<header class="calendar-today-action__heading"><h2 tabindex="-1">Что сделать сейчас</h2><button type="button" data-today-choose aria-expanded="false">Выбрать другое</button></header>
     <div data-today-recommendation></div>
@@ -14,7 +14,16 @@ export function mountCalendarTodayAction(element, dependencies) {
     <div data-today-run hidden></div>`;
   const q = selector => element.querySelector(selector);
   const recommendation = q('[data-today-recommendation]'), choices = q('[data-today-choices]'), run = q('[data-today-run]'), choose = q('[data-today-choose]');
-  const focus = () => q('.calendar-today-action__heading h2').focus({preventScroll:true});
+  const heading = q('.calendar-today-action__heading h2');
+  heading.dataset.todayTitle = '';
+  const focus = () => heading.focus({preventScroll:true});
+  function syncCurrentTask(selection = currentRecommendation) {
+    const candidate = mode === 'recommendation' && selection?.type === 'task' ? selection.task : null;
+    const hasWork = Boolean(candidate?.has_work || Number(candidate?.actual_seconds) > 0 || Number(candidate?.actual_minutes) > 0);
+    const task = candidate && (selection.action === 'open' || hasWork) ? candidate : null;
+    heading.textContent = task ? 'Сейчас' : 'Что сделать сейчас';
+    dependencies.onCurrentTaskChange?.(task);
+  }
   function clearRun() { disposeRun?.(); disposeRun = null; run.replaceChildren(); dependencies.onRoutineFocusChange?.(null); }
   function setMode(next) {
     if (disposed || disposeRun?.isBusy?.()) return false;
@@ -24,10 +33,12 @@ export function mountCalendarTodayAction(element, dependencies) {
     choose.textContent = next === 'choices' ? 'К рекомендации' : 'Выбрать другое';
     choose.setAttribute('aria-expanded', String(next === 'choices'));
     element.dataset.mode = next;
+    syncCurrentTask();
     return true;
   }
   function openRoutine(options) {
     if (!setMode('run')) return false;
+    controller.setCurrentTask(null);
     clearRun();
     dependencies.onRoutineFocusChange?.(options);
     const returnToRecommendation = () => {
@@ -40,6 +51,7 @@ export function mountCalendarTodayAction(element, dependencies) {
   }
   const controller = mountCalendarNextAction(recommendation, {
     ...dependencies, hideHeading:true, onOpenSettings:null, openRoutine,
+    onSelectionChange: selection => { currentRecommendation = selection; syncCurrentTask(selection); },
   });
   function selectScope(scope) {
     q('[data-today-routines]').hidden = scope !== 'routines';
@@ -53,6 +65,7 @@ export function mountCalendarTodayAction(element, dependencies) {
         ...dependencies.taskOptions,
         executeAction:async (row, action) => {
           const result = await dependencies.taskOptions.executeAction(row, action);
+          if (result !== false && !disposed && action === 'start') controller.setCurrentTask(row);
           if (result !== false && !disposed && ['start','finish'].includes(action)) { setMode('recommendation'); focus(); }
           return result;
         },
@@ -72,6 +85,7 @@ export function mountCalendarTodayAction(element, dependencies) {
   dispose.focus = focus;
   dispose.refresh = controller.refresh;
   dispose.setPreferences = controller.setPreferences;
+  dispose.setFocusedTaskVisible = controller.setFocusedTaskVisible;
   dispose.openRoutine = openRoutine;
   dispose.choose = openChoices;
   return dispose;
