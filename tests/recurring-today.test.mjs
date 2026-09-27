@@ -94,19 +94,27 @@ test('routine library rolls its daily marks forward after midnight',async t=>{
   assert.match(host.querySelector('[data-library-id="rule-1"]').textContent,/Отметить/);
 });
 
-test('reflection requires explicit date answers and stores no answer without marking success',async t=>{
+test('library opens dated reflection, keeps drafts across dates and does not treat no answer as success',async t=>{
   const dom=new JSDOM('<main></main>',{url:'https://fixture.invalid'}),host=dom.window.document.querySelector('main'),yesterday='2026-09-12';
   dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;this.dispatchEvent(new dom.window.Event('close'));};
   const reflectionPlan={...plan,id:'reflection',kind:'action',title:'Дневной ритуал',mode:'check',startsOn:yesterday,weekdays:[0,1,2,3,4,5,6],reflection:{prompt:'Мой вопрос'}};let raw=JSON.stringify({version:1,plans:[reflectionPlan],days:{}}),writes=0;
   const invoke=async(command,args)=>{if(command==='get_ui_state')return raw;if(command==='set_ui_state'){raw=args.value;writes++;return;}throw Error(command);};
-  const dispose=mountCalendarRecurring(host,{invoke,now:()=>new Date(`${today}T12:00:00`)});t.after(()=>{dispose();dom.window.close();});
-  await new Promise(resolve=>setImmediate(resolve));dispose.setDate(yesterday);host.querySelector('[data-recurring-details]').click();
-  const detail=dom.window.document.querySelector('dialog[open]');assert.match(detail.textContent,/2026-09-12/);assert.match(detail.textContent,/Мой вопрос/);
+  const dispose=mountCalendarRecurring(host,{invoke,now:()=>new Date(`${today}T12:00:00`),library:true});t.after(()=>{dispose();dom.window.close();});
+  await new Promise(resolve=>setImmediate(resolve));const opener=host.querySelector('[data-library-reflection="reflection"]');assert.ok(opener);opener.click();
+  const detail=dom.window.document.querySelector('dialog[open]');assert.match(detail.textContent,/Мой вопрос/);assert.equal(detail.querySelector('[data-reflection-date]').value,today);
+  detail.querySelector('[data-reflection-rule]').value='kept';detail.querySelector('[data-reflection-restoration]').value='better';detail.querySelector('[data-reflection-trigger]').value='Черновик сегодня';
+  let dateInput=detail.querySelector('[data-reflection-date]');dateInput.value=yesterday;dateInput.dispatchEvent(new dom.window.Event('change',{bubbles:true}));
+  assert.equal(detail.querySelector('[data-reflection-rule]').value,'');assert.equal(detail.querySelector('[data-reflection-date]').value,yesterday);
   detail.querySelector('[data-save-reflection]').click();await new Promise(resolve=>setImmediate(resolve));
   assert.equal(writes,0);assert.match(detail.querySelector('[data-dialog-error]').textContent,/Выбери ответ/);
   detail.querySelector('[data-reflection-rule]').value='no_answer';detail.querySelector('[data-reflection-restoration]').value='no_answer';detail.querySelector('[data-save-reflection]').click();
   await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
-  const saved=JSON.parse(raw).days[yesterday].reflection;assert.equal(saved.status,'pending');assert.equal(saved.reflection.ruleOutcome,'no_answer');assert.equal(saved.reflection.restoration,'no_answer');assert.equal(saved.reflection.trigger,'');assert.equal(writes,1);
+  let saved=JSON.parse(raw).days[yesterday].reflection;assert.equal(saved.status,'pending');assert.equal(saved.reflection.ruleOutcome,'no_answer');assert.equal(saved.reflection.restoration,'no_answer');assert.equal(saved.reflection.trigger,'');assert.equal(writes,1);
+  dateInput=detail.querySelector('[data-reflection-date]');dateInput.value=today;dateInput.dispatchEvent(new dom.window.Event('change',{bubbles:true}));
+  assert.equal(detail.querySelector('[data-reflection-rule]').value,'kept');assert.equal(detail.querySelector('[data-reflection-restoration]').value,'better');assert.equal(detail.querySelector('[data-reflection-trigger]').value,'Черновик сегодня');
+  detail.querySelector('[data-save-reflection]').click();await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
+  saved=JSON.parse(raw).days[today].reflection;assert.equal(saved.status,'pending');assert.equal(saved.reflection.ruleOutcome,'kept');assert.equal(saved.reflection.trigger,'Черновик сегодня');assert.equal(writes,2);
+  detail.close();assert.equal(dom.window.document.activeElement,host.querySelector('[data-library-reflection="reflection"]'));
 });
 
 test('graph editor lets imported step properties be edited without changing the plan identity',async t=>{
