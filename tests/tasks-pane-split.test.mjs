@@ -455,3 +455,49 @@ test('phone layout keeps the switches scrollable and the tap targets at least 36
   assert.match(phone, /\.ct-stage-next \{[^}]*width: 32px; height: 22px/, 'the stage arrow grows on the phone');
   assert.match(css, /\.ct-subspheres \{[^}]*overflow-x: auto/);
 });
+
+test('goal indexes preserve first matches, string IDs and cycles, then rebuild after same-array refresh', async t => {
+  const goals = [
+    { id: 7, title: 'Карьера' },
+    { id: '7', title: 'Дубликат ID' },
+    { id: 'child', title: 'SQL', parent_goal_id: '7' },
+    { id: 'other', title: 'Другая цель' },
+    { id: 'cycle-a', title: 'Цикл А', parent_goal_id: 'cycle-b' },
+    { id: 'cycle-b', title: 'Цикл Б', parent_goal_id: 'cycle-a' },
+  ];
+  const links = [
+    { source_type: 'note', source_id: 'Mapped', goal_id: 'child' },
+    { source_type: 'note', source_id: 'Mapped', goal_id: 'other' },
+    { source_type: 'note', source_id: 'Cycle', goal_id: 'cycle-a' },
+  ];
+  const x = await mount(t, [note('Mapped', day()), note('Spare', day()), note('Cycle', day())], {
+    goals, links, state: { groupBy: 'goal' },
+  });
+
+  assert.deepEqual(x.groups(), [
+    ['goal:7', 'Карьера', '1'], ['goal:cycle-b', 'Цикл Б', '1'], ['no-goal', 'Без цели', '1'],
+  ], 'the first link and first String(id)-equivalent goal win, while cyclic ancestry terminates');
+  assert.equal(x.item('Mapped').querySelector('.ct-goal').title, 'Карьера / SQL');
+
+  const filter = x.$('[data-tasks-goal]');
+  filter.value = '7';
+  filter.dispatchEvent(new x.dom.window.Event('change', { bubbles: true }));
+  assert.deepEqual(x.titles(), ['Mapped'], 'a numeric parent ID is found from the string filter value');
+  filter.value = '';
+  filter.dispatchEvent(new x.dom.window.Event('change', { bubbles: true }));
+
+  links[0].source_id = 'Spare';
+  goals[0].id = 'career-renamed';
+  goals[0].title = 'Карьера обновлена';
+  goals[2].parent_goal_id = 'career-renamed';
+  x.dom.window.dispatchEvent(new x.dom.window.Event('task-state-changed'));
+  await settle();
+
+  assert.deepEqual(x.groups(), [
+    ['goal:other', 'Другая цель', '1'], ['goal:career-renamed', 'Карьера обновлена', '1'],
+    ['goal:cycle-b', 'Цикл Б', '1'],
+  ], 'successful refresh rebuilds indexes after key changes inside the same arrays');
+  assert.equal(x.item('Mapped').querySelector('.ct-goal'), null, 'the moved first link places Mapped under its new top-level goal');
+  assert.equal(x.item('Spare').querySelector('.ct-goal').title, 'Карьера обновлена / SQL');
+});
+
