@@ -11,7 +11,7 @@
     "check": "wrangler deploy --dry-run"
   },
   "devDependencies": {
-    "miniflare": "5.20260903.0-alpha",
-    "wrangler": "4.129.0"
+    "miniflare": "5.20260926.0-alpha",
+    "wrangler": "4.142.0"
   }
 }
