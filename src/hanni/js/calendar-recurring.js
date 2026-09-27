@@ -56,7 +56,29 @@ export function mountCalendarRecurring(element,{invoke=defaultInvoke,showComplet
   function fail(err){error.textContent=err?.message||String(err);error.hidden=false;retry.hidden=false;}
   async function refresh(canCommit=null){if(canCommit&&!canCommit())return;const own=++revision;try{const loaded=await store.read();if(disposed||own!==revision||(canCommit&&!canCommit()))return;state=loaded;error.hidden=true;retry.hidden=true;render();}catch(err){if(!disposed&&own===revision)fail(err);}}
   async function mark(id,status){if(busy)return;busy=true;render();try{const result=await store.setStatus(id,status,date);state=result.state;error.hidden=true;retry.hidden=true;window.dispatchEvent(new window.CustomEvent('hanni:recurring-changed'));}catch(err){fail(err);}finally{busy=false;render();}}
-  function openDetails(item,returnFocus){if(details||disposed)return;const dialog=createCalendarDialog({document,title:item.title,returnFocus,onClose:()=>{details=null;},isCurrent:()=>!disposed});details=dialog;const rule=item.kind==='rule',pending=item.status==='pending';dialog.body.innerHTML=`<p>${rule?'Отметь, соблюдено ли правило в выбранный день.':'Отметка выполнения для выбранного дня.'}</p><p class="calendar-recurring__dialog-meta">${item.required===false?'По желанию':'Обязательное'} · ${escaped(frequency(item))}${rule?' · правило на день':''}</p>${rule?`<div class="calendar-recurring__choice-actions">${pending?'<button type="button" data-detail-status="kept">Соблюдено</button><button type="button" data-detail-status="broken">Не соблюдено</button>':'<button type="button" data-detail-status="pending">Отменить отметку</button>'}</div>`:''}<button type="button" class="calendar-recurring__text" data-detail-edit>Изменить рутину</button>`;dialog.body.addEventListener('click',event=>{const button=event.target.closest('button');if(button?.dataset.detailStatus){void mark(item.id,button.dataset.detailStatus).then(()=>dialog.close());}else if(button?.hasAttribute('data-detail-edit')){dialog.close();edit(item);}});dialog.open();}
+  function openDetails(item,returnFocus){
+    if(details||disposed)return;
+    const dialog=createCalendarDialog({document,title:item.title,returnFocus,onClose:()=>{details=null;},isCurrent:()=>!disposed});details=dialog;
+    const rule=item.kind==='rule',pending=item.status==='pending';
+    const renderDetails=()=>{
+      const saved=item.reflectionAnswer||{};
+      dialog.body.innerHTML=`<p>${rule?'Отметь, соблюдено ли правило в выбранный день.':'Отметка выполнения для выбранного дня.'}</p><p class="calendar-recurring__dialog-meta">${item.required===false?'По желанию':'Обязательное'} · ${escaped(frequency(item))}${rule?' · правило на день':''}</p>${item.reflection?`<section class="calendar-recurring__reflection"><h3>Короткая рефлексия · ${escaped(date)}</h3><p>${escaped(item.reflection.prompt)}</p><label>Я следовал своему правилу<select data-reflection-rule><option value="">Выбери ответ</option><option value="kept" ${saved.ruleOutcome==='kept'?'selected':''}>Да</option><option value="broken" ${saved.ruleOutcome==='broken'?'selected':''}>Нет</option><option value="no_answer" ${saved.ruleOutcome==='no_answer'?'selected':''}>Нет ответа</option></select></label><label>Восстановление после дня<select data-reflection-restoration><option value="">Выбери ответ</option><option value="better" ${saved.restoration==='better'?'selected':''}>Лучше</option><option value="same" ${saved.restoration==='same'?'selected':''}>Так же</option><option value="worse" ${saved.restoration==='worse'?'selected':''}>Хуже</option><option value="no_answer" ${saved.restoration==='no_answer'?'selected':''}>Нет ответа</option></select></label><label>Что повлияло, если хочешь<textarea data-reflection-trigger maxlength="500" rows="2">${escaped(saved.trigger||'')}</textarea></label><button type="button" data-save-reflection>Сохранить ответы</button><p data-reflection-saved role="status" hidden></p></section>`:''}${rule?`<div class="calendar-recurring__choice-actions">${pending?'<button type="button" data-detail-status="kept">Соблюдено</button><button type="button" data-detail-status="broken">Не соблюдено</button>':'<button type="button" data-detail-status="pending">Отменить отметку</button>'}</div>`:''}<button type="button" class="calendar-recurring__text" data-detail-edit>Изменить рутину</button>`;
+    };
+    renderDetails();
+    dialog.body.addEventListener('click',async event=>{
+      const button=event.target.closest('button');
+      if(button?.dataset.detailStatus){void mark(item.id,button.dataset.detailStatus).then(()=>dialog.close());}
+      else if(button?.hasAttribute('data-detail-edit')){dialog.close();edit(item);}
+      else if(button?.hasAttribute('data-save-reflection')){
+        const ruleOutcome=dialog.body.querySelector('[data-reflection-rule]').value,restoration=dialog.body.querySelector('[data-reflection-restoration]').value;
+        if(!ruleOutcome||!restoration){dialog.showError('Выбери ответ на оба вопроса. Если не хочешь отвечать, выбери «Нет ответа».',!ruleOutcome?dialog.body.querySelector('[data-reflection-rule]'):dialog.body.querySelector('[data-reflection-restoration]'));return;}
+        button.disabled=true;dialog.showError('');
+        try{const result=await store.setReflection(item.id,{ruleOutcome,restoration,trigger:dialog.body.querySelector('[data-reflection-trigger]').value},date);state=result.state;item=recurringItems(state,date).find(value=>value.id===item.id)||item;renderDetails();dialog.body.querySelector('[data-reflection-saved]').textContent='Ответы сохранены за выбранный день.';dialog.body.querySelector('[data-reflection-saved]').hidden=false;window.dispatchEvent(new window.CustomEvent('hanni:recurring-changed'));render();}
+        catch(error){dialog.showError(error?.message||String(error));const retry=dialog.body.querySelector('[data-save-reflection]');if(retry)retry.disabled=false;}
+      }
+    });
+    dialog.open();
+  }
   function run(id,start=true){return openRecurringRun({document,invoke,id,date,start});}
   function edit(plan=null,kind='action',options={}){
     if(editor)return;

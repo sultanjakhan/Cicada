@@ -39,7 +39,15 @@ function planFields(fields, old, today, id) {
   const stepSource=fields.steps ?? (plan.mode==='graph'?old?.steps:undefined) ?? [];
   plan.steps = plan.mode==='graph' ? validatedGraphSteps(stepSource) : plan.mode==='chain' ? stepSource.map(step=>({title:String(step.title||'').trim()})) : [];
   if (plan.mode==='chain' && (!plan.steps.length || plan.steps.length>50 || plan.steps.some(step=>!step.title || step.title.length>160))) throw Error('Укажи от 1 до 50 шагов, до 160 символов каждый.');
+  const reflection=fields.reflection===undefined?old?.reflection:fields.reflection;
+  if(reflection!==undefined&&reflection!==null){
+    if(plan.kind!=='action'||plan.mode!=='check'||typeof reflection.prompt!=='string'||!reflection.prompt.trim()||reflection.prompt.trim().length>160)throw Error('Короткая рефлексия доступна для одного действия без таймера. Укажи вопрос до 160 символов.');
+    plan.reflection={prompt:reflection.prompt.trim()};
+  }
   return plan;
+}
+function validReflection(value) {
+  return value&&typeof value==='object'&&['kept','broken','no_answer'].includes(value.ruleOutcome)&&['better','same','worse','no_answer'].includes(value.restoration)&&typeof (value.trigger??'')==='string'&&(value.trigger??'').length<=500;
 }
 export function parseRecurring(raw) {
   if (!raw) return empty();
@@ -57,6 +65,7 @@ export function parseRecurring(raw) {
       for (const [id,record] of Object.entries(records)) {
         if (record.snapshot.id!==id || !allowed(record.snapshot.kind).includes(record.status)) throw Error();
         const snapshot=planFields(record.snapshot,record.snapshot,day,id);
+        if(record.reflection!==undefined&&!validReflection(record.reflection))throw Error();
         if (record.run && (!Array.isArray(record.run.steps) || !record.run.steps.length || record.run.steps.length>50 || record.run.steps.some(step=>typeof step.title!=='string'||!step.title.trim()||step.title.length>160||!['pending','done','skipped'].includes(step.status)))) throw Error();
         if (record.run&&snapshot.mode==='graph'&&(record.run.steps.length!==snapshot.steps.length||record.run.steps.some((step,index)=>step.title!==snapshot.steps[index].title||!Array.isArray(step.dependsOn)||JSON.stringify(step.dependsOn)!==JSON.stringify(snapshot.steps[index].dependsOn)||(step.trackingMode??'track')!==snapshot.steps[index].trackingMode||(step.optional??false)!==snapshot.steps[index].optional))) throw Error();
       }
@@ -71,7 +80,7 @@ export function recurringItems(state,date) {
   if (!validDate(date)) throw Error('Выбери корректную дату.');
   const records=state.days[date]||{};
   const plans=new Map(state.plans.filter(plan=>applies(plan,date)).map(plan=>[plan.id,{...plan,status:'pending'}]));
-  for (const [id,record] of Object.entries(records)) plans.set(id,{...record.snapshot,status:record.status,run:record.run});
+  for (const [id,record] of Object.entries(records)) plans.set(id,{...record.snapshot,status:record.status,run:record.run,reflectionAnswer:record.reflection});
   return [...plans.values()].sort((a,b)=>(a.time||'99').localeCompare(b.time||'99')||a.title.localeCompare(b.title,'ru'));
 }
 export function createRecurringStore(invoke,{now=()=>new Date(),uuid=()=>crypto.randomUUID()}={}) {
@@ -106,7 +115,17 @@ export function createRecurringStore(invoke,{now=()=>new Date(),uuid=()=>crypto.
       if (!allowed(plan.kind).includes(status)) throw Error('Недопустимая отметка.');
       if (record?.run) throw Error('Открой выполнение, чтобы завершить или пропустить его шаг.');
       state.days[date]||={};
-      state.days[date][id]={snapshot:clone(plan),status};
+      state.days[date][id]={...(record||{}),snapshot:clone(plan),status};
+    }); },
+    setReflection(id,reflection,date=dateKey(now())) { return update(state=>{
+      if (!validDate(date)||date>dateKey(now())) throw Error('Заполнить рефлексию можно только за наступивший день.');
+      const record=state.days[date]?.[id];
+      const plan=record?.snapshot||state.plans.find(item=>item.id===id);
+      if(!plan||!plan.reflection||(!record&&!applies(plan,date))) throw Error('На этот день рефлексия не запланирована.');
+      const value={ruleOutcome:reflection?.ruleOutcome,restoration:reflection?.restoration,trigger:String(reflection?.trigger||'').trim()};
+      if(!validReflection(value))throw Error('Выбери оба ответа. Если не хочешь отвечать, выбери «Нет ответа».');
+      state.days[date]||={};
+      state.days[date][id]={...(record||{snapshot:clone(plan),status:'pending'}),reflection:value};
     }); },
     ensureRun(id,date=dateKey(now())) { return update(state=>{
       if (!validDate(date) || date>dateKey(now())) throw Error('Запустить можно только наступившее занятие.');

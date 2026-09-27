@@ -22,6 +22,7 @@ async function submit(dialog) { dialog.form.dispatchEvent(new dialog.modal.owner
 
 test('routine editor starts compact and saves a single action without extra steps', async t => {
   const { dialog, calls } = setup(t);
+  dialog.body.querySelector('[data-routine-title]').value = 'Итог дня';
   const body = dialog.body;
   assert.equal(body.querySelector('.cre-advanced[open]'), null);
   assert.equal(body.querySelectorAll('[data-routine-weekday]').length, 7);
@@ -30,6 +31,24 @@ test('routine editor starts compact and saves a single action without extra step
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0].mode, 'check');
   assert.deepEqual(calls[0][0].steps, []);
+});
+
+test('optional reflection belongs only to one check action and saves its user question', async t => {
+  const { dialog, calls } = setup(t);
+  dialog.body.querySelector('[data-routine-title]').value = 'Итог дня';
+  dialog.body.querySelector('.cre-advanced summary').click();
+  const toggle = dialog.body.querySelector('[data-routine-reflection]');
+  assert.ok(toggle); toggle.click();
+  const prompt = dialog.body.querySelector('[data-routine-reflection-prompt]');
+  prompt.value = 'Мой вопрос на день';
+  prompt.dispatchEvent(new dialog.modal.ownerDocument.defaultView.Event('input', { bubbles: true }));
+  await submit(dialog);
+  assert.deepEqual(calls[0][0].reflection, { prompt: 'Мой вопрос на день' });
+
+  const activity = setup(t);
+  activity.dialog.body.querySelector('.cre-advanced summary').click();
+  activity.dialog.body.querySelector('[data-routine-single-track]').click();
+  assert.equal(activity.dialog.body.querySelector('[data-routine-reflection]'), null);
 });
 
 test('graph editor preserves later dependencies through reorder and converts chain options without losing edges', async t => {

@@ -5,6 +5,7 @@ import { loadCalendarPreferences, saveCalendarPreferences } from './calendar-dis
 import { mountSyncSettings } from './sync-settings.js';
 import { mountSleepSettings } from './health-sleep.js';
 import { mountHealthActivitySettings } from './health-activity.js';
+import { mountDigitalActivitySettings } from './digital-activity-settings.js';
 import { mountAppUpdates } from './app-updates.js';
 import { mountProcessSettings } from './calendar-process-settings.js';
 
@@ -21,6 +22,7 @@ const SECTIONS = [
   { id: 'calendar', label: 'Календарь' },
   { id: 'processes', label: 'Этапы задач' },
   { id: 'connections', label: 'Подключения' },
+  { id: 'restrictions', label: 'Ограничения' },
   { id: 'about', label: 'О приложении' },
 ];
 
@@ -38,7 +40,7 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
   if (settingsDialog || document.querySelector('dialog[open]')) return;
 
   let original = null, draft = null, closed = false, disposeSync = null;
-  let disposeUpdates = null, disposeSleep = null, disposeActivity = null;
+  let disposeUpdates = null, disposeSleep = null, disposeActivity = null, disposeDigitalActivity = null;
   let processSettings = null, processObserver = null, preferencesLoading = true, preferencesLoadBusy = false;
   const requestedSection = sectionFor(section);
   const window = document.defaultView;
@@ -57,7 +59,7 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
       closed = true;
       processObserver?.disconnect();
       processSettings?.dispose();
-      disposeSync?.(); disposeUpdates?.(); disposeSleep?.(); disposeActivity?.();
+      disposeSync?.(); disposeUpdates?.(); disposeSleep?.(); disposeActivity?.(); disposeDigitalActivity?.();
       settingsDialog = null;
     },
   });
@@ -156,7 +158,7 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
   }
 
   function preferenceDirty() { return !!draft && !samePreferences(draft, original); }
-  function hasUnsavedChanges() { return preferenceDirty() || !!processSettings?.isDirty() || !!disposeSync?.isDirty?.(); }
+  function hasUnsavedChanges() { return preferenceDirty() || !!processSettings?.isDirty() || !!disposeSync?.isDirty?.() || !!disposeDigitalActivity?.isDirty?.(); }
   function setPreferenceControlsEnabled(enabled) {
     preferencesLoading = !enabled;
     for (const root of [hosts.today, hosts.calendar]) {
@@ -176,7 +178,7 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
     saveButton.textContent = 'Сохранить календарь';
     cancelButton.textContent = hasUnsavedChanges() ? 'Отмена' : 'Закрыть';
     api.modal.querySelector('.calendar-settings-actions').dataset.dirty = String(hasUnsavedChanges());
-    if (!settingsStatus.hidden && !processSettings?.isDirty() && !disposeSync?.isDirty?.()) settingsStatus.hidden = true;
+    if (!settingsStatus.hidden && !processSettings?.isDirty() && !disposeSync?.isDirty?.() && !disposeDigitalActivity?.isDirty?.()) settingsStatus.hidden = true;
   }
 
   nav.addEventListener('click', event => {
@@ -282,6 +284,9 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
   hosts.connections.classList.add('calendar-settings-connections');
   hosts.about.classList.add('calendar-settings-about');
   const sync = document.createElement('section'), sleep = document.createElement('section'), activity = document.createElement('section');
+  const digitalActivity = document.createElement('section');
+  digitalActivity.className = 'calendar-settings-digital-activity';
+  hosts.restrictions.append(digitalActivity);
   const health = document.createElement('details'); health.className = 'calendar-settings-health';
   const healthTitle = document.createElement('summary'); healthTitle.textContent = 'Здоровье: сон, прогулки и шаги';
   health.append(healthTitle, sleep, activity);
@@ -380,6 +385,10 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
   sync.addEventListener('click', scheduleFooterRefresh);
   disposeSleep = mountSleepSettings(sleep, { invoke, setPending: value => api.setPending(value) });
   disposeActivity = mountHealthActivitySettings(activity, { invoke, setPending: value => api.setPending(value) });
+  disposeDigitalActivity = mountDigitalActivitySettings(digitalActivity, { invoke, setPending: value => api.setPending(value) });
+  digitalActivity.addEventListener('input', scheduleFooterRefresh);
+  digitalActivity.addEventListener('change', scheduleFooterRefresh);
+  digitalActivity.addEventListener('click', scheduleFooterRefresh);
   disposeUpdates = mountAppUpdates(updates, { invoke });
   setPreferenceControlsEnabled(false);
   async function loadPreferences() {

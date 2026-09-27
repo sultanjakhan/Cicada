@@ -1,5 +1,5 @@
 import { canRefreshHealthView, mayCommitHealthView, retryHealthViewRefresh, startHealthViewRefresh } from './health-view-refresh.js';
-import { S, invoke, tabLoaders, TAB_ICONS, loadTabSetting, IS_MOBILE } from './state.js';
+import { S, invoke, listen, requestMvpSync, tabLoaders, TAB_ICONS, loadTabSetting, IS_MOBILE } from './state.js';
 import { ICONS } from './icons.js';
 import { escapeHtml } from './utils.js';
 import { renderUnifiedLayout, savePaneState } from './unified-layout.js';
@@ -14,6 +14,7 @@ import { mountCalendarTasks } from './calendar-tasks.js';
 import { mountCalendarContextMenu } from './calendar-context-menu.js';
 import { createCalendarDialog } from './calendar-dialog.js';
 import { mountCalendarRecurring } from './calendar-recurring.js';
+import { startDigitalActivityRefresh } from './digital-activity-settings.js';
 import { openRecurringRun } from './calendar-routine-execution.js';
 import { startCalendarExecution, readActiveBlocks } from './calendar-execution.js';
 import { mountCalendarInProgress } from './calendar-in-progress.js';
@@ -32,6 +33,7 @@ import { openCalendarCreateMenu } from './calendar-create-menu.js';
 let disposeNow = null, disposeTable = null, disposePanel = null, disposeTasks = null;
 let disposeRecurring = null, goalPopup = null, tasksDialog = null;
 let disposeDayBanner = null, disposeInProgress = null;
+let disposeDigitalActivityRefresh = null;
 let disposeNextAction = null, disposeTaskDetails = null, disposeRoutineChoices = null;
 let routinesRouteHandler = null;
 let preferences = { density:'comfortable', showCompleted:false };
@@ -41,7 +43,7 @@ const tasksPaneState = { filter:'active', search:'', goal:'', sphere:'', page:0 
 // The Goals/Wishes choice survives pane switches within a session; it is not a stored preference.
 const goalsPaneState = { view:'goals' };
 let closeCreateMenu = null;
-function cleanupWorkspace() { workspaceRevision++; disposeNextAction?.(); disposeTaskDetails?.(); disposeRoutineChoices?.(); disposeNextAction = disposeTaskDetails = disposeRoutineChoices = null; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeRecurring?.(); disposeDayBanner?.(); disposeInProgress?.(); goalPopup?.dispose(); tasksDialog?.dispose(); disposeInProgress = null; disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; disposeRecurring = null; disposeDayBanner = null; goalPopup = null; tasksDialog = null; }
+function cleanupWorkspace() { workspaceRevision++; disposeNextAction?.(); disposeTaskDetails?.(); disposeRoutineChoices?.(); disposeNextAction = disposeTaskDetails = disposeRoutineChoices = null; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeRecurring?.(); disposeDayBanner?.(); disposeInProgress?.(); disposeDigitalActivityRefresh?.(); goalPopup?.dispose(); tasksDialog?.dispose(); disposeInProgress = null; disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; disposeRecurring = null; disposeDayBanner = null; disposeDigitalActivityRefresh = null; goalPopup = null; tasksDialog = null; }
 const nextActionPreferences = () => ({ enabled:preferences.recommendationsEnabled, includeTasks:preferences.recommendTasks, includeRoutines:preferences.recommendRoutines });
 const view = { period: 'day', mode: 'grid', date: views.iso(new Date()), firstDay:'mon' };
 let initialViewLoaded = false;
@@ -501,6 +503,7 @@ export async function loadCalendarWorkspace(el) {
   if(routinesRouteHandler){window.removeEventListener('hanni:open-recurring-settings',routinesRouteHandler);window.removeEventListener('hanni:open-routines-pane',routinesRouteHandler);routinesRouteHandler=null;}
   startHealthViewRefresh();
   cleanupWorkspace(); tabLoaders.cleanupCalendar = cleanupWorkspace;
+  disposeDigitalActivityRefresh = startDigitalActivityRefresh({window,listen,requestSync:requestMvpSync});
   const loadRevision = workspaceRevision;
   const { mountCalendarNow } = await import('./calendar-now.js');
   try { preferences=await loadCalendarPreferences(invoke); document.documentElement.dataset.calendarDensity=preferences.density; } catch { /* Settings expose the read error without overwriting the stored snapshot. */ }

@@ -42,6 +42,7 @@ async function boot({ failPreferenceSave = false, failPreferenceLoad = false, de
     if (command === 'mvp_sync_status') return { configured: true, enabled: true, pending: 0, conflicts: 0, running: false };
     if (command === 'health_sleep_status') return { status: 'unsupported' };
     if (command === 'health_activity_status') return { status: 'unsupported' };
+    if (command === 'digital_activity_status') return { enabled: false, devices: [] };
     if (command === 'mvp_update_status') return { installed_version: '0.3.35', configured: false, phase: 'idle' };
     if (command === 'mvp_sync_set_enabled') return { configured: true, enabled: args.enabled, pending: 0, conflicts: 0, running: false };
     throw Error(command);
@@ -58,7 +59,7 @@ test('tab semantics, deep link and keyboard navigation preserve a preference dra
   const x = await boot();
   const { modal } = x;
   const tabs = [...modal.querySelectorAll('[role="tab"]')];
-  assert.equal(tabs.length, 5);
+  assert.equal(tabs.length, 6);
   assert.equal(tabs.find(tab => tab.getAttribute('aria-selected') === 'true').textContent, 'Сегодня');
   assert.equal(modal.querySelector('[role="tabpanel"][aria-labelledby="calendar-settings-tab-today"]').hidden, false);
 
@@ -84,6 +85,22 @@ test('the process deep link selects the task-stage tab', async () => {
   assert.equal(panel.hidden, false);
   assert.equal(panel.getAttribute('role'), 'tabpanel');
   assert.ok(panel.classList.contains('calendar-settings-panel'), 'the editor mount keeps the panel styling and hidden-state selector');
+});
+
+test('restriction form draft participates in the existing close confirmation', async () => {
+  const x=await boot({section:'restrictions'}),{modal}=x;
+  const selected=modal.querySelector('[role="tab"][aria-selected="true"]');
+  assert.equal(selected.textContent,'Ограничения');
+  modal.querySelector('[data-da-add]').click();
+  const label=modal.querySelector('[data-da-label]');label.value='Телефон';label.dispatchEvent(new x.dom.window.Event('input',{bubbles:true}));await tick();
+  assert.equal(modal.querySelector('.calendar-settings-actions').dataset.dirty,'true');
+  modal.querySelector('.calendar-settings-actions [data-dialog-close]').click();
+  const confirmation=modal.querySelector('[data-close-confirmation]');assert.equal(confirmation.hidden,false);
+  confirmation.querySelectorAll('button')[0].click();
+  assert.equal(modal.open,true);assert.equal(label.value,'Телефон');
+  modal.querySelector('.calendar-settings-actions [data-dialog-close]').click();
+  confirmation.querySelectorAll('button')[1].click();
+  assert.equal(modal.open,false);
 });
 
 test('preference controls stay disabled during a delayed read while connections remain usable', async () => {
