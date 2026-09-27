@@ -8,7 +8,7 @@ export function mountCalendarDayBanner(element, { invoke, now = () => new Date()
   element.className = 'calendar-day-banner';
   // One row: the date may ellipsize, the start action keeps its full label.
   const today = onOpenSettings
-    ? `<button type="button" class="today-date__settings" data-today-settings aria-label="Настроить рекомендации на сегодня" aria-haspopup="dialog">Сегодня<span aria-hidden="true">${ICONS.sliders}</span></button>`
+    ? `<button type="button" class="today-date__settings" data-today-settings aria-label="Настроить рекомендации на сегодня" aria-haspopup="dialog"><span aria-hidden="true">${ICONS.sliders}</span>Сегодня</button>`
     : '<span class="today-date__label">Сегодня</span>';
   element.innerHTML = `<div class="today-date"><h2>${today}<span class="today-date__day"> · <time></time>, <span data-weekday></span></span></h2></div><button type="button" data-start-day disabled>Начать день</button><p role="alert" hidden></p><button type="button" data-day-retry hidden>Повторить загрузку</button>`;
   const settings = element.querySelector('[data-today-settings]');

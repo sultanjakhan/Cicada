@@ -4,7 +4,7 @@ import { JSDOM } from 'jsdom';
 
 const tick = async () => { for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve)); };
 
-async function boot({ failPreferenceSave = false, failPreferenceLoad = false, delayPreferenceLoad = false, deferProcessSave = false, initialPreferences = null, section = 'next-action' } = {}) {
+async function boot({ failPreferenceSave = false, failPreferenceLoad = false, delayPreferenceLoad = false, deferProcessSave = false, initialPreferences = null, section = 'next-action', recommendationsOnly = false } = {}) {
   const dom = new JSDOM('<button id="settings">Настройки</button>', { url: 'http://cicada.local', pretendToBeVisual: true });
   Object.assign(globalThis, {
     window: dom.window, document: dom.window.document, localStorage: dom.window.localStorage,
@@ -48,7 +48,7 @@ async function boot({ failPreferenceSave = false, failPreferenceLoad = false, de
   } } };
 
   const module = await import(`../src/hanni/js/calendar-settings.js?${Math.random()}`);
-  module.showCalendarSettings(document.querySelector('#settings'), { section });
+  module.showCalendarSettings(document.querySelector('#settings'), { section, recommendationsOnly });
   await tick();
   return { dom, ui, writes, calls, modal: document.querySelector('dialog'),
     resolvePreferenceLoad: () => resolvePreferenceLoad?.(), resolveProcessSave: () => resolveProcessSave?.() };
@@ -241,4 +241,24 @@ test('connection drafts survive calendar saves and closing requires explicit dis
   assert.equal(x.modal.querySelector('[data-settings-status]').hidden, true);
   x.modal.querySelector('footer [data-dialog-close]').click();
   assert.equal(x.modal.open, false);
+});
+
+
+test('Today entry exposes only selection settings and saves no unrelated preference',async()=>{
+  const x=await boot({recommendationsOnly:true,initialPreferences:{density:'compact',showCompleted:true,recommendRoutines:false}});
+  try {
+    assert.match(x.modal.querySelector('h2').textContent,/Выбор следующего действия/);
+    assert.equal(x.modal.querySelector('[role="tab"]'),null);
+    assert.equal(x.modal.querySelector('[data-recurring]'),null);
+    assert.equal(x.modal.querySelector('[data-key="showCompleted"]'),null);
+    assert.equal(x.calls.some(c=>/mvp_sync|health_|mvp_update/.test(c)),false,'focused entry does not mount unrelated services');
+    const input=x.modal.querySelector('[data-key="recommendTasks"]');input.checked=false;input.dispatchEvent(new x.dom.window.Event('change',{bubbles:true}));
+    const latest=JSON.parse(x.ui.get('calendar_preferences_v1'));latest.density='comfortable';latest.first_day='sun';
+    x.ui.set('calendar_preferences_v1',JSON.stringify(latest));
+    x.modal.querySelector('form').dispatchEvent(new x.dom.window.Event('submit',{bubbles:true,cancelable:true}));await tick();
+    const saved=JSON.parse(x.ui.get('calendar_preferences_v1'));
+    assert.equal(saved.recommendTasks,false);assert.equal(saved.recommendRoutines,false);
+    assert.equal(saved.density,'comfortable');assert.equal(saved.first_day,'sun');assert.equal(saved.showCompleted,true);
+    assert.equal(x.modal.open,false);
+  } finally{x.dom.window.close();}
 });

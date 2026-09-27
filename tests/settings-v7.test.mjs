@@ -6,3 +6,9 @@ test('invalid snapshot rejects without write',async()=>{await assert.rejects(()=
 test('save one acknowledged write',async()=>{let n=0;await m.saveCalendarPreferences({version:1,first_day:'mon',default_view:'Месяц',density:'compact',showCompleted:false},async c=>{if(c==='set_ui_state')n++});assert.equal(n,1);});
 test('save failure is not acknowledged',async()=>{await assert.rejects(()=>m.saveCalendarPreferences({},async()=>{throw Error('down')}));});
 test('recommendation choices survive save/load while old preferences receive defaults',async()=>{const old=m.normalizeCalendarPreferences({showCompleted:true});assert.equal(old.recommendationsEnabled,true);let raw;await m.saveCalendarPreferences({...old,recommendTasks:false,recommendRoutines:true},async(_,{value})=>{raw=value;});const loaded=await m.loadCalendarPreferences(async()=>raw);assert.equal(loaded.recommendTasks,false);assert.equal(loaded.recommendRoutines,true);assert.throws(()=>m.normalizeCalendarPreferences({recommendTasks:'yes'}));});
+
+test('recommendation save uses an expected empty state and rejects a concurrent update',async()=>{
+  let write;await m.saveRecommendationPreferences({recommendTasks:false},async(c,a)=>{if(c==='set_ui_state'){write=a;return;}return null;});
+  assert.equal(write.expectedValue,'');assert.equal(JSON.parse(write.value).recommendTasks,false);
+  await assert.rejects(()=>m.saveRecommendationPreferences({recommendTasks:false},async c=>{if(c==='set_ui_state')throw 'mvp_sync_stale_ui_state';return null;}),/Настройки изменились/);
+});
