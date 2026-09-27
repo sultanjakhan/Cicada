@@ -29,6 +29,9 @@ tracker remains the operational source of truth.
   The manual GC test also disables scheduling only in its fixture so a real
   alarm cannot remove a page during restart before the asserted manual calls.
   Automatic alarm recovery remains covered by its separate unchanged test.
+  Read-lease and abandoned-staging fixtures likewise expire only the intended
+  record after setup. This removes 300/100 ms setup deadlines while retaining
+  expired-lease rejection before and after GC and real scheduled-alarm cleanup.
 - Invalid routes still have GET and empty-POST HTTP checks. POST-body rejection
   runs against the same Worker through Miniflare's service proxy because its
   loopback HTTP bridge intermittently resets early responses to unread bodies

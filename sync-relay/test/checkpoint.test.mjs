@@ -124,14 +124,33 @@ test('concurrent identical finalization produces one generation and two matching
 });
 
 test('read lease pins an immutable replaced snapshot through GC, then expires',async t=>{
-  const mf=runtime({HANNI_READ_LEASE_MS:'300',HANNI_GRACE_MS:'10'});t.after(()=>mf.dispose());await ok(await append(mf,batch(1)),201);
+  // Control the expired state, not how quickly a busy host completes uploads.
+  const probe=source+`\nexport class ReadLeaseProbeRelay extends Relay {async fetch(request){
+    const path=new URL(request.url).pathname;
+    if(path==='/__end-grace'){
+      const id=await request.text();
+      this.sql.exec('UPDATE checkpoints SET delete_after=0 WHERE checkpoint_id=?',id);
+      const cp=this.checkpoint(id);return Response.json({state:cp.state,delete_after:cp.delete_after});
+    }
+    if(path==='/__expire-read'){
+      const id=await request.text();
+      this.sql.exec('UPDATE read_leases SET expires_at=0 WHERE lease_id=?',id);
+      return Response.json(this.sql.exec('SELECT expires_at FROM read_leases WHERE lease_id=?',id).one());
+    }
+    return super.fetch(request);
+  }}`;
+  const mf=runtime({},undefined,probe,'ReadLeaseProbeRelay');t.after(()=>mf.dispose());await ok(await append(mf,batch(1)),201);
+  const ns=await mf.getDurableObjectNamespace('RELAY');const stub=ns.get(ns.idFromName('hanni-mvp-relay-v1'));
   const first=await publish(mf);const lease=await readLease(mf,first);
   const same=await readLease(mf,first);assert.equal(same.read_lease_id,lease.read_lease_id);
   await ok(await append(mf,batch(2)),201);const second=await publish(mf,{base:2,generation:1});
-  await sleep(20);await maintenance(mf);
+  assert.deepEqual(await ok(await stub.fetch('https://relay.test/__end-grace',{method:'POST',body:first.id})),{state:'retired',delete_after:0});
+  await maintenance(mf);
   const oldPart=await ok(await download(mf,first,lease,0));assert.deepEqual(oldPart.envelope,first.parts[0]);
   await error(await download(mf,first,lease,0,'phone-a'),409,'read_lease_expired');
-  await sleep(310);await maintenance(mf);
+  assert.equal((await ok(await stub.fetch('https://relay.test/__expire-read',{method:'POST',body:lease.read_lease_id}))).expires_at,0);
+  await error(await download(mf,first,lease,0),409,'read_lease_expired');
+  await maintenance(mf);
   await error(await download(mf,first,lease,0),409,'read_lease_expired');
   const latest=await ok(await request(mf,'/v1/checkpoints/latest'));assert.equal(latest.checkpoint_id,second.id);
   const latestLease=await readLease(mf,second);await ok(await download(mf,second,latestLease));
@@ -233,11 +252,18 @@ test('durable alarms resume prefix GC after restart without client maintenance',
 test('an abandoned upload expires and is collected by its scheduled alarm',async t=>{
   const probe=source+`\nexport class StageProbeRelay extends Relay {async fetch(request){
     if(new URL(request.url).pathname==='/__probe')return Response.json({checkpoints:this.sql.exec('SELECT COUNT(*) AS n FROM checkpoints').one().n,chunks:this.sql.exec('SELECT COUNT(*) AS n FROM checkpoint_chunks').one().n,meta:this.state()});
+    if(new URL(request.url).pathname==='/__expire-staging'){
+      const id=await request.text();
+      this.sql.exec('UPDATE checkpoints SET created_at=0 WHERE checkpoint_id=?',id);
+      const cp=this.checkpoint(id);await this.schedule();
+      return Response.json({state:cp.state,created_at:cp.created_at});
+    }
     return super.fetch(request);
   }}`;
-  const mf=runtime({HANNI_STAGING_MS:'100'},undefined,probe,'StageProbeRelay');t.after(()=>mf.dispose());
+  const mf=runtime({},undefined,probe,'StageProbeRelay');t.after(()=>mf.dispose());
   await ok(await append(mf,batch(1)),201);const cp=await acquire(mf);await ok(await put(mf,cp,0),201);
   const ns=await mf.getDurableObjectNamespace('RELAY');const stub=ns.get(ns.idFromName('hanni-mvp-relay-v1'));
+  assert.deepEqual(await ok(await stub.fetch('https://relay.test/__expire-staging',{method:'POST',body:cp.id})),{state:'staging',created_at:0});
   const inspect=async()=>ok(await stub.fetch('https://relay.test/__probe'));
   const deadline=Date.now()+8000;let state=await inspect();
   while(state.checkpoints && Date.now()<deadline){await sleep(100);state=await inspect();}
