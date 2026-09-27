@@ -44,6 +44,12 @@
 .calendar-create-menu small { display:block; font-size:12px; line-height:17px; color:var(--text-muted,#777); }
 .calendar-workspace .calendar-now__card[hidden] + .calendar-now__goal { margin-top:0; }
 [data-task-launcher] .calendar-task-overview { margin:0; padding:0; border:0; border-radius:0; }
+[data-task-launcher] [data-launch-scopes] { display:flex; gap:2px; width:fit-content; padding:3px; margin:0 0 20px; border-radius:9px; background:var(--bg-hover,#f3f3f3); }
+[data-task-launcher] [data-launch-scopes] button { min-height:36px; padding:6px 13px; border:1px solid transparent; border-radius:7px; background:transparent; color:var(--text-secondary,#626262); font:inherit; font-size:13px; cursor:pointer; }
+[data-task-launcher] [data-launch-scopes] button[aria-pressed=true] { border-color:var(--border-default,#ddd); background:var(--bg-card,#fff); color:var(--text-primary,#252525); }
+[data-task-launcher] [data-launch-scopes] button:focus-visible { outline:2px solid var(--text-primary); outline-offset:1px; }
+[data-task-launcher][data-launch-scope="routines"] .calendar-routine-choices { margin-top:0; padding-top:0; border-top:0; }
+[data-task-launcher] [data-launch-section][hidden] { display:none !important; }
 /* Navigation to the current-task widget; the optional count is running work only. */
 .calendar-workspace .uni-header:has(.calendar-running:not([hidden])) { grid-template-columns:28px minmax(0,1fr) auto; }
 .calendar-running { grid-column:3; grid-row:1; display:flex; justify-content:flex-end; min-width:0; }

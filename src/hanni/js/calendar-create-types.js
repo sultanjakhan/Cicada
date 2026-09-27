@@ -74,19 +74,21 @@ const wishType = {
   hint: 'Покупка, поездка или впечатление — без плана. Цену и ссылку можно добавить позже.',
   titleLabel: 'Что хочется?', titlePlaceholder: 'Например, новые кроссовки', titleRequired: 'Напиши, чего хочется.',
   panel(doc) {
-    return panelOf(doc, `<label class="evm-field" for="evm-wish-category"><span class="evm-field-label">Категория</span><select class="form-select" id="evm-wish-category">${WISH_CATEGORIES.map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`).join('')}</select></label>
+    return panelOf(doc, `<details class="evm-wish-details"><summary>Детали <span>Цена, ссылка и заметка · необязательно</span></summary><label class="evm-field" for="evm-wish-category"><span class="evm-field-label">Категория</span><select class="form-select" id="evm-wish-category">${WISH_CATEGORIES.map(([value, label]) => `<option value="${escapeHtml(value)}"${value === 'other' ? ' selected' : ''}>${escapeHtml(label)}</option>`).join('')}</select></label>
       <div class="evm-wish-price"><label class="evm-field" for="evm-wish-price"><span class="evm-field-label">Цена · необязательно</span><input class="form-input" id="evm-wish-price" inputmode="decimal" placeholder="Например, 45 000"></label>
       <label class="evm-field" for="evm-wish-currency"><span class="evm-field-label">Валюта</span><select class="form-select" id="evm-wish-currency">${WISH_CURRENCIES.map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`).join('')}</select></label></div>
       <label class="evm-field" for="evm-wish-url"><span class="evm-field-label">Ссылка · необязательно</span><input class="form-input" id="evm-wish-url" type="url" inputmode="url" maxlength="${WISH_LIMITS.url}" placeholder="https://"></label>
       <label class="evm-field" for="evm-wish-status"><span class="evm-field-label">Статус</span><select class="form-select" id="evm-wish-status">${WISH_STATUSES.map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`).join('')}</select></label>
-      <label class="evm-field" for="evm-wish-note"><span class="evm-field-label">Заметка · необязательно</span><textarea class="form-textarea" id="evm-wish-note" maxlength="${WISH_LIMITS.note}" rows="3" placeholder="Размер, цвет, где видел"></textarea></label>`);
+      <label class="evm-field" for="evm-wish-note"><span class="evm-field-label">Заметка · необязательно</span><textarea class="form-textarea" id="evm-wish-note" maxlength="${WISH_LIMITS.note}" rows="3" placeholder="Размер, цвет, где видел"></textarea></label></details>`);
   },
   input(panel, title) { return { title, category: panel.querySelector('#evm-wish-category').value, price: panel.querySelector('#evm-wish-price').value, currency: panel.querySelector('#evm-wish-currency').value,
     url: panel.querySelector('#evm-wish-url').value, status: panel.querySelector('#evm-wish-status').value, note: panel.querySelector('#evm-wish-note').value }; },
   validate(panel, title) {
     try { validateWishInput(this.input(panel, title)); return null; }
     catch (error) { const fields = { title: panel.ownerDocument.querySelector('#evm-title'), price: panel.querySelector('#evm-wish-price'), url: panel.querySelector('#evm-wish-url'), note: panel.querySelector('#evm-wish-note') };
-      return { message: error.message, field: fields[error.field] || panel.querySelector('#evm-wish-category') }; }
+      const field = fields[error.field] || panel.querySelector('#evm-wish-category');
+      if (field?.closest('details')) field.closest('details').open = true;
+      return { message: error.message, field }; }
   },
   save(panel, { invoke, title }) { return createWish(this.input(panel, title), { invoke }); },
 };

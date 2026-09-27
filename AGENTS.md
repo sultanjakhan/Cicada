@@ -6,6 +6,14 @@
 
 Перед новой постановкой прочитай [подтверждённый контекст продукта](docs/product-context.md), затем проверь исходный код и относящиеся к задаче Issues. Не повторяй вопросы, на которые уже есть ответ в этом контексте; уточняй только новые отсутствующие факты.
 
+Owner continuation, 2026-09-27 (workspace controls): restore a dedicated Routines
+pane after Tasks, reusing existing routine records, execution and editors. Keep
+one shared Create entry, including Wishes and Routines; remove duplicate New Note
+and New Goal/Wish buttons in their panes. Preserve note drafts and explicit starts.
+Distinguish Create from Start visually, make task/routine choices easy to reach,
+and keep the selected main goal clearly marked. The separate goal below Today
+was accepted. This supersedes the older no-Routines-pane directions below.
+
 Owner continuation, 2026-09-27: keep the main goal in a separate widget; the DEV
 candidate places it below Today at matching width. Connect task recommendations to their existing goal/subgoal
 and stage; waiting tasks lead to review, never an implicit start. Import the

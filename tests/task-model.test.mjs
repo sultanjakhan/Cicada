@@ -107,6 +107,8 @@ test('shared Create saves a wish through the synced wish store and announces it 
   const { showCalendarCreateModal } = await modal();
   await showCalendarCreateModal(null, { kind: 'wish' }); await settle();
   assert.equal(x.q('#evm-heading').textContent, 'Новое желание');
+  assert.equal(x.q('#evm-wish-category').value, 'other', 'a title alone does not assume a purchase category');
+  assert.equal(x.q('.evm-wish-details').open, false, 'optional fields do not obstruct quick capture');
   x.q('#evm-title').value = 'Поездка в горы';
   x.q('#evm-wish-category').value = 'travel'; x.q('#evm-wish-price').value = '45 000';
   x.q('#evm-wish-currency').value = 'KZT'; x.q('#evm-wish-url').value = 'https://example.com/trip';
@@ -118,6 +120,17 @@ test('shared Create saves a wish through the synced wish store and announces it 
     { title: 'Поездка в горы', category: 'travel', price: 45000, url: 'https://example.com/trip', note: 'На выходные', status: 'want' });
   assert.equal(announced, 1); assert.equal(x.q('#evm-form'), null, 'success closes the modal');
   assert.equal(x.saved('set_ui_state').length, 1, 'one CAS write to the existing wishes store');
+});
+
+test('wish validation reveals a bad optional link before focusing it, without persisting', async t => {
+  const x = useWindow(t, { get_ui_state:null });
+  const { showCalendarCreateModal } = await modal();
+  await showCalendarCreateModal(null, { kind:'wish', types:['wish'] }); await settle();
+  x.q('#evm-title').value = 'Идея поездки'; x.q('#evm-wish-url').value = 'javascript:alert(1)';
+  x.q('#evm-form').dispatchEvent(new x.w.Event('submit', { bubbles:true, cancelable:true })); await settle();
+  assert.equal(x.q('.evm-wish-details').open,true);
+  assert.equal(x.w.document.activeElement,x.q('#evm-wish-url'));
+  assert.equal(x.saved('set_ui_state').length,0);
 });
 
 test('Enter saves a task with its time, kind and sphere; an instant task skips the hidden estimate', async t => {

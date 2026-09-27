@@ -27,6 +27,7 @@ import { openCalendarTaskDetails } from './calendar-task-details.js';
 import { mountCalendarNextAction } from './calendar-next-action.js';
 import { mountCalendarRoutineChoices } from './calendar-routine-choices.js';
 import { showCalendarSettings } from './calendar-settings.js';
+import { openCalendarCreateMenu } from './calendar-create-menu.js';
 
 let disposeNow = null, disposeTable = null, disposePanel = null, disposeTasks = null;
 let disposeRecurring = null, goalPopup = null, tasksDialog = null;
@@ -38,6 +39,7 @@ let dialogSequence = 0;
 const tasksPaneState = { filter:'active', search:'', goal:'', sphere:'', page:0 };
 // The Goals/Wishes choice survives pane switches within a session; it is not a stored preference.
 const goalsPaneState = { view:'goals' };
+let closeCreateMenu = null;
 function cleanupWorkspace() { workspaceRevision++; disposeNextAction?.(); disposeTaskDetails?.(); disposeRoutineChoices?.(); disposeNextAction = disposeTaskDetails = disposeRoutineChoices = null; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeRecurring?.(); disposeDayBanner?.(); disposeInProgress?.(); goalPopup?.dispose(); tasksDialog?.dispose(); disposeInProgress = null; disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; disposeRecurring = null; disposeDayBanner = null; goalPopup = null; tasksDialog = null; }
 const nextActionPreferences = () => ({ enabled:preferences.recommendationsEnabled, includeTasks:preferences.recommendTasks, includeRoutines:preferences.recommendRoutines });
 const view = { period: 'day', mode: 'grid', date: views.iso(new Date()), firstDay:'mon' };
@@ -482,12 +484,23 @@ export async function mountCalendarTable(el) {
 export function openCalendarCreate(button) {
   const el = document.getElementById('calendar-content');
   if (!el?.querySelector('.uni-pane') || document.querySelector('dialog[open]')) return;
+  if (closeCreateMenu) { closeCreateMenu(); return; }
   const revision = workspaceRevision;
   const isCurrent = () => revision === workspaceRevision && button.isConnected && el.isConnected && S.activeTab === 'calendar';
-  const tasksPane = S._unifiedPane.calendar === 'tasks';
-  showCalendarCreateModal(tasksPane ? null : S._unifiedPane.calendar === 'table' ? view.date : views.iso(new Date()), {
-    initialNoDate: tasksPane,
-    isCurrent, returnFocus: () => { if (isCurrent()) button.focus({ preventScroll:true }); },
+  const pane = S._unifiedPane.calendar;
+  const initialKind = pane === 'notes' ? 'note' : pane === 'goals' ? goalsPaneState.view === 'wishes' ? 'wish' : 'goal' : pane === 'routines' ? 'routine' : pane === 'table' ? 'event' : 'task';
+  const returnFocus = () => { if (isCurrent()) button.focus({ preventScroll:true }); };
+  closeCreateMenu = openCalendarCreateMenu(button, { isCurrent, initialKind,
+    onClose: () => { closeCreateMenu = null; },
+    onSelect: kind => {
+      if (!isCurrent()) return;
+      if (kind === 'routine') { window.dispatchEvent(new CustomEvent('hanni:open-routines-pane', { detail:{create:true} })); return; }
+      if (kind === 'note' && pane === 'notes' && disposePanel?.openCreate) { void disposePanel.openCreate({returnFocus}); return; }
+      if (kind === 'goal' && pane === 'goals' && disposePanel?.openGoalCreate) { disposePanel.openGoalCreate({returnFocus}); return; }
+      showCalendarCreateModal(pane === 'tasks' ? null : pane === 'table' ? view.date : views.iso(new Date()), {
+        kind, types:[kind], initialNoDate:pane === 'tasks', isCurrent, returnFocus,
+      });
+    },
   });
 }
 
@@ -535,7 +548,11 @@ export async function loadCalendarWorkspace(el) {
     tasksDialog=dialog;
     if (button) dialog.modal.dataset.taskLauncher = '';
     dialog.modal.querySelector('footer [data-dialog-close]').textContent='Закрыть';
-    const list = document.createElement('div');
+    const list = document.createElement('div'); list.dataset.launchSection = 'tasks';
+    const scopes = document.createElement('div'); scopes.dataset.launchScopes = '';
+    scopes.setAttribute('role','group'); scopes.setAttribute('aria-label','Что начать');
+    scopes.innerHTML = '<button type="button" data-launch-scope="all">Всё</button><button type="button" data-launch-scope="tasks">Задачи</button><button type="button" data-launch-scope="routines">Рутины</button>';
+    dialog.body.append(scopes);
     if (button) {
       const controller = disposeNow;
       const previous = document.createElement('button'); previous.type='button'; previous.dataset.launcherReturn=''; previous.hidden=true;
@@ -566,7 +583,13 @@ export async function loadCalendarWorkspace(el) {
       renderLauncherState(controller.getLauncherState());
     }
     dialog.body.append(list);
-    const routines = document.createElement('div'); dialog.body.append(routines);
+    const routines = document.createElement('div'); routines.dataset.launchSection = 'routines'; dialog.body.append(routines);
+    const setScope = scope => {
+      list.hidden = scope === 'routines'; routines.hidden = scope === 'tasks'; dialog.modal.dataset.launchScope = scope;
+      scopes.querySelectorAll('button').forEach(button => button.setAttribute('aria-pressed',String(button.dataset.launchScope === scope)));
+    };
+    scopes.addEventListener('click', event => { const button = event.target.closest('[data-launch-scope]'); if (button) setScope(button.dataset.launchScope); });
+    setScope(S._unifiedPane.calendar === 'routines' ? 'routines' : S._unifiedPane.calendar === 'tasks' ? 'tasks' : 'all');
     disposeRoutineChoices = mountCalendarRoutineChoices(routines, { invoke, notifyChange:changed,
       openRoutine:options => { dialog.close({restoreFocus:false}); openRecurringRun({document,invoke,...options,returnFocus:() => el.querySelector('[data-calendar-launch]')?.focus()}); },
       openManager:() => { dialog.close(); window.dispatchEvent(new CustomEvent('hanni:open-recurring-settings')); },
@@ -611,14 +634,15 @@ export async function loadCalendarWorkspace(el) {
   let nowHost = null;
   const config = { title:'Календарь', headerIcon:TAB_ICONS.calendar, editableHeader:false, subtitle:'События и расписание', hideDescription:true, hideMemory:true, accessibleTabs:true, beforeRender:cleanupWorkspace, isCurrent:() => S.activeTab === 'calendar',
     toolbarActions: [
-      { label:'Создать', title:'Создать задачу, событие, цель или заметку', icon:TAB_ICONS.add, onClick:openCalendarCreate },
+      { label:'Создать', title:'Создать задачу, событие, цель, заметку, желание или рутину', icon:TAB_ICONS.add, onClick:openCalendarCreate },
       { label:'Начать', title:'Выбрать задачу или рутину', icon:ICONS.play, onClick:showAllTasks },
     ],
     renderHeaderExtra: host => {
       const create = host.querySelector('.uni-header-action');
       create.dataset.calendarCreate = '';
-      create.setAttribute('aria-label', create.title);
-      create.setAttribute('aria-haspopup', 'dialog');
+      create.setAttribute('aria-label', 'Создать');
+      create.setAttribute('aria-haspopup', 'menu');
+      create.setAttribute('aria-expanded', 'false');
       const launch = host.querySelector('[data-action-idx="1"]');
       launch.dataset.calendarLaunch = '';
       launch.setAttribute('aria-haspopup', 'dialog');
