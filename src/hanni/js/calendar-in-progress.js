@@ -135,6 +135,7 @@ export function mountCalendarInProgress(element, dependencies) {
     group.append(chip);
     if (state.next) {
       const next = node('button', 'cip-stage-next'); next.type = 'button'; next.innerHTML = ARROW;
+      next.append(node('span', 'cip-stage-next-label', 'Дальше'));
       next.dataset.cipControl = 'stage-next'; next.dataset.cipKey = row.key; next.disabled = busy;
       next.title = `${state.stage ? 'Дальше' : 'Начать'}: ${state.next.title}`;
       next.setAttribute('aria-label', `Следующая стадия «${state.next.title}»: ${row.title}`);
@@ -180,8 +181,8 @@ export function mountCalendarInProgress(element, dependencies) {
     const finish = iconButton('cip-finish', ICONS.check, 'Готово', 'finish', row);
     const more = iconButton('cip-more', MORE_ICON, 'Действия', 'menu', row);
     more.setAttribute('aria-haspopup', 'menu'); more.setAttribute('aria-expanded', String(menu?.key === row.key && menu.control === 'menu'));
-    actions.append(toggle, finish, more);
-    item.append(content, meter, actions);
+    actions.append(finish, more);
+    item.append(toggle, content, meter, actions);
     if (confirming === row.key) { item.classList.add('is-confirming'); item.append(confirmPanel(row)); }
     rowSignatures.set(item, JSON.stringify([row, confirming === row.key]));
     return item;

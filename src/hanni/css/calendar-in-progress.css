@@ -22,12 +22,12 @@
 /* Work and personal tasks (2026-09-25): two quiet sub-headings when both are listed. */
 .cip-group { margin: 8px 0 2px; padding: 0 12px; font-size: 11px; line-height: 16px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); }
 .cip-group:first-child { margin-top: 2px; }
-.cip-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 112px auto; align-items: center; column-gap: 16px; min-height: 64px; padding: 8px 8px 8px 12px; border: 1px solid transparent; border-radius: 10px; transition: background-color .12s, border-color .12s; }
+.cip-row { position: relative; display: grid; grid-template-columns: 40px minmax(0, 1fr) max-content auto; align-items: center; column-gap: 12px; min-height: 68px; padding: 8px; border: 1px solid transparent; border-radius: 10px; transition: background-color .12s, border-color .12s; }
 .cip-row:has(:focus-visible) { background: var(--cip-hover); }
 .cip-row.is-running { background: transparent; }
 .cip-row.is-running:hover { background: transparent; }
 
-.cip-content { display: grid; grid-template-columns: minmax(0, 1fr); row-gap: 4px; min-width: 0; }
+.cip-content { display: grid; grid-template-columns: minmax(0, 1fr); grid-column: 2; row-gap: 4px; min-width: 0; }
 .cip-line { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .calendar-in-progress .cip-title { flex: 1 1 auto; display: block; min-width: 0; padding: 0; border: 0; border-radius: 3px; background: transparent; font-size: 14px !important; line-height: 20px; font-weight: 600; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .cip-title:hover { text-decoration: underline; text-decoration-color: var(--text-faint); text-underline-offset: 3px; }
@@ -49,7 +49,7 @@
 .cip-stage-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cip-stage-mark { flex: none; color: var(--text-muted); }
 .cip-stage.is-deleted .cip-stage-text { font-style: italic; }
-.cip-stage-next { position: relative; flex: none; display: inline-grid; place-items: center; width: 26px; height: 22px; padding: 0; border: 1px solid var(--border-subtle); border-radius: 11px; background: transparent; color: var(--text-muted) !important; cursor: pointer; transition: background-color .12s, border-color .12s, color .12s; }
+.cip-stage-next { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 32px; padding: 4px 7px; border: 0; border-radius: 5px; background: transparent; color: var(--text-secondary) !important; font-size: 12px !important; cursor: pointer; transition: background-color .12s, color .12s; }
 .cip-stage-next svg { display: block; }
 .cip-stage-next:hover:not(:disabled) { border-color: var(--border-hover); background: var(--cip-hover-strong); color: var(--text-primary) !important; }
 .cip-stage-next:disabled { cursor: default; opacity: .6; }
@@ -62,12 +62,13 @@
 .cip-row.is-running .cip-progress > span { background: var(--text-secondary); }
 .cip-progress.is-over > span, .cip-row.is-running .cip-progress.is-over > span { background: var(--cip-warn); }
 
-.cip-actions { display: flex; grid-column: 3; grid-row: 1; align-items: center; gap: 2px; }
+.cip-actions { display: flex; grid-column: 4; grid-row: 1; align-items: center; gap: 2px; }
 .cip-icon { position: relative; display: inline-grid; place-items: center; flex: none; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--text-muted) !important; cursor: pointer; transition: background-color .12s, color .12s, box-shadow .12s; }
 .cip-icon svg { display: block; }
 .cip-icon:hover:not(:disabled), .cip-icon[aria-expanded="true"] { background: var(--cip-hover-strong); color: var(--text-primary) !important; }
 .cip-icon:disabled { cursor: default; opacity: .4; }
 .cip-toggle:not(.is-running) svg path { fill: currentColor; }
+.cip-row > .cip-toggle { grid-column: 1; grid-row: 1; width: 40px; height: 40px; color: var(--text-primary) !important; background: var(--bg-card); box-shadow: inset 0 0 0 1px var(--border-default); }
 .cip-toggle.is-running { color: var(--text-primary) !important; background: var(--bg-card); box-shadow: inset 0 0 0 1px var(--border-default); }
 .cip-toggle.is-running:hover:not(:disabled) { box-shadow: inset 0 0 0 1px var(--border-hover); }
 
@@ -100,8 +101,8 @@
 /* Stage work is primary here; task totals remain in the task details. */
 .cip-row:has(.cip-stage-time) .cip-time-meter { display: none; }
 @media (min-width: 681px) {
-  .cip-row:has(.cip-stage-time) { grid-template-columns: minmax(0, 1fr) auto; }
-  .cip-row:has(.cip-stage-time) .cip-actions { grid-column: 2; }
+  .cip-row:has(.cip-stage-time) { grid-template-columns: 40px minmax(0, 1fr) auto; }
+  .cip-row:has(.cip-stage-time) .cip-actions { grid-column: 3; }
 }
 
 /* Stage and ⋯ menus reuse .calendar-record-menu (calendar-context-menu.css). */
@@ -119,19 +120,20 @@
   .calendar-in-progress { margin-bottom: 14px; }
   .cip-card { padding: 8px 4px 4px; }
   .cip-heading { padding-left: 10px; }
-  .cip-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; column-gap: 8px; row-gap: 6px; min-height: 64px; padding: 7px 2px 7px 10px; }
-  .cip-content { grid-column: 1 / -1; grid-row: 1; row-gap: 3px; }
+  .cip-row { grid-template-columns: 40px minmax(0, 1fr) auto; grid-template-rows: auto auto; column-gap: 8px; row-gap: 6px; min-height: 64px; padding: 8px 4px; }
+  .cip-content { grid-column: 2 / -1; grid-row: 1; row-gap: 3px; }
+  .cip-row > .cip-toggle { align-self: start; }
   .calendar-in-progress .cip-title { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
   .cip-meta { row-gap: 3px; }
-  .cip-time-meter { grid-column: 1; grid-row: 2; display: grid; grid-template-columns: max-content max-content; grid-template-rows: auto auto; justify-items: start; align-items: center; column-gap: 6px; row-gap: 2px; }
+  .cip-time-meter { grid-column: 2; grid-row: 2; display: grid; grid-template-columns: max-content max-content; grid-template-rows: auto auto; justify-items: start; align-items: center; column-gap: 6px; row-gap: 2px; }
   .cip-time-label { grid-column: 1; }
   .cip-time { grid-column: 2; margin-left: 0; }
   .cip-time-meter .cip-progress { grid-column: 1 / -1; width: 64px; }
-  .cip-actions { grid-column: 2; grid-row: 2; align-self: center; }
+  .cip-actions { grid-column: 3; grid-row: 2; align-self: center; }
   .cip-line { gap: 8px; }
   .cip-actions { gap: 0; }
   .cip-icon { width: 36px; height: 36px; }
-  .cip-stage-next { width: 36px; height: 36px; border-radius: 18px; }
+  .cip-stage-next { min-height: 36px; }
   .cip-group { padding-left: 10px; }
   /* The confirmation text takes its own line; both answers share the next one. */
   .cip-confirm-text { flex-basis: 100%; }

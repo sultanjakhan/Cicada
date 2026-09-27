@@ -31,14 +31,19 @@ export function mountHealthActivitySettings(element, { invoke, setPending = () =
   let disposed = false, busy = false, status = null;
   element.className = 'calendar-setting';
   element.innerHTML = `<h3>Прогулки и шаги</h3>
-    <section><h4>Прогулки</h4><p data-activity-walking-status role="status">Проверяем Health Connect…</p></section>
-    <section><h4>Шаги</h4><p data-activity-steps-status role="status">Проверяем Health Connect…</p></section>
+    <p data-activity-remote role="status" hidden></p>
+    <section data-activity-walking><h4>Прогулки</h4><p data-activity-walking-status role="status">Проверяем Health Connect…</p></section>
+    <section data-activity-steps><h4>Шаги</h4><p data-activity-steps-status role="status">Проверяем Health Connect…</p></section>
     <p data-activity-background></p><p data-activity-success></p><p data-activity-history hidden></p>
     <div class="calendar-sync-actions"><button type="button" data-activity-connect hidden>Разрешить чтение прогулок и шагов</button>
     <button type="button" data-activity-import hidden>Проверить прогулки и шаги сейчас</button><button type="button" data-activity-retry hidden>Повторить проверку</button></div>`;
   const q = key => element.querySelector(`[data-activity-${key}]`);
   function render() {
     if (disposed) return;
+    const remote = status?.status === 'unsupported';
+    q('remote').hidden = !remote;
+    q('remote').textContent = remote ? walkingStatusText(status) : '';
+    q('walking').hidden = remote; q('steps').hidden = remote;
     q('walking-status').textContent = busy ? 'Проверяем прогулки…' : walkingStatusText(status);
     q('steps-status').textContent = busy ? 'Проверяем шаги…' : stepsStatusText(status);
     const ready = status?.status === 'ready', permission = status?.status === 'permission_required';

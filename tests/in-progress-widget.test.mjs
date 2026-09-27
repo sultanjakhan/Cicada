@@ -157,7 +157,7 @@ test('rows show total time against the estimate, the stage chip and the goal; ov
   const draft = x.row('note:draft'), letters = x.row('note:letters');
   assert.equal(draft.querySelector('.cip-time').classList.contains('is-over'), true, 'actual 70 is over the 60 minute estimate');
   assert.equal(draft.querySelector('.cip-time').getAttribute('aria-label'), 'Идёт. Учтено 70 из 60 мин, больше оценки');
-  assert.deepEqual([...draft.children].map(item => item.className), ['cip-content', 'cip-time-meter', 'cip-actions']);
+  assert.equal(draft.querySelector('button'), x.control('note:draft', 'toggle'), 'keyboard order starts with the primary start/pause control');
   assert.equal(draft.querySelector('.cip-meta .cip-state').textContent, 'Идёт');
   assert.equal(draft.querySelector('.cip-time-label').textContent, 'Всего / оценка');
   assert.match(draft.querySelector('.cip-stage-time').textContent, /^Учтено на этапе /);

@@ -4,6 +4,17 @@
 `https://github.com/sultanjakhan/Cicada`. Остальной интерфейс остаётся на русском;
 технические идентификаторы, ключи, package/bundle IDs и лицензии не переименовывать.
 
+Owner design rule, 2026-09-27: before designing or substantially changing UI,
+apply `hanni-ux-ui-research`; accept composition with `hanni-visual-review`.
+Show the complete relevant scenario and make the primary action, stage and time
+meaning clear. Passing tests or absence of overflow is not visual acceptance.
+Preserve agreed workspace widths and controls; do not substitute decorations for
+information hierarchy. A small copy fix does not require a full design audit.
+The Today work focus shows one task and its current stage at a time. Selection
+does not pause or finish other running tasks. The stage arrow advances the stage;
+start/pause and task completion remain separate actions. Goals may have separate
+subtasks; this does not make a task stage an independently completed subtask.
+
 Перед новой постановкой прочитай [подтверждённый контекст продукта](docs/product-context.md), затем проверь исходный код и относящиеся к задаче Issues. Не повторяй вопросы, на которые уже есть ответ в этом контексте; уточняй только новые отсутствующие факты.
 
 Owner continuation, 2026-09-27 (Today completion): recommendation settings open

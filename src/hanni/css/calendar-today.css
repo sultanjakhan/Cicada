@@ -33,11 +33,10 @@
 /* The title opens the goal. Today owns the single next-action recommendation. */
 .calendar-main-goal [data-action="goal-open"], .calendar-main-goal .calendar-now__goal-next { display:none; }
 .calendar-main-goal .calendar-now__goal-glance { margin-top:8px; }
-.calendar-today .cip-card { margin:18px 0 0; padding:14px 0 0; border:0; border-top:1px solid var(--border-default,#ddd); border-radius:0; background:transparent; }
-.calendar-today .cip-heading h2 { font-size:13px; }
-.calendar-today:has([data-calendar-next-action][data-running="true"]) .cip-card { border-top:0; padding-top:0; margin-top:10px; }
-.calendar-today:has([data-calendar-next-action][data-running="true"]) .cip-heading { display:none; }
-.calendar-today:has([data-calendar-next-action][data-running="true"]) .calendar-next-action__item { margin-top:2px; }
+.calendar-today .cip-card { margin:10px 0 0; padding:0; border:0; border-radius:0; background:transparent; }
+.calendar-today .cip-heading { display:none; }
+.calendar-today:has(.calendar-next-action[data-running="true"]) .calendar-next-action__item { margin-top:2px; }
+.calendar-today .calendar-next-action[data-running="true"] .calendar-next-action__reason { display:none; }
 .calendar-today-links { display:flex; gap:18px; padding-top:14px; }
 .calendar-today-links button, .calendar-routine-choices__heading button { border:0; padding:4px 0; background:transparent; color:var(--text-secondary,#626262); font-size:12px; text-decoration:underline; text-underline-offset:3px; cursor:pointer; }
 .calendar-task-history { margin-top:20px; border-top:1px solid var(--border-default,#ddd); padding-top:12px; }
