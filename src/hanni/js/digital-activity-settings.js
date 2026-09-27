@@ -1,5 +1,6 @@
 import { listen } from './state.js';
 import { escapeHtml } from './utils.js';
+import { mountDigitalActivityErasure } from './digital-activity-erasure.js';
 
 const esc=value=>escapeHtml(String(value??''));
 const fallbackPort=5600;
@@ -8,19 +9,32 @@ function errorLabel(value){const known={digital_activity_invalid_config:'Про�
 
 export function mountDigitalActivitySettings(element,{invoke,setPending=()=>{}}={}){
   const window=element.ownerDocument.defaultView;
-  let disposed=false,busy=false,devices=[],loadError='',message='',editingId=null,formBaseline=null,removingId=null;
+  let disposed=false,busy=false,devices=[],loadError='',message='',editingId=null,formBaseline=null,removingId=null,erasureFocusId=null;
   element.className='calendar-setting digital-activity-settings';
-  element.innerHTML=`<h3>Локальный учёт приложений</h3><p class="calendar-setting-hint">Подключи ActivityWatch на этом устройстве, чтобы добавлять дневные итоги в календарь. В календарь попадут названия приложений и время, без заголовков окон и адресов страниц.</p><p data-da-error role="alert" hidden></p><p data-da-message role="status" hidden></p><div data-da-list></div><button type="button" data-da-add>Добавить устройство</button><button type="button" data-da-retry hidden>Повторить загрузку</button><section data-da-form hidden><h4 data-da-form-title>Новое устройство</h4><label>Название устройства<input data-da-label maxlength="100" autocomplete="off"></label><label>Система<select data-da-source><option value="windows">Windows</option><option value="android">Android</option></select></label><label class="digital-activity-settings__toggle"><input type="checkbox" data-da-enabled> Автоматически обновлять календарь</label><details><summary>Подключение</summary><label>Локальный порт<input type="number" data-da-port min="1" max="65535" value="${fallbackPort}"></label><p>Только локальный ActivityWatch на этом устройстве.</p></details><label>Токен, если настроен<input type="password" data-da-token autocomplete="new-password" placeholder="Оставь пустым, чтобы не менять"></label><label data-da-token-clear-wrap hidden><input type="checkbox" data-da-token-clear> Удалить сохранённый токен</label><div class="digital-activity-settings__actions"><button type="button" data-da-save>Сохранить подключение</button><button type="button" data-da-cancel>Отмена</button></div></section><section class="digital-activity-settings__blockers"><h3>Ограничение приложений и сайтов</h3><p>Блокировщики настраиваются в своих приложениях. Управление из Cicada ещё не подключено.</p><article><h4>Android · TimeLimit</h4><p>Стороннее приложение для правил использования приложений.</p><a href="https://codeberg.org/timelimit/opentimelimit-android" data-open-url="https://codeberg.org/timelimit/opentimelimit-android" target="_blank" rel="noopener noreferrer">Открыть исходный проект</a></article><article><h4>Браузер · LeechBlock NG</h4><p>Расширение для расписания блокировки сайтов в поддерживаемом браузере.</p><a href="https://github.com/proginosko/LeechBlockNG" data-open-url="https://github.com/proginosko/LeechBlockNG" target="_blank" rel="noopener noreferrer">Открыть исходный проект</a></article><p>Блокирование приложений Windows из Cicada пока не поддерживается.</p></section>`;
+  element.innerHTML=`<h3>Локальный учёт приложений</h3><p class="calendar-setting-hint">Подключи ActivityWatch на этом устройстве, чтобы добавлять дневные итоги в календарь. В календарь попадут названия приложений и время, без заголовков окон и адресов страниц.</p><p data-da-error role="alert" hidden></p><p data-da-message role="status" hidden></p><div data-da-list></div><button type="button" data-da-add>Добавить устройство</button><button type="button" data-da-retry hidden>Повторить загрузку</button><section data-da-form hidden><h4 data-da-form-title>Новое устройство</h4><label>Название устройства<input data-da-label maxlength="100" autocomplete="off"></label><label>Система<select data-da-source><option value="windows">Windows</option><option value="android">Android</option></select></label><label class="digital-activity-settings__toggle"><input type="checkbox" data-da-enabled> Автоматически обновлять календарь</label><details><summary>Подключение</summary><label>Локальный порт<input type="number" data-da-port min="1" max="65535" value="${fallbackPort}"></label><p>Только локальный ActivityWatch на этом устройстве.</p></details><label>Токен, если настроен<input type="password" data-da-token autocomplete="new-password" placeholder="Оставь пустым, чтобы не менять"></label><label data-da-token-clear-wrap hidden><input type="checkbox" data-da-token-clear> Удалить сохранённый токен</label><div class="digital-activity-settings__actions"><button type="button" data-da-save>Сохранить подключение</button><button type="button" data-da-cancel>Отмена</button></div></section><section data-da-erasure hidden></section><section class="digital-activity-settings__blockers"><h3>Ограничение приложений и сайтов</h3><p>Блокировщики настраиваются в своих приложениях. Управление из Cicada ещё не подключено.</p><article><h4>Android · TimeLimit</h4><p>Стороннее приложение для правил использования приложений.</p><a href="https://codeberg.org/timelimit/opentimelimit-android" data-open-url="https://codeberg.org/timelimit/opentimelimit-android" target="_blank" rel="noopener noreferrer">Открыть исходный проект</a></article><article><h4>Браузер · LeechBlock NG</h4><p>Расширение для расписания блокировки сайтов в поддерживаемом браузере.</p><a href="https://github.com/proginosko/LeechBlockNG" data-open-url="https://github.com/proginosko/LeechBlockNG" target="_blank" rel="noopener noreferrer">Открыть исходный проект</a></article><p>Блокирование приложений Windows из Cicada пока не поддерживается.</p></section>`;
   const q=selector=>element.querySelector(selector),error=q('[data-da-error]'),statusMessage=q('[data-da-message]'),list=q('[data-da-list]'),form=q('[data-da-form]');
   const showError=value=>{error.textContent=value;error.hidden=!value;};
+  const focusErasure=id=>Array.from(element.querySelectorAll('[data-da-erase]')).find(button=>button.dataset.daErase===id)?.focus();
+  const erasure=mountDigitalActivityErasure(q('[data-da-erasure]'),{
+    invoke,
+    onPending:value=>{busy=value;setPending(value);render();if(!value&&erasureFocusId){focusErasure(erasureFocusId);erasureFocusId=null;}},
+    onErased:async(value,confirmed)=>{
+      message=`Удалено дневных итогов: ${Number(value?.deleted)||0}. Дни по ${value?.deletedThrough||confirmed.throughDate} исключены из импорта.`;
+      statusMessage.textContent=message;statusMessage.hidden=false;
+      await reloadAfterAction();render();
+      erasureFocusId=confirmed.deviceId;
+    },
+  });
+  element.addEventListener('activity-erasure-cancel',event=>focusErasure(event.detail?.deviceId));
   function render(){
     if(disposed)return;
-    list.innerHTML=devices.length?devices.map(device=>`<article class="digital-activity-device" data-device-id="${esc(device.id)}"><div class="digital-activity-device__heading"><div><h4>${esc(device.label)}</h4><p>${device.source==='android'?'Android':'Windows'} · порт ${esc(device.port)}</p></div><span class="digital-activity-device__state ${device.lastError?'is-error':device.enabled?'is-enabled':'is-paused'}">${device.lastError?'Проверь подключение':device.enabled?'Автоимпорт включён':'Автоимпорт на паузе'}</span></div><p>${device.lastError?errorLabel(device.lastError):timeLabel(device.lastSuccess)}</p><p>Записей активности · ${Number(device.records)||0}</p><div class="digital-activity-settings__actions"><button type="button" data-da-import="${esc(device.id)}">Импортировать сейчас</button><button type="button" data-da-edit="${esc(device.id)}">Изменить</button><button type="button" data-da-toggle="${esc(device.id)}">${device.enabled?'Приостановить автоимпорт':'Включить автоимпорт'}</button><button type="button" data-da-remove="${esc(device.id)}">Удалить подключение</button></div>${removingId===device.id?`<div class="digital-activity-settings__remove"><p>Убрать подключение? Дневные события останутся. Сбор данных в ActivityWatch отключается отдельно.</p><div class="digital-activity-settings__actions"><button type="button" data-da-confirm-remove="${esc(device.id)}">Удалить</button><button type="button" data-da-keep="${esc(device.id)}">Оставить</button></div></div>`:''}</article>`).join(''):'<p>Подключения пока нет. Устройство и автоимпорт настраиваются отдельно; новые профили не подключаются автоматически.</p>';
+    list.innerHTML=devices.length?devices.map(device=>`<article class="digital-activity-device" data-device-id="${esc(device.id)}"><div class="digital-activity-device__heading"><div><h4>${esc(device.label)}</h4><p>${device.source==='android'?'Android':'Windows'} · порт ${esc(device.port)}</p></div><span class="digital-activity-device__state ${device.lastError?'is-error':device.enabled?'is-enabled':'is-paused'}">${device.lastError?'Проверь подключение':device.enabled?'Автоимпорт включён':'Автоимпорт на паузе'}</span></div><p>${device.lastError?errorLabel(device.lastError):timeLabel(device.lastSuccess)}</p><p>Записей активности · ${Number(device.records)||0}</p>${device.deletedThrough?`<p>Не импортировать дни по ${esc(device.deletedThrough)} включительно.</p>`:''}<div class="digital-activity-settings__actions"><button type="button" data-da-import="${esc(device.id)}">Импортировать сейчас</button><button type="button" data-da-edit="${esc(device.id)}">Изменить</button><button type="button" data-da-toggle="${esc(device.id)}">${device.enabled?'Приостановить автоимпорт':'Включить автоимпорт'}</button><button type="button" data-da-erase="${esc(device.id)}">Очистить историю</button><button type="button" data-da-remove="${esc(device.id)}">Удалить подключение</button></div>${removingId===device.id?`<div class="digital-activity-settings__remove"><p>Убрать подключение? Дневные события останутся. Сбор данных в ActivityWatch отключается отдельно.</p><div class="digital-activity-settings__actions"><button type="button" data-da-confirm-remove="${esc(device.id)}">Удалить</button><button type="button" data-da-keep="${esc(device.id)}">Оставить</button></div></div>`:''}</article>`).join(''):'<p>Подключения пока нет. Устройство и автоимпорт настраиваются отдельно; новые профили не подключаются автоматически.</p>';
     q('[data-da-retry]').hidden=!loadError;
-    element.querySelectorAll('button').forEach(button=>{button.disabled=busy;});
+    element.querySelectorAll('button').forEach(button=>{if(!button.closest('[data-da-erasure]'))button.disabled=busy;});
     if(loadError)showError(loadError);
   }
   function openForm(device=null){
+    erasure.close();
     editingId=device?.id||null;
     q('[data-da-form-title]').textContent=device?'Изменить подключение':'Новое устройство';
     q('[data-da-label]').value=device?.label||'';q('[data-da-source]').value=device?.source||'windows';q('[data-da-enabled]').checked=device?.enabled??false;q('[data-da-port]').value=String(device?.port||fallbackPort);q('[data-da-token]').value='';q('[data-da-token-clear]').checked=false;q('[data-da-token-clear-wrap]').hidden=!device;
@@ -63,15 +77,16 @@ export function mountDigitalActivitySettings(element,{invoke,setPending=()=>{}}=
   }
   element.addEventListener('click',event=>{
     const button=event.target.closest('button');if(!button||!element.contains(button))return;
-    if(busy)return;
+    if(busy||button.closest('[data-da-erasure]'))return;
     if(isDirty()&&!button.matches('[data-da-save],[data-da-cancel]')){showError('Сначала сохрани или отмени открытый черновик подключения.');return;}
     if(button.hasAttribute('data-da-add'))openForm();
     else if(button.hasAttribute('data-da-cancel')){form.hidden=true;formBaseline=null;showError('');}
     else if(button.hasAttribute('data-da-retry')){loadError='';void load();}
     else if(button.dataset.daEdit)openForm(devices.find(device=>device.id===button.dataset.daEdit));
+    else if(button.dataset.daErase){showError('');statusMessage.hidden=true;form.hidden=true;formBaseline=null;removingId=null;render();erasure.open(devices.find(device=>device.id===button.dataset.daErase));}
     else if(button.dataset.daImport)void importNow(button.dataset.daImport);
     else if(button.dataset.daToggle){const device=devices.find(item=>item.id===button.dataset.daToggle);if(device)void toggle(device);}
-    else if(button.dataset.daRemove){removingId=button.dataset.daRemove;render();q('[data-da-confirm-remove]')?.focus();}
+    else if(button.dataset.daRemove){erasure.close();removingId=button.dataset.daRemove;render();q('[data-da-confirm-remove]')?.focus();}
     else if(button.dataset.daKeep){const id=button.dataset.daKeep;removingId=null;render();Array.from(element.querySelectorAll('[data-da-remove]')).find(button=>button.dataset.daRemove===id)?.focus();}
     else if(button.dataset.daConfirmRemove)void removeConnection(button.dataset.daConfirmRemove);
     else if(button.hasAttribute('data-da-save'))void save();
@@ -80,7 +95,7 @@ export function mountDigitalActivitySettings(element,{invoke,setPending=()=>{}}=
   let unlisten;
   try{Promise.resolve(listen('digital-activity-updated',onUpdated)).then(stop=>{if(disposed)stop?.();else unlisten=stop;}).catch(()=>{});}catch{}
   render();void load();
-  const dispose=()=>{disposed=true;unlisten?.();};
+  const dispose=()=>{disposed=true;erasure.dispose();unlisten?.();};
   dispose.isDirty=isDirty;return dispose;
 }
 

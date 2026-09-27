@@ -124,6 +124,11 @@
 .digital-activity-settings details p{margin:5px 0;color:var(--text-secondary);font-size:12px;}
 .digital-activity-settings__toggle{display:flex;align-items:center;gap:9px;min-height:44px;font-size:13px;}
 .digital-activity-settings__actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 0;}
+.digital-activity-erasure{margin:16px 0;padding:16px;border:1px solid var(--border-default);border-radius:12px;}
+.digital-activity-erasure h4{margin:0 0 6px;}
+.digital-activity-erasure>p{font-size:13px;line-height:1.5;overflow-wrap:anywhere;}
+.digital-activity-erasure>label{display:grid;gap:6px;margin:12px 0;font-size:13px;}
+.digital-activity-erasure [data-erasure-confirm]{color:var(--danger,#a33737);border-color:currentColor;}
 .digital-activity-device{padding:14px 0;border-top:1px solid var(--border-subtle,#e9e9e9);}
 .digital-activity-device__heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;min-width:0;}
 .digital-activity-device__heading>div{min-width:0;}
