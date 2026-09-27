@@ -500,4 +500,3 @@ test('goal indexes preserve first matches, string IDs and cycles, then rebuild a
   assert.equal(x.item('Mapped').querySelector('.ct-goal'), null, 'the moved first link places Mapped under its new top-level goal');
   assert.equal(x.item('Spare').querySelector('.ct-goal').title, 'Карьера обновлена / SQL');
 });
-
