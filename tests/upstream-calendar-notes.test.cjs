@@ -6,7 +6,7 @@ const read = name => fs.readFileSync(path.resolve(__dirname, '../src/hanni/js', 
 const tick = async () => { for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve)); };
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 let sequence = 0;
-async function setup(t, { realEditor = false } = {}) {
+async function setup(t, { realEditor = false, fixtureRows = null } = {}) {
   const dom = new JSDOM('<main></main><button id="outside">Вне</button>', { url: 'http://localhost/', pretendToBeVisual: true, runScripts: 'outside-only' });
   const w = dom.window, root = w.document.querySelector('main');
   const vendor = name => fs.readFileSync(path.resolve(__dirname, '../src/public/vendor', name + '.min.js'), 'utf8');
@@ -30,7 +30,7 @@ async function setup(t, { realEditor = false } = {}) {
     .replace("'./calendar-dialog.js'", JSON.stringify(data(read('calendar-dialog'))))
     .replace("'./block-editor-security.js'", () => JSON.stringify(data(read('block-editor-security'))));
   const module = await import(data(source) + '#' + sequence++);
-  const rows = [
+  const rows = fixtureRows || [
     { id: 1, title: 'Plain', content: 'Исходный текст', tab_name: 'calendar', status: 'note', tags: 'tag,keep', pinned: true, priority: 4, due_date: '2027-01-01', reminder_at: 'later', archived: false, updated_at: '2026-09-06T13:00:00.000000100+05:00' },
     { id: 2, title: 'Rich', content: 'Rich original', tab_name: 'calendar', status: 'note', tags: 'rich,keep', archived: false, updated_at: 'rich-v1', content_blocks: JSON.stringify({ time: 10, version: '2.31', blocks: [{ type: 'paragraph', data: { text: 'Rich original' } }, { type: 'code', data: { code: 'const x = 1;' } }] }) },
     { id: 3, title: 'Invalid', content: 'Readonly fallback', tab_name: 'calendar', status: 'note', updated_at: 'bad-v1', content_blocks: '{invalid' },
@@ -74,6 +74,30 @@ async function setup(t, { realEditor = false } = {}) {
   const remount = async () => { dispose(); root.replaceChildren(); dispose = await module.mountCalendarNotes(root, { invoke, initBlockEditor: createEditor }); await tick(); };
   return { w, root, rows, before, calls, editors, open, set, save, close, remount, dispose: () => dispose(), failEditor: () => { editorFailure = true; } };
 }
+
+test('catalog uses one complete IPC result at 199/200/201 notes without a false truncation warning', async t => {
+  for (const total of [199, 200, 201]) {
+    const rows = Array.from({ length: total }, (_, index) => ({
+      id: index + 1,
+      title: `Boundary note ${index + 1}`,
+      content: `Content ${index + 1}`,
+      tab_name: 'calendar',
+      status: 'note',
+      tags: `calendar,fixture-${index + 1}`,
+      archived: index === total - 1,
+      updated_at: `2026-09-${String((index % 28) + 1).padStart(2, '0')}`,
+      ...(index === 0 ? { priority: 4, pinned: true, content_blocks: JSON.stringify({ time: 8, version: 'fixture', blocks: [{ type: 'paragraph', data: { text: 'rich metadata' } }] }) } : {}),
+    }));
+    const x = await setup(t, { fixtureRows: rows });
+    assert.equal(x.calls.filter(call => call.name === 'get_notes').length, 1, `${total} notes should load through one IPC call`);
+    assert.equal(x.root.querySelector('[data-message]').textContent, '', `${total} notes should not claim the list was truncated`);
+    assert.equal(x.root.querySelectorAll('.cp-note-card').length, total - 1);
+    assert.match(x.root.querySelector('[data-note-id="1"]').textContent, /Boundary note 1/);
+    x.root.querySelector('[data-filter="archive"]').click();
+    assert.equal(x.root.querySelectorAll('.cp-note-card').length, 1, 'archived note remains available');
+    assert.equal(x.root.querySelector(`[data-note-id="${total}"] .cp-note-title`).textContent, `Boundary note ${total}`);
+  }
+});
 
 const hostileInline = '<b>Keep formatting</b><img src="x" onerror="window.__noteXss=1"><a href="javascript:alert(1)">js</a><a href="data:text/html,unsafe">data</a><a href="file:///example">file</a><a href="https://example.com/path">safe</a>';
 const hostileBlocks = () => ({ time: 10, version: 'fixture', blocks: [
