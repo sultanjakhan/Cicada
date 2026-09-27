@@ -671,7 +671,7 @@ test('a paused note whose record is gone clears stale execution but retains its 
 });
 
 test('a return-note read failure other than not-found remains visible', async t => {
-  const initial = { ...blank(), returnTo: { source_type: 'note', source_id: 'task-a', title: 'Р—Р°РјРµС‚РєРё РїРѕ API' } };
+  const initial = { ...blank(), returnTo: { source_type: 'note', source_id: 'task-a', title: 'API notes' } };
   const data = backend(initial);
   data.onceFail('get_note');
   const x = await mount(t, data);
