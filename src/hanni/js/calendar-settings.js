@@ -308,6 +308,7 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
     invoke,
     setPending: value => { api.setPending(value); refreshFooter(); },
   });
+  hosts.processes.classList.add('calendar-settings-panel');
   hosts.processes.append(settingsStatus);
   hosts.processes.addEventListener('input', scheduleFooterRefresh);
   hosts.processes.addEventListener('click', scheduleFooterRefresh);

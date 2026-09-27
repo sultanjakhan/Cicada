@@ -81,7 +81,10 @@ test('tab semantics, deep link and keyboard navigation preserve a preference dra
 test('the process deep link selects the task-stage tab', async () => {
   const x = await boot({ section: 'processes' });
   assert.equal(x.modal.querySelector('[role="tab"][aria-selected="true"]').textContent, 'Этапы задач');
-  assert.equal(x.modal.querySelector('#calendar-settings-panel-processes').hidden, false);
+  const panel = x.modal.querySelector('#calendar-settings-panel-processes');
+  assert.equal(panel.hidden, false);
+  assert.equal(panel.getAttribute('role'), 'tabpanel');
+  assert.ok(panel.classList.contains('calendar-settings-panel'), 'the editor mount keeps the panel styling and hidden-state selector');
 });
 
 test('preference controls stay disabled during a delayed read while connections remain usable', async () => {
