@@ -4,6 +4,7 @@
 const SVG_ATTRS = 'width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"';
 
 export const ICONS = {
+  sliders: `<svg ${SVG_ATTRS}><path d="M2 5h3m4 0h5M2 11h6m4 0h2"/><circle cx="7" cy="5" r="2"/><circle cx="10" cy="11" r="2"/></svg>`,
   calendar: `<svg ${SVG_ATTRS}><rect x="2" y="3.5" width="12" height="10.5" rx="2"/><path d="M5 2v3M11 2v3M2 7h12"/></svg>`,
   target: `<svg ${SVG_ATTRS}><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="3"/><circle cx="8" cy="8" r=".75" fill="currentColor" stroke="none"/></svg>`,
   flag: `<svg ${SVG_ATTRS}><path d="M3.5 14V2m0 0h5l1 2h3v6h-4l-1-2h-4"/></svg>`,

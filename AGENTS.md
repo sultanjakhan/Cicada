@@ -6,6 +6,12 @@
 
 Перед новой постановкой прочитай [подтверждённый контекст продукта](docs/product-context.md), затем проверь исходный код и относящиеся к задаче Issues. Не повторяй вопросы, на которые уже есть ответ в этом контексте; уточняй только новые отсутствующие факты.
 
+Owner continuation, 2026-09-27 (Today completion): recommendation settings open
+from the Today heading; remove the footer Settings and All Tasks links. A confirmed
+terminal routine returns the inline surface to the existing recommendation or empty
+state without starting anything. Defer the policy for empty Today, overdue/undated
+work and rest/sleep to private product Issue #107; do not change ranking for this fix.
+
 Owner continuation, 2026-09-27 (workspace controls): restore a dedicated Routines
 pane after Tasks, reusing existing routine records, execution and editors. Keep
 one shared Create entry, including Wishes and Routines; remove duplicate New Note

@@ -8,8 +8,6 @@
 .calendar-today-action__heading { display:flex; align-items:center; gap:12px; justify-content:space-between; flex-wrap:wrap; }
 .calendar-today-action__heading h2 { margin:0; font-size:15px; line-height:1.4; }
 .calendar-today-action__heading > button { padding:6px 0; background:transparent; border:0; color:var(--text-secondary,#626262); font:inherit; font-size:13px; cursor:pointer; }
-.calendar-today-action__footer { display:flex; flex-wrap:wrap; gap:8px 20px; margin-top:16px; }
-.calendar-today-action__footer button { padding:6px 0; background:transparent; border:0; color:var(--text-secondary,#626262); font:inherit; font-size:12px; cursor:pointer; }
 .calendar-today-action__scopes { display:inline-flex; gap:2px; margin:16px 0 0; padding:3px; background:var(--bg-hover,#f3f3f3); border-radius:8px; }
 .calendar-today-action__scopes button { padding:7px 14px; border:0; border-radius:6px; background:transparent; color:var(--text-secondary,#626262); font:inherit; font-size:13px; cursor:pointer; }
 .calendar-today-action__scopes button[aria-pressed="true"] { background:var(--bg-card,#fff); color:var(--text-primary,#252525); box-shadow:0 1px 3px #0001; }
@@ -19,6 +17,10 @@
 .calendar-today-action [data-today-run] { margin-top:14px; }
 .calendar-today-action button:focus-visible { outline:2px solid var(--text-primary,#252525); outline-offset:3px; }
 .calendar-today > .calendar-day-banner { margin:0 0 18px; padding:0; }
+.calendar-day-banner .today-date__settings { display:inline-flex; align-items:center; gap:6px; min-height:36px; padding:0 2px; border:0; border-radius:4px; background:transparent; color:inherit; font:inherit; cursor:pointer; vertical-align:baseline; }
+.today-date__settings > span { display:flex; color:var(--text-muted,#777); }
+.today-date__settings:hover { text-decoration:underline; text-underline-offset:4px; }
+.today-date__settings:focus-visible { outline:2px solid var(--text-primary,#252525); outline-offset:2px; }
 .calendar-main-goal.calendar-now { max-width:none; margin:16px 0 0; padding:0; border:0; background:transparent; }
 .calendar-main-goal [hidden] { display:none !important; }
 .calendar-main-goal.calendar-now:not(.calendar-now--compact) .calendar-now__goal { padding:14px 20px 18px; border:1px solid var(--border-default,#ddd); border-radius:14px; }

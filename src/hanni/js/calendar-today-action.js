@@ -11,8 +11,7 @@ export function mountCalendarTodayAction(element, dependencies) {
   element.innerHTML = `<header class="calendar-today-action__heading"><h2 tabindex="-1">Что сделать сейчас</h2><button type="button" data-today-choose aria-expanded="false">Выбрать другое</button></header>
     <div data-today-recommendation></div>
     <section data-today-choices hidden aria-label="Выбрать дело"><div class="calendar-today-action__scopes" role="group" aria-label="Что выбрать"><button type="button" data-today-scope="routines" aria-pressed="true">Рутины</button><button type="button" data-today-scope="tasks" aria-pressed="false">Задачи</button></div><div data-today-routines></div><div data-today-task-choices hidden></div></section>
-    <div data-today-run hidden></div>
-    <footer class="calendar-today-action__footer"><button type="button" data-today-settings>Настроить рекомендации</button><button type="button" data-today-all-tasks>Все задачи</button></footer>`;
+    <div data-today-run hidden></div>`;
   const q = selector => element.querySelector(selector);
   const recommendation = q('[data-today-recommendation]'), choices = q('[data-today-choices]'), run = q('[data-today-run]'), choose = q('[data-today-choose]');
   const focus = () => q('.calendar-today-action__heading h2').focus({preventScroll:true});
@@ -31,9 +30,12 @@ export function mountCalendarTodayAction(element, dependencies) {
     if (!setMode('run')) return false;
     clearRun();
     dependencies.onRoutineFocusChange?.(options);
-    disposeRun = mountRecurringRun(run, { document, invoke:dependencies.invoke, ...options, onClose:() => {
+    const returnToRecommendation = () => {
       if (setMode('recommendation')) { void controller.refresh(); choose.focus({preventScroll:true}); }
-    }});
+    };
+    disposeRun = mountRecurringRun(run, { document, invoke:dependencies.invoke, ...options,
+      onClose:returnToRecommendation, onTerminal:returnToRecommendation,
+    });
     return true;
   }
   const controller = mountCalendarNextAction(recommendation, {
@@ -66,8 +68,6 @@ export function mountCalendarTodayAction(element, dependencies) {
     else openChoices();
   };
   element.querySelectorAll('[data-today-scope]').forEach(button => { button.onclick = () => selectScope(button.dataset.todayScope); });
-  q('[data-today-settings]').onclick = event => dependencies.onOpenSettings?.(event.currentTarget);
-  q('[data-today-all-tasks]').onclick = () => dependencies.openTasks?.();
   const dispose = () => { disposed = true; controller(); clearRun(); disposeChoices?.(); disposeTasks?.(); };
   dispose.focus = focus;
   dispose.refresh = controller.refresh;

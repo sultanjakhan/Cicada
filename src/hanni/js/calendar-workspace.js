@@ -687,14 +687,16 @@ export async function loadCalendarWorkspace(el) {
       </section><div data-calendar-now-slot></div>`;
       pane.querySelector('[data-calendar-now-slot]').replaceWith(nowHost);
       nowHost.hidden = false;
-      disposeDayBanner = mountCalendarDayBanner(pane.querySelector('[data-calendar-day-banner]'),{invoke});
+      disposeDayBanner = mountCalendarDayBanner(pane.querySelector('[data-calendar-day-banner]'), {
+        invoke,
+        onOpenSettings:button => showCalendarSettings(button, {section:'next-action',returnFocus:() => button.isConnected ? button.focus({preventScroll:true}) : disposeNextAction?.focus()}),
+      });
       disposeNextAction = mountCalendarTodayAction(pane.querySelector('[data-calendar-next-action]'), {
         invoke, preferences:nextActionPreferences(), notifyChange:changed, compactRunning:true,
-        taskOptions, openTasks:() => void openPane('tasks'), openRoutines:() => void openPane('routines'),
+        taskOptions, openRoutines:() => void openPane('routines'),
         onRoutineFocusChange:options => disposeInProgress?.setExcludedRoutine(options?.id || null),
         openTask:task => showRecord(calendarRecord(task), () => disposeNextAction?.focus()),
         executeTask:(task,action) => executeCalendarTaskAction(calendarRecord(task),action),
-        onOpenSettings:button => showCalendarSettings(button, {section:'next-action',returnFocus:() => button.isConnected ? button.focus({preventScroll:true}) : disposeNextAction?.focus()}),
       });
       disposeInProgress = mountCalendarInProgress(pane.querySelector('[data-calendar-in-progress]'), {
         invoke, notifyChange:changed, title:'Идёт сейчас', activeOnly:true, hideWhenEmpty:true, embedded:true,

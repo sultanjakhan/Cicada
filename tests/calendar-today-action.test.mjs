@@ -4,22 +4,30 @@ import { JSDOM } from 'jsdom';
 import { mountCalendarTodayAction } from '../src/hanni/js/calendar-today-action.js';
 
 const settle = async () => { for (let i=0;i<12;i++) await new Promise(resolve=>setImmediate(resolve)); };
-async function setup(t) {
+async function setup(t, {nextTask=false}={}) {
   const dom = new JSDOM('<main></main>'), host = dom.window.document.querySelector('main');
   const now = new Date(), date = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
   const plan = {id:'routine',title:'Проверка',kind:'action',mode:'graph',active:true,required:true,createdOn:date,startsOn:'',endsOn:'',time:'',weekdays:[0,1,2,3,4,5,6],steps:[{title:'Первая ветка',dependsOn:[],trackingMode:'check'},{title:'Вторая ветка',dependsOn:[],trackingMode:'check'}]};
-  let state = JSON.stringify({version:1,plans:[plan],days:{}});
+  let state = JSON.stringify({version:1,plans:[plan],days:{}}), failCompletion=false;
   const calls = [], selected = [];
   const invoke = async (name,args) => {
     calls.push({name,args});
     if (name==='get_ui_state') return args?.key==='calendar_recurring_v1'?state:null;
     if (name==='set_ui_state') { assert.equal(args.expectedValue,state); state=args.value; return; }
+    if (name==='get_calendar_tasks' && nextTask) return [{source_type:'note',source_id:'99',title:'Следующая задача',status_extra:'task',date,completed:false}];
+    if (name==='complete_recurring_step' || name==='skip_recurring_step') {
+      if(failCompletion) throw Error('Не удалось сохранить шаг');
+      const data=JSON.parse(state), [id,day,index]=JSON.parse(args.sourceId), run=data.days[day][id];
+      run.run.steps[index].status=name==='complete_recurring_step'?'done':'skipped';
+      run.status=run.run.steps.some(step=>step.status==='pending')?'pending':run.run.steps.some(step=>step.status==='skipped')?'skipped':'done';
+      state=JSON.stringify(data); return;
+    }
     if (['get_calendar_tasks','get_calendar_task_goals','get_goals','get_active_blocks','get_schedules'].includes(name)) return [];
     throw Error(name);
   };
   const dispose = mountCalendarTodayAction(host, {invoke,taskOptions:{invoke},onRoutineFocusChange:value=>selected.push(value)});
   t.after(()=>{dispose();dom.window.close();}); await settle();
-  return {dom,host,calls,selected,dispose,state:()=>JSON.parse(state)};
+  return {dom,host,calls,selected,dispose,date,state:()=>JSON.parse(state),failCompletion:value=>{failCompletion=value;}};
 }
 
 test('routine recommendation opens branches inline and quiet refresh keeps the same controls', async t => {
@@ -51,4 +59,29 @@ test('inline choice switches between tasks and routines without opening a dialog
   assert.equal(x.host.querySelector('[data-today-recommendation]').hidden,false);
   assert.equal(x.calls.some(call=>call.name==='set_ui_state'),false);
   assert.equal(x.host.querySelectorAll('dialog').length,0);
+  assert.equal(x.host.querySelector('[data-today-settings]'),null);
+  assert.equal(x.host.querySelector('[data-today-all-tasks]'),null);
+});
+
+for (const action of ['complete','skip']) test(`last routine step (${action}) returns to an empty recommendation without starting work`,async t=>{
+  const x=await setup(t);x.dispose.openRoutine({id:'routine',date:x.date,start:true});await settle();
+  x.host.querySelector(`[data-run-action="${action}"]`).click();await settle();
+  assert.equal(x.host.dataset.mode,'run','partial completion keeps the remaining branches');
+  x.host.querySelector(`[data-run-action="${action}"]`).click();await settle();
+  assert.equal(x.host.dataset.mode,'recommendation');assert.equal(x.host.querySelector('[data-today-run]').hidden,true);
+  assert.equal(x.state().days[x.date].routine.status,action==='complete'?'done':'skipped');
+  assert.match(x.host.querySelector('[data-today-recommendation]').textContent,/Подходящей задачи или дела сейчас нет/);
+  assert.equal(x.dom.window.document.activeElement,x.host.querySelector('[data-today-choose]'));
+  assert.equal(x.calls.some(call=>call.name==='start_task_block'),false);
+});
+
+test('completion shows the next existing candidate; failed save keeps the runner available',async t=>{
+  const x=await setup(t,{nextTask:true});x.dispose.openRoutine({id:'routine',date:x.date,start:true});await settle();
+  x.failCompletion(true);x.host.querySelector('[data-run-action="complete"]').click();await settle();
+  assert.equal(x.host.dataset.mode,'run');assert.equal(x.state().days[x.date].routine.status,'pending');
+  x.failCompletion(false);x.host.querySelector('[data-run-action="complete"]').click();await settle();
+  x.host.querySelector('[data-run-action="complete"]').click();await settle();
+  assert.equal(x.host.dataset.mode,'recommendation');
+  assert.match(x.host.querySelector('[data-today-recommendation]').textContent,/Следующая задача/);
+  assert.equal(x.calls.some(call=>call.name==='start_task_block'),false);
 });

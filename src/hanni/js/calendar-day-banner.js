@@ -1,12 +1,18 @@
 import { projectDayStarts } from './calendar-day-start.js';
 import { dateKey } from './calendar-recurring-store.js';
+import { ICONS } from './icons.js';
 
-export function mountCalendarDayBanner(element, { invoke, now = () => new Date() } = {}) {
+export function mountCalendarDayBanner(element, { invoke, now = () => new Date(), onOpenSettings } = {}) {
   const document = element.ownerDocument, window = document.defaultView;
   let disposed = false, busy = false, loaded = false, day = '', entries = [], revision = 0, pendingRefresh = false;
   element.className = 'calendar-day-banner';
   // One row: the date may ellipsize, the start action keeps its full label.
-  element.innerHTML = '<div class="today-date"><h2><span class="today-date__label">Сегодня</span><span class="today-date__day"> · <time></time>, <span data-weekday></span></span></h2></div><button type="button" data-start-day disabled>Начать день</button><p role="alert" hidden></p><button type="button" data-day-retry hidden>Повторить загрузку</button>';
+  const today = onOpenSettings
+    ? `<button type="button" class="today-date__settings" data-today-settings aria-label="Настроить рекомендации на сегодня" aria-haspopup="dialog">Сегодня<span aria-hidden="true">${ICONS.sliders}</span></button>`
+    : '<span class="today-date__label">Сегодня</span>';
+  element.innerHTML = `<div class="today-date"><h2>${today}<span class="today-date__day"> · <time></time>, <span data-weekday></span></span></h2></div><button type="button" data-start-day disabled>Начать день</button><p role="alert" hidden></p><button type="button" data-day-retry hidden>Повторить загрузку</button>`;
+  const settings = element.querySelector('[data-today-settings]');
+  if (settings) settings.onclick = () => { if (!disposed) onOpenSettings(settings); };
   const start = element.querySelector('[data-start-day]'), error = element.querySelector('[role=alert]'), retry = element.querySelector('[data-day-retry]');
   function render() {
     if (disposed) return;
