@@ -5,20 +5,17 @@
 .calendar-today .calendar-next-action__surface header > button { border:0; padding:5px 0; min-height:32px; font-size:12px; color:var(--text-muted,#777); }
 .calendar-today .calendar-next-action__actions > button:first-child { background:var(--text-primary,#252525); color:var(--bg-card,#fff); border-color:var(--text-primary,#252525); }
 .calendar-today .calendar-next-action__actions > button[data-next-action-action="later"] { border-color:transparent; color:var(--text-muted,#777); }
-.calendar-today .calendar-now .calendar-now__goal-tools .calendar-now__primary { background:transparent; color:var(--text-secondary,#626262); border:1px solid var(--border-default,#ddd); }
 .calendar-today > .calendar-day-banner { margin:0 0 18px; padding:0; }
-.calendar-today .calendar-now { max-width:none; margin:18px 0 0; padding:14px 0 0; border:0; border-top:1px solid var(--border-default,#ddd); border-radius:0; background:transparent; }
-.calendar-today .calendar-now:not(.calendar-now--compact) .calendar-now__goal { margin:0; padding:0; border:0; border-radius:0; background:transparent; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:4px 16px; }
-.calendar-today .calendar-now .calendar-now__goal-top { display:contents; }
-.calendar-today .calendar-now__eyebrow { margin:0; font-size:11px; grid-column:1; }
-.calendar-today .calendar-now:not(.calendar-now--compact) .calendar-now__goal h2 { font-size:14px; line-height:1.4; margin:0; grid-column:1; }
-.calendar-today .calendar-now__goal-tools { grid-column:2; grid-row:1 / 3; align-self:center; }
-.calendar-today .calendar-now .calendar-now__goal-status,
-.calendar-today .calendar-now .calendar-now__goal-stage,
-.calendar-today .calendar-now .calendar-now__goal-progress,
-.calendar-today .calendar-now .calendar-now__goal-next,
-.calendar-today .calendar-now .calendar-now__goal-actions { display:none; }
-.calendar-today .calendar-now__goal-tools button { min-height:34px; padding:5px 9px; font-size:12px; }
+.calendar-main-goal.calendar-now { max-width:none; margin:16px 0 0; padding:0; border:0; background:transparent; }
+.calendar-main-goal [hidden] { display:none !important; }
+.calendar-main-goal.calendar-now:not(.calendar-now--compact) .calendar-now__goal { padding:14px 20px 18px; border:1px solid var(--border-default,#ddd); border-radius:14px; }
+.calendar-main-goal.calendar-now .calendar-now__goal-top { margin-bottom:6px; }
+.calendar-main-goal.calendar-now .calendar-now__eyebrow { font-size:13px; color:var(--text-primary,#252525); }
+.calendar-main-goal.calendar-now:not(.calendar-now--compact) .calendar-now__goal h2 { font-size:17px; line-height:1.45; }
+.calendar-main-goal.calendar-now .calendar-now__goal-tools .calendar-now__primary { background:transparent; color:var(--text-primary,#252525); border:1px solid var(--border-default,#ddd); }
+/* The title opens the goal. Today owns the single next-action recommendation. */
+.calendar-main-goal [data-action="goal-open"], .calendar-main-goal .calendar-now__goal-next { display:none; }
+.calendar-main-goal .calendar-now__goal-glance { margin-top:8px; }
 .calendar-today .cip-card { margin:18px 0 0; padding:14px 0 0; border:0; border-top:1px solid var(--border-default,#ddd); border-radius:0; background:transparent; }
 .calendar-today .cip-heading h2 { font-size:13px; }
 .calendar-today:has([data-calendar-next-action][data-running="true"]) .cip-card { border-top:0; padding-top:0; margin-top:10px; }
@@ -39,7 +36,7 @@
 .calendar-setting-hint { color:var(--text-muted,#777); font-size:12px; margin:4px 0 12px; }
 @media(max-width:480px) {
   .calendar-today { padding:14px; }
-  .calendar-today .calendar-now__goal { gap:4px 8px; }
-  .calendar-today .calendar-now__goal-tools { grid-row:3; grid-column:1 / -1; justify-self:start; }
+  .calendar-main-goal.calendar-now:not(.calendar-now--compact) .calendar-now__goal { padding:10px 14px 14px; }
+  .calendar-main-goal.calendar-now .calendar-now__goal-top { flex-wrap:wrap; }
   .calendar-today .calendar-day-banner { flex-wrap:wrap; gap:8px; }
 }

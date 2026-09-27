@@ -19,7 +19,7 @@ import { startCalendarExecution, readActiveBlocks } from './calendar-execution.j
 import { mountCalendarInProgress } from './calendar-in-progress.js';
 import { mountCalendarDayBanner } from './calendar-day-banner.js';
 import { loadCalendarPreferences } from './calendar-display-preferences.js';
-import { attachDevelopmentTask } from './calendar-development.js';
+import { attachDevelopmentTask, mountGoalGlance } from './calendar-development.js';
 import { openCalendarGoalPopup } from './calendar-goal-popup.js';
 import { sphereLabel, isInstantTask } from './task-model.js';
 import { loadProcesses, mountStageTime, taskStage } from './task-processes.js';
@@ -628,6 +628,7 @@ export async function loadCalendarWorkspace(el) {
       host.querySelector('.uni-header').append(header);
       nowHost = document.createElement('div');
       nowHost.dataset.calendarNow = '';
+      nowHost.classList.add('calendar-main-goal');
       nowHost.hidden = true;
       host.append(nowHost);
       // Every pane shares one execution owner; Dashboard reveals its goal summary.
@@ -635,6 +636,7 @@ export async function loadCalendarWorkspace(el) {
         headerElement:header,
         headerLabel:'Сегодня',
         hideTaskCard:true,
+        mountGoalSummary:(host, goal) => mountGoalGlance(host, {invoke, goal}),
         openTaskLauncher:() => showAllTasks(host.querySelector('[data-calendar-launch]')),
         onLauncherStateChange:state => renderLauncherState?.(state),
         openGoalDetails:(goal, { returnFocus } = {}) => openGoalPopup(goal, { primaryGoalId:goal.id, returnFocus }),
@@ -663,9 +665,9 @@ export async function loadCalendarWorkspace(el) {
     renderDash: (pane) => {
       pane.innerHTML = `<section class="calendar-today" aria-label="Сегодня">
         <div data-calendar-day-banner></div><div data-calendar-next-action></div>
-        <div data-calendar-in-progress></div><div data-calendar-now-slot></div>
+        <div data-calendar-in-progress></div>
         <nav class="calendar-today-links" aria-label="План и рутины"><button type="button" data-today-tasks>Все задачи</button><button type="button" data-today-routines>Рутины</button></nav>
-      </section>`;
+      </section><div data-calendar-now-slot></div>`;
       pane.querySelector('[data-calendar-now-slot]').replaceWith(nowHost);
       nowHost.hidden = false;
       disposeDayBanner = mountCalendarDayBanner(pane.querySelector('[data-calendar-day-banner]'),{invoke});

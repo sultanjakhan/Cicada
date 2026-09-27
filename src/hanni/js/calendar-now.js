@@ -805,7 +805,7 @@ export function mountCalendarNow(element, dependencies = {}) {
       const target = actionTarget(action), pending = readFlight;
       void pending.then(() => {
         if (disposed) return;
-        const current = [...ui.card.querySelectorAll('[data-action]')].find(item => item.dataset.action === action && (item.dataset.taskKey || null) === taskKey);
+        const current = [...element.querySelectorAll('[data-action]')].find(item => item.dataset.action === action && (item.dataset.taskKey || null) === taskKey);
         if (actionTarget(action) !== target) { announce('Состояние обновилось. Проверь задачу перед действием.'); return; }
         if (!current || current.hidden || current.disabled) return;
         current.click();

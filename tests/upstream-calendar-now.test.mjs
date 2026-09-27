@@ -49,6 +49,21 @@ test('a quiet remote read keeps action styling and replays one still-valid click
   assert.equal(x.data.count('start_task_block'),1,'a deferred click runs once despite a double click');
 });
 
+test('choosing a goal during an unchanged background refresh opens the picker without changing execution', async t => {
+  const x=await mount(t); let release;
+  const gate=new Promise(resolve=>{release=resolve;});
+  x.data.before.set('get_ui_state',()=>gate);
+  x.dom.window.dispatchEvent(new x.dom.window.CustomEvent('task-state-changed',{detail:{remoteSync:true,canCommit:()=>true}}));
+  await new Promise(resolve=>setImmediate(resolve));
+  const writes=x.data.count('set_ui_state');
+  x.action('open-goal').click();
+  assert.equal(x.dom.window.document.querySelector('.calendar-goal-picker'),null);
+  release(); await x.settle(); await new Promise(resolve=>setImmediate(resolve)); await x.settle();
+  assert.equal(x.dom.window.document.querySelector('.calendar-goal-picker')?.open,true);
+  assert.equal(x.data.count('set_ui_state'),writes);
+  assert.equal(x.data.count('start_task_block'),0);
+});
+
 test('a queued goal action is discarded with feedback when remote goal changes but the task stays the same', async t => {
   const initial={...blank(),selectionMode:'manual',selection:{source_type:'event',source_id:'event-a',title:'Вопросы к интервью',duration_minutes:25,date:'2026-09-05',completion_date:'2026-09-05'}};
   const data=backend(initial); data.links.push({source_type:'event',source_id:'event-a',goal_id:'goal-b'});
