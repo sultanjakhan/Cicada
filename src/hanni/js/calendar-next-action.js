@@ -128,7 +128,7 @@ export function mountCalendarNextAction(element, dependencies) {
   let preferences = normalizedPreferences(dependencies.preferences), disposed = false, revision = 0, busy = false, preferencesChangedWhileBusy = false, snapshot = null, recommendation = null, renderedKey = '', error = '', feedback = '', lastDay = '', focusTarget = null, refreshQueued = false;
 
   element.classList.add('calendar-next-action');
-  element.setAttribute('aria-labelledby', 'calendar-next-action-title');
+  if (!dependencies.hideHeading) element.setAttribute('aria-labelledby', 'calendar-next-action-title');
 
   const getNow = () => { const value = clock(); return value instanceof Date ? value : new Date(value); };
   const getDeferred = now => {
@@ -168,7 +168,7 @@ export function mountCalendarNextAction(element, dependencies) {
     const header = document.createElement('header');
     const heading = document.createElement('h2'); heading.id = 'calendar-next-action-title'; heading.tabIndex = -1; heading.textContent = compactRunning ? 'Сейчас' : 'Что сделать сейчас'; header.append(heading);
     if (onOpenSettings) { const settings = document.createElement('button'); settings.type = 'button'; settings.dataset.nextActionSetting = 'settings'; settings.textContent = 'Настроить'; settings.disabled = busy; settings.addEventListener('click', () => onOpenSettings(settings)); header.append(settings); }
-    section.append(header);
+    if (!dependencies.hideHeading) section.append(header);
     if (!preferences.enabled) {
       const copy = document.createElement('p'); copy.textContent = 'Рекомендации выключены.'; section.append(copy);
     } else if (!snapshot && !error) {
@@ -177,6 +177,12 @@ export function mountCalendarNextAction(element, dependencies) {
       const card = document.createElement('div'); card.className = 'calendar-next-action__item'; card.dataset.nextActionKey = selected.key;
       const title = document.createElement('h3'); title.textContent = selected.title; if (!compactRunning) card.append(title);
       const why = document.createElement('p'); why.className = 'calendar-next-action__reason'; why.textContent = compactRunning ? 'Время начатых дел учитывается.' : selected.reason; card.append(why);
+      if (!compactRunning && selected.type === 'routine') {
+        const context = document.createElement('p'); context.className = 'calendar-next-action__context';
+        const count = selected.routine.steps?.length || 0;
+        context.textContent = selected.routine.mode === 'check' ? 'Рутина · отметка без таймера' : count > 1 ? `Рутина · шагов: ${count}` : 'Рутина · с учётом времени';
+        card.append(context);
+      }
       if (!compactRunning && selected.type === 'task' && (selected.context?.goal || selected.context?.stage || selected.context?.waiting)) {
         const context = document.createElement('p'); context.className = 'calendar-next-action__context'; context.dataset.nextActionContext = '';
         const parts = [];

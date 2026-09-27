@@ -77,7 +77,7 @@
   .calv-day-count--overflow { display: none; }
   .calv-day-count--total { display: inline-block; }
   .calv-weekday { padding: 9px 0; font-size: 12px; }
-  .calv-day-count { font-size: 9px; }
+  .calv-day-count { font-size: 11px; color:var(--text-primary); }
   .calv-month-cell[aria-current="date"] .calv-date-number { align-self: center; }
   .calv-record:not(.calv-grid-record) { grid-template-columns: 84px minmax(0, 1fr); padding: 12px 4px; gap: 4px 8px; }
   .calv-record-time { font-size: 11px; }

@@ -153,7 +153,7 @@ import { isInstantTask } from './task-model.js';
       function renderItems() {
         const expanded = state.untimedExpanded[date] === true;
         list.replaceChildren(...(expanded ? items : items.slice(0, untimedPreviewLimit)).map(record => recordButton(record, options, 'calv-untimed-record')));
-        more.textContent = expanded ? 'Свернуть' : 'Показать';
+        more.textContent = expanded ? 'Свернуть' : `Показать · ${items.length}`;
         more.setAttribute('aria-expanded', String(expanded)); more.hidden = items.length <= untimedPreviewLimit;
       }
       renderItems(); column.append(heading, list, more); band.append(column);

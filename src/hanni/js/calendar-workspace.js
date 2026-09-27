@@ -24,7 +24,7 @@ import { openCalendarGoalPopup } from './calendar-goal-popup.js';
 import { sphereLabel, isInstantTask } from './task-model.js';
 import { loadProcesses, mountStageTime, taskStage } from './task-processes.js';
 import { openCalendarTaskDetails } from './calendar-task-details.js';
-import { mountCalendarNextAction } from './calendar-next-action.js';
+import { mountCalendarTodayAction } from './calendar-today-action.js';
 import { mountCalendarRoutineChoices } from './calendar-routine-choices.js';
 import { showCalendarSettings } from './calendar-settings.js';
 import { openCalendarCreateMenu } from './calendar-create-menu.js';
@@ -290,8 +290,9 @@ export async function mountCalendarTable(el) {
   disposeTable?.();
   let revision = 0, disposed = false, menuRecords = [], actionBusy = false;
   el.classList.add('calendar-mvp');
-  el.innerHTML = `<div class="cm-toolbar"><div class="cm-segment" role="group" aria-label="Период календаря">${[['day','День'],['week','Неделя'],['month','Месяц']].map(([id,title]) => `<button data-period="${id}" aria-pressed="${view.period === id}">${title}</button>`).join('')}</div></div>
-    <div class="cm-controls"><div class="cm-date"><button data-prev aria-label="Предыдущий период"><span class="cm-icon" aria-hidden="true">${ICONS.chevronLeft}</span></button><div class="cm-date-roller" data-date-roller><h2 data-range></h2></div><button data-next aria-label="Следующий период"><span class="cm-icon" aria-hidden="true">${ICONS.chevronRight}</span></button><button data-today>Сегодня</button></div>
+  el.innerHTML = `<div class="cm-calendar-toolbar"><div class="cm-date-roller" data-date-roller><h2 data-range></h2></div>
+    <div class="cm-date"><button data-prev aria-label="Предыдущий период"><span class="cm-icon" aria-hidden="true">${ICONS.chevronLeft}</span></button><button data-next aria-label="Следующий период"><span class="cm-icon" aria-hidden="true">${ICONS.chevronRight}</span></button><button data-today>Сегодня</button></div>
+    <div class="cm-toolbar"><div class="cm-segment" role="group" aria-label="Период календаря">${[['day','День'],['week','Неделя'],['month','Месяц']].map(([id,title]) => `<button data-period="${id}" aria-pressed="${view.period === id}">${title}</button>`).join('')}</div></div>
     </div><p data-notice role="status"></p><button data-retry hidden>Повторить загрузку</button><div data-calendar-records></div>`;
   const host = el.querySelector('[data-calendar-records]');
   host.tabIndex = -1;
@@ -683,29 +684,27 @@ export async function loadCalendarWorkspace(el) {
       pane.innerHTML = `<section class="calendar-today" aria-label="Сегодня">
         <div data-calendar-day-banner></div><div data-calendar-next-action></div>
         <div data-calendar-in-progress></div>
-        <nav class="calendar-today-links" aria-label="План и рутины"><button type="button" data-today-pick-routine>${ICONS.cycle} Выбрать рутину</button><button type="button" data-today-tasks>Все задачи</button></nav>
       </section><div data-calendar-now-slot></div>`;
       pane.querySelector('[data-calendar-now-slot]').replaceWith(nowHost);
       nowHost.hidden = false;
       disposeDayBanner = mountCalendarDayBanner(pane.querySelector('[data-calendar-day-banner]'),{invoke});
-      disposeNextAction = mountCalendarNextAction(pane.querySelector('[data-calendar-next-action]'), {
+      disposeNextAction = mountCalendarTodayAction(pane.querySelector('[data-calendar-next-action]'), {
         invoke, preferences:nextActionPreferences(), notifyChange:changed, compactRunning:true,
+        taskOptions, openTasks:() => void openPane('tasks'), openRoutines:() => void openPane('routines'),
+        onRoutineFocusChange:options => disposeInProgress?.setExcludedRoutine(options?.id || null),
         openTask:task => showRecord(calendarRecord(task), () => disposeNextAction?.focus()),
         executeTask:(task,action) => executeCalendarTaskAction(calendarRecord(task),action),
-        openRoutine:options => openRecurringRun({document,invoke,...options,returnFocus:() => disposeNextAction?.focus()}),
-        onOpenSettings:button => showCalendarSettings(button, {section:'next-action',returnFocus:() => disposeNextAction?.focus()}),
+        onOpenSettings:button => showCalendarSettings(button, {section:'next-action',returnFocus:() => button.isConnected ? button.focus({preventScroll:true}) : disposeNextAction?.focus()}),
       });
       disposeInProgress = mountCalendarInProgress(pane.querySelector('[data-calendar-in-progress]'), {
         invoke, notifyChange:changed, title:'Идёт сейчас', activeOnly:true, hideWhenEmpty:true, embedded:true,
         onEmptyFocus:() => disposeNextAction?.focus(),
         openLauncher:button => showAllTasks(button),
         openTask:(row, restore) => {
-          if (row.source_type === 'schedule') { const [id, date] = JSON.parse(row.source_id); openRecurringRun({ document, invoke, id, date, start:false }); }
+          if (row.source_type === 'schedule') { const [id, date] = JSON.parse(row.source_id); disposeNextAction?.openRoutine({id,date,start:false}); }
           else showRecord(calendarRecord({ ...row, date: row.date || null }), restore);
         },
       });
-      pane.querySelector('[data-today-tasks]').onclick = () => void openPane('tasks');
-      pane.querySelector('[data-today-pick-routine]').onclick = event => showAllTasks(event.currentTarget,'routines');
     },
     renderTable: pane => mountCalendarTable(pane),
     renderTasks: pane => {

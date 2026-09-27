@@ -7,6 +7,18 @@ const settle = async () => { for (let i = 0; i < 12; i++) await new Promise(reso
 const TODAY = '2026-09-24', YESTERDAY = '2026-09-23';
 const routine = JSON.stringify(['plan-a', TODAY, 0]);
 
+test('inline routine is excluded only from presentation while parallel task controls stay intact', async t => {
+  const data=backend(), x=await mount(t,data,{activeOnly:true,hideWhenEmpty:true});
+  const running=x.row('note:draft');
+  x.dispose.setExcludedRoutine('plan-a');
+  assert.equal(x.row(`schedule:${routine}`),undefined);
+  assert.equal(x.row('note:draft'),running);
+  assert.equal(data.blocks.filter(block=>block.is_active).length,2);
+  x.dispose.setExcludedRoutine(null);
+  assert.ok(x.row(`schedule:${routine}`));
+  assert.equal(data.calls.some(call=>['pause_task_block','cancel_task_block','finish_task_block'].includes(call.name)),false);
+});
+
 // Fictional records only: two running tasks, one paused today and records that must stay out.
 function backend() {
   const state = {

@@ -57,6 +57,7 @@ export function mountCalendarInProgress(element, dependencies) {
   const prefix = `calendar-in-progress-${++sequence}`;
   let rows = null, failed = false, busy = false, disposed = false, revision = 0, queued = false, feedback = null;
   let hidden = {}, hiddenRaw = null, confirming = null, menu = null;
+  let excludedRoutine = null;
   let day = dayOf(clock());
   element.classList.add('calendar-in-progress');
   element.innerHTML = `<section class="cip-card" aria-labelledby="${prefix}-title" data-cip-card>
@@ -198,23 +199,27 @@ export function mountCalendarInProgress(element, dependencies) {
   }
   function render() {
     if (disposed) return;
+    const visibleRows = (rows || []).filter(row => {
+      if (!excludedRoutine || row.source_type !== 'schedule') return true;
+      try { return String(JSON.parse(row.source_id)[0]) !== excludedRoutine; } catch { return true; }
+    });
     const focused = doc.activeElement, focusKey = element.contains(focused) ? focused.dataset.cipKey : null, focusControl = focused?.dataset?.cipControl;
     if (confirming && !rows?.some(row => row.key === confirming && row.running)) confirming = null;
-    const empty = !rows?.length;
+    const empty = !visibleRows.length;
     element.hidden = !!dependencies.hideWhenEmpty && rows !== null && empty && !failed && !feedback?.error;
     card.classList.toggle('is-empty', empty);
     card.setAttribute('aria-busy', String(busy || rows === null));
     q('heading').hidden = empty; list.hidden = empty; q('footer').hidden = empty || !!dependencies.embedded; q('empty').hidden = !empty;
     q('empty-text').textContent = rows === null ? (failed ? 'Не удалось загрузить задачи в работе.' : 'Загружаем задачи в работе…') : 'Ничего не запущено';
     q('empty-launch').hidden = rows === null; q('retry').hidden = !(rows === null && failed);
-    q('count').textContent = empty ? '' : summaryOf(rows);
+    q('count').textContent = empty ? '' : summaryOf(visibleRows);
     element.querySelectorAll('[data-cip-launch], [data-cip-retry]').forEach(button => { button.disabled = busy; });
     element.querySelectorAll('[data-cip-control]').forEach(button => { button.disabled = busy; });
     // Work first, then personal; sub-headings only when both kinds are listed.
-    const groups = SCOPES.map(([id, label]) => ({ id, label, items: (rows || []).filter(row => row.scope === id) })).filter(group => group.items.length);
+    const groups = SCOPES.map(([id, label]) => ({ id, label, items: visibleRows.filter(row => row.scope === id) })).filter(group => group.items.length);
     const previous = new Map([...list.querySelectorAll('.cip-row')].map(item => [item.dataset.contextRecord, item]));
     const grouped = groups.length > 1, wantedList = [];
-    for (const group of (grouped ? groups : [{ items: rows || [] }])) {
+    for (const group of (grouped ? groups : [{ items: visibleRows }])) {
       const oldHeading = group.id ? [...list.querySelectorAll('[data-cip-group]')].find(item => item.dataset.cipGroup === group.id) : null;
       const oldList = group.id
         ? [...list.querySelectorAll('.cip-list')].find(item => item.getAttribute('aria-labelledby') === `${prefix}-group-${group.id}`)
@@ -507,6 +512,7 @@ export function mountCalendarInProgress(element, dependencies) {
     (rows?.length ? title : q('empty-launch')).focus({ preventScroll: true });
   };
   dispose.refresh = () => refresh();
+  dispose.setExcludedRoutine = id => { excludedRoutine = id == null ? null : String(id); render(); };
   dispose.keys = () => (rows || []).map(row => row.key);
   return dispose;
 }

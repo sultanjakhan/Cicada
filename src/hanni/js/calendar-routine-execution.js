@@ -93,8 +93,9 @@ export function mountRecurringRun(element, { document = element.ownerDocument, i
       element.append(progress);
       const ready = graph() ? available() : current >= 0 ? [current] : [];
       const next = document.createElement('section'); next.className = 'calendar-run-ready'; next.dataset.runReady = '';
-      const heading = document.createElement('h3'); heading.textContent = ready.length > 1 ? 'Выбери следующий шаг' : ready.length ? 'Текущий шаг' : 'Рутина завершена'; next.append(heading);
-      if (ready.length > 1) { const hint = document.createElement('p'); hint.textContent = 'Эти шаги доступны сейчас. Выбери удобный порядок.'; next.append(hint); }
+      const runningCount = ready.filter(index => scheduleRow(index)?.is_active).length;
+      const heading = document.createElement('h3'); heading.textContent = runningCount ? 'Выполняется сейчас' : ready.length > 1 ? 'Выбери следующий шаг' : ready.length ? 'Текущий шаг' : 'Рутина завершена'; next.append(heading);
+      if (ready.length > 1 && runningCount < ready.length) { const hint = document.createElement('p'); hint.textContent = runningCount ? 'Можно продолжить начатое или выбрать другой доступный шаг.' : 'Эти шаги доступны сейчас. Выбери удобный порядок.'; next.append(hint); }
       for (const index of ready) {
         const step = record.run.steps[index], row = scheduleRow(index), stepConfig = record.snapshot.steps?.[index], check = graph() && stepConfig?.trackingMode === 'check';
         const card = document.createElement('article'); card.className = 'calendar-run-step'; card.dataset.runStepCard = String(index);

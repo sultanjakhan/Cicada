@@ -21,6 +21,13 @@
 .calendar-run-actions .calendar-run-skip{border-color:transparent;background:transparent;color:var(--text-secondary,#666)}
 .calendar-run-actions button:focus-visible,.calendar-run-plan>summary:focus-visible{outline:2px solid var(--text-primary,#242424);outline-offset:2px}
 .calendar-routine-inline .calendar-run-actions button{min-height:44px}
+.calendar-routine-inline .calendar-run-heading{align-items:center;margin-bottom:6px}
+.calendar-routine-inline .calendar-run-heading button{min-height:32px;padding:4px 0;border:0;font-size:13px;color:var(--text-secondary,#666)}
+.calendar-routine-inline .calendar-run-step{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:20px;align-items:center;padding:12px 0}
+.calendar-routine-inline .calendar-run-step>strong{grid-column:1;font-size:15px}
+.calendar-routine-inline .calendar-run-step__status{grid-column:1;margin:5px 0 0}
+.calendar-routine-inline .calendar-run-actions{grid-column:2;grid-row:1 / span 2}
+@media(max-width:700px){.calendar-routine-inline .calendar-run-step{display:block}.calendar-routine-inline .calendar-run-step__status{margin:5px 0 10px}.calendar-run-heading{flex-wrap:wrap}}
 .calendar-run-plan{margin-top:16px;border-top:1px solid var(--border-default,#ddd);padding-top:8px}
 .calendar-run-plan>summary{padding:12px 0;font-size:13px;cursor:pointer;min-height:44px;box-sizing:border-box}
 .calendar-run-plan li{font-size:14px;line-height:1.4}
