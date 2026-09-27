@@ -29,7 +29,9 @@ pub fn initialize(conn: &Connection) -> Result<(), String> {
 }
 
 pub fn editable(id: &str) -> Result<(), String> {
-    if id.starts_with(PREFIX) {
+    if id.starts_with("digital-activity:") {
+        Err("digital_activity_readonly".into())
+    } else if id.starts_with(PREFIX) {
         Err("health_sleep_readonly".into())
     } else if crate::health_activity::is_readonly(id) {
         Err("health_activity_readonly".into())

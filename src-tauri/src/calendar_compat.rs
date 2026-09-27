@@ -672,6 +672,7 @@ pub fn update_note(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     date(&due_date)?;
+    crate::health_sleep::editable(&id)?;
     let conn = lock(&state)?;
     let n = now();
     let changed=conn.execute("UPDATE items SET title=?1,notes=?2,tags=?3,archived=COALESCE(?4,archived),date=COALESCE(?5,date),content_blocks=COALESCE(?6,content_blocks),priority=COALESCE(?7,priority),version=version+1,updated_at=?8 WHERE id=?9 AND kind='task' AND (?10 IS NULL OR version=?10)",params![title.trim(),content,tags,archived.map(|v|v as i64),due_date,content_blocks,priority,n,id,expected_version]).map_err(|e|fail(e.to_string()))?;
@@ -688,6 +689,7 @@ pub fn update_note_status(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     validate_note_status(&status)?;
+    crate::health_sleep::editable(&id)?;
     let conn = lock(&state)?;
     let changed=conn.execute("UPDATE items SET completed=?1,version=version+1,updated_at=?2 WHERE id=?3 AND kind='task'",params![(status=="done") as i64,now(),id]).map_err(|e|fail(e.to_string()))?;
     if changed == 1 {
@@ -698,6 +700,7 @@ pub fn update_note_status(
 }
 #[tauri::command]
 pub fn toggle_note_archive(id: String, state: State<'_, AppState>) -> Result<bool, String> {
+    crate::health_sleep::editable(&id)?;
     let conn = lock(&state)?;
     conn.execute("UPDATE items SET archived=1-archived,version=version+1,updated_at=?1 WHERE id=?2 AND kind='task'",params![now(),id]).map_err(|e|fail(e.to_string()))?;
     conn.query_row("SELECT archived!=0 FROM items WHERE id=?1", [id], |r| {
@@ -1298,7 +1301,7 @@ pub fn update_event_category(
         if name != old {
             transaction
                 .execute(
-                    "UPDATE items SET category=?1,version=version+1,updated_at=?2 WHERE kind='event' AND category=?3",
+                    "UPDATE items SET category=?1,version=version+1,updated_at=?2 WHERE kind='event' AND category=?3 AND id NOT LIKE 'digital-activity:%'",
                     params![name, now(), old],
                 )
                 .map_err(|e| fail(e.to_string()))?;
@@ -1342,7 +1345,7 @@ pub fn delete_event_category(
     }
     let n = transaction
         .execute(
-            "UPDATE items SET category=?1,version=version+1,updated_at=?2 WHERE kind='event' AND category=?3",
+            "UPDATE items SET category=?1,version=version+1,updated_at=?2 WHERE kind='event' AND category=?3 AND id NOT LIKE 'digital-activity:%'",
             params![target, now(), name],
         )
         .map_err(|e| fail(e.to_string()))? as i64;
@@ -1533,6 +1536,7 @@ fn stop(conn: &Connection, id: i64, complete: bool) -> Result<(), String> {
             |r| Ok((r.get(0)?,r.get::<_,i64>(1)?!=0,r.get(2)?,r.get(3)?,r.get(4)?)),
         )
         .map_err(|_| fail("block not found"))?;
+    crate::health_sleep::editable(&source)?;
     if active {
         let end = Local::now().format("%H:%M:%S").to_string();
         let began = chrono::DateTime::parse_from_rfc3339(&created)
@@ -1736,6 +1740,9 @@ pub fn set_app_setting(
     value: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    if key == "digital_activity_connections_v1" {
+        return Err("digital_activity_use_connection_command".into());
+    }
     let conn = lock(&state)?;
     conn.execute("INSERT INTO app_settings(key,value,updated_at) VALUES(?1,?2,?3) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at", params![key,value,now()])
         .map_err(|e| fail(e.to_string()))?;

@@ -339,6 +339,7 @@ fn complete(
     expected_version: i64,
     completed: bool,
 ) -> Result<Item, String> {
+    health_sleep::editable(id)?;
     let transaction = conn
         .transaction()
         .map_err(|e| fail(format!("begin completion: {e}")))?;
@@ -545,7 +546,7 @@ pub fn run() {
                 init_schema(&connection)?;
                 app.manage(AppState(Mutex::new(connection)));
                 app.manage(instance_lock);
-                if !startup_options.is_update_background() {
+                if !startup_options.is_one_shot() {
                     digital_activity::start_background(app.handle().clone());
                 }
                 #[cfg(target_os = "macos")]
@@ -586,6 +587,7 @@ pub fn run() {
             health_activity::health_activity_import,
             digital_activity::digital_activity_get_connections,
             digital_activity::digital_activity_save_connection,
+            digital_activity::digital_activity_remove_connection,
             digital_activity::digital_activity_status,
             digital_activity::digital_activity_import_now,
             list_items,
