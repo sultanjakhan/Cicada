@@ -51,6 +51,9 @@
 .calendar-settings-panel[hidden] {
   display: none !important;
 }
+.calendar-settings-dialog:has([data-close-confirmation]:not([hidden])) .calendar-settings-actions {
+  display: none;
+}
 .calendar-settings-load-state {
   margin-top: 10px;
 }
@@ -222,6 +225,21 @@
 }
 
 @media (max-width: 620px) {
+  .calendar-settings-dialog .cp-stage {
+    grid-template-columns: 22px minmax(0, 1fr) repeat(3, 44px);
+    row-gap: 6px;
+    padding-bottom: 8px;
+  }
+  .calendar-settings-dialog .cp-stage input {
+    grid-column: 2 / -1;
+  }
+  .calendar-settings-dialog .cp-stage .cp-icon:first-of-type {
+    grid-column: 3;
+  }
+  .calendar-settings-dialog .cp-stage .cp-icon {
+    width: 44px;
+    height: 44px;
+  }
   .calendar-settings-dialog {
     width: calc(100% - 24px);
     max-width: none;

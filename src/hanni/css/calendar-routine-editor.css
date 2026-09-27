@@ -1,26 +1,30 @@
-.calendar-routine-editor{display:grid;gap:16px;min-width:0;color:var(--text,#202124)}
+.calendar-routine-editor{display:grid;gap:16px;min-width:0;color:var(--text-primary,#252525)}
 .calendar-routine-editor label{display:grid;gap:6px;min-width:0}
-.calendar-routine-editor input:not([type=checkbox]),.calendar-routine-editor select{box-sizing:border-box;width:100%;min-height:44px;padding:8px 10px;border:1px solid var(--border,#c7c9cc);border-radius:8px;background:var(--surface,#fff);color:inherit;font:inherit}
-.calendar-routine-editor input[type=checkbox]{width:20px;height:20px;flex:0 0 auto;accent-color:var(--accent,#4c6fff)}
-.calendar-routine-editor button{box-sizing:border-box;min-height:44px;padding:8px 12px;border:1px solid var(--border,#c7c9cc);border-radius:8px;background:var(--surface,#fff);color:inherit;font:inherit;cursor:pointer}
+.calendar-routine-editor input:not([type=checkbox]),.calendar-routine-editor select{box-sizing:border-box;width:100%;min-height:44px;padding:8px 10px;border:1px solid var(--border-default,#dedede);border-radius:8px;background:var(--bg-card,#fff);color:inherit;font:inherit}
+.calendar-routine-editor input[type=checkbox]{width:20px;height:20px;flex:0 0 auto;accent-color:var(--accent-fill,#252525)}
+.calendar-routine-editor button{box-sizing:border-box;min-height:44px;padding:8px 12px;border:1px solid var(--border-default,#dedede);border-radius:8px;background:var(--bg-card,#fff);color:inherit;font:inherit;cursor:pointer}
 .calendar-routine-editor button:disabled{opacity:.48;cursor:default}
-.calendar-routine-editor :focus-visible{outline:3px solid color-mix(in srgb,var(--accent,#4c6fff) 70%,transparent);outline-offset:2px}
+.calendar-routine-editor :focus-visible{outline:3px solid color-mix(in srgb,var(--accent-fill,#252525) 70%,transparent);outline-offset:2px}
 .calendar-routine-editor .cre-title{font-weight:600}
-.calendar-routine-editor .cre-layout,.calendar-routine-editor .cre-dependencies,.calendar-routine-editor .cre-week{min-width:0;margin:0;padding:12px;border:1px solid var(--border,#d4d6d8);border-radius:10px}
+.calendar-routine-editor .cre-layout,.calendar-routine-editor .cre-dependencies,.calendar-routine-editor .cre-week{min-width:0;margin:0;padding:12px;border:1px solid var(--border-default,#dedede);border-radius:10px}
+.calendar-routine-editor .cre-layout{border:0;padding:0}
 .calendar-routine-editor .cre-layout>div{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
-.calendar-routine-editor .cre-layout button[aria-pressed=true]{border-color:var(--accent,#4c6fff);background:color-mix(in srgb,var(--accent,#4c6fff) 10%,var(--surface,#fff))}
+.calendar-routine-editor .cre-layout button[aria-pressed=true]{border-color:var(--accent-fill,#252525);background:color-mix(in srgb,var(--accent-fill,#252525) 10%,var(--bg-card,#fff))}
 .calendar-routine-editor .cre-steps{display:grid;gap:12px;min-width:0}
 .calendar-routine-editor .cre-steps-heading{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
 .calendar-routine-editor .cre-steps-heading h3{margin:0;font-size:1.05rem}
-.calendar-routine-editor .cre-steps-heading span,.calendar-routine-editor .cre-muted{color:var(--muted,#666);font-size:.9rem}
-.calendar-routine-editor .cre-step{display:grid;gap:8px;min-width:0;padding:12px;border:1px solid var(--border,#d4d6d8);border-radius:10px}
+.calendar-routine-editor .cre-steps-heading span,.calendar-routine-editor .cre-muted{color:var(--text-secondary,#606060);font-size:.9rem}
+.calendar-routine-editor .cre-step{display:grid;gap:8px;min-width:0;padding:8px 0;border:0;border-top:1px solid var(--border-subtle,#ebebeb);border-radius:0}
 .calendar-routine-editor .cre-step>header{display:flex;align-items:center;gap:8px;min-width:0}
 .calendar-routine-editor .cre-step>header>label{display:flex;align-items:center;gap:8px;flex:1;min-width:0}
-.calendar-routine-editor .cre-step-number{display:grid;place-items:center;width:28px;height:28px;flex:0 0 auto;border-radius:50%;background:var(--surface-muted,#f0f1f2);font-weight:600}
+.calendar-routine-editor .cre-step-number{display:grid;place-items:center;width:28px;height:28px;flex:0 0 auto;border-radius:50%;background:var(--bg-hover,#f0f0f0);font-weight:600}
 .calendar-routine-editor .cre-step-order{display:flex;gap:4px;flex:0 0 auto}
 .calendar-routine-editor .cre-step-order button{min-width:44px;padding-inline:8px}
 .calendar-routine-editor .cre-step-options{display:grid;gap:10px}
 .calendar-routine-editor .cre-step-options>summary,.calendar-routine-editor .cre-advanced>summary{min-height:44px;display:flex;align-items:center;cursor:pointer;font-weight:600}
+.calendar-routine-editor .cre-step-options>summary::before,.calendar-routine-editor .cre-advanced>summary::before{content:"›";display:inline-block;width:14px;margin-right:5px;font-size:18px;transform-origin:center}
+.calendar-routine-editor details[open]>summary::before{transform:rotate(90deg)}
+.calendar-routine-editor .cre-step-options>summary{font-weight:400;color:var(--text-secondary);min-height:36px}
 .calendar-routine-editor .cre-toggle{display:flex;align-items:center;gap:9px;min-height:44px}
 .calendar-routine-editor .cre-field{max-width:460px}
 .calendar-routine-editor .cre-dependencies{display:grid;gap:7px}
@@ -28,9 +32,9 @@
 .calendar-routine-editor .cre-dependencies p{margin:0}
 .calendar-routine-editor .cre-dependency{display:flex;align-items:center;gap:8px;min-height:44px;overflow-wrap:anywhere}
 .calendar-routine-editor .cre-dependency span{flex:1;min-width:0}
-.calendar-routine-editor .cre-dependency small{color:var(--muted,#666)}
+.calendar-routine-editor .cre-dependency small{color:var(--text-secondary,#606060)}
 .calendar-routine-editor .cre-dependency.is-disabled{opacity:.6}
-.calendar-routine-editor .cre-advanced{padding:0 12px;border:1px solid var(--border,#d4d6d8);border-radius:10px}
+.calendar-routine-editor .cre-advanced{padding:0 12px;border:1px solid var(--border-default,#dedede);border-radius:10px}
 .calendar-routine-editor .cre-advanced-fields{display:grid;gap:12px;padding:0 0 12px}
 .calendar-routine-editor .cre-week{display:flex;flex-wrap:wrap;gap:8px}
 .calendar-routine-editor .cre-week label{display:flex;align-items:center;gap:6px;min-height:44px;padding:0 5px}
@@ -38,4 +42,4 @@
 .calendar-routine-editor .cre-delete-confirm,.calendar-routine-editor .cre-change-confirm{display:grid;gap:8px;padding:12px;border:1px solid var(--warning,#c87800);border-radius:8px}
 .calendar-routine-editor .cre-delete-confirm p,.calendar-routine-editor .cre-change-confirm p{margin:0}
 .calendar-routine-editor .cre-single{min-height:44px}
-@media(max-width:480px){.calendar-routine-editor{gap:12px}.calendar-routine-editor .cre-step{padding:8px}.calendar-routine-editor .cre-step>header{align-items:stretch;flex-direction:column;gap:6px}.calendar-routine-editor .cre-step>header>label{width:100%;gap:5px}.calendar-routine-editor .cre-step-order{justify-content:flex-end;gap:2px}.calendar-routine-editor .cre-step-order button{min-width:44px;padding-inline:5px}.calendar-routine-editor .cre-dependency{align-items:flex-start;flex-wrap:wrap}.calendar-routine-editor .cre-dependency small{margin-left:28px}}
+@media(max-width:480px){.calendar-routine-editor{gap:12px}.calendar-routine-editor .cre-step{padding:8px 0}.calendar-routine-editor .cre-layout button{font-size:13px;padding-inline:10px}.calendar-routine-editor .cre-step>header{align-items:stretch;flex-direction:column;gap:6px}.calendar-routine-editor .cre-step>header>label{width:100%;gap:5px}.calendar-routine-editor .cre-step-order{justify-content:flex-end;gap:2px}.calendar-routine-editor .cre-step-order button{min-width:44px;padding-inline:5px}.calendar-routine-editor .cre-dependency{align-items:flex-start;flex-wrap:wrap}.calendar-routine-editor .cre-dependency small{margin-left:28px}}

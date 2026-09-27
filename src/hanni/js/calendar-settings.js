@@ -107,7 +107,6 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
   const cancelButton = api.modal.querySelector('.calendar-editor-actions [data-dialog-close]');
   const closeButtons = [...api.modal.querySelectorAll('[data-dialog-close]')];
   const footerButtons = [...api.modal.querySelectorAll('.calendar-editor-actions button')];
-  const headerClose = api.modal.querySelector('.calendar-editor-close');
   const feedback = api.modal.querySelector('.calendar-editor-feedback');
   cancelButton.textContent = 'Отмена';
   cancelButton.setAttribute('aria-label', 'Отмена и закрыть настройки');
@@ -152,10 +151,12 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
       hosts[item.id].hidden = !selected;
     }
     if (id === 'today' || id === 'calendar') hosts[id].append(prefsLoadState);
+    tabs[id].scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
     if (focus) tabs[id].focus();
   }
 
   function preferenceDirty() { return !!draft && !samePreferences(draft, original); }
+  function hasUnsavedChanges() { return preferenceDirty() || !!processSettings?.isDirty() || !!disposeSync?.isDirty?.(); }
   function setPreferenceControlsEnabled(enabled) {
     preferencesLoading = !enabled;
     for (const root of [hosts.today, hosts.calendar]) {
@@ -171,10 +172,11 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
   function refreshFooter() {
     const dirty = preferenceDirty();
     saveButton.hidden = !dirty;
-    saveButton.disabled = api.pending || !original;
+    saveButton.disabled = api.pending || !original || !closeConfirmation.hidden;
     saveButton.textContent = 'Сохранить календарь';
-    cancelButton.textContent = dirty || processSettings?.isDirty() ? 'Отмена' : 'Закрыть';
-    api.modal.querySelector('.calendar-settings-actions').dataset.dirty = String(dirty || !!processSettings?.isDirty());
+    cancelButton.textContent = hasUnsavedChanges() ? 'Отмена' : 'Закрыть';
+    api.modal.querySelector('.calendar-settings-actions').dataset.dirty = String(hasUnsavedChanges());
+    if (!settingsStatus.hidden && !processSettings?.isDirty() && !disposeSync?.isDirty?.()) settingsStatus.hidden = true;
   }
 
   nav.addEventListener('click', event => {
@@ -195,6 +197,7 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
   });
 
   function finishClose(intent) {
+    if (api.pending) return;
     closeConfirmation.hidden = true;
     closeIntent = null;
     api.body.removeAttribute('inert');
@@ -220,7 +223,7 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
   function requestClose(intent = 'close') {
     if (api.pending) return;
     if (!closeConfirmation.hidden) { dismissCloseConfirmation(); return; }
-    const dirty = preferenceDirty() || !!processSettings?.isDirty();
+    const dirty = hasUnsavedChanges();
     if (!dirty) { finishClose(intent); return; }
     closeIntent = intent;
     focusAfterConfirmation = document.activeElement;
@@ -231,7 +234,7 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
     footerButtons.forEach(button => { button.disabled = true; });
     continueEditing.focus({ preventScroll: true });
   }
-  const scheduleFooterRefresh = () => window.setTimeout(refreshFooter, 0);
+  const scheduleFooterRefresh = () => window.queueMicrotask(() => { if (!closed) refreshFooter(); });
   // Intercept both Escape and shell close buttons so dirty drafts are never silently lost.
   api.modal.addEventListener('cancel', event => {
     event.preventDefault(); event.stopImmediatePropagation();
@@ -338,9 +341,15 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
       window.dispatchEvent(new window.CustomEvent('hanni:calendar-settings-changed', { detail: { changes: saved } }));
       api.setPending(false);
       if (processSettings?.isDirty()) {
+        hosts.processes.append(settingsStatus);
         settingsStatus.textContent = 'Настройки календаря сохранены. Черновик этапов ещё не сохранён — сохрани его во вкладке «Этапы задач» или закрой настройки с отменой.';
         settingsStatus.hidden = false;
         setActive('processes', true);
+      } else if (disposeSync?.isDirty?.()) {
+        hosts.connections.prepend(settingsStatus);
+        settingsStatus.textContent = 'Настройки календаря сохранены. Изменения подключения ещё не сохранены.';
+        settingsStatus.hidden = false;
+        setActive('connections', true);
       } else {
         api.close({ skipBeforeClose: true });
       }
@@ -366,7 +375,10 @@ export function showCalendarSettings(trigger, { section, returnFocus } = {}) {
   hosts.processes.addEventListener('click', scheduleFooterRefresh);
   processObserver = new window.MutationObserver(scheduleFooterRefresh);
   processObserver.observe(hosts.processes, { childList: true, subtree: true, attributes: true });
-  disposeSync = mountSyncSettings(sync, { invoke, setPending: value => api.setPending(value) });
+  disposeSync = mountSyncSettings(sync, { invoke, setPending: value => { api.setPending(value); refreshFooter(); } });
+  sync.addEventListener('input', scheduleFooterRefresh);
+  sync.addEventListener('change', scheduleFooterRefresh);
+  sync.addEventListener('click', scheduleFooterRefresh);
   disposeSleep = mountSleepSettings(sleep, { invoke, setPending: value => api.setPending(value) });
   disposeActivity = mountHealthActivitySettings(activity, { invoke, setPending: value => api.setPending(value) });
   disposeUpdates = mountAppUpdates(updates, { invoke });

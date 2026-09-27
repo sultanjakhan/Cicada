@@ -215,3 +215,30 @@ test('an in-flight process save prevents closing the settings shell', async () =
   await tick();
   assert.equal(x.modal.querySelector('.calendar-editor-actions [data-dialog-close]').disabled, false);
 });
+
+test('connection drafts survive calendar saves and closing requires explicit discard', async () => {
+  const x = await boot();
+  const preference = x.modal.querySelector('[data-key="recommendTasks"]');
+  preference.checked = false;
+  preference.dispatchEvent(new x.dom.window.Event('change', { bubbles: true }));
+  x.modal.querySelector('#calendar-settings-tab-connections').click();
+  const enabled = x.modal.querySelector('[data-sync-enabled]');
+  enabled.checked = false;
+  enabled.dispatchEvent(new x.dom.window.Event('change', { bubbles: true }));
+  x.modal.querySelector('form').dispatchEvent(new x.dom.window.Event('submit', { bubbles: true, cancelable: true }));
+  await tick();
+  assert.equal(x.modal.open, true);
+  assert.equal(x.modal.querySelector('#calendar-settings-panel-connections').hidden, false);
+  assert.equal(enabled.checked, false);
+  assert.equal(x.calls.includes('mvp_sync_set_enabled'), false);
+  assert.equal(x.ui.has('calendar_preferences_v1'), true);
+  assert.equal(x.modal.querySelector('[data-settings-status]').hidden, false);
+  x.modal.dispatchEvent(new x.dom.window.Event('cancel', { cancelable: true }));
+  assert.equal(x.modal.querySelector('[data-close-confirmation]').hidden, false);
+  x.modal.querySelector('[data-close-confirmation] button:first-of-type').click();
+  x.modal.querySelector('[data-sync-cancel]').click();
+  await tick();
+  assert.equal(x.modal.querySelector('[data-settings-status]').hidden, true);
+  x.modal.querySelector('footer [data-dialog-close]').click();
+  assert.equal(x.modal.open, false);
+});
