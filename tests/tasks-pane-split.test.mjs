@@ -1,17 +1,16 @@
 // Tasks pane, 2026-09-24/25: Work/Personal switch, «В работе» group, overdue cleanup,
-// fewer repeated labels, stage menu, grouping by goal and quick add.
+// fewer repeated labels, stage arrow, grouping by goal and shared task creation.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { mountCalendarTasks } from '../src/hanni/js/calendar-tasks.js';
-import { TASK_STAGES } from '../src/hanni/js/task-model.js';
 
 const settle = async (rounds = 4) => { for (let i = 0; i < rounds; i++) await new Promise(resolve => setImmediate(resolve)); };
 const day = (delta = 0) => { const d = new Date(); d.setDate(d.getDate() + delta); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const note = (id, date, extra = {}) => ({ source_type: 'note', source_id: id, title: id, date, status_extra: 'task', ...extra });
 
-async function mount(t, rows, { goals = [], links = [], state = {}, handlers = {}, openProcessSettings } = {}) {
+async function mount(t, rows, { goals = [], links = [], state = {}, handlers = {} } = {}) {
   const dom = new JSDOM('<main></main>', { url: 'https://fixture.invalid', pretendToBeVisual: true });
   const host = dom.window.document.querySelector('main'), calls = [];
   const paneState = { filter: 'active', search: '', goal: '', sphere: '', page: 0, ...state };
@@ -24,7 +23,7 @@ async function mount(t, rows, { goals = [], links = [], state = {}, handlers = {
     if (command === 'get_calendar_task_goals') return links;
     throw new Error(`unexpected ${command}`);
   };
-  const dependencies = { state: paneState, invoke, openTask() {}, editDate() {}, notifyChange() { changes++; }, executeAction: async () => {}, ...(openProcessSettings ? { openProcessSettings } : {}) };
+  const dependencies = { state: paneState, invoke, openTask() {}, editDate() {}, notifyChange() { changes++; }, executeAction: async () => {} };
   const dispose = mountCalendarTasks(host, dependencies);
   t.after(() => { dispose(); dom.window.close(); });
   await settle();
@@ -248,108 +247,72 @@ test('rows do not repeat what their group or filter already says', async t => {
   assert.equal(x.item('Untimed').querySelector('.ct-goal'), null, 'the chosen goal is not repeated');
 });
 
-test('the stage chip is the single stage action; the process menu is keyboard accessible and success has no visible echo', async t => {
+test('the stage arrow advances once, preserves waiting and timer state, then focuses the row action at the last stage', async t => {
   const rows = [
-    note('Spec', day(), { sphere: 'work', stage: 'description', waiting: true }),
-    note('Fresh', null, { sphere: 'work', stage: '' }),
-    note('Started', null, { sphere: 'work', process: 'system-analysis', stage: '' }),
-    note('Home with stage', null, { sphere: 'home', stage: 'agreement' }),
-    note('Home plain', null, { sphere: 'home' }),
-    note('Instant', null, { sphere: 'work', task_kind: 'instant', stage: 'development' }),
-    note('Closed', day(-1), { sphere: 'work', stage: 'acceptance', completed: true }),
+    note('Working', day(), { process: 'system-analysis', stage: 'development', waiting: true, is_active: true, has_work: true }),
+    note('Empty', null, { process: 'system-analysis', stage: '' }),
     note('Last', null, { process: 'system-analysis', stage: 'acceptance' }),
+    note('Deleted', null, { process: 'system-analysis', stage: 'removed-stage' }),
+    note('No process', null, { stage: '' }),
+    note('Instant', null, { process: 'system-analysis', task_kind: 'instant', stage: 'development' }),
   ];
-  let fail = false;
   const x = await mount(t, rows, { handlers: { set_calendar_task_stage: ({ id, stage, waiting }) => {
-    if (fail) throw 'offline';
-    // As the backend: a stage change writes the process of a 0.3.33 stage.
-    const row = rows.find(item => item.source_id === id); Object.assign(row, { process: row.process || 'system-analysis', ...(stage == null ? {} : { stage }), ...(waiting == null ? {} : { waiting }) }); return { ...row };
+    const row = rows.find(item => item.source_id === id);
+    Object.assign(row, { ...(stage == null ? {} : { stage }), ...(waiting == null ? {} : { waiting }) });
+    return { ...row };
   } } });
-  const chip = id => x.item(id)?.querySelector('[data-task-control="stage"]') ?? null;
-  const menu = () => x.doc.querySelector('[data-tasks-stage-menu]');
-  assert.match(chip('Spec').textContent, /^Этап:\s*Описание/);
-  assert.ok(chip('Spec').querySelector('.ct-stage-chevron'));
-  assert.equal(chip('Spec').querySelector('.ct-stage-label').textContent, 'Описание', 'a 0.3.33 stage belongs to the built-in process');
-  assert.equal(chip('Spec').querySelector('.ct-waiting').textContent, 'жду ответа');
-  assert.equal(chip('Fresh'), null, 'a work task without a process has no stage and no placeholder');
-  assert.match(chip('Started').textContent, /^Этап:\s*Выбрать/); assert.equal(chip('Started').classList.contains('is-empty'), true);
-  assert.match(chip('Home with stage').textContent, /Согласование/, 'a stored stage shows on any task');
-  assert.equal(chip('Home plain'), null);
-  assert.equal(chip('Instant'), null, 'instant tasks have no stage');
-  assert.equal(x.item('Spec').querySelector('[data-task-control="stage-next"]'), null, 'no separate next-stage action');
-  assert.equal(x.item('Last').querySelector('[data-task-control="stage-next"]'), null);
+  const stage = id => x.item(id)?.querySelector('.ct-stage') ?? null;
+  const next = id => x.item(id)?.querySelector('[data-task-control="stage-next"]') ?? null;
 
-  chip('Started').click();
-  assert.ok(menu()); assert.equal(chip('Started').getAttribute('aria-expanded'), 'true');
-  assert.equal(menu().querySelector('.ct-stage-menu-title').textContent, 'Системный анализ');
-  const options = () => [...menu().querySelectorAll('[role^="menuitem"]')];
-  assert.deepEqual(options().map(el => el.textContent), [...TASK_STAGES.map(([, label]) => label), 'Без стадии', 'Жду ответа']);
-  assert.ok(options().some(el => el.textContent === 'Анализ и модели'));
-  assert.deepEqual(options().filter(el => el.getAttribute('aria-checked') === 'true').map(el => el.textContent), ['Без стадии']);
-  assert.equal(x.doc.activeElement.textContent, 'Без стадии', 'focus starts on the current stage');
-  x.key(x.doc.activeElement, 'ArrowDown'); assert.equal(x.doc.activeElement.textContent, 'Жду ответа');
-  menu().querySelector('[data-stage="requirements"]').focus();x.key(x.doc.activeElement,'Enter');await settle();
-  assert.deepEqual(x.commands('set_calendar_task_stage').at(-1), { id: 'Started', stage: 'requirements', waiting: false });
-  assert.equal(menu(), null);
-  assert.equal(chip('Started').querySelector('.ct-stage-label').textContent, 'Требования');
-  assert.match(x.$('[data-tasks-stage-announcement]').textContent, /Этап: Требования/);
-  assert.equal(x.$('[data-tasks-message]').textContent, '', 'successful stage selection does not add a visible echo');
-  assert.equal(x.doc.activeElement, chip('Started'), 'focus returns to the stage in the row');
+  assert.equal(stage('Working').querySelector('.ct-waiting').querySelector('.ct-visually-hidden').textContent, 'жду ответа');
+  assert.ok(next('Working'));
+  assert.equal(next('Empty').getAttribute('aria-label').includes('Понимание'), true, 'an empty configured process advances to its first stage');
+  assert.equal(next('Last'), null, 'the last stage has no forward arrow');
+  assert.equal(next('Deleted'), null, 'a deleted stage cannot advance');
+  assert.equal(stage('Deleted').classList.contains('is-deleted'), true);
+  assert.equal(stage('No process'), null, 'tasks without a process show no stage control');
+  assert.equal(stage('Instant'), null, 'instant tasks show no stage control');
+
+  next('Working').click(); await settle(8);
+  assert.deepEqual(x.commands('set_calendar_task_stage').at(-1), { id: 'Working', stage: 'acceptance', waiting: null });
+  assert.equal(rows.find(row => row.source_id === 'Working').stage, 'acceptance', 'one click advances by exactly one configured step');
+  assert.equal(rows.find(row => row.source_id === 'Working').waiting, true, '«Жду ответа» remains an overlay after the stage change');
+  assert.equal(next('Working'), null, 'there is no arrow after reaching the last stage');
+  assert.equal(x.doc.activeElement, x.item('Working').querySelector('[data-task-control="open"]'), 'focus falls back to the task title when the arrow disappears');
+  assert.deepEqual(x.commands('start_task_block'), []);
+  assert.deepEqual(x.commands('pause_task_block'), []);
+  assert.deepEqual(x.commands('finish_task_block'), []);
+  assert.deepEqual(x.commands('complete_calendar_task'), [], 'changing stage leaves task timers and completion untouched');
+  assert.equal(x.$('[data-tasks-message]').textContent, '', 'success is announced accessibly without a visible echo');
+  assert.match(x.$('[data-tasks-stage-announcement]').textContent, /Этап: Приёмка/);
   assert.ok(x.changes >= 1, 'other surfaces are told about the stage change');
 
-  chip('Spec').click();
-  assert.equal(menu().querySelector('[data-stage-waiting]').getAttribute('aria-checked'), 'true');
-  menu().querySelector('[data-stage-waiting]').click(); await settle();
-  assert.deepEqual(x.commands('set_calendar_task_stage').at(-1), { id: 'Spec', stage: null, waiting: false }, '«Жду ответа» alone leaves the stage to the backend');
-  assert.equal(chip('Spec').querySelector('.ct-waiting'), null);
-
-  chip('Home with stage').click();
-  menu().querySelector('[data-stage=""]').click(); await settle();
-  assert.deepEqual(x.commands('set_calendar_task_stage').at(-1), { id: 'Home with stage', stage: '', waiting: false });
-  assert.match(chip('Home with stage').textContent, /^Этап:\s*Выбрать/, '«Без стадии» keeps the process');
-
-  fail = true; chip('Spec').click();
-  menu().querySelector('[data-stage="agreement"]').click(); await settle();
-  assert.ok(menu(), 'a failure keeps the menu open');
-  assert.equal(menu().querySelector('[role=alert]').textContent, 'Не удалось изменить стадию. Повтори.');
-  x.key(x.doc.activeElement, 'Escape');
-  assert.equal(menu(), null); assert.equal(x.doc.activeElement, chip('Spec'));
-  assert.equal(x.$('[data-tasks-message]').textContent, '', 'stage errors stay beside the menu option');
-  assert.equal(chip('Spec').querySelector('.ct-stage-label').textContent, 'Описание', 'failed stage write leaves the row unchanged');
-
-  x.filter('completed');
-  assert.equal(chip('Closed'), null, 'closed tasks show no stage control');
-  x.filter('active');
-  // A stage deleted in the settings stays on the task and says so.
-  rows.push(note('Removed', null, { process: 'system-analysis', stage: 'review', waiting: false }));
-  x.dom.window.dispatchEvent(new x.dom.window.Event('task-state-changed')); await settle();
-  assert.equal(chip('Removed').querySelector('.ct-stage-label').textContent, 'Стадия удалена');
-  assert.equal(chip('Removed').classList.contains('is-deleted'), true);
-  assert.equal(x.item('Removed').querySelector('[data-task-control="stage-next"]'), null);
-  fail = false; chip('Removed').click();
-  assert.deepEqual([...menu().querySelectorAll('[aria-checked="true"]')].map(el => el.textContent), [], 'no listed stage is current');
-  menu().querySelector('[data-stage-waiting]').click(); await settle();
-  assert.deepEqual(x.commands('set_calendar_task_stage').at(-1), { id: 'Removed', stage: null, waiting: true }, 'toggling «Жду ответа» keeps the deleted stage');
+  next('Empty').click(); await settle(8);
+  assert.deepEqual(x.commands('set_calendar_task_stage').at(-1), { id: 'Empty', stage: 'understanding', waiting: null });
+  assert.equal(rows.find(row => row.source_id === 'Empty').stage, 'understanding');
+  assert.ok(next('Empty'), 'the arrow remains while another step is available');
 });
 
-test('process settings are optional, close the stage menu and receive its chip for focus return', async t => {
-  const row = note('Task', day(), { process: 'system-analysis', stage: 'requirements' });
-  const withoutRoute = await mount(t, [row]);
-  withoutRoute.item('Task').querySelector('[data-task-control="stage"]').click();
-  assert.equal(withoutRoute.doc.querySelector('[data-tasks-stage-menu]').querySelector('.ct-stage-settings-label'), null);
-  withoutRoute.key(withoutRoute.doc.activeElement, 'Escape');
+test('failed stage advance remains visible with alert feedback and can be retried', async t => {
+  const row = note('Retry', day(), { process: 'system-analysis', stage: 'agreement' });
+  let fail = true;
+  const x = await mount(t, [row], { handlers: { set_calendar_task_stage: ({ stage }) => {
+    if (fail) throw new Error('offline');
+    row.stage = stage; return { ...row };
+  } } });
+  const next = () => x.item('Retry').querySelector('[data-task-control="stage-next"]');
+  next().click(); await settle(8);
+  const error = x.$('[data-tasks-message]');
+  assert.equal(error.getAttribute('role'), 'alert');
+  assert.match(error.textContent, /Не удалось перейти к следующему этапу/);
+  assert.equal(row.stage, 'agreement', 'failed persistence leaves the displayed stage unchanged');
+  assert.equal(x.doc.activeElement, next(), 'focus returns to the retryable arrow');
 
-  let returnedFocus;
-  const withRoute = await mount(t, [row], { openProcessSettings(trigger) { returnedFocus = trigger; } });
-  const chip = withRoute.item('Task').querySelector('[data-task-control="stage"]');
-  chip.click();
-  const menu = withRoute.doc.querySelector('[data-tasks-stage-menu]');
-  const settings = [...menu.querySelectorAll('[role^="menuitem"]')].find(item => item.querySelector('.ct-stage-settings-label')?.textContent === 'Настроить этапы…');
-  assert.ok(settings);
-  assert.equal(settings.querySelector('.ct-stage-settings-hint').textContent, 'Общий список этапов процесса');
-  settings.click();
-  assert.equal(withRoute.doc.querySelector('[data-tasks-stage-menu]'), null);
-  assert.equal(returnedFocus, chip);
+  fail = false;
+  next().click(); await settle(8);
+  assert.equal(row.stage, 'decomposition');
+  assert.equal(x.$('[data-tasks-message]').textContent, '', 'success clears the visible error');
+  assert.match(x.$('[data-tasks-stage-announcement]').textContent, /Этап: Декомпозиция/);
 });
 
 test('the stage tooltip in a row gives timer time per stage; blocks of other tasks never count', async t => {
@@ -364,7 +327,7 @@ test('the stage tooltip in a row gives timer time per stage; blocks of other tas
     { id: 2, source_type: 'note', source_id: 'Parallel', created_at: iso(-90), duration_seconds: 1500, is_active: false },
   ];
   const x = await mount(t, rows, { handlers: { get_calendar_task_blocks: ({ sourceIds }) => blocks.filter(block => sourceIds.includes(block.source_id)) } });
-  const title = id => x.item(id).querySelector('[data-task-control="stage"]').title;
+  const title = id => x.item(id).querySelector('.ct-stage').title;
   assert.equal(title('Model'), 'Время по стадиям: Требования 30 мин · Анализ и модели 30 мин', 'a block spanning the change is split');
   assert.equal(title('Parallel'), 'Время по стадиям: Требования 25 мин', 'a parallel task keeps its own time');
   assert.deepEqual(x.commands('get_calendar_task_blocks').at(-1).sourceIds.sort(), ['Model', 'Parallel'], 'only tasks with a process are read');
@@ -400,59 +363,13 @@ test('«По цели» groups active tasks under their top-level goal, «Без
   again();
 });
 
-test('quick add creates a title-only task in the chosen sphere and plans it for today only in «Сегодня»', async t => {
-  const rows = [note('Existing', day())];
-  let fail = null, next = 1;
-  const x = await mount(t, rows, { handlers: { save_calendar_task: args => {
-    if (fail) throw fail;
-    const id = `new-${next++}`; rows.push(note(id, args.dueDate, { title: args.title, sphere: args.sphere || null })); return id;
-  } } });
-  const input = x.$('[data-tasks-add]'), status = x.$('[data-tasks-add-status]');
-  const enter = async value => { input.value = value; x.key(input, 'Enter'); await settle(); };
-  assert.equal(input.placeholder, 'Добавить задачу…');
-  await enter('Купить хлеб');
-  assert.deepEqual(x.commands('save_calendar_task').at(-1), { id: null, title: 'Купить хлеб', dueDate: null, time: '', estimateMinutes: null, goalId: null, expectedVersion: null, important: false, taskKind: 'normal', sphere: '' });
-  assert.equal(input.value, '');
-  assert.equal(status.textContent, 'Задача добавлена в «Без даты».');
-  assert.ok(x.titles().includes('Купить хлеб'));
-  assert.ok(x.changes >= 1);
-
-  x.sphere('work'); x.filter('today');
-  await enter('  Созвон по API  ');
-  assert.deepEqual(x.commands('save_calendar_task').at(-1), { id: null, title: 'Созвон по API', dueDate: day(), time: '', estimateMinutes: null, goalId: null, expectedVersion: null, important: false, taskKind: 'normal', sphere: 'work' });
-  assert.equal(status.textContent, 'Задача добавлена.');
-  assert.deepEqual(x.titles(), ['Созвон по API']);
-  x.sphere('personal'); x.filter('undated'); await enter('Полить цветы');
-  assert.deepEqual([x.commands('save_calendar_task').at(-1).sphere, x.commands('save_calendar_task').at(-1).dueDate], ['personal', null], '«Личное» adds a personal task');
-  // Two spheres inside «Личное» now: the chosen one is used.
-  x.$('[data-tasks-personal-option="none"]').click(); await enter('Прогулка');
-  assert.equal(x.commands('save_calendar_task').at(-1).sphere, '', '«Без сферы» adds without a sphere');
-  x.$('[data-tasks-personal-option="personal"]').click(); await enter('Позвонить маме');
-  assert.equal(x.commands('save_calendar_task').at(-1).sphere, 'personal');
-
-  const saved = x.commands('save_calendar_task').length;
-  await enter('   ');
-  assert.equal(x.commands('save_calendar_task').length, saved, 'an empty line creates nothing');
-  input.value = 'Черновик'; x.key(input, 'Escape');
-  assert.equal(input.value, '', 'Esc clears the line');
-  await enter('x'.repeat(501));
-  assert.equal(x.commands('save_calendar_task').length, saved);
-  assert.match(status.textContent, /500/); assert.equal(status.getAttribute('role'), 'alert');
-
-  fail = 'offline';
-  await enter('Не сохранится');
-  assert.equal(status.getAttribute('role'), 'alert');
-  assert.match(status.textContent, /^Не удалось добавить задачу: offline\./);
-  assert.equal(input.value, 'Не сохранится', 'the typed text stays');
-  assert.equal(input.readOnly, false);
-  fail = null;
-
-  x.sphere(''); x.filter('active');
-  x.$('[data-tasks-search]').value = 'zzz'; x.$('[data-tasks-search]').dispatchEvent(new x.dom.window.Event('input'));
-  await enter('Скрытая');
-  assert.equal(status.textContent, 'Задача добавлена, но скрыта поиском или фильтром цели.');
-  x.filter('completed');
-  assert.equal(x.$('[data-tasks-add-form]').hidden, true, 'no quick add among completed tasks');
+test('task capture stays on the shared «+ Создать» action, not a second quick-add field', async t => {
+  const x = await mount(t, []);
+  assert.equal(x.$('[data-tasks-add-form]'), null);
+  assert.equal(x.$('[data-tasks-add]'), null);
+  assert.equal(x.$('[data-tasks-add-status]'), null);
+  assert.deepEqual(x.commands('save_calendar_task'), [], 'opening Tasks does not create or save anything');
+  assert.match(x.$('.ct-empty').textContent, /\+ Создать/, 'the empty state names the shared creation action');
 });
 
 test('phone layout keeps the switches scrollable and the tap targets at least 36px', () => {
@@ -463,9 +380,8 @@ test('phone layout keeps the switches scrollable and the tap targets at least 36
     const rule = phone.match(new RegExp(`${selector.replace(/[.]/g, '\\.')} \\{([^}]*)\\}`))?.[1] || '';
     assert.match(rule, /height: (3[6-9]|4\d)px/, `${selector} is at least 36px tall on the phone`);
   }
-  assert.match(phone, /\.ct-add input \{[^}]*height: 48px/);
   assert.match(phone, /\.ct-grouping button \{[^}]*height: 36px/);
-  assert.match(phone, /\.ct-stage \{[^}]*min-height: 36px/, 'the stage selector keeps a 36px phone touch target');
+  assert.match(phone, /\.ct-stage-next \{[^}]*width: 36px; height: 36px/, 'the next-stage action keeps a 36px phone touch target');
   assert.match(phone, /\.ct-meta \{[^}]*max-height: none; overflow: visible/, 'wrapped stage and estimate metadata stays fully visible on narrow screens');
   assert.match(css, /\.ct-subspheres \{[^}]*overflow-x: auto/);
 });
