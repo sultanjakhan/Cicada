@@ -63,6 +63,10 @@ export function mountCalendarTodayAction(element, dependencies) {
     if (scope === 'tasks' && !disposeTasks) {
       disposeTasks = mountCalendarDashboardTasks(q('[data-today-task-choices]'), {
         ...dependencies.taskOptions,
+        openTask: row => {
+          controller.setCurrentTask(row);
+          if (setMode('recommendation')) focus();
+        },
         executeAction:async (row, action) => {
           const result = await dependencies.taskOptions.executeAction(row, action);
           if (result !== false && !disposed && action === 'start') controller.setCurrentTask(row);

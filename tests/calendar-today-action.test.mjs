@@ -4,7 +4,7 @@ import { JSDOM } from 'jsdom';
 import { mountCalendarTodayAction } from '../src/hanni/js/calendar-today-action.js';
 
 const settle = async () => { for (let i=0;i<12;i++) await new Promise(resolve=>setImmediate(resolve)); };
-async function setup(t, {nextTask=false,activeTask=false}={}) {
+async function setup(t, {nextTask=false,activeTask=false,extraTasks=[]}={}) {
   const dom = new JSDOM('<main></main>'), host = dom.window.document.querySelector('main');
   const now = new Date(), date = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
   const plan = {id:'routine',title:'Проверка',kind:'action',mode:'graph',active:true,required:true,createdOn:date,startsOn:'',endsOn:'',time:'',weekdays:[0,1,2,3,4,5,6],steps:[{title:'Первая ветка',dependsOn:[],trackingMode:'check'},{title:'Вторая ветка',dependsOn:[],trackingMode:'check'}]};
@@ -14,7 +14,7 @@ async function setup(t, {nextTask=false,activeTask=false}={}) {
     calls.push({name,args});
     if (name==='get_ui_state') return args?.key==='calendar_recurring_v1'?state:null;
     if (name==='set_ui_state') { assert.equal(args.expectedValue,state); state=args.value; return; }
-    if (name==='get_calendar_tasks' && nextTask) return [{source_type:'note',source_id:'99',title:'Следующая задача',status_extra:'task',date,completed:false,is_active:activeTask,has_work:activeTask,actual_seconds:activeTask?90:0}];
+    if (name==='get_calendar_tasks' && nextTask) return [{source_type:'note',source_id:'99',title:'Следующая задача',status_extra:'task',date,completed:false,is_active:activeTask,has_work:activeTask,actual_seconds:activeTask?90:0},...extraTasks];
     if (name==='complete_recurring_step' || name==='skip_recurring_step') {
       if(failCompletion) throw Error('Не удалось сохранить шаг');
       const data=JSON.parse(state), [id,day,index]=JSON.parse(args.sourceId), run=data.days[day][id];
@@ -40,6 +40,26 @@ test('one selected running task becomes the current work row, and choices hide i
   x.dispose.openRoutine({id:'routine',date:x.date,start:false});await settle();
   assert.equal(x.currentTasks.at(-1),null);
   assert.equal(x.calls.some(call=>['pause_task_block','cancel_task_block','finish_task_block','start_task_block'].includes(call.name)),false);
+});
+
+test('choosing a task by title selects it and returns to Today without changing any timer',async t=>{
+  const x=await setup(t,{nextTask:true,activeTask:true,extraTasks:[
+    {source_type:'note',source_id:'100',title:'Вторая активная',status_extra:'task',date:null,completed:false,is_active:true,has_work:true,actual_seconds:30},
+    {source_type:'note',source_id:'101',title:'Не начатая',status_extra:'task',date:null,completed:false,is_active:false},
+  ]});
+  const openPicker=async()=>{x.host.querySelector('[data-today-choose]').click();x.host.querySelector('[data-today-scope="tasks"]').click();await settle();};
+  await openPicker();
+  x.host.querySelector('[data-overview-task="note:100"]').click(); await settle();
+  assert.equal(x.currentTasks.at(-1).source_id,'100','an already-running task can become the one selected current task');
+  assert.equal(x.host.dataset.mode,'recommendation');
+  assert.ok(x.host.querySelector('[data-next-action-key]'));
+
+  await openPicker();
+  x.host.querySelector('[data-overview-task="note:101"]').click(); await settle();
+  assert.equal(x.currentTasks.at(-1),null,'an inactive task becomes the recommendation but is not shown as running work');
+  assert.equal(x.host.dataset.mode,'recommendation');
+  assert.equal(x.host.querySelector('[data-next-action-key]').dataset.nextActionKey,'task:note:101');
+  assert.equal(x.calls.some(call=>['start_task_block','pause_task_block','cancel_task_block','finish_task_block'].includes(call.name)),false);
 });
 
 test('routine recommendation opens branches inline and quiet refresh keeps the same controls', async t => {
