@@ -106,6 +106,15 @@ test('mismatched native preview and future date never permit history deletion',a
   assert.equal(x.host.querySelector('[data-erasure-error]').hidden,false);
 });
 
+test('a successful erasure accepts a farther boundary already advanced by another peer',async t=>{
+  const x=await boot(t,{erasureHandler:async(command,args)=>command==='digital_activity_preview_erasure'?{...args,count:1,deletedThrough:'2099-01-01'}:{deleted:1,deletedThrough:'2099-01-01'}});
+  await addErasureDevice(x);x.host.querySelector('[data-erasure-date]').value='2026-09-20';
+  x.host.querySelector('[data-erasure-preview]').click();await tick();x.host.querySelector('[data-erasure-confirm]').click();await tick();
+  assert.equal(x.host.querySelector('[data-da-erasure]').hidden,true);
+  assert.match(x.host.querySelector('[data-da-message]').textContent,/Дни по 2099-01-01 исключены/);
+  assert.equal(x.host.querySelector('[data-erasure-error]').hidden,true);
+});
+
 test('status failure can retry and manual import exposes a real result',async t=>{
   const x=await boot(t,{failFirst:true});x.devices.push({id:'w',label:'Ноутбук',port:5600,enabled:true,source:'windows',lastSuccess:null,lastError:null,records:3});
   x.host.querySelector('[data-da-retry]').click();await tick();

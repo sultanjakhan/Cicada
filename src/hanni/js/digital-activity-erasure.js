@@ -25,11 +25,12 @@ export function mountDigitalActivityErasure(element, { invoke, onPending=()=>{},
     q('[data-erasure-cancel]').disabled=busy;
   }
   function invalidate() { revision++;preview=null;result.hidden=true;showError('');render(); }
-  function validDate(value) {
-    if(!/^\d{4}-\d{2}-\d{2}$/.test(value)||value>today())return false;
+  function calendarDate(value) {
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(value))return false;
     const parsed=new Date(`${value}T12:00:00Z`);
     return Number.isFinite(parsed.getTime())&&parsed.toISOString().slice(0,10)===value;
   }
+  const validDate=value=>calendarDate(value)&&value<=today();
   async function perform(action) {
     if(busy||disposed||!device)return;
     busy=true;showError('');onPending(true);render();
@@ -55,7 +56,9 @@ export function mountDigitalActivityErasure(element, { invoke, onPending=()=>{},
     void perform(async()=>{
       const value=await invoke('digital_activity_erase_history',{deviceId:confirmed.deviceId,throughDate:confirmed.throughDate,expectedCount:confirmed.count});
       if(disposed)return;
-      if(!Number.isSafeInteger(value?.deleted)||value.deleted<0||!validDate(value.deletedThrough)||value.deletedThrough<confirmed.throughDate)throw Error('invalid_erasure_result');
+      // Another timezone/peer may already have advanced this monotone boundary.
+      // Only the user's requested date must not be in the local future.
+      if(!Number.isSafeInteger(value?.deleted)||value.deleted<0||!calendarDate(value.deletedThrough)||value.deletedThrough<confirmed.throughDate)throw Error('invalid_erasure_result');
       element.hidden=true;revision++;preview=null;
       await onErased(value,confirmed);
     });
