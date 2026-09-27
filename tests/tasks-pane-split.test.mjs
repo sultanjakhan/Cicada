@@ -37,6 +37,7 @@ async function mount(t, rows, { goals = [], links = [], state = {}, handlers = {
     counts: () => Object.fromEntries([...host.querySelectorAll('[data-tasks-sphere]')].map(el => [el.dataset.tasksSphere, el.querySelector('[data-tasks-sphere-count]').textContent])),
     sphere: id => host.querySelector(`[data-tasks-sphere="${id}"]`).click(),
     filter: id => host.querySelector(`[data-tasks-filter="${id}"]`).click(),
+    refresh: async () => { dom.window.dispatchEvent(new dom.window.CustomEvent('hanni:calendar-refresh', { detail: { remoteSync: true, quietHealth: true } })); await settle(8); },
     commands: name => calls.filter(([command]) => command === name).map(([, args]) => args),
     get changes() { return changes; },
     key: (el, key) => el.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })),
@@ -291,6 +292,47 @@ test('the stage arrow advances once, preserves waiting and timer state, then foc
   assert.deepEqual(x.commands('set_calendar_task_stage').at(-1), { id: 'Empty', stage: 'understanding', waiting: null });
   assert.equal(rows.find(row => row.source_id === 'Empty').stage, 'understanding');
   assert.ok(next('Empty'), 'the arrow remains while another step is available');
+});
+
+test('quiet remote refresh preserves task DOM and focus; changed data, filters and stage actions still render', async t => {
+  const rows = [
+    note('Quiet', day(), { process: 'system-analysis', stage: 'requirements', waiting: true }),
+    note('Other', day()),
+    note('Tomorrow', day(1)),
+  ];
+  let readFail = false;
+  const x = await mount(t, rows, { handlers: {
+    get_calendar_tasks: () => { if (readFail) throw new Error('temporary read failure'); return rows; },
+    set_calendar_task_stage: ({ id, stage, waiting }) => {
+      const row = rows.find(item => item.source_id === id);
+      Object.assign(row, { stage, ...(waiting == null ? {} : { waiting }) });
+      return { ...row };
+    },
+  } });
+  const initialQuiet = x.item('Quiet');
+  const arrow = () => x.item('Quiet').querySelector('[data-task-control="stage-next"]');
+  arrow().focus();
+  await x.refresh();
+  assert.equal(x.item('Quiet'), initialQuiet, 'equal remote snapshot leaves task row attached');
+  assert.equal(x.doc.activeElement, arrow(), 'quiet refresh preserves the focused control');
+
+  readFail = true; await x.refresh();
+  assert.equal(x.$('[data-tasks-retry]').hidden, false, 'read failure remains visible');
+  readFail = false; await x.refresh();
+  assert.equal(x.item('Quiet'), initialQuiet, 'recovery with equal data can retain the row');
+  assert.equal(x.$('[data-tasks-retry]').hidden, true, 'successful quiet recovery clears the error state');
+
+  x.filter('today');
+  assert.deepEqual(x.titles().sort(), ['Other', 'Quiet'], 'view filters still render against the unchanged snapshot');
+  arrow().click(); await settle(8);
+  assert.deepEqual(x.commands('set_calendar_task_stage').at(-1), { id: 'Quiet', stage: 'analysis', waiting: null });
+  assert.equal(rows.find(row => row.source_id === 'Quiet').waiting, true, 'next-stage action preserves waiting');
+
+  const previousOther = x.item('Other');
+  rows.find(row => row.source_id === 'Other').title = 'Updated';
+  await x.refresh();
+  assert.notEqual(x.item('Other'), previousOther, 'real data change rebuilds the affected view');
+  assert.equal(x.item('Other').querySelector('[data-task-control="open"]').textContent, 'Updated');
 });
 
 test('failed stage advance remains visible with alert feedback and can be retried', async t => {

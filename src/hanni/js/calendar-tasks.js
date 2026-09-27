@@ -4,6 +4,10 @@ import { sphereLabel, isInstantTask, taskTime, compareTaskTime, isWorkTask } fro
 import { loadProcesses, loadStageBlocks, stageSeconds, stageTimeTitle, taskStage } from './task-processes.js';
 
 const taskKey = row => `${row.source_type}:${row.source_id}`;
+const stableJson = value => JSON.stringify(value, (_key, item) => {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
+  return Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]]));
+});
 const closed = row => row.completed || ['done', 'skipped', 'missed'].includes(row.status_extra);
 const dayOf = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const shiftDay = (day, delta) => { const date = new Date(`${day}T12:00:00`); date.setDate(date.getDate() + delta); return dayOf(date); };
@@ -53,7 +57,7 @@ export function mountCalendarTasks(host, dependencies) {
   if (state.sphere !== 'personal' || !PERSONAL_TABS.some(([id]) => id === state.personal)) state.personal = '';
   if (state.groupBy !== 'goal') state.groupBy = 'date';
   const prefix = `calendar-tasks-${++sequence}`;
-  let rows = [], goals = [], links = [], processes = [], stageBlocks = new Map(), ready = false, disposed = false, revision = 0, busy = false, queued = false, feedback = '';
+  let rows = [], goals = [], links = [], processes = [], stageBlocks = new Map(), readSignature = null, ready = false, disposed = false, revision = 0, busy = false, queued = false, feedback = '';
   let bulk = null, confirming = null, overdue = [], shown = new Set();
   let today = dayOf(new Date());
   host.classList.add('calendar-tasks');
@@ -244,10 +248,14 @@ export function mountCalendarTasks(host, dependencies) {
       // Time per stage is context for the tooltip; a failed read leaves it empty.
       const blocks=await loadStageBlocks(invoke,nextRows.filter(row=>!closed(row)&&!isInstantTask(row)&&taskStage(row,result[3])).map(row=>row.source_id));
       if(disposed||request!==revision||canCommit&&!canCommit())return;
-      rows=nextRows;goals=result[1];links=result[2];processes=result[3];stageBlocks=blocks;ready=true;today=dayOf(new Date());
+      const nextToday=dayOf(new Date());
+      const nextSignature=stableJson([nextToday,nextRows,result[1],result[2],result[3],[...blocks].sort(([a],[b])=>String(a).localeCompare(String(b)))]);
+      ready=true;
+      if(nextSignature===readSignature){message.textContent=feedback;q('retry').hidden=true;return;}
+      rows=nextRows;goals=result[1];links=result[2];processes=result[3];stageBlocks=blocks;today=nextToday;
       goalFilter.replaceChildren(new win.Option('Любая цель',''),new win.Option('Без цели','none'),...goals.map(goal=>new win.Option(goalPath(goal.id),String(goal.id))));
       if(state.goal&&!['none',...goals.map(goal=>String(goal.id))].includes(state.goal))state.goal='';goalFilter.value=state.goal;
-      message.textContent=feedback;q('retry').hidden=true;render();
+      message.textContent=feedback;q('retry').hidden=true;render();readSignature=nextSignature;
     }catch{if(!disposed&&request===revision){message.textContent=ready?'Не удалось обновить задачи. Показан предыдущий список.':'Не удалось загрузить задачи. Это не означает, что список пуст.';q('retry').hidden=false;}}
     finally{if(!disposed&&request===revision)host.removeAttribute('aria-busy');}
   }
