@@ -53,6 +53,7 @@
 .stage-time-part { white-space: nowrap; }
 .stage-time [data-stage-time-current] { color: var(--text-primary); font-weight: 600; }
 .evm-modal .evm-create-panel { display: grid; gap: 14px; margin: 0 0 8px; }
+.evm-modal .evm-wish-price { display: grid; grid-template-columns: minmax(0, 1fr) minmax(112px, .5fr); gap: 12px; }
 .evm-modal .evm-end-day { margin-top: 8px; }
 .evm-modal .evm-end-toggle { min-height: 36px; padding: 6px 0; border: 0; background: transparent; color: var(--text-secondary); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
 .evm-modal #evm-end-date-field { margin-top: 8px; }

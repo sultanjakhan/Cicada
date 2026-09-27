@@ -67,7 +67,7 @@ async function setup(t, { realEditor = false } = {}) {
   };
   let dispose = await module.mountCalendarNotes(root, { invoke, initBlockEditor: createEditor });
   t.after(async () => { dispose(); await tick(); dom.window.close(); });
-  const open = async (id = null) => { if (id === 4) root.querySelector('[data-filter="archive"]').click(); else root.querySelector('[data-filter="active"]').click(); root.querySelector(id == null ? '[data-new]' : `[data-note-id="${id}"]`).click(); await tick(); return w.document.querySelector('dialog[open][data-note-editor]'); };
+  const open = async (id = null, options = {}) => { if (id === 4) root.querySelector('[data-filter="archive"]').click(); else root.querySelector('[data-filter="active"]').click(); if (id == null) await dispose.openCreate(options); else root.querySelector(`[data-note-id="${id}"]`).click(); await tick(); return w.document.querySelector('dialog[open][data-note-editor]'); };
   const set = (modal, name, value) => { const input = modal.querySelector(`[name="${name}"]`); input.value = value; input.dispatchEvent(new w.Event('input', { bubbles: true })); };
   const save = async modal => { modal.querySelector('form').dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true })); await tick(); };
   const close = async modal => { modal.dispatchEvent(new w.Event('cancel', { cancelable: true })); await tick(); };
@@ -133,15 +133,18 @@ test('security: missing purifier renders rich markup as literal text', async t =
   assert.equal(modal.querySelectorAll('.ce-paragraph a').length, 0);
 });
 
-test('catalog mounts without empty editor, excludes other tabs, and new note focuses content with no phantom draft', async t => {
+test('catalog mounts without a separate create button, excludes other tabs, and shared entry opens the note editor without a phantom draft', async t => {
   const x = await setup(t); assert.equal(x.w.document.querySelector('dialog'), null); assert.equal(x.root.querySelector('[data-detail]'), null); assert.equal(x.root.querySelector('[data-note-id="5"]'), null);
-  const modal = await x.open(); assert.equal(x.w.document.activeElement, modal.querySelector('[name=content]')); await x.close(modal);
-  assert.equal(x.root.querySelector('[data-new]').textContent, 'Новая заметка'); assert.equal(x.calls.some(call => /create_|update_/.test(call.name)), false);
+  assert.equal(x.root.querySelector('[data-new]'), null);
+  const returnFocus = x.w.document.querySelector('#outside');
+  const modal = await x.open(null, { returnFocus: () => returnFocus.focus() }); assert.equal(x.w.document.activeElement, modal.querySelector('[name=content]')); await x.close(modal);
+  assert.equal(x.w.document.activeElement, returnFocus, 'shared entry receives focus after closing');
+  assert.equal(x.calls.some(call => /create_|update_/.test(call.name)), false);
 });
 
 test('title or content is required; plain draft survives close, reopen and remount without DB autosave', async t => {
   const x = await setup(t); let modal = await x.open(); await x.save(modal); assert.match(modal.querySelector('[data-dialog-error]').textContent, /Добавь мысль/);
-  x.set(modal, 'content', 'Одна мысль'); await x.close(modal); assert.match(x.root.querySelector('[data-new]').textContent, /Продолжить/);
+  x.set(modal, 'content', 'Одна мысль'); await x.close(modal); assert.match(x.root.querySelector('[data-note-hint]').textContent, /черновик/i);
   await x.remount(); modal = await x.open(); assert.equal(modal.querySelector('[name=content]').value, 'Одна мысль');
   assert.equal(x.calls.some(call => call.name === 'create_note'), false); await x.save(modal);
   assert.equal(x.calls.filter(call => call.name === 'create_note').length, 1); assert.equal(x.rows.at(-1).title, 'Одна мысль');

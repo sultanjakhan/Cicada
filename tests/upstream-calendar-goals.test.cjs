@@ -43,7 +43,7 @@ async function setup(t, { dependencies = {}, ui: initialUi = {} } = {}) {
   const opened = [];
   const dispose = await (await modulePromise).mountCalendarGoals(root, { invoke: api, onSelectGoal: () => { selected++; }, onCreateTask: goal => { created = goal; }, ...dependencies });
   t.after(() => { dispose(); dom.window.close(); });
-  const open = () => { const trigger = root.querySelector('[data-new]'); trigger.focus(); trigger.click(); return w.document.querySelector('dialog[data-goal-create], dialog[data-wish-form]'); };
+  const open = () => { dispose.openGoalCreate({ returnFocus: () => w.document.querySelector('#outside').focus() }); return w.document.querySelector('dialog[data-goal-create], dialog[data-wish-form]'); };
   const submit = async modal => { modal.querySelector('form').dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true })); await tick(); };
   const refresh = async () => { w.dispatchEvent(new w.Event('task-state-changed')); await tick(); };
   const menuItems = selector => { const more = root.querySelector(selector); more.focus(); more.click(); return [...w.document.querySelectorAll('.calendar-record-menu [role=menuitem]')]; };
@@ -51,13 +51,13 @@ async function setup(t, { dependencies = {}, ui: initialUi = {} } = {}) {
   return { w, root, goals, links, calls, before, ui, opened, dispose, open, submit, refresh, menu, menuItems, selected: () => selected, created: () => created, setActive: value => { active = value; } };
 }
 
-test('New goal opens a named shared dialog, not an inline form; cancel restores the trigger without IPC', async t => {
+test('shared Create goal opens the existing editor; cancel restores its caller without IPC', async t => {
   const x = await setup(t), calls = x.calls.length, modal = x.open();
   assert.equal(modal.open, true); assert.equal(x.root.querySelector('form'), null);
   assert.equal(x.w.document.getElementById(modal.getAttribute('aria-labelledby')).textContent, 'Новая цель');
   assert.equal(x.w.document.activeElement, modal.querySelector('[name=title]'));
   modal.querySelector('[name=title]').value = 'Не сохранять'; modal.dispatchEvent(new x.w.Event('cancel', { cancelable: true }));
-  assert.equal(modal.isConnected, false); assert.equal(x.w.document.activeElement, x.root.querySelector('[data-new]')); assert.equal(x.calls.length, calls);
+  assert.equal(modal.isConnected, false); assert.equal(x.w.document.activeElement, x.w.document.querySelector('#outside')); assert.equal(x.calls.length, calls);
 });
 
 for (const deadline of ['', '2027-02-03']) test(`goal creation keeps the existing model and optional deadline ${deadline || 'empty'}`, async t => {
@@ -66,7 +66,7 @@ for (const deadline of ['', '2027-02-03']) test(`goal creation keeps the existin
   assert.deepEqual(x.calls.filter(call => call.name === 'save_calendar_goal'), [{ name: 'save_calendar_goal', args: { id: null, title: 'Стать специалистом', targetValue: 1, unit: '', deadline: deadline || null, goalKind: 'goal', description: '', criteria: '', parentGoalId: null, clearParent: false, currentValue: null } }]);
   assert.equal(modal.isConnected, false); assert.equal(x.goals.length, 1); assert.equal(x.selected(), 0);
   assert.equal(x.calls.some(call => /set_ui_state|task_block/.test(call.name)), false);
-  assert.match(x.root.querySelector('[data-list]').textContent, /Стать специалистом/); assert.equal(x.w.document.activeElement, x.root.querySelector('[data-new]'));
+  assert.match(x.root.querySelector('[data-list]').textContent, /Стать специалистом/); assert.equal(x.w.document.activeElement, x.w.document.querySelector('#outside'));
 });
 
 test('empty and excessive goal titles are focused errors; a 500-character title remains valid', async t => {
@@ -244,7 +244,7 @@ test('goal deletion requires confirmation; cancellation preserves the goal and f
   x.before.delete('delete_goal'); await x.submit(modal);
   assert.equal(x.goals.length, 0); assert.equal(modal.isConnected, false);
   assert.equal(x.root.querySelector('[data-goal-menu="9"]'), null);
-  assert.equal(x.w.document.activeElement, x.root.querySelector('[data-new]'));
+  assert.equal(x.w.document.activeElement, x.root.querySelector('[data-goals-view="goals"]'));
   assert.equal(x.calls.some(call => /delete_note|delete_event|delete_schedule/.test(call.name)), false);
 });
 
@@ -312,17 +312,20 @@ test('a running task disables «Сделать главной» and says why', a
 const wishState = wishes => JSON.stringify({ version: 1, wishes });
 const wish = (id, extra = {}) => ({ id, title: `Желание ${id}`, category: 'other', price: null, currency: 'KZT', url: '', note: '', status: 'want', goalId: null, createdAt: `2026-09-0${id.length}T10:00:00.000Z`, updatedAt: '', ...extra });
 
-test('Goals | Wishes switch keeps its choice across remounts and changes the create action', async t => {
+test('Goals | Wishes switch keeps its choice across remounts and has no separate create action', async t => {
   const state = { view: 'goals' };
   const x = await setup(t, { dependencies: { state } });
   const [goalsButton, wishesButton] = x.root.querySelectorAll('[data-goals-view]');
-  assert.equal(goalsButton.getAttribute('aria-pressed'), 'true'); assert.equal(x.root.querySelector('[data-new]').textContent, 'Новая цель');
+  assert.equal(goalsButton.getAttribute('aria-pressed'), 'true'); assert.equal(x.root.querySelector('[data-new]'), null);
   wishesButton.click(); await tick();
   assert.equal(wishesButton.getAttribute('aria-pressed'), 'true'); assert.equal(x.w.document.activeElement, wishesButton);
   assert.equal(x.root.querySelector('[data-goals-panel]').hidden, true); assert.equal(x.root.querySelector('[data-wishes-panel]').hidden, false);
-  assert.equal(x.root.querySelector('[data-new]').textContent, 'Новое желание');
+  assert.equal(x.root.querySelector('[data-new]'), null);
   assert.match(x.root.querySelector('.cp-wish-empty').textContent, /Желаний пока нет/);
   assert.equal(state.view, 'wishes');
+  const wishDialog = x.dispose.openWishCreate({ returnFocus: () => x.w.document.querySelector('#outside').focus() });
+  assert.equal(wishDialog?.modal?.dataset.wishForm !== undefined, true);
+  wishDialog.dispose();
   x.dispose();
   const again = await setup(t, { dependencies: { state } });
   assert.equal(again.root.querySelector('[data-goals-view="wishes"]').getAttribute('aria-pressed'), 'true');

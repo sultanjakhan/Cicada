@@ -23,23 +23,29 @@ export async function mountCalendarNotes(element, dependencies = {}) {
   let disposed = false, revision = 0, opening = 0, session = null, catalogBusy = false;
   let notes = [], archived = false, lastArchived = null, retryOpen = undefined;
   element.classList.add('calendar-panels', 'calendar-notes');
-  element.innerHTML = `<header class="cp-heading"><div><h2>Заметки</h2><p>Мысли, идеи и детали, которые хочется сохранить.</p></div><button type="button" class="cp-primary" data-new>Новая заметка</button></header>
+  element.innerHTML = `<header class="cp-heading"><div><h2>Заметки</h2><p data-note-hint>Мысли, идеи и детали, которые хочется сохранить.</p></div></header>
     <p class="cp-message" data-message role="status" aria-live="polite"></p><button type="button" data-retry hidden>Повторить загрузку</button><button type="button" data-open-retry hidden>Повторить открытие заметки</button><button type="button" data-undo hidden>Вернуть из архива</button>
     <section class="cp-notes-catalog" aria-label="Сохранённые заметки"><div class="cp-notes-tools"><input type="search" data-search aria-label="Поиск по заметкам" placeholder="Найти заметку">
       <div class="cp-note-tabs" role="group" aria-label="Раздел заметок"><button type="button" data-filter="active" aria-pressed="true">Заметки</button><button type="button" data-filter="archive" aria-pressed="false">Архив</button></div></div><p class="cp-muted" data-count></p><div class="cp-note-list" data-list aria-busy="true"></div></section>`;
   const list = element.querySelector('[data-list]'), message = element.querySelector('[data-message]'), search = element.querySelector('[data-search]');
   const dateLabel = value => { const date = new Date(value); return Number.isFinite(date.getTime()) ? date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) : ''; };
   const current = value => !disposed && session === value && !value.closed;
-  const restoreRow = id => (element.querySelector(`[data-note-id="${id}"]`) || element.querySelector('[data-new]'))?.focus();
+  const restoreRow = (id, fallback = null) => {
+    const target = id != null ? element.querySelector(`[data-note-id="${id}"]`) : null;
+    if (target) target.focus(); else if (fallback) fallback(); else dependencies.returnFocus?.();
+  };
   function renderList() {
     const focused = list.contains(document.activeElement) ? document.activeElement.dataset.noteId : null;
     const query = search.value.trim().toLocaleLowerCase('ru');
     const visible = notes.filter(note => !!note.archived === archived && `${note.title}\n${note.content}\n${note.tags}`.toLocaleLowerCase('ru').includes(query));
     element.querySelector('[data-count]').textContent = visible.length ? `Найдено: ${visible.length}` : '';
     element.querySelectorAll('[data-filter]').forEach(button => button.setAttribute('aria-pressed', String((button.dataset.filter === 'archive') === archived)));
-    element.querySelector('[data-new]').textContent = drafts.has('new') || retainedEditors.has('new') ? 'Продолжить черновик' : 'Новая заметка';
+    element.querySelector('[data-note-hint]').textContent = drafts.has('new') || retainedEditors.has('new') ? 'Черновик новой заметки сохранён в этом окне. Открой «Создать → Заметка», чтобы продолжить.' : 'Мысли, идеи и детали, которые хочется сохранить.';
     list.replaceChildren();
-    if (!visible.length) list.innerHTML = `<div class="cp-empty"><h3>${query ? 'Ничего не найдено' : archived ? 'Архив пуст' : 'Здесь будут твои заметки'}</h3><p>${query ? 'Попробуй другое слово.' : archived ? 'Заметки из архива можно восстановить.' : 'Нажми «Новая заметка», чтобы записать мысль. Название можно добавить позже.'}</p></div>`;
+    if (!visible.length) {
+      const hasDraft = drafts.has('new') || retainedEditors.has('new');
+      list.innerHTML = `<div class="cp-empty"><h3>${query ? 'Ничего не найдено' : archived ? 'Архив пуст' : 'Здесь будут твои заметки'}</h3><p>${query ? 'Попробуй другое слово.' : archived ? 'Заметки из архива можно восстановить.' : hasDraft ? 'Черновик сохранён в этом окне. Открой «Создать → Заметка», чтобы продолжить.' : 'Создай заметку через общий вход «Создать». Название можно добавить позже.'}</p></div>`;
+    }
     visible.forEach(note => {
       const button = document.createElement('button'); button.type = 'button'; button.className = 'cp-note-card'; button.dataset.noteId = String(note.id);
       button.setAttribute('aria-current', String(session?.key === String(note.id)));
@@ -101,7 +107,7 @@ export async function mountCalendarNotes(element, dependencies = {}) {
     pendingDrafts.set(value.key, work);
     return work.finally(() => { if (pendingDrafts.get(value.key) === work) pendingDrafts.delete(value.key); });
   }
-  async function showEditor(note = null) {
+  async function showEditor(note = null, options = {}) {
     const key = keyOf(note?.id), draft = drafts.get(key);
     let originalBlocks = null, invalid = false;
     if (note?.content_blocks) { try { originalBlocks = JSON.parse(note.content_blocks); invalid = !Array.isArray(originalBlocks?.blocks); } catch { invalid = true; } }
@@ -113,7 +119,7 @@ export async function mountCalendarNotes(element, dependencies = {}) {
       pending: false, closing: false, closed: false, detached: false, destroyed: false, retained: false, committed: false, captureRevision: 0,
       conflict: !!draft && draft.baseUpdatedAt !== note?.updated_at };
     const dialog = createCalendarDialog({ document, title: note?.archived ? 'Заметка в архиве' : note ? 'Заметка' : 'Новая заметка', hint: 'Название необязательно. Черновик остаётся в этом окне до сохранения.', submitLabel: note ? 'Сохранить изменения' : 'Сохранить заметку',
-      isCurrent: () => !disposed && element.isConnected, returnFocus: () => restoreRow(note?.id), beforeClose: () => beforeClose(value),
+      isCurrent: () => !disposed && element.isConnected, returnFocus: () => restoreRow(note?.id, options.returnFocus), beforeClose: () => beforeClose(value),
       onPendingChange: () => controls(value),
       onClose: () => { value.closed = true; if (!value.retained) destroy(value); if (session === value) session = null; if (!disposed) renderList(); } });
     value.dialog = dialog; session = value;
@@ -149,7 +155,7 @@ export async function mountCalendarNotes(element, dependencies = {}) {
     if (current(value) && value.conflict) dialog.showError('Заметка изменилась в другом месте. Этот черновик основан на прежней версии. Отмени черновик и загрузи сохранённое перед редактированием новой версии.');
     if (current(value)) renderList();
   }
-  async function openNote(id = null) {
+  async function openNote(id = null, options = {}) {
     if (catalogBusy || session?.pending || session?.dialog.pending) return;
     const request = ++opening;
     if (session) { const previous = session; await previous.dialog.close(); if (previous.dialog.modal.isConnected) return; }
@@ -161,7 +167,7 @@ export async function mountCalendarNotes(element, dependencies = {}) {
       if (disposed || request !== opening) return;
       if (id != null && !isCalendarNote(note)) throw new Error('Not a calendar note');
       retryOpen = undefined; element.querySelector('[data-open-retry]').hidden = true;
-      await showEditor(note);
+      await showEditor(note, options);
     } catch { if (!disposed && request === opening) { retryOpen = id; message.textContent = 'Не удалось открыть заметку или прочитать её черновик. Последний ввод сохранён для повторной попытки.'; element.querySelector('[data-open-retry]').hidden = false; } }
   }
   async function discardReload(value) {
@@ -241,7 +247,6 @@ export async function mountCalendarNotes(element, dependencies = {}) {
   }
   search.addEventListener('input', renderList);
   element.querySelectorAll('[data-filter]').forEach(button => button.onclick = () => { archived = button.dataset.filter === 'archive'; renderList(); });
-  element.querySelector('[data-new]').onclick = () => openNote();
   element.querySelector('[data-retry]').onclick = () => refresh();
   element.querySelector('[data-open-retry]').onclick = () => openNote(retryOpen);
   element.querySelector('[data-undo]').onclick = () => changeArchive();
@@ -251,10 +256,12 @@ export async function mountCalendarNotes(element, dependencies = {}) {
   window.addEventListener('hanni:calendar-refresh', onSync);
   window.addEventListener('hanni:calendar-notes-changed', onCreated);
   await refresh();
-  return () => {
+  const dispose = () => {
     disposed = true; revision++; opening++;
     window.removeEventListener('hanni:calendar-refresh', onSync);
     window.removeEventListener('hanni:calendar-notes-changed', onCreated);
     if (session) { const old = session; old.detached = true; remember(old); old.dialog.dispose(); }
   };
+  dispose.openCreate = options => openNote(null, options);
+  return dispose;
 }

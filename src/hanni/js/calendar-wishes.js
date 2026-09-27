@@ -103,10 +103,10 @@ export function mountCalendarWishes(element, dependencies = {}) {
     }
     render();
   }
-  function openForm(wish = null) {
+  function openForm(wish = null, options = {}) {
     if (dialog || disposed) return null;
     const editor = createCalendarDialog({ document, title: wish ? 'Изменить желание' : 'Новое желание', hint: 'Желание — одно действие без плана. Цену и ссылку можно добавить позже.', submitLabel: 'Сохранить',
-      isCurrent: () => !disposed && element.isConnected, returnFocus: () => wish && findWish(wish.id) ? focusRow(wish.id) : fallbackFocus(), onClose: () => { dialog = null; } });
+      isCurrent: () => !disposed && element.isConnected, returnFocus: () => wish && findWish(wish.id) ? focusRow(wish.id) : (options.returnFocus ? options.returnFocus() : fallbackFocus()), onClose: () => { dialog = null; } });
     dialog = editor; editor.modal.dataset.wishForm = '';
     const id = `${prefix}-form`;
     editor.body.innerHTML = `<div class="calendar-goal-fields cp-wish-fields">
@@ -218,7 +218,7 @@ export function mountCalendarWishes(element, dependencies = {}) {
   window.addEventListener('hanni:calendar-refresh', onExternal);
   const ready = refresh();
   return {
-    ready, refresh, openCreate: () => openForm(null), render,
+    ready, refresh, openCreate: options => openForm(null, options), render,
     dispose() { disposed = true; revision++; dialog?.dispose(); disposeMenu?.(); element.removeEventListener('click', onClick); element.removeEventListener('change', onChange); window.removeEventListener('hanni:wishes-changed', onExternal); window.removeEventListener('hanni:calendar-refresh', onExternal); element.replaceChildren(); },
   };
 }
