@@ -572,6 +572,16 @@ fn resolve(
             [remote_millis],
         ))?;
         let mut next = record.clone();
+        if current.as_ref().is_some_and(|value| {
+            value.record.v == 2
+                && next.v == 1
+                && next.kind == "ui"
+                && recurring_identity(&next.key)
+        }) {
+            // A deliberate conflict choice may replace the content, but the
+            // recurring identity remains on the graph-capable record version.
+            next.v = 2;
+        }
         next.parent = current.as_ref().map(|v| v.stamp.clone());
         next.parent_writer = current.as_ref().map(|v| v.writer.clone());
         let stamp = clock(&tx)?;
@@ -673,6 +683,9 @@ mod tests {
     fn task(conn: &Connection, id: &str, title: &str) {
         conn.execute("INSERT INTO items(id,kind,title,duration_minutes,version,created_at,updated_at) VALUES(?1,'task',?2,30,1,'2026-09-14T00:00:00Z','2026-09-14T00:00:00Z')",params![id,title]).unwrap();
     }
+    fn recurring_graph(title: &str) -> Value {
+        json!({"version":1,"plans":[{"id":"graph-plan","title":title,"mode":"graph","steps":[{"title":"A","dependsOn":[]}]}],"days":{}})
+    }
     fn archive(conn: &Connection, id: &str, title: &str) -> (String, Record) {
         let id = key("items", &[json!(id)]);
         let mut row = current(conn, &id).unwrap().unwrap().record;
@@ -752,6 +765,114 @@ mod tests {
             .unwrap(),
             1
         );
+    }
+    #[test]
+    fn explicit_recurring_incoming_choice_keeps_v2_and_archives_original_v1() {
+        let mut c = fixture();
+        crate::mvp_sync_db::set_ui(
+            &c,
+            "calendar_recurring_v1",
+            &recurring_graph("Current graph").to_string(),
+            None,
+        )
+        .unwrap();
+        let id = key("ui", &[json!("calendar_recurring_v1"), json!("plans"), json!("graph-plan")]);
+        let before = current(&c, &id).unwrap().unwrap();
+        assert_eq!(before.record.v, 2);
+        let mut incoming = before.record.clone();
+        incoming.v = 1;
+        incoming.value["row"]["mode"] = json!("chain");
+        incoming.value["row"]["title"] = json!("Chosen legacy edit");
+        let remote_stamp = "2026-09-28T13:00:00.000Z";
+        let original_fields = fields(&id, remote_stamp, "legacy-peer", &incoming).unwrap();
+        c.execute(
+            "INSERT INTO mvp_sync_conflicts VALUES(?1,?2,'legacy-peer',?3)",
+            params![id, remote_stamp, serde_json::to_string(&incoming).unwrap()],
+        )
+        .unwrap();
+        let entry = list(&c, 0, 25).unwrap()["entries"][0].clone();
+        assert_eq!(entry["can_use_incoming"], true);
+        let mut peer = fixture();
+        crate::mvp_sync_db::set_ui(
+            &peer,
+            "calendar_recurring_v1",
+            &recurring_graph("Current graph").to_string(),
+            None,
+        )
+        .unwrap();
+        peer.execute(
+            "UPDATE mvp_records SET data=?1,updated_at=?2 WHERE id=?3",
+            params![before.data, before.stamp, id],
+        )
+        .unwrap();
+        peer.execute(
+            "UPDATE sync_row_versions SET updated_at=?1,device_id=?2 WHERE row_id=?3",
+            params![before.stamp, before.writer, id],
+        )
+        .unwrap();
+
+        choose(&mut c, &entry, "incoming").unwrap();
+
+        let after = current(&c, &id).unwrap().unwrap();
+        assert_eq!(after.record.v, 2);
+        assert!(after.stamp > before.stamp);
+        assert!(after.stamp > remote_stamp);
+        assert_eq!(after.record.parent.as_deref(), Some(before.stamp.as_str()));
+        assert_eq!(after.record.parent_writer.as_deref(), Some(before.writer.as_str()));
+        assert_eq!(after.record.value["row"]["mode"], "chain");
+        assert_eq!(after.record.value["row"]["title"], "Chosen legacy edit");
+        assert_eq!(
+            c.query_row(
+                "SELECT data FROM mvp_sync_resolution_archive WHERE id=?1 AND stamp=?2 AND writer='legacy-peer' AND source='archive'",
+                params![id, remote_stamp],
+                |r| r.get::<_, String>(0),
+            )
+            .unwrap(),
+            serde_json::to_string(&incoming).unwrap()
+        );
+        let state: Value = serde_json::from_str(
+            &crate::mvp_sync_db::read_ui(&c, "calendar_recurring_v1")
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(state["plans"][0]["mode"], "chain");
+        assert!(apply_record(&peer, &fields(&id, &after.stamp, &after.writer, &after.record).unwrap()).unwrap());
+        assert_eq!(
+            peer.query_row("SELECT data FROM mvp_records WHERE id=?1", [&id], |r| r.get::<_, String>(0)).unwrap(),
+            serde_json::to_string(&after.record).unwrap()
+        );
+        assert!(!apply_record(&c, &original_fields).unwrap());
+        assert_eq!(list(&c, 0, 25).unwrap()["total"], 0);
+    }
+    #[test]
+    fn recurring_v2_tombstone_cannot_be_resurrected_by_legacy_incoming() {
+        let mut c = fixture();
+        crate::mvp_sync_db::set_ui(
+            &c,
+            "calendar_recurring_v1",
+            &recurring_graph("Graph").to_string(),
+            None,
+        )
+        .unwrap();
+        let id = key("ui", &[json!("calendar_recurring_v1"), json!("plans"), json!("graph-plan")]);
+        let mut incoming = current(&c, &id).unwrap().unwrap().record;
+        incoming.v = 1;
+        let before = json!({"version":1,"plans":[],"days":{}}).to_string();
+        crate::mvp_sync_db::set_ui(&c, "calendar_recurring_v1", &before, None).unwrap();
+        let tombstone = current(&c, &id).unwrap().unwrap();
+        assert!(tombstone.record.deleted);
+        assert_eq!(tombstone.record.v, 2);
+        let stamp = "2026-09-28T13:00:00.000Z";
+        c.execute(
+            "INSERT INTO mvp_sync_conflicts VALUES(?1,?2,'legacy-peer',?3)",
+            params![id, stamp, serde_json::to_string(&incoming).unwrap()],
+        )
+        .unwrap();
+        let entry = list(&c, 0, 25).unwrap()["entries"][0].clone();
+        assert_eq!(entry["can_use_incoming"], false);
+        assert_eq!(entry["reason"], "mvp_sync_conflict_deleted");
+        assert_eq!(choose(&mut c, &entry, "incoming").unwrap_err(), "mvp_sync_conflict_deleted");
     }
     #[test]
     fn concurrent_update_after_opening_rejects_both_choices_without_dropping_archive() {

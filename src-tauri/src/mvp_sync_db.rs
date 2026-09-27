@@ -192,6 +192,7 @@ pub(crate) fn initialize(conn: &Connection) -> Result<(), String> {
             }
         }
     }
+    upgrade_local_recurring_graph_records(&tx)?;
     sql(tx.execute("UPDATE mvp_sync_meta SET initialized=1 WHERE id=1", []))?;
     sql(tx.pragma_update(None, "user_version", crate::SCHEMA_VERSION))?;
     sql(tx.commit())
@@ -220,6 +221,13 @@ fn record_local(
     deleted: bool,
 ) -> Result<(), String> {
     let id = key(kind, &keys);
+    let prior_data: Option<String> = sql(conn
+        .query_row("SELECT data FROM mvp_records WHERE id=?1", [&id], |r| r.get(0))
+        .optional())?;
+    let prior_record = prior_data
+        .as_deref()
+        .map(|raw| serde_json::from_str::<Record>(raw).map_err(|_| "mvp_sync_invalid_local_record"))
+        .transpose()?;
     let parent: Option<(String,String)>=sql(conn.query_row("SELECT updated_at,device_id FROM sync_row_versions WHERE table_name='mvp_records' AND row_id=?1",[&id],|r|Ok((r.get(0)?,r.get(1)?))).optional())?;
     let identity = if kind == "timeline_blocks" {
         Some(json!([
@@ -231,7 +239,11 @@ fn record_local(
         None
     };
     let record = Record {
-        v: 1,
+        v: if recurring_record_needs_v2(kind, &keys, &value, deleted, prior_record.as_ref()) {
+            2
+        } else {
+            1
+        },
         kind: kind.into(),
         key: keys,
         value,
@@ -243,6 +255,71 @@ fn record_local(
     let stamp = clock(conn)?;
     let writer = get_setting_checked(conn, "device_id")?.ok_or("mvp_sync_missing_writer")?;
     store(conn, &id, &record, &stamp, &writer)
+}
+
+fn recurring_identity(keys: &[Value]) -> bool {
+    match keys {
+        [name, group, id] => {
+            name.as_str() == Some("calendar_recurring_v1")
+                && group.as_str() == Some("plans")
+                && id.as_str().is_some_and(|v| !v.is_empty())
+        }
+        [name, group, day, id] => {
+            name.as_str() == Some("calendar_recurring_v1")
+                && group.as_str() == Some("days")
+                && day.as_str().is_some_and(|v| !v.is_empty())
+                && id.as_str().is_some_and(|v| !v.is_empty())
+        }
+        _ => false,
+    }
+}
+
+fn graph_payload(keys: &[Value], value: &Value, deleted: bool) -> bool {
+    if deleted {
+        return false;
+    }
+    match keys.get(1).and_then(Value::as_str) {
+        Some("plans") => value["row"]["mode"] == "graph",
+        Some("days") => value["snapshot"]["mode"] == "graph",
+        _ => false,
+    }
+}
+
+fn recurring_record_needs_v2(
+    kind: &str,
+    keys: &[Value],
+    value: &Value,
+    deleted: bool,
+    prior: Option<&Record>,
+) -> bool {
+    if kind != "ui" || !recurring_identity(keys) {
+        return false;
+    }
+    prior.is_some_and(|record| {
+        record.v == 2 || graph_payload(&record.key, &record.value, record.deleted)
+    }) || graph_payload(keys, value, deleted)
+}
+
+fn upgrade_local_recurring_graph_records(conn: &Connection) -> Result<(), String> {
+    let mut statement = sql(conn.prepare(
+        "SELECT data FROM mvp_records WHERE json_extract(data,'$.kind')='ui' AND json_extract(data,'$.key[0]')='calendar_recurring_v1' ORDER BY id",
+    ))?;
+    let rows = sql(statement.query_map([], |row| row.get::<_, String>(0)))?;
+    let mut legacy_graphs = Vec::new();
+    for row in rows {
+        let raw = sql(row)?;
+        let record: Record = serde_json::from_str(&raw).map_err(|_| "mvp_sync_invalid_local_record")?;
+        if record.v == 1
+            && !record.deleted
+            && graph_payload(&record.key, &record.value, record.deleted)
+        {
+            legacy_graphs.push((record.key, record.value));
+        }
+    }
+    for (keys, value) in legacy_graphs {
+        record_local(conn, "ui", keys, value, false)?;
+    }
+    Ok(())
 }
 fn store(
     conn: &Connection,
@@ -273,7 +350,9 @@ fn decoded(fields: &Map<String, Value>) -> Result<(String, Record, String, Strin
     let record: Record =
         serde_json::from_str(get("data")?).map_err(|_| "content_sync_unknown_schema")?;
     let id = get("id")?.to_owned();
-    if record.v != 1
+    let supported_version = record.v == 1
+        || (record.v == 2 && record.kind == "ui" && recurring_identity(&record.key));
+    if !supported_version
         || id != key(&record.kind, &record.key)
         || record.key.len() > 8
         || record.key.is_empty()
@@ -465,6 +544,10 @@ pub(crate) fn apply_record(conn: &Connection, fields: &Map<String, Value>) -> Re
             }
         }
         let different = local.deleted != record.deleted || local_value != remote_value;
+        let version_downgrade = record.kind == "ui"
+            && record.v == 1
+            && local.v == 2
+            && recurring_identity(&record.key);
         if (stamp.as_str(), writer.as_str()) == (local_stamp.as_str(), local_writer.as_str()) {
             if different {
                 return Err("content_sync_version_conflict".into());
@@ -475,6 +558,15 @@ pub(crate) fn apply_record(conn: &Connection, fields: &Map<String, Value>) -> Re
             && record.parent_writer.as_deref() == Some(&local_writer);
         let precedes = local.parent.as_deref() == Some(&stamp)
             && local.parent_writer.as_deref() == Some(&writer);
+        if version_downgrade {
+            // Old queued writes that are identical or a known ancestor are not
+            // conflicts. A divergent v1 payload cannot replace a v2 identity.
+            if !different || precedes {
+                return Ok(false);
+            }
+            keep_conflict(conn, &id, &stamp, &writer, &record)?;
+            return Ok(false);
+        }
         let wins =
             (stamp.as_str(), writer.as_str()) > (local_stamp.as_str(), local_writer.as_str());
         if different && !follows && !precedes {

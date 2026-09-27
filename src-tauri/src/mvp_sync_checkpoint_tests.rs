@@ -194,6 +194,63 @@ fn checkpoint_restores_day_and_preserves_local_outbox_and_writer() {
     );
 }
 #[test]
+fn checkpoint_roundtrips_v2_recurring_graph_rows_and_v1_conflicts() {
+    let cfg = config("graph-source");
+    let mut source = connection(&cfg);
+    let state = json!({
+        "version":1,
+        "plans":[{"id":"graph-plan","title":"Graph plan","mode":"graph","steps":[{"title":"Step","dependsOn":[]}]}],
+        "days":{"2026-09-28":{"graph-plan":{"id":"graph-plan","snapshot":{"id":"graph-plan","title":"Graph plan","mode":"graph","steps":[{"title":"Step","dependsOn":[]}]}}}}
+    });
+    crate::mvp_sync_db::set_ui(&source, "calendar_recurring_v1", &state.to_string(), None).unwrap();
+    crate::mvp_sync_db::start_day(&source).unwrap();
+    let mut seq = 0;
+    drain_local(&mut source, &cfg, &mut seq);
+
+    let row_id = json!(["ui", ["calendar_recurring_v1", "plans", "graph-plan"]]).to_string();
+    let mut old_graph: Value = serde_json::from_str(
+        &source.query_row("SELECT data FROM mvp_records WHERE id=?1", [&row_id], |r| r.get::<_, String>(0)).unwrap(),
+    ).unwrap();
+    old_graph["v"] = json!(1);
+    old_graph["value"]["row"]["title"] = json!("Old compatibility conflict");
+    source.execute(
+        "INSERT INTO mvp_sync_conflicts VALUES(?1,'2026-09-28T14:00:00.000Z','legacy-peer',?2)",
+        params![row_id, old_graph.to_string()],
+    ).unwrap();
+    assert_eq!(
+        crate::mvp_sync_db::checkpoint_publishable(&source).unwrap(),
+        true
+    );
+    assert!(capture(&mut source, &cfg, 0).unwrap());
+
+    let peer_cfg = config("graph-peer");
+    let mut peer = connection(&peer_cfg);
+    let descriptor = descriptor(&source, &cfg, &peer);
+    install(&mut peer, &peer_cfg, &descriptor).unwrap();
+
+    let plan: Value = serde_json::from_str(
+        &peer.query_row("SELECT data FROM mvp_records WHERE id=?1", [&row_id], |r| r.get::<_, String>(0)).unwrap(),
+    ).unwrap();
+    let day_id = json!(["ui", ["calendar_recurring_v1", "days", "2026-09-28", "graph-plan"]]).to_string();
+    let day: Value = serde_json::from_str(
+        &peer.query_row("SELECT data FROM mvp_records WHERE id=?1", [&day_id], |r| r.get::<_, String>(0)).unwrap(),
+    ).unwrap();
+    assert_eq!(plan["v"], 2);
+    assert_eq!(plan["value"]["row"]["mode"], "graph");
+    assert_eq!(day["v"], 2);
+    assert_eq!(day["value"]["snapshot"]["mode"], "graph");
+    assert_eq!(
+        peer.query_row("SELECT count(*) FROM mvp_sync_conflicts", [], |r| r.get::<_, i64>(0)).unwrap(),
+        1
+    );
+    let archived: String = peer.query_row(
+        "SELECT data FROM mvp_sync_conflicts WHERE id=?1 AND writer='legacy-peer'",
+        [&row_id],
+        |r| r.get(0),
+    ).unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&archived).unwrap()["v"], 1);
+}
+#[test]
 fn checkpoint_capture_waits_for_dirty_outbox_pending_and_fragments() {
     let cfg = config("a");
     let mut conn = connection(&cfg);
