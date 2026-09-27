@@ -25,6 +25,31 @@ test('open recurring editor keeps its draft when the same plan was changed remot
   assert.equal(modal.open,true);assert.equal(field.value,'Local draft');assert.match(modal.querySelector('[data-dialog-error]').textContent,/другом устройстве/);assert.equal(raw,remote);assert.equal(writes,0);
 });
 
+test('routine library shows enabled and disabled plans, filters, marks rules, and creates only on submit',async t=>{
+  const dom=new JSDOM('<main></main>',{url:'https://fixture.invalid'}),host=dom.window.document.querySelector('main');let raw=JSON.stringify({version:1,plans:[plan,{...plan,id:'disabled',title:'Выключенная рутина',active:false}],days:{}}),writes=0;
+  dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;this.dispatchEvent(new dom.window.Event('close'));};
+  const invoke=async(command,args)=>{if(command==='get_ui_state')return raw;if(command==='set_ui_state'){writes++;raw=args.value;return;}throw Error(command);};
+  const dispose=mountCalendarRecurring(host,{invoke,now:()=>new Date(`${today}T12:00:00`),library:true});t.after(()=>{dispose();dom.window.close();});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(host.querySelector('[data-recurring-heading]').textContent,'Рутины');
+  assert.equal(host.querySelectorAll('[data-library-title]').length,2);
+  assert.match(host.textContent,/выключено/);
+  const search=host.querySelector('[data-routine-search]');search.value='выключенная';search.dispatchEvent(new dom.window.Event('input',{bubbles:true}));
+  assert.equal([...host.querySelectorAll('[data-library-title]')].filter(row=>!row.hidden).length,1);
+  search.value='';search.dispatchEvent(new dom.window.Event('input',{bubbles:true}));
+  host.querySelector('[data-library-details="rule-1"]').click();
+  const detail=dom.window.document.querySelector('dialog[open]');assert.ok(detail);
+  detail.querySelector('[data-detail-status="kept"]').click();
+  await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(JSON.parse(raw).days[today]['rule-1'].status,'kept');
+  assert.equal(writes,1);
+  dispose.create();
+  const editor=dom.window.document.querySelector('dialog[open]');assert.ok(editor);
+  assert.equal(editor.querySelector('[name=title]').value,'');
+  assert.equal(writes,1);
+  editor.close();
+});
+
 test('graph editor keeps dependency structure read-only while saving schedule edits',async t=>{
   const dom=new JSDOM('<main></main>',{url:'https://fixture.invalid'}),host=dom.window.document.querySelector('main');
   dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;this.dispatchEvent(new dom.window.Event('close'));};

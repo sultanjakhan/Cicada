@@ -33,6 +33,7 @@ let disposeNow = null, disposeTable = null, disposePanel = null, disposeTasks = 
 let disposeRecurring = null, goalPopup = null, tasksDialog = null;
 let disposeDayBanner = null, disposeInProgress = null;
 let disposeNextAction = null, disposeTaskDetails = null, disposeRoutineChoices = null;
+let routinesRouteHandler = null;
 let preferences = { density:'comfortable', showCompleted:false };
 let workspaceRevision = 0;
 let dialogSequence = 0;
@@ -53,15 +54,6 @@ window.addEventListener('hanni:calendar-settings-changed', event => {
   view.firstDay = changes.first_day === 'sun' ? 'sun' : 'mon';
   window.dispatchEvent(new Event('hanni:calendar-refresh'));
 });
-window.addEventListener('hanni:open-recurring-settings', () => {
-  if (document.querySelector('[data-calendar-recurring]')) return;
-  const host = document.createElement('div'); host.hidden = true; document.body.append(host);
-  const dispose = mountCalendarRecurring(host, { invoke, showCompleted:preferences.showCompleted });
-  // A temporary mount supports this settings entry from Table, Goals and Notes too.
-  void dispose.openManager().finally(() => {});
-  dispose.onManagerClose = () => { dispose(); host.remove(); };
-});
-
 // Actions that leave the goal popup. Set by the workspace mount, which owns navigation.
 const goalPopupActions = { selectGoal: null };
 function createGoalTask(goal, returnFocus = null, skill = null) {
@@ -505,6 +497,7 @@ export function openCalendarCreate(button) {
 }
 
 export async function loadCalendarWorkspace(el) {
+  if(routinesRouteHandler){window.removeEventListener('hanni:open-recurring-settings',routinesRouteHandler);window.removeEventListener('hanni:open-routines-pane',routinesRouteHandler);routinesRouteHandler=null;}
   startHealthViewRefresh();
   cleanupWorkspace(); tabLoaders.cleanupCalendar = cleanupWorkspace;
   const loadRevision = workspaceRevision;
@@ -685,7 +678,7 @@ export async function loadCalendarWorkspace(el) {
         onCurrentTaskChange: value => disposeRecurring?.setCurrentTask(value),
       });
     },
-    panes: [{id:'dash',label:'Дашборд'}, {id:'table',label:'Календарь'}, {id:'tasks',label:'Задачи'}, {id:'notes',label:'Заметки'}, {id:'goals',label:'Цели'}],
+    panes: [{id:'dash',label:'Дашборд'}, {id:'table',label:'Календарь'}, {id:'tasks',label:'Задачи'}, {id:'routines',label:'Рутины'}, {id:'notes',label:'Заметки'}, {id:'goals',label:'Цели'}],
     renderDash: (pane) => {
       pane.innerHTML = `<section class="calendar-today" aria-label="Сегодня">
         <div data-calendar-day-banner></div><div data-calendar-next-action></div>
@@ -712,12 +705,12 @@ export async function loadCalendarWorkspace(el) {
         },
       });
       pane.querySelector('[data-today-tasks]').onclick = () => void openPane('tasks');
-      pane.querySelector('[data-today-routines]').onclick = () => window.dispatchEvent(new CustomEvent('hanni:open-recurring-settings'));
+      pane.querySelector('[data-today-routines]').onclick = () => window.dispatchEvent(new CustomEvent('hanni:open-routines-pane'));
     },
     renderTable: pane => mountCalendarTable(pane),
     renderTasks: pane => {
       const revision = workspaceRevision;
-      pane.innerHTML = `<div data-workspace-task-list></div><details class="calendar-task-history"><summary>Запущено и на паузе сегодня</summary><div data-calendar-in-progress></div></details><details class="calendar-task-history"><summary>Рутины и отметки</summary><div data-calendar-recurring></div></details>`;
+      pane.innerHTML = `<div data-workspace-task-list></div><details class="calendar-task-history"><summary>Запущено и на паузе сегодня</summary><div data-calendar-in-progress></div></details>`;
       disposePanel = mountCalendarTasks(pane.querySelector('[data-workspace-task-list]'), {
         invoke, state:tasksPaneState, mountMenu:mountRecordMenu, notifyChange:changed,
         openTask:(row,restore) => showRecord(calendarRecord(row),restore),
@@ -726,14 +719,15 @@ export async function loadCalendarWorkspace(el) {
       });
       disposeInProgress = mountCalendarInProgress(pane.querySelector('[data-calendar-in-progress]'), {
         invoke, notifyChange:changed, title:'Запущено и на паузе', openLauncher:showAllTasks,
-        onRowsChange:keys => disposeRecurring?.setInProgress?.(keys),
         openTask:(row,restore) => {
           if (row.source_type === 'schedule') { const [id,date] = JSON.parse(row.source_id); openRecurringRun({document,invoke,id,date,start:false}); }
           else showRecord(calendarRecord(row),restore);
         },
       });
-      disposeRecurring = mountCalendarRecurring(pane.querySelector('[data-calendar-recurring]'), {invoke,showCompleted:preferences.showCompleted});
-      disposeRecurring.setInProgress(disposeInProgress.keys());
+    },
+    renderRoutines: pane => {
+      pane.innerHTML='<div data-calendar-routines></div>';
+      disposeRecurring=mountCalendarRecurring(pane.querySelector('[data-calendar-routines]'),{invoke,showCompleted:preferences.showCompleted,library:true});
     },
     renderGoals: async (pane) => {
       const revision = workspaceRevision;
@@ -752,6 +746,13 @@ export async function loadCalendarWorkspace(el) {
       if (revision !== workspaceRevision) dispose?.(); else disposePanel = dispose;
     },
   };
+  routinesRouteHandler=event=>{
+    if(S.activeTab!=='calendar'||!el.isConnected)return;
+    const create=event.type==='hanni:open-routines-pane'&&event.detail?.create===true;
+    void openPane('routines').then(()=>{if(create&&S._unifiedPane.calendar==='routines')disposeRecurring?.create?.();});
+  };
+  window.addEventListener('hanni:open-recurring-settings',routinesRouteHandler);
+  window.addEventListener('hanni:open-routines-pane',routinesRouteHandler);
   await renderUnifiedLayout(el, 'calendar', config);
   const create = document.querySelector('[data-calendar-create]');
   if (create && el.isConnected && el.querySelector('.uni-pane')) create.disabled = false;
