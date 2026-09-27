@@ -22,6 +22,7 @@
 .calv-month-preview[data-source-type="note"] { border-left-color: var(--accent-green); }
 .calv-month-preview[data-source-type="schedule"] { border-left-style: dashed; }
 .calv-day-count { align-self: flex-end; margin-top: auto; padding: 1px 5px; border-radius: 8px; background: var(--bg-soft); font-size: 10px; line-height: 1.2; font-weight: 600; color: var(--text-secondary); }
+.calv-day-count--total { display: none; }
 .calv-time-scroll { overflow: auto; max-height: max(240px, calc(100dvh - 96px)); box-sizing: border-box; border: 1px solid var(--border-default); border-radius: 8px; overscroll-behavior: contain; overflow-anchor: none; }
 .calv-time-board { width: 100%; }
 .calv-time-board--week { min-width: 910px; }
@@ -73,6 +74,8 @@
 @media (max-width: 640px) {
   .calv-month-cell { min-height: 59px; padding: 5px 2px; align-items: center; }
   .calv-month-preview { display: none; }
+  .calv-day-count--overflow { display: none; }
+  .calv-day-count--total { display: inline-block; }
   .calv-weekday { padding: 9px 0; font-size: 12px; }
   .calv-day-count { font-size: 9px; }
   .calv-month-cell[aria-current="date"] .calv-date-number { align-self: center; }

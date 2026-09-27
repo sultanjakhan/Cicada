@@ -221,7 +221,9 @@ import { isInstantTask } from './task-model.js';
       const weekdays = options.firstDay === 'sun' ? ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'] : ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
       for (const day of weekdays) grid.append(el('div', 'calv-weekday', day));
       const first = weekStart(`${options.date.slice(0, 7)}-01`, options.firstDay);
-      for (let i = 0; i < 42; i++) {
+      const offset = (parse(`${options.date.slice(0, 7)}-01`).getDay() + (options.firstDay === 'sun' ? 0 : 6)) % 7;
+      const cellCount = Math.ceil((offset + dates.length) / 7) * 7;
+      for (let i = 0; i < cellCount; i++) {
         const date = add(first, i);
         const sourceOrder = { note: 0, event: 1, schedule: 2 };
         const dayRecords = available.filter((record) => record.date === date).sort((a, b) =>
@@ -242,23 +244,28 @@ import { isInstantTask } from './task-model.js';
         const preview = dayRecords.slice(0, 2);
         for (const record of preview) {
           const type = { note: 'Задача', event: 'Событие', schedule: 'Рутина' }[record.source_type] || record.kind || 'Запись';
-          const line = el('span', 'calv-month-preview', `${record.time ? `${record.time} · ` : 'Без времени · '}${record.title}`);
+          const line = el('span', 'calv-month-preview', `${record.time ? `${record.time} · ` : ''}${record.title}`);
           line.dataset.sourceType = record.source_type || 'other';
           line.title = `${type}: ${record.title}${record.time ? `, ${record.time}` : ', без времени'}`;
           cell.append(line);
         }
         const overflow = dayRecords.length - preview.length;
         if (overflow > 0) {
-          const count = el('span', 'calv-day-count', `+${overflow}`);
+          const count = el('span', 'calv-day-count calv-day-count--overflow', `+${overflow}`);
           count.setAttribute('aria-hidden', 'true');
           cell.append(count);
+        }
+        if (dayRecords.length) {
+          const total = el('span', 'calv-day-count calv-day-count--total', String(dayRecords.length));
+          total.setAttribute('aria-hidden', 'true');
+          cell.append(total);
         }
         if (preview.length) {
           const previewLabel = preview.map(record => {
             const type = { note: 'Задача', event: 'Событие', schedule: 'Рутина' }[record.source_type] || record.kind || 'Запись';
             return `${type}: ${record.title}${record.time ? `, ${record.time}` : ', без времени'}`;
           }).join('; ');
-          cell.setAttribute('aria-label', `${dayLabel}. ${previewLabel}${overflow ? `; ещё ${overflow}` : ''}`);
+          cell.setAttribute('aria-label', `${cell.getAttribute('aria-label')}. ${previewLabel}${overflow ? `; ещё ${overflow}` : ''}`);
         }
         grid.append(cell);
       }
