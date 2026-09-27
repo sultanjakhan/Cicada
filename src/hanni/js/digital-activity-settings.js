@@ -76,12 +76,11 @@ export function mountDigitalActivitySettings(element,{invoke,setPending=()=>{}}=
     else if(button.dataset.daConfirmRemove)void removeConnection(button.dataset.daConfirmRemove);
     else if(button.hasAttribute('data-da-save'))void save();
   });
-  const changed=()=>{if(!disposed)render();};element.addEventListener('input',changed);element.addEventListener('change',changed);
   const onUpdated=()=>{if(!disposed){void reloadAfterAction().then(()=>render());}};
   let unlisten;
   try{Promise.resolve(listen('digital-activity-updated',onUpdated)).then(stop=>{if(disposed)stop?.();else unlisten=stop;}).catch(()=>{});}catch{}
   render();void load();
-  const dispose=()=>{disposed=true;unlisten?.();element.removeEventListener('input',changed);element.removeEventListener('change',changed);};
+  const dispose=()=>{disposed=true;unlisten?.();};
   dispose.isDirty=isDirty;return dispose;
 }
 

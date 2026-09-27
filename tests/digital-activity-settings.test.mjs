@@ -28,6 +28,12 @@ test('connection form saves platform and port; token stays write-only and auto-i
   assert.equal(x.host.querySelector('[data-da-token]').value,'');assert.match(x.host.textContent,/Android · порт 5601/);
   x.host.querySelector('[data-da-toggle="device-1"]').click();await tick();assert.equal(x.devices[0].enabled,false);assert.match(x.host.textContent,/приостановлен/);
   assert.deepEqual(x.pending,[true,false,true,false]);
+  x.host.querySelector('[data-da-edit="device-1"]').click();
+  const label=x.host.querySelector('[data-da-label]'),importButton=x.host.querySelector('[data-da-import="device-1"]');
+  label.value='Черновик';label.dispatchEvent(new x.dom.window.Event('input',{bubbles:true}));label.dispatchEvent(new x.dom.window.Event('change',{bubbles:true}));
+  assert.equal(importButton.isConnected,true,'blur must not replace the button during its first click');
+  importButton.click();assert.match(x.host.querySelector('[data-da-error]').textContent,/Сначала сохрани или отмени/);
+  assert.equal(x.devices[0].label,'Телефон');
 });
 
 test('status failure can retry and manual import exposes a real result',async t=>{
