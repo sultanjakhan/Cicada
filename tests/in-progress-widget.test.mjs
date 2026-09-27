@@ -147,12 +147,12 @@ test('rows show total time against the estimate, the stage chip and the goal; ov
   assert.equal(letters.querySelector('[data-cip-progress] > span').style.width, '72.2%');
   assert.equal(letters.querySelector('.cip-stage').classList.contains('is-waiting'), true);
   assert.ok(letters.querySelector('.cip-stage .cip-stage-mark'), '«Жду ответа» is a small hourglass before the stage');
-  assert.match(x.control('note:letters', 'stage').getAttribute('aria-label'), /^Этап: Согласование, жду ответа\./);
+  assert.match(letters.querySelector('.cip-stage').textContent, /Этап:Согласование/);
   assert.equal(x.row(`schedule:${routine}`).querySelector('[data-cip-progress]'), null, 'no estimate, no bar');
   assert.equal(x.row(`schedule:${routine}`).querySelector('.cip-stage'), null, 'a routine step has no stage');
   assert.equal(x.control('note:draft', 'toggle').getAttribute('aria-label'), 'Пауза: Черновик отчёта');
   assert.equal(x.control('note:letters', 'finish').getAttribute('aria-label'), 'Готово: Разобрать письма');
-  assert.match(x.control('note:draft', 'stage').getAttribute('aria-label'), /^Этап: Описание\. Выбрать этап для задачи: Черновик отчёта$/);
+  assert.match(x.control('note:draft', 'stage-next').getAttribute('aria-label'), /Следующая стадия «Согласование»: Черновик отчёта/);
   x.data.now = new Date(`${TODAY}T11:01:00`);
   await new Promise(resolve => setTimeout(resolve, 1100));
   assert.deepEqual(x.text().map(row => row[1]), ['03:00', '1:11:00 / 60 мин', '32:30 / 45 мин'], 'running rows tick, paused rows stay');
@@ -261,54 +261,19 @@ test('Done closes a note through task completion and a routine step through its 
   assert.equal(x.data.count('start_task_block'), 0);
 });
 
-test('the stage label opens the stages of the task process, «Без стадии» and a «Жду ответа» toggle', async t => {
+test('stage labels are readable text and arbitrary selection stays outside the row', async t => {
   const x = await mount(t);
-  const chip = x.control('note:draft', 'stage');
-  chip.click();
-  assert.equal(chip.getAttribute('aria-expanded'), 'true');
-  assert.deepEqual(x.menuItems(), ['Понимание', 'Требования', 'Анализ и модели', 'Описание', 'Согласование', 'Декомпозиция', 'В разработке', 'Приёмка', 'Без стадии', 'Жду ответа']);
-  const checked = [...x.menu().querySelectorAll('[aria-checked="true"]')].map(item => item.textContent);
-  assert.deepEqual(checked, ['Описание']);
-  assert.equal(x.doc.activeElement, x.menu().querySelector('[data-menu-action="stage:description"]'), 'focus starts at the current stage');
-  await x.choose('Согласование');
-  assert.deepEqual(x.data.args('set_calendar_task_stage'), [{ id:'draft', stage:'agreement', waiting:null }]);
+  const label = x.row('note:draft').querySelector('.cip-stage');
+  assert.equal(label.tagName, 'SPAN');
+  assert.equal(label.hasAttribute('tabindex'), false);
+  label.click(); await settle();
   assert.equal(x.menu(), null);
-  assert.equal(x.row('note:draft').querySelector('.cip-stage-text').textContent, 'Согласование');
-  assert.equal(x.doc.activeElement, x.control('note:draft', 'stage'));
-  x.control('note:draft', 'stage').click();
-  await x.choose('Жду ответа');
-  assert.deepEqual(x.data.args('set_calendar_task_stage')[1], { id:'draft', stage:null, waiting:true });
-  assert.equal(x.row('note:draft').querySelector('.cip-stage-text').textContent, 'Согласование');
-  assert.ok(x.row('note:draft').querySelector('.cip-stage.is-waiting .cip-stage-mark'));
-  x.control('note:letters', 'stage').click();
-  await x.choose('Без стадии');
-  assert.deepEqual(x.data.args('set_calendar_task_stage')[2], { id:'letters', stage:'', waiting:null });
-  assert.equal(x.row('note:letters').querySelector('.cip-stage-text').textContent, 'Жду ответа', 'waiting stays without a stage');
-  // Escape closes the menu without a change and returns focus to the chip.
-  x.control('note:letters', 'stage').click();
-  x.doc.dispatchEvent(new x.dom.window.KeyboardEvent('keydown', { key:'Escape', bubbles:true, cancelable:true }));
-  assert.equal(x.menu(), null);
-  assert.equal(x.doc.activeElement, x.control('note:letters', 'stage'));
-  assert.equal(x.data.count('set_calendar_task_stage'), 3);
-  assert.equal(x.data.count('pause_task_block') + x.data.count('start_task_block'), 0, 'a stage never touches the timer');
+  assert.equal(x.data.count('set_calendar_task_stage'), 0);
+  x.control('note:draft', 'open').click();
+  assert.equal(x.opened[0].row.source_id, 'draft', 'the task card remains available');
 });
 
-test('process settings appear only with a route, then close the menu and receive the stage chip for focus return', async t => {
-  const plain = await mount(t);
-  plain.control('note:draft', 'stage').click();
-  assert.equal(plain.menuItems().includes('Настроить этапы…'), false);
-  plain.doc.dispatchEvent(new plain.dom.window.KeyboardEvent('keydown', { key:'Escape', bubbles:true, cancelable:true }));
 
-  let passedTrigger;
-  const routed = await mount(t, backend(), { openProcessSettings(trigger) { passedTrigger = trigger; } });
-  const chip = routed.control('note:draft', 'stage');
-  chip.click();
-  const item = [...routed.menu().querySelectorAll('[role^="menuitem"]')].find(value => value.querySelector('.cip-menu-label').textContent === 'Настроить этапы…');
-  assert.equal(item.querySelector('.cip-menu-hint').textContent, 'Общий список этапов процесса');
-  item.click();
-  assert.equal(routed.menu(), null);
-  assert.equal(passedTrigger, chip);
-});
 
 test('the ⋯ menu offers Stop, Cancel start only for running work, and Open', async t => {
   const x = await mount(t);
@@ -400,47 +365,46 @@ test('a failed action keeps the rows, reports the error and allows another try',
   await y.choose('Остановить');
   assert.equal(data.ui.has(HIDDEN_KEY), false);
   assert.ok(y.row('note:draft'));
-  y.control('note:draft', 'stage').click();
-  await y.choose('Приёмка');
+  y.control('note:draft', 'stage-next').click(); await settle();
+  assert.match(y.host.querySelector('[data-cip-message]').textContent, /Проверочная ошибка/);
+  assert.equal(y.doc.activeElement, y.host.querySelector('[data-cip-message]'));
   assert.equal(y.row('note:draft').querySelector('.cip-stage-text').textContent, 'Описание', 'the stage is unchanged');
 });
 
 // ---- Process stage selection and time per stage ----
 const at = time => new Date(`${TODAY}T${time}`).toISOString();
 
-test('the stage chip is the only stage action, visibly names its role, and stage changes announce without a success echo', async t => {
-  const x = await mount(t);
-  const chip = () => x.control('note:draft', 'stage');
-  assert.match(chip().textContent, /^Этап:\s*Описание/);
-  assert.ok(chip().querySelector('.cip-stage-chevron'));
-  assert.equal(x.control('note:draft', 'stage-next'), undefined, 'there is no second quick-change action');
-  chip().click();
-  x.doc.activeElement.dispatchEvent(new x.dom.window.KeyboardEvent('keydown', { key:'ArrowDown', bubbles:true, cancelable:true }));
-  x.doc.activeElement.dispatchEvent(new x.dom.window.KeyboardEvent('keydown', { key:'Enter', bubbles:true, cancelable:true }));
-  await settle();
-  assert.deepEqual(x.data.args('set_calendar_task_stage'), [{ id:'draft', stage:'agreement', waiting:null }], 'Enter selects the focused stage and leaves waiting unchanged');
+test('the next-stage arrow preserves waiting and timers without a visible success echo', async t => {
+  const data = backend();
+  data.tasks.find(task => task.source_id === 'draft').waiting = true;
+  const x = await mount(t, data), originalBlocks = structuredClone(data.blocks);
+  const arrow = () => x.control('note:draft', 'stage-next');
+  assert.match(arrow().getAttribute('aria-label'), /Согласование/);
+  arrow().click(); await settle();
+  assert.deepEqual(data.args('set_calendar_task_stage'), [{ id:'draft', stage:'agreement', waiting:null }]);
   assert.equal(x.row('note:draft').querySelector('.cip-stage-text').textContent, 'Согласование');
-  assert.equal(x.doc.activeElement, chip(), 'focus returns to the stage chip');
-  assert.match(x.host.querySelector('[data-cip-announcement]').textContent, /Стадия: Согласование/);
-  assert.equal(x.host.querySelector('[data-cip-message]').textContent, '', 'successful changes have no visible echo');
-  assert.equal(x.row('note:letters').querySelector('.cip-stage-text').textContent, 'Согласование');
-  assert.equal(x.data.count('pause_task_block') + x.data.count('start_task_block'), 0, 'stages never touch the timer');
+  assert.equal(data.tasks.find(task => task.source_id === 'draft').waiting, true);
+  assert.equal(x.doc.activeElement, arrow());
+  assert.match(x.host.querySelector('[data-cip-announcement]').textContent, /Этап: Согласование/);
+  assert.equal(x.host.querySelector('[data-cip-message]').textContent, '');
+  assert.deepEqual(data.blocks, originalBlocks, 'changing a stage preserves all timer blocks');
+  assert.equal(data.count('pause_task_block') + data.count('start_task_block'), 0);
 });
 
-test('only a task with a process shows a stage; a process without a stage offers «Начать»', async t => {
+test('a process without a stage advances to its first stage; no process has no arrow', async t => {
   const data = backend();
   data.tasks.find(task => task.source_id === 'draft').stage = '';
   Object.assign(data.tasks.find(task => task.source_id === 'letters'), { waiting:false, stage:'', process:'system-analysis' });
   const x = await mount(t, data);
-  assert.equal(x.row('note:draft').querySelector('.cip-stage'), null, 'no process: no stage control, no placeholder');
-  const chip = x.control('note:letters', 'stage');
-  assert.match(chip.textContent, /Этап:\s*Выбрать/); assert.equal(chip.classList.contains('is-empty'), true);
-  chip.click(); await x.choose('Понимание');
-  assert.deepEqual(x.data.args('set_calendar_task_stage'), [{ id:'letters', stage:'understanding', waiting:null }]);
+  assert.equal(x.row('note:draft').querySelector('.cip-stage'), null);
+  assert.equal(x.control('note:draft', 'stage-next'), undefined);
+  assert.match(x.row('note:letters').querySelector('.cip-stage').textContent, /Этап:\s*Не выбран/);
+  x.control('note:letters', 'stage-next').click(); await settle();
+  assert.deepEqual(data.args('set_calendar_task_stage'), [{ id:'letters', stage:'understanding', waiting:null }]);
   assert.equal(x.row('note:letters').querySelector('.cip-stage-text').textContent, 'Понимание');
 });
 
-test('a custom process drives the stage menu; a deleted stage remains selectable without a next-stage action', async t => {
+test('custom process order drives the arrow, with safe focus at its last or deleted stage', async t => {
   const data = backend();
   data.ui.set('calendar_processes_v1', JSON.stringify({ version:1, processes:[
     { id:'system-analysis', title:'Системный анализ', stages:[{ id:'understanding', title:'Понимание' }, { id:'requirements', title:'Требования' }] },
@@ -448,20 +412,14 @@ test('a custom process drives the stage menu; a deleted stage remains selectable
   ] }));
   Object.assign(data.tasks.find(task => task.source_id === 'draft'), { process:'p-report', stage:'s-draft' });
   const x = await mount(t, data);
-  assert.equal(x.row('note:draft').querySelector('.cip-stage-text').textContent, 'Черновик');
-  x.control('note:draft', 'stage').click();
-  assert.deepEqual(x.menuItems(), ['Черновик', 'Проверка', 'Без стадии', 'Жду ответа']);
-  x.doc.dispatchEvent(new x.dom.window.KeyboardEvent('keydown', { key:'Escape', bubbles:true, cancelable:true }));
+  x.control('note:draft', 'stage-next').click(); await settle();
+  assert.deepEqual(data.args('set_calendar_task_stage'), [{ id:'draft', stage:'s-check', waiting:null }]);
   assert.equal(x.control('note:draft', 'stage-next'), undefined);
-  // «Согласование» was removed from the built-in process: the task keeps it and says so.
-  const letters = x.control('note:letters', 'stage');
-  assert.equal(letters.querySelector('.cip-stage-text').textContent, 'Стадия удалена');
-  assert.equal(letters.classList.contains('is-deleted'), true);
-  assert.equal(x.control('note:letters', 'stage-next'), undefined, 'there is no separate next-stage action');
-  x.control('note:letters', 'stage').click();
-  assert.deepEqual(x.menuItems(), ['Понимание', 'Требования', 'Без стадии', 'Жду ответа']);
-  await x.choose('Жду ответа');
-  assert.deepEqual(x.data.args('set_calendar_task_stage')[0], { id:'letters', stage:null, waiting:false }, 'the deleted stage is kept');
+  assert.equal(x.doc.activeElement, x.control('note:draft', 'open'));
+  assert.equal(x.row('note:letters').querySelector('.cip-stage-text').textContent, 'Стадия удалена');
+  assert.equal(x.control('note:letters', 'stage-next'), undefined);
+  assert.ok(x.control('note:letters', 'open'), 'deleted stages can still be edited through the task card');
+  assert.equal(data.count('complete_calendar_task'), 0, 'the final stage never completes a task automatically');
 });
 
 test('the stage tooltip gives timer time per stage, the running block included, and ticks', async t => {
@@ -469,7 +427,7 @@ test('the stage tooltip gives timer time per stage, the running block included, 
   // The draft moved from «Требования» to «Описание» at 09:20, while its 09:00–09:40 block ran.
   data.tasks.find(task => task.source_id === 'draft').stage_log = [{ stage:'requirements', at:at('08:00:00') }, { stage:'description', at:at('09:20:00') }];
   const x = await mount(t, data);
-  const chip = () => x.control('note:draft', 'stage');
+  const chip = () => x.row('note:draft').querySelector('.cip-stage');
   const elapsed = () => x.row('note:draft').querySelector('.cip-stage-time').textContent;
   assert.equal(chip().title, 'Время по стадиям: Требования 20 мин · Описание 50 мин', 'the 10:30 running block counts up to 11:00');
   assert.equal(elapsed(), 'Учтено на этапе 50:00');
@@ -479,7 +437,7 @@ test('the stage tooltip gives timer time per stage, the running block included, 
   assert.equal(chip().title, 'Время по стадиям: Требования 20 мин · Описание 1 ч 5 мин', 'the current stage is live');
   assert.equal(elapsed(), 'Учтено на этапе 1:05:00');
   // No history: the stored stage owns all of the task's time.
-  assert.equal(x.control('note:letters', 'stage').title, 'Время по стадиям: Согласование 12 мин');
+  assert.equal(x.row('note:letters').querySelector('.cip-stage').title, 'Время по стадиям: Согласование 12 мин');
 });
 
 test('stage time reports an unavailable read and recovers without showing a false zero', async t => {
@@ -490,7 +448,7 @@ test('stage time reports an unavailable read and recovers without showing a fals
     return invoke(name, args);
   };
   const x = await mount(t, data);
-  const chip = () => x.control('note:draft', 'stage');
+  const chip = () => x.row('note:draft').querySelector('.cip-stage');
   const elapsed = () => x.row('note:draft').querySelector('.cip-stage-time');
   assert.equal(elapsed().textContent, 'Время этапа недоступно');
   assert.equal(chip().title, 'Время по стадиям недоступно');
