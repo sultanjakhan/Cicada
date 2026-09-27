@@ -14,6 +14,9 @@ use std::{
 use tauri::{Emitter, State};
 use uuid::Uuid;
 
+#[path = "digital_activity_erasure.rs"]
+pub(crate) mod erasure;
+
 const SETTINGS_KEY: &str = "digital_activity_connections_v1";
 const SECRET_SERVICE: &str = "app.hanni.mvp.activity";
 const MAX_RESPONSE: usize = 8 * 1024 * 1024;
@@ -689,8 +692,13 @@ fn project(
 ) -> Result<i64, String> {
     let now = Utc::now().to_rfc3339();
     let mut changed = 0;
+    let deleted_through = erasure::cutoff(conn, &cfg.id)?;
     for aggregate in aggregates {
-        if aggregate.foreground_seconds <= 0.0 {
+        if aggregate.foreground_seconds <= 0.0
+            || deleted_through
+                .as_ref()
+                .is_some_and(|day| aggregate.day.to_string() <= *day)
+        {
             continue;
         }
         let key = format!("digital-activity:{}:{}", cfg.id, aggregate.day);
@@ -754,7 +762,10 @@ fn commit_reading(
         return Ok(None);
     }
     let outcome = match result {
-        Ok(reading) => {
+        Ok(mut reading) => {
+            if let Some(limit) = erasure::cutoff(&tx, &cfg.id)? {
+                reading.aggregates.retain(|a| a.day.to_string() > limit);
+            }
             let changed = project(&tx, cfg, &reading.aggregates)?;
             let records: i64 = tx
                 .query_row(
@@ -977,6 +988,7 @@ pub fn digital_activity_status(state: State<'_, crate::AppState>) -> Result<Valu
         value["lastSuccess"] = json!(success);
         value["lastError"] = json!(error);
         value["records"] = json!(records);
+        value["deletedThrough"] = json!(erasure::cutoff(&conn, &cfg.id)?);
         devices.push(value);
     }
     Ok(json!({"enabled":devices.iter().any(|v| v["enabled"] == true),"devices":devices}))

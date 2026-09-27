@@ -592,6 +592,8 @@ pub fn run() {
             digital_activity::digital_activity_remove_connection,
             digital_activity::digital_activity_status,
             digital_activity::digital_activity_import_now,
+            digital_activity::erasure::digital_activity_preview_erasure,
+            digital_activity::erasure::digital_activity_erase_history,
             list_items,
             save_item,
             set_completed,

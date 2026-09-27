@@ -142,6 +142,20 @@ fn incoming_allowed(
         .record
         .as_ref()
         .ok_or("mvp_sync_conflict_unknown")?;
+    if record.kind == "items"
+        && !record.deleted
+        && crate::digital_activity::erasure::blocked_item(conn, &record.value)?
+    {
+        return Err("digital_activity_history_erased".into());
+    }
+    if record.kind == "ui" && record.key[0] == crate::digital_activity::erasure::KEY {
+        let device = record.key[1].as_str().ok_or("mvp_sync_conflict_unknown")?;
+        if crate::digital_activity::erasure::cutoff(conn, device)?.as_deref()
+            > record.value["deletedThrough"].as_str()
+        {
+            return Err("digital_activity_history_erased".into());
+        }
+    }
     if let Some(current) = current {
         if current.record.kind != record.kind || current.record.key != record.key {
             return Err("mvp_sync_conflict_identity".into());
@@ -672,6 +686,11 @@ pub(crate) fn mvp_sync_conflict_resolve(
         json!({"views_changed":result["views_changed"],"revision":result["revision"]}),
     );
     Ok(result)
+}
+
+#[cfg(test)]
+pub(crate) fn resolve_for_test(conn: &mut Connection, token: &str, expected: &str, choice: &str) -> Result<Value, String> {
+    resolve(conn, token, expected, choice)
 }
 
 #[cfg(test)]

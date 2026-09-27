@@ -1232,3 +1232,7 @@ pub(super) fn maintain(
 #[cfg(test)]
 #[path = "mvp_sync_checkpoint_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "digital_activity_erasure_checkpoint_tests.rs"]
+mod erasure_tests;

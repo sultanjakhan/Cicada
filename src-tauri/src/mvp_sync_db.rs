@@ -254,7 +254,7 @@ fn parse(raw: &str) -> Result<Value, String> {
 fn parse_keys(raw: &str) -> Result<Vec<Value>, String> {
     serde_json::from_str(raw).map_err(|_| "mvp_sync_invalid_key".into())
 }
-fn record_local(
+pub(crate) fn record_local(
     conn: &Connection,
     kind: &str,
     keys: Vec<Value>,
@@ -486,7 +486,14 @@ pub(crate) fn checkpoint_merge_conflict(conn: &Connection, value: &Value) -> Res
 pub(crate) fn apply_record(conn: &Connection, fields: &Map<String, Value>) -> Result<bool, String> {
     validate_record(conn, fields)?;
     let (id, record, stamp, writer) = decoded(fields)?;
-    if conflicts::was_resolved(conn, &id, &stamp, &writer, &record)? {
+    let retention = record.kind == "ui" && record.key[0] == crate::digital_activity::erasure::KEY;
+    if !retention && conflicts::was_resolved(conn, &id, &stamp, &writer, &record)? {
+        return Ok(false);
+    }
+    if record.kind == "items"
+        && !record.deleted
+        && crate::digital_activity::erasure::blocked_item(conn, &record.value)?
+    {
         return Ok(false);
     }
     let prior:Option<(String,String,String)>=sql(conn.query_row("SELECT r.data,r.updated_at,v.device_id FROM mvp_records r JOIN sync_row_versions v ON v.table_name='mvp_records' AND v.row_id=r.id WHERE r.id=?1",[&id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional())?;
@@ -520,10 +527,24 @@ pub(crate) fn apply_record(conn: &Connection, fields: &Map<String, Value>) -> Re
             && record.parent_writer.as_deref() == Some(&local_writer);
         let precedes = local.parent.as_deref() == Some(&stamp)
             && local.parent_writer.as_deref() == Some(&writer);
-        let wins = if reflection_priority { incoming_priority > local_priority } else {
-            (stamp.as_str(), writer.as_str()) > (local_stamp.as_str(), local_writer.as_str())
+        // A deletion boundary is monotone. Select the entire winning record,
+        // preserving its payload AND original version; never forge a merged stamp.
+        let boundary_order = if retention {
+            record.value["deletedThrough"]
+                .as_str()
+                .cmp(&local.value["deletedThrough"].as_str())
+        } else {
+            std::cmp::Ordering::Equal
         };
-        if different && !follows && !precedes && !reflection_priority {
+        let stamp_wins = (stamp.as_str(), writer.as_str()) > (local_stamp.as_str(), local_writer.as_str());
+        let wins = if retention {
+            boundary_order.is_gt() || (boundary_order.is_eq() && stamp_wins)
+        } else if reflection_priority {
+            incoming_priority > local_priority
+        } else {
+            stamp_wins
+        };
+        if !retention && !reflection_priority && different && !follows && !precedes {
             if wins {
                 keep_conflict(conn, &id, &local_stamp, &local_writer, &local)?;
             } else {
@@ -549,6 +570,12 @@ pub(crate) fn apply_record(conn: &Connection, fields: &Map<String, Value>) -> Re
     Ok(true)
 }
 fn materialize(conn: &Connection, record: &Record) -> Result<(), String> {
+    if record.kind == "items"
+        && !record.deleted
+        && crate::digital_activity::erasure::blocked_item(conn, &record.value)?
+    {
+        return Ok(());
+    }
     match record.kind.as_str() {
         "day" => {
             let (id, stamp) = day_entry(&record.value)?;
@@ -772,6 +799,9 @@ pub(crate) fn set_ui_in_transaction(
     if key == crate::recurring_reflections::KEY {
         return Err("reflection_use_bundle_command".into());
     }
+    if key == crate::digital_activity::erasure::KEY {
+        return Err("digital_activity_retention_read_only".into());
+    }
     let prior = read_ui(&tx, key)?;
     if let Some(expected) = expected {
         if prior.as_deref().unwrap_or("") != expected {
@@ -949,6 +979,9 @@ fn validate_ui_record(record: &Record) -> Result<(), String> {
         .map(|v| v.as_str().ok_or("content_sync_unknown_schema"))
         .collect::<Result<_, _>>()?;
     let valid = match keys.as_slice() {
+        [crate::digital_activity::erasure::KEY, device] => {
+            crate::digital_activity::erasure::valid_marker(device, &record.value, record.deleted)
+        }
         ["calendar_now_v1"] => !record.deleted && record.value.is_object(),
         ["calendar_development_v1", goal, "meta"] => {
             !goal.is_empty() && (record.deleted || record.value.is_object())
@@ -996,6 +1029,14 @@ fn apply_ui_record(conn: &Connection, record: &Record) -> Result<(), String> {
     let name = record.key[0]
         .as_str()
         .ok_or("content_sync_unknown_schema")?;
+    if name == crate::digital_activity::erasure::KEY {
+        return crate::digital_activity::erasure::materialize_marker(
+            conn,
+            record.key[1]
+                .as_str()
+                .ok_or("content_sync_unknown_schema")?,
+        );
+    }
     if name == "calendar_now_v1" {
         return write_ui(conn, name, &record.value.to_string());
     }
