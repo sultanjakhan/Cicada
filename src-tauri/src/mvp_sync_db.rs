@@ -593,12 +593,11 @@ pub(crate) fn apply_record(conn: &Connection, fields: &Map<String, Value>) -> Re
             }
         }
         let different = local.deleted != record.deleted || local_value != remote_value;
-        let version_downgrade = record.kind == "ui"
-            && record.v == 1
-            && local.v == 2
+        let version_priority = record.kind == "ui"
+            && record.v != local.v
             && recurring_identity(&record.key);
         if (stamp.as_str(), writer.as_str()) == (local_stamp.as_str(), local_writer.as_str()) {
-            if different {
+            if different || record.v != local.v {
                 return Err("content_sync_version_conflict".into());
             }
             return Ok(false);
@@ -610,15 +609,6 @@ pub(crate) fn apply_record(conn: &Connection, fields: &Map<String, Value>) -> Re
             && record.parent_writer.as_deref() == Some(&local_writer);
         let precedes = local.parent.as_deref() == Some(&stamp)
             && local.parent_writer.as_deref() == Some(&writer);
-        if version_downgrade {
-            // Old queued writes that are identical or a known ancestor are not
-            // conflicts. A divergent v1 payload cannot replace a v2 identity.
-            if !different || precedes {
-                return Ok(false);
-            }
-            keep_conflict(conn, &id, &stamp, &writer, &record)?;
-            return Ok(false);
-        }
         // A deletion boundary is monotone. Select the entire winning record,
         // preserving its payload AND original version; never forge a merged stamp.
         let boundary_order = if retention {
@@ -633,10 +623,19 @@ pub(crate) fn apply_record(conn: &Connection, fields: &Map<String, Value>) -> Re
             boundary_order.is_gt() || (boundary_order.is_eq() && stamp_wins)
         } else if reflection_priority {
             incoming_priority > local_priority
+        } else if version_priority {
+            record.v > local.v
         } else {
             stamp_wins
         };
-        if !retention && !reflection_priority && different && !follows && !precedes {
+        let archive = different && if version_priority {
+            // A known v1 ancestor of v2 and an identical v1 replay are harmless.
+            // A divergent v1 edit following v2 is still retained for review.
+            !(if wins { follows } else { precedes })
+        } else {
+            !follows && !precedes
+        };
+        if !retention && !reflection_priority && archive {
             if wins {
                 keep_conflict(conn, &id, &local_stamp, &local_writer, &local)?;
             } else {

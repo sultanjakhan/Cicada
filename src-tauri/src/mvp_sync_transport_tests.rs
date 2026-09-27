@@ -1081,3 +1081,226 @@ fn reflection_encrypted_legacy_outbox_survives_upgrade_without_erasing_answer() 
         1
     );
 }
+
+fn graph_version_fields(wire: &Row) -> Map<String, Value> {
+    let mut fields = wire.f.clone();
+    // JSON object ordering is not wire identity; every field and version stamp is.
+    fields.insert(
+        "data".into(),
+        serde_json::from_str(wire.f["data"].as_str().unwrap()).unwrap(),
+    );
+    fields
+}
+
+fn graph_version_wire(
+    source: &Connection,
+    id: &str,
+    version: u8,
+    deleted: bool,
+    stamp: &str,
+) -> Row {
+    let mut wire = row(source, id);
+    let mut body: Value = serde_json::from_str(wire.f["data"].as_str().unwrap()).unwrap();
+    body["v"] = json!(version);
+    body["deleted"] = json!(deleted);
+    body["parent"] = Value::Null;
+    body["parent_writer"] = Value::Null;
+    if deleted {
+        body["value"] = Value::Null;
+    } else if version == 1 {
+        let payload = if body["key"][1] == "plans" {
+            "row"
+        } else {
+            "snapshot"
+        };
+        body["value"][payload]["title"] = json!("Divergent legacy edit");
+        body["value"][payload]["mode"] = json!("chain");
+    }
+    wire.f["data"] = json!(body.to_string());
+    wire.f["updated_at"] = json!(stamp);
+    wire.f["_updated_at"] = json!(stamp);
+    wire.f["_device_id"] = json!(format!("writer-v{version}"));
+    wire
+}
+
+#[test]
+fn graph_version_convergence_three_replicas_both_orders_and_tombstones() {
+    let (source, sender) = replica("source");
+    crate::mvp_sync_db::set_ui(
+        &source,
+        "calendar_recurring_v1",
+        &recurring_state("graph", "Protected graph").to_string(),
+        None,
+    )
+    .unwrap();
+    for group in [
+        json!(["plans", "graph-plan"]),
+        json!(["days", "2026-09-28", "graph-plan"]),
+    ] {
+        let mut keys = vec![json!("calendar_recurring_v1")];
+        keys.extend(group.as_array().unwrap().clone());
+        let id = json!(["ui", keys]).to_string();
+        for v2_deleted in [false, true] {
+            for v1_deleted in [false, true] {
+                let current =
+                    graph_version_wire(&source, &id, 2, v2_deleted, "2026-01-01T00:00:00.000Z");
+                let legacy =
+                    graph_version_wire(&source, &id, 1, v1_deleted, "2099-01-01T00:00:00.000Z");
+                for (index, delivery) in [
+                    vec![current.clone(), legacy.clone()],
+                    vec![legacy.clone(), current.clone()],
+                    vec![
+                        legacy.clone(),
+                        current.clone(),
+                        legacy.clone(),
+                        current.clone(),
+                    ],
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    let (mut peer, cfg) = replica(&format!("peer-{index}"));
+                    for (i, incoming) in delivery.into_iter().enumerate() {
+                        let seq = i as i64 + 1;
+                        apply(&mut peer, &cfg, stored(&sender, vec![incoming], seq, seq)).unwrap();
+                    }
+                    assert_eq!(
+                        graph_version_fields(&row(&peer, &id)),
+                        graph_version_fields(&current),
+                        "winner wire/stamp must be exact in every order"
+                    );
+                    let expected_conflicts = i64::from(!(v1_deleted && v2_deleted));
+                    assert_eq!(
+                        scalar(&peer, "SELECT count(*) FROM mvp_sync_conflicts").unwrap(),
+                        expected_conflicts
+                    );
+                    if expected_conflicts == 1 {
+                        let archived: String = peer
+                            .query_row(
+                                "SELECT data FROM mvp_sync_conflicts WHERE id=?1",
+                                [&id],
+                                |r| r.get(0),
+                            )
+                            .unwrap();
+                        assert_eq!(
+                            serde_json::from_str::<Value>(&archived).unwrap(),
+                            graph_version_fields(&legacy)["data"]
+                        );
+                    }
+                    assert_eq!(
+                        scalar(&peer, "SELECT count(*) FROM content_sync_pending").unwrap(),
+                        0
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn graph_version_convergence_identical_payload_promotes_without_archive() {
+    let (source, sender) = replica("source");
+    crate::mvp_sync_db::set_ui(
+        &source,
+        "calendar_recurring_v1",
+        &recurring_state("graph", "Graph").to_string(),
+        None,
+    )
+    .unwrap();
+    let id = json!(["ui", ["calendar_recurring_v1", "plans", "graph-plan"]]).to_string();
+    let current = graph_version_wire(&source, &id, 2, false, "2026-01-01T00:00:00.000Z");
+    let mut legacy = graph_version_wire(&source, &id, 1, false, "2099-01-01T00:00:00.000Z");
+    let mut body: Value = serde_json::from_str(current.f["data"].as_str().unwrap()).unwrap();
+    body["v"] = json!(1);
+    legacy.f["data"] = json!(body.to_string());
+    for delivery in [
+        [legacy.clone(), current.clone()],
+        [current.clone(), legacy.clone()],
+    ] {
+        let (mut peer, cfg) = replica("peer");
+        for (i, incoming) in delivery.into_iter().enumerate() {
+            let seq = i as i64 + 1;
+            apply(&mut peer, &cfg, stored(&sender, vec![incoming], seq, seq)).unwrap();
+        }
+        assert_eq!(
+            graph_version_fields(&row(&peer, &id)),
+            graph_version_fields(&current)
+        );
+        assert_eq!(
+            scalar(&peer, "SELECT count(*) FROM mvp_sync_conflicts").unwrap(),
+            0
+        );
+    }
+}
+
+#[test]
+fn graph_version_convergence_same_stamp_version_mutation_is_rejected() {
+    let (source, _) = replica("source");
+    crate::mvp_sync_db::set_ui(
+        &source,
+        "calendar_recurring_v1",
+        &recurring_state("graph", "Graph").to_string(),
+        None,
+    )
+    .unwrap();
+    let id = json!(["ui", ["calendar_recurring_v1", "plans", "graph-plan"]]).to_string();
+    let current = row(&source, &id);
+    assert!(
+        !crate::mvp_sync_db::apply_record(&source, &current.f).unwrap(),
+        "an exact replay remains idempotent"
+    );
+    let mut mutated = current.clone();
+    let mut body: Value = serde_json::from_str(mutated.f["data"].as_str().unwrap()).unwrap();
+    body["v"] = json!(1);
+    mutated.f["data"] = json!(body.to_string());
+    assert_eq!(
+        crate::mvp_sync_db::apply_record(&source, &mutated.f).unwrap_err(),
+        "content_sync_version_conflict"
+    );
+    assert_eq!(row(&source, &id).f, current.f);
+    body["v"] = json!(2);
+    body["value"]["row"]["title"] = json!("Illegal replacement");
+    mutated.f["data"] = json!(body.to_string());
+    assert_eq!(
+        crate::mvp_sync_db::apply_record(&source, &mutated.f).unwrap_err(),
+        "content_sync_version_conflict"
+    );
+    assert_eq!(row(&source, &id).f, current.f);
+}
+
+#[test]
+fn graph_version_convergence_known_ancestor_is_not_archived_in_either_direction() {
+    let (source, sender) = replica("source");
+    crate::mvp_sync_db::set_ui(
+        &source,
+        "calendar_recurring_v1",
+        &recurring_state("graph", "Graph").to_string(),
+        None,
+    )
+    .unwrap();
+    let id = json!(["ui", ["calendar_recurring_v1", "plans", "graph-plan"]]).to_string();
+    let legacy = graph_version_wire(&source, &id, 1, false, "2026-01-01T00:00:00.000Z");
+    let mut current = graph_version_wire(&source, &id, 2, false, "2026-01-02T00:00:00.000Z");
+    let mut body: Value = serde_json::from_str(current.f["data"].as_str().unwrap()).unwrap();
+    body["parent"] = legacy.f["updated_at"].clone();
+    body["parent_writer"] = legacy.f["_device_id"].clone();
+    current.f["data"] = json!(body.to_string());
+    for delivery in [
+        [legacy.clone(), current.clone()],
+        [current.clone(), legacy.clone()],
+    ] {
+        let (mut peer, cfg) = replica("peer");
+        for (i, incoming) in delivery.into_iter().enumerate() {
+            let seq = i as i64 + 1;
+            apply(&mut peer, &cfg, stored(&sender, vec![incoming], seq, seq)).unwrap();
+        }
+        assert_eq!(
+            graph_version_fields(&row(&peer, &id)),
+            graph_version_fields(&current)
+        );
+        assert_eq!(
+            scalar(&peer, "SELECT count(*) FROM mvp_sync_conflicts").unwrap(),
+            0
+        );
+    }
+}
