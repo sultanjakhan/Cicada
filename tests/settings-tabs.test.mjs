@@ -288,3 +288,27 @@ test('Today entry exposes only selection settings and saves no unrelated prefere
     assert.equal(x.modal.open,false);
   } finally{x.modal.close();}
 });
+
+
+test('saving calendar preferences preserves a pending activity connection draft', async () => {
+  const x=await boot({section:'restrictions'}),{modal}=x;
+  modal.querySelector('[data-da-add]').click();
+  const label=modal.querySelector('[data-da-label]'),token=modal.querySelector('[data-da-token]');
+  label.value='Test phone';token.value='synthetic-only';
+  label.dispatchEvent(new x.dom.window.Event('input',{bubbles:true}));
+  modal.querySelector('#calendar-settings-tab-calendar').click();
+  const completed=modal.querySelector('[data-key="showCompleted"]');completed.checked=!completed.checked;
+  completed.dispatchEvent(new x.dom.window.Event('change',{bubbles:true}));
+  modal.querySelector('form').dispatchEvent(new x.dom.window.Event('submit',{bubbles:true,cancelable:true}));
+  await tick();
+  assert.equal(JSON.parse(x.ui.get('calendar_preferences_v1')).showCompleted,completed.checked);
+  assert.equal(modal.open,true);
+  assert.equal(modal.querySelector('#calendar-settings-tab-restrictions').getAttribute('aria-selected'),'true');
+  assert.equal(label.value,'Test phone');assert.equal(token.value,'synthetic-only');
+  assert.equal(x.calls.includes('digital_activity_save_connection'),false);
+  assert.match(modal.querySelector('[role="status"].calendar-settings-status').textContent,/трекера ещё не сохранено/);
+  modal.querySelector('.calendar-settings-actions [data-dialog-close]').click();
+  assert.equal(modal.querySelector('[data-close-confirmation]').hidden,false);
+  modal.querySelector('[data-close-confirmation]').querySelectorAll('button')[1].click();
+  assert.equal(modal.open,false);
+});

@@ -368,6 +368,11 @@ export function showCalendarSettings(trigger, { section, returnFocus, activityHi
         settingsStatus.textContent = 'Настройки календаря сохранены. Изменения подключения ещё не сохранены.';
         settingsStatus.hidden = false;
         setActive('connections', true);
+      } else if (disposeDigitalActivity?.isDirty?.()) {
+        hosts.restrictions.prepend(settingsStatus);
+        settingsStatus.textContent = 'Настройки календаря сохранены. Подключение трекера ещё не сохранено.';
+        settingsStatus.hidden = false;
+        setActive('restrictions', true);
       } else {
         api.close({ skipBeforeClose: true });
       }
