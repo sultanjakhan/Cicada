@@ -277,7 +277,7 @@ test('Today entry exposes only selection settings and saves no unrelated prefere
     assert.equal(x.modal.querySelector('[role="tab"]'),null);
     assert.equal(x.modal.querySelector('[data-recurring]'),null);
     assert.equal(x.modal.querySelector('[data-key="showCompleted"]'),null);
-    assert.equal(x.calls.some(c=>/^(mvp_sync_status|health_.*_status|mvp_update_status)$/.test(c)),false,'focused entry does not read unrelated service status');
+    assert.equal(x.calls.some(c=>/^(mvp_sync_status|health_.*_status|mvp_update_status|digital_activity_.*)$/.test(c)),false,'focused entry does not read unrelated service status');
     const input=x.modal.querySelector('[data-key="recommendTasks"]');input.checked=false;input.dispatchEvent(new x.dom.window.Event('change',{bubbles:true}));
     const latest=JSON.parse(x.ui.get('calendar_preferences_v1'));latest.density='comfortable';latest.first_day='sun';
     x.ui.set('calendar_preferences_v1',JSON.stringify(latest));
