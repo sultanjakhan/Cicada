@@ -384,3 +384,39 @@ fn answered_migration_seed_dominates_later_empty_seed_in_both_orders() {
         );
     }
 }
+
+
+#[test]
+fn graph_identity_stays_v2_after_check_reflection_and_remote_status_edit() {
+    let mut source = replica();
+    let mut graph = fixture_state();
+    graph["plans"][0]["mode"] = json!("graph");
+    graph["plans"][0]["steps"] = json!([{"id":"step","title":"Step","mode":"check","dependsOn":[]}]);
+    graph["days"]["2026-01-15"] = json!({"plan":{"snapshot":graph["plans"][0],"status":"pending"}});
+    save(&mut source, &graph, None);
+    let mut state = fixture_state();
+    state["plans"][0]["reflection"] = json!({"prompt":"Original question"});
+    save(&mut source, &state, Some(change(json!({"kind":"plan","id":"plan","prompt":"Original question"}))));
+    answer(&mut source, &mut state);
+    let expected = sidecar(&source);
+    let transmitted = wires(&source);
+    let mut peer = replica();
+    for wire in transmitted.iter().rev() {
+        let body: Value = serde_json::from_str(wire["data"].as_str().unwrap()).unwrap();
+        if body["key"][0] == RECURRING { assert_eq!(body["v"], 2); }
+        if body["key"][0] == KEY { assert_eq!(body["v"], 1); }
+        deliver(&mut peer, wire);
+    }
+    assert_eq!(sidecar(&peer), expected);
+    let mut edited: Value = serde_json::from_str(get_bundle(&mut peer).unwrap().recurring.as_ref().unwrap()).unwrap();
+    edited["days"]["2026-01-15"]["plan"]["status"] = json!("done");
+    save(&mut peer, &edited, None);
+    for wire in wires(&peer) { deliver(&mut source, &wire); }
+    assert_eq!(sidecar(&source), expected);
+    let core: Value = serde_json::from_str(get_bundle(&mut source).unwrap().recurring.as_ref().unwrap()).unwrap();
+    assert_eq!(core["days"]["2026-01-15"]["plan"]["status"], "done");
+    for wire in wires(&source) {
+        let body: Value = serde_json::from_str(wire["data"].as_str().unwrap()).unwrap();
+        if body["key"][0] == RECURRING { assert_eq!(body["v"], 2); }
+    }
+}
