@@ -18,10 +18,6 @@ function formatDate(date) {
   return Number.isFinite(parsed.getTime()) ? new Intl.DateTimeFormat('ru', { day: 'numeric', month: 'short', year: 'numeric' }).format(parsed) : date;
 }
 
-function localDay(now = new Date()) {
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-}
-
 function goalTitle(goals, id) {
   const chain = [], seen = new Set();
   let current = goals.find(goal => String(goal.id) === String(id));
@@ -38,7 +34,7 @@ export function openCalendarTaskDetails(record, dependencies) {
 
   const window = document.defaultView;
   let current = { ...record }, processes = [], goals = [], activeBlocks = [], closedSeconds = 0;
-  let stageState = null, historyStop = null, clockTimer = null, disposed = false, pending = false, loadRevision = 0;
+  let stageState = null, historyStop = null, clockTimer = null, disposed = false, pending = false, loadFailed = false, activeStatusKnown = false, timeAvailable = false, loadRevision = 0;
   const live = () => !disposed && api.modal.isConnected && isCurrent();
   const api = createCalendarDialog({
     document, title: current.title, hint: 'Задача', returnFocus, isCurrent,
@@ -51,10 +47,6 @@ export function openCalendarTaskDetails(record, dependencies) {
   fields.classList.add('calendar-task-details__fields');
 
   const card = document.createElement('div'); card.className = 'task-details-card';
-  const stateLine = document.createElement('div'); stateLine.className = 'task-details-state';
-  const scope = document.createElement('span'); scope.className = 'task-details-scope';
-  const stateLabel = document.createElement('span'); stateLabel.className = 'task-details-state-label';
-  stateLine.append(scope, stateLabel);
   const total = document.createElement('strong'); total.className = 'task-details-total';
   const metadata = document.createElement('div'); metadata.className = 'task-details-meta';
   const goal = document.createElement('div'); goal.className = 'task-details-goal'; goal.hidden = true;
@@ -70,7 +62,7 @@ export function openCalendarTaskDetails(record, dependencies) {
   const historyContent = document.createElement('div'); historyContent.className = 'task-details-history-content';
   history.append(historySummary, historyContent);
   const announcement = document.createElement('span'); announcement.className = 'task-details-sr-only'; announcement.setAttribute('role', 'status'); announcement.setAttribute('aria-live', 'polite');
-  card.append(stateLine, total, metadata, goal, stageRow, waiting, history, announcement);
+  card.append(total, metadata, goal, stageRow, waiting, history, announcement);
   fields.append(card);
 
   const actions = modal.querySelector('.calendar-editor-actions');
@@ -91,26 +83,26 @@ export function openCalendarTaskDetails(record, dependencies) {
     const start = new Date(`${block.date}T${block.start_time}`).getTime();
     return sum + (Number.isFinite(start) ? Math.max(0, Math.floor((now - start) / 1000)) : 0);
   }, 0);
-  function paintTotal() { total.textContent = `Учтено ${formatWorkSeconds(closedSeconds + activeSeconds(Date.now()))}`; }
+  function paintTotal() { total.textContent = timeAvailable ? `Учтено ${formatWorkSeconds(closedSeconds + activeSeconds(Date.now()))}` : 'Время недоступно'; }
   function syncClock() {
     if (clockTimer) window.clearInterval(clockTimer);
-    clockTimer = activeForTask(activeBlocks).length ? window.setInterval(paintTotal, 1000) : null;
+    clockTimer = timeAvailable && activeStatusKnown && activeForTask(activeBlocks).length ? window.setInterval(paintTotal, 1000) : null;
     paintTotal();
   }
   function syncSummary() {
-    const work = current.sphere === 'work';
-    scope.textContent = work ? 'Работа' : sphereLabel(current.sphere) || 'Личное';
-    const active = activeForTask(activeBlocks).length > 0 || !!current.is_active;
+    const scope = current.sphere === 'work' ? 'Работа' : sphereLabel(current.sphere) || 'Личное';
+    const completed = !!current.completed || current.status === 'done' || ['done', 'skipped', 'missed'].includes(current.status_extra);
+    const active = activeStatusKnown && activeForTask(activeBlocks).length > 0;
     current.is_active = active;
     const hasWork = active || !!current.has_work || (closedSeconds > 0);
-    stateLabel.textContent = active ? 'В работе' : hasWork ? 'На паузе' : 'Не запускалась';
-    headingHint.textContent = `${scope.textContent} · ${stateLabel.textContent}`;
-    const label = active ? 'Пауза' : hasWork ? 'Продолжить' : 'Начать';
+    const status = loadFailed ? 'Статус недоступен' : !activeStatusKnown ? 'Проверяем статус…' : isInstantTask(current) ? (completed ? 'Завершена' : 'К выполнению') : active ? 'В работе' : hasWork ? 'На паузе' : 'Не запускалась';
+    headingHint.textContent = `${scope} · ${status}`;
+    const label = isInstantTask(current) ? 'Завершить' : active ? 'Пауза' : hasWork ? 'Продолжить' : 'Начать';
     syncButton.replaceChildren();
-    const glyph = document.createElement('span'); glyph.className = 'task-details-button-icon'; glyph.innerHTML = active ? ICONS.pause : ICONS.play;
+    const glyph = document.createElement('span'); glyph.className = 'task-details-button-icon'; glyph.innerHTML = isInstantTask(current) ? ICONS.check : active ? ICONS.pause : ICONS.play;
     syncButton.append(glyph, document.createTextNode(label));
     execute.setAttribute('aria-label', `${label}: ${current.title}`);
-    execute.hidden = !!current.completed || ['done', 'skipped', 'missed'].includes(current.status_extra);
+    execute.hidden = completed;
   }
   function syncMetadata() {
     metadata.replaceChildren();
@@ -137,14 +129,14 @@ export function openCalendarTaskDetails(record, dependencies) {
   }
   function setPending(value) {
     pending = value; api.setPending(value);
-    edit.disabled = value; execute.disabled = value;
-    stageSelect.disabled = value || !stageState || !!current.completed || ['done', 'skipped', 'missed'].includes(current.status_extra);
+    edit.disabled = value || loadFailed; execute.disabled = value || loadFailed;
+    stageSelect.disabled = value || loadFailed || !stageState || !!current.completed || ['done', 'skipped', 'missed'].includes(current.status_extra);
   }
   function setLoading(value) {
     api.form.setAttribute('aria-busy', String(value));
     api.retry.disabled = value;
-    edit.disabled = value || pending; execute.disabled = value || pending;
-    stageSelect.disabled = value || pending || !stageState || !!current.completed || ['done', 'skipped', 'missed'].includes(current.status_extra);
+    edit.disabled = value || pending || loadFailed; execute.disabled = value || pending || loadFailed;
+    stageSelect.disabled = value || pending || loadFailed || !stageState || !!current.completed || ['done', 'skipped', 'missed'].includes(current.status_extra);
   }
 
   syncSummary(); syncMetadata(); syncStageOptions();
@@ -159,7 +151,7 @@ export function openCalendarTaskDetails(record, dependencies) {
       if (finite(current.actual_seconds)) return current.actual_seconds;
       if (finite(current.actual_minutes)) return current.actual_minutes * 60;
       try { return Math.max(0, Number(await invoke('get_calendar_task_minutes', { sourceType: 'note', sourceId: String(current.source_id), completionDate: current.completion_date || current.date || null })) || 0) * 60; }
-      catch { return 0; }
+      catch { return null; }
     }
   }
   async function loadData({ retry = false } = {}) {
@@ -173,27 +165,32 @@ export function openCalendarTaskDetails(record, dependencies) {
         invoke('get_goals', { tabName: null }).then(value => ({ value }), error => ({ error })),
         invoke('get_calendar_task_goals').then(value => ({ value }), error => ({ error })),
         readSeconds(),
-        readActiveBlocks(invoke).catch(() => []),
+        readActiveBlocks(invoke),
       ]);
       if (!live() || request !== loadRevision) return;
       current = { ...current, ...detail, goal_id: detail?.goal_id ?? current.goal_id };
       processes = processList; goals = Array.isArray(goalResult.value) ? goalResult.value : [];
       const links = linksResult.value;
       if (!current.goal_id && Array.isArray(links)) current.goal_id = links.find(link => link.source_type === 'note' && String(link.source_id) === String(current.source_id))?.goal_id;
-      closedSeconds = Number.isFinite(seconds) ? seconds : (finite(current.actual_seconds) ? current.actual_seconds : 0);
+      timeAvailable = Number.isFinite(seconds);
+      closedSeconds = timeAvailable ? seconds : 0;
       activeBlocks = Array.isArray(active) ? active : [];
+      activeStatusKnown = true; loadFailed = false;
       syncStageOptions(); syncSummary(); syncMetadata(); syncClock(); remountHistory();
       api.showError(''); api.retry.hidden = true;
     } catch (error) {
       if (!live() || request !== loadRevision) return;
+      activeBlocks = []; activeStatusKnown = false; timeAvailable = false; closedSeconds = 0; loadFailed = true;
+      syncSummary(); syncClock();
       api.showError(errorText(error) || 'Не удалось загрузить задачу. Попробуй ещё раз.');
       api.retry.hidden = false;
-      stageSelect.disabled = true; execute.disabled = true;
     } finally {
       if (live() && request === loadRevision) {
         setLoading(false);
-        if (stageState && !stageRow.hidden) stageSelect.focus({ preventScroll: true });
-        else execute.focus({ preventScroll: true });
+        if (!loadFailed) {
+          if (stageState && !stageRow.hidden) stageSelect.focus({ preventScroll: true });
+          else execute.focus({ preventScroll: true });
+        }
       }
     }
   }
@@ -231,35 +228,47 @@ export function openCalendarTaskDetails(record, dependencies) {
   execute.addEventListener('click', async () => {
     if (pending || !live() || typeof executeAction !== 'function') return;
     setPending(true); api.showError('');
+    let activeReadSucceeded = false;
     try {
       // Re-read own active blocks so a stale card cannot start a duplicate or pause another task.
+      const instant = isInstantTask(current);
       const before = await readActiveBlocks(invoke);
+      activeReadSucceeded = true;
       if (!live()) return;
+      activeBlocks = before; activeStatusKnown = true; syncSummary();
       const own = before.filter(block => sourceKey(block) === sourceKey(current));
-      const action = own.length ? 'pause' : 'start';
+      const action = instant ? 'finish' : own.length ? 'pause' : 'start';
       const result = await executeAction({ ...current }, action);
       if (result === false) return;
       onChanged?.();
-      current.is_active = action === 'start';
-      const now = new Date();
-      activeBlocks = action === 'start' ? [...before, { source_type: 'note', source_id: current.source_id, date: localDay(now), start_time: now.toTimeString().slice(0, 8) }] : before.filter(block => !own.includes(block));
+      if (instant) { current.completed = true; current.status = 'done'; current.status_extra = 'done'; }
+      announcement.textContent = instant ? 'Задача завершена.' : action === 'start' ? 'Задача в работе.' : 'Задача на паузе.';
+      const [freshResult, activeResult, secondsResult] = await Promise.allSettled([
+        invoke('get_calendar_task', { id: String(current.source_id) }), readActiveBlocks(invoke), readSeconds(),
+      ]);
+      if (!live()) return;
+      if (freshResult.status === 'fulfilled') current = { ...current, ...freshResult.value };
+      if (instant && !current.completed && current.status !== 'done' && current.status_extra !== 'done') {
+        current.completed = true; current.status = 'done'; current.status_extra = 'done';
+      }
+      if (activeResult.status === 'fulfilled') { activeBlocks = activeResult.value; activeStatusKnown = true; }
+      else { activeBlocks = []; activeStatusKnown = false; loadFailed = true; }
+      if (secondsResult.status === 'fulfilled' && Number.isFinite(secondsResult.value)) { closedSeconds = secondsResult.value; timeAvailable = true; }
+      else { timeAvailable = false; }
+      if (freshResult.status === 'rejected' || activeResult.status === 'rejected') {
+        loadFailed = true; api.retry.hidden = false;
+        api.showError(errorText(freshResult.reason || activeResult.reason) || 'Не удалось обновить состояние задачи. Повтори чтение.');
+      }
       syncSummary(); syncClock();
-      announcement.textContent = action === 'start' ? 'Задача в работе.' : 'Задача на паузе.';
-      try {
-        const [fresh, active, seconds] = await Promise.all([
-          invoke('get_calendar_task', { id: String(current.source_id) }), readActiveBlocks(invoke), readSeconds(),
-        ]);
-        if (!live()) return;
-        current = { ...current, ...fresh };
-        activeBlocks = Array.isArray(active) ? active : [];
-        closedSeconds = Number.isFinite(seconds) ? seconds : closedSeconds;
-        syncSummary(); syncClock();
-      } catch { /* The successful action still stands; the shared surface will refresh. */ }
     } catch (error) {
       if (!live()) return;
       if (error?.refreshRequired) onChanged?.();
+      if (!activeReadSucceeded || error?.refreshRequired) {
+        activeBlocks = []; activeStatusKnown = false; loadFailed = true; syncSummary();
+        api.retry.hidden = false;
+      }
       api.showError(errorText(error) || 'Не удалось изменить выполнение задачи. Повтори.');
-    } finally { if (live()) setPending(false); }
+    } finally { if (live()) { setPending(false); if (loadFailed) { edit.disabled = true; execute.disabled = true; stageSelect.disabled = true; } } }
   });
 
   api.open(stageRow.hidden ? execute : stageSelect);
