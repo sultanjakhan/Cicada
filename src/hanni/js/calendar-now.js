@@ -544,6 +544,10 @@ export function mountCalendarNow(element, dependencies = {}) {
     else if (block.source_type === 'schedule') row = (await api('get_schedules', { category: null })).find(item => String(item.id) === String(block.source_id));
     return taskOf({ ...row, source_type: block.source_type, source_id: block.source_id, title: row?.title || 'Текущая задача', completion_date: occurrence || block.date });
   }
+  function isMissingNoteError(error) {
+    const message = typeof error === 'string' ? error : error?.message;
+    return message === 'item not found' || message === 'note not found';
+  }
   function canApplyRemote() {
     const safe = !panel && !goalPicker && !goalDialog && !document.querySelector('dialog[open], .modal-overlay, .cal-event-pop, .dragging') &&
       !document.activeElement?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])');
@@ -578,7 +582,7 @@ export function mountCalendarNow(element, dependencies = {}) {
         const task=await resolveTask(latest,planned,state);
         if(state.execution&&keyOf(state.execution.task)!==keyOf(task))state.returnTo=taskOf(state.execution.task);
         state.execution={blockId:latest.id,date:latest.date,task};state.completed=null;
-      }catch(error){if(error?.message!=='missing-record')throw error;}
+      }catch(error){if(error?.message!=='missing-record'&&!isMissingNoteError(error))throw error;}
     }
     if (active) {
       const task = await resolveTask(active, planned, state);
@@ -593,11 +597,13 @@ export function mountCalendarNow(element, dependencies = {}) {
       // A paused note may be completed from All tasks while its due date is outside
       // today's projection. Read its authoritative status before offering Resume.
       if (block && !task && state.execution.task.source_type === 'note') {
-        const note = await api('get_note', { id: String(state.execution.task.source_id) });
-        if (!note) throw new Error('missing-note');
-        task = { ...note, status_extra: note.status || note.status_extra };
+        let note;
+        try { note = await api('get_note', { id: String(state.execution.task.source_id) }); }
+        catch (error) { if (!isMissingNoteError(error)) throw error; }
+        if (!note) { state.execution = null; state.selection = null; state.selectionMode = 'auto'; }
+        else task = { ...note, status_extra: note.status || note.status_extra };
       }
-      if (block && !task && state.execution.task.source_type === 'event') {
+      if (block && !task && state.execution?.task.source_type === 'event') {
         task = (await api('get_all_events', {})).find(item => String(item.id) === state.execution.task.source_id);
         if (!task) {
           if (block.is_active) throw new Error('missing-event');
@@ -616,7 +622,10 @@ export function mountCalendarNow(element, dependencies = {}) {
     if(state.returnTo){
       const previous=state.returnTo;
       let row;
-      if(previous.source_type==='note')row=await api('get_note',{id:String(previous.source_id)});
+      if(previous.source_type==='note'){
+        try { row=await api('get_note',{id:String(previous.source_id)}); }
+        catch(error) { if(!isMissingNoteError(error))throw error; }
+      }
       else if(previous.source_type==='event')row=(await api('get_all_events',{})).find(item=>String(item.id)===String(previous.source_id));
       else if(previous.source_type==='schedule'){
         const schedules=await api('get_schedules',{});

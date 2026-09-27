@@ -637,7 +637,50 @@ test('a deleted paused event clears stale execution and retains its closed histo
    await x.refresh();
    assert.equal(JSON.parse(data.stored).execution, null);
 
-  });test('global active task on another date blocks goal switching and a different task starts beside it without stopping it', async t =>{
+  });
+
+test('refresh adopts a valid latest task when its previous return note was deleted', async t => {
+  const initial = blank();
+  initial.execution = { blockId: 88, date: '2026-09-05', task: { source_type: 'note', source_id: 'qa-note', title: 'QA note' } };
+  initial.observedBlockId = 88;
+  const data = backend(initial);
+  data.blocks.push({ id: 99, date: '2026-09-05', start_time: '09:30', source_type: 'note', source_id: 'task-a', is_active: false, duration_minutes: 15 });
+  data.before.set('get_note', args => {
+    if (args.id === 'qa-note') throw 'item not found';
+  });
+  const x = await mount(t, data);
+  assert.equal(x.host.dataset.taskKey, 'note:task-a');
+  assert.equal(x.host.dataset.state, 'paused');
+  assert.equal(x.ui('error').hidden, true, 'a deleted optional return target must not fail refresh');
+  assert.equal(JSON.parse(data.stored).execution.task.source_id, 'task-a');
+  assert.equal(JSON.parse(data.stored).returnTo, null);
+});
+
+test('a paused note whose record is gone clears stale execution but retains its history', async t => {
+  const initial = blank();
+  initial.execution = { blockId: 88, date: '2026-09-05', task: { source_type: 'note', source_id: 'qa-note', title: 'QA note' } };
+  initial.selection = { source_type: 'note', source_id: 'qa-note' }; initial.selectionMode = 'manual';
+  const data = backend(initial);
+  data.blocks.push({ id: 88, date: '2026-09-05', start_time: '09:30', source_type: 'note', source_id: 'qa-note', is_active: false, duration_minutes: 15 });
+  data.before.set('get_note', () => { throw 'item not found'; });
+  const x = await mount(t, data);
+  assert.equal(JSON.parse(data.stored).execution, null);
+  assert.equal(JSON.parse(data.stored).selection, null);
+  assert.equal(data.blocks[0].duration_minutes, 15, 'closed history is not deleted');
+  assert.equal(x.ui('error').hidden, true);
+});
+
+test('a return-note read failure other than not-found remains visible', async t => {
+  const initial = { ...blank(), returnTo: { source_type: 'note', source_id: 'task-a', title: 'Р—Р°РјРµС‚РєРё РїРѕ API' } };
+  const data = backend(initial);
+  data.onceFail('get_note');
+  const x = await mount(t, data);
+  assert.equal(x.ui('error').hidden, false, 'non-missing read errors remain visible');
+  assert.notEqual(x.ui('error-text').textContent, '', 'the refresh failure has visible feedback');
+  assert.equal(JSON.parse(data.stored).returnTo.source_id, 'task-a');
+});
+
+test('global active task on another date blocks goal switching and a different task starts beside it without stopping it', async t =>{
    const data = backend();
    data.blocks.push({
      id: 90, date: '2026-09-04', start_time: '23:58', source_type: 'note', source_id: 'task-a', is_active: true, duration_minutes: 0
