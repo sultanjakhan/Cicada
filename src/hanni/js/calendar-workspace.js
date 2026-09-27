@@ -15,6 +15,7 @@ import { mountCalendarContextMenu } from './calendar-context-menu.js';
 import { createCalendarDialog } from './calendar-dialog.js';
 import { mountCalendarRecurring } from './calendar-recurring.js';
 import { startDigitalActivityRefresh } from './digital-activity-settings.js';
+import { appendDigitalActivityDetails, isDigitalActivity } from './digital-activity-details.js';
 import { openRecurringRun } from './calendar-routine-execution.js';
 import { startCalendarExecution, readActiveBlocks } from './calendar-execution.js';
 import { mountCalendarInProgress } from './calendar-in-progress.js';
@@ -108,8 +109,8 @@ export async function executeCalendarTaskAction(record, action) {
 export function calendarRecord(row) {
   return { ...row, id: `${key(row)}:${row.date || 'undated'}`, time: row.planned_time || null,
     durationMinutes: row.duration_minutes > 0 ? row.duration_minutes : null,
-    kind: row.readonly ? 'Данные здоровья' : { note: 'Задача', event: 'Событие', schedule: 'Повторение' }[row.source_type],
-    status: row.is_active ? 'В работе' : row.completed ? 'Завершено' : row.status_extra === 'skipped' ? 'Пропущено' : row.has_work || row.actual_minutes > 0 ? 'На паузе' : row.date ? 'Запланировано' : 'Без даты' };
+    kind: isDigitalActivity(row) ? 'Активность приложений' : row.readonly ? 'Данные здоровья' : { note: 'Задача', event: 'Событие', schedule: 'Повторение' }[row.source_type],
+    status: isDigitalActivity(row) ? 'Дневной итог' : row.is_active ? 'В работе' : row.completed ? 'Завершено' : row.status_extra === 'skipped' ? 'Пропущено' : row.has_work || row.actual_minutes > 0 ? 'На паузе' : row.date ? 'Запланировано' : 'Без даты' };
 }
 
 function dialog(title, returnFocus = null) {
@@ -199,6 +200,10 @@ async function showRecord(record, returnFocus = null, initialFocus = null) {
   modal.querySelector('.cm-fields').innerHTML = `<p>${escapeHtml(summary)}</p><p>${escapeHtml(record.date ? views.label(record.date) : 'Без даты')} · ${escapeHtml(record.time || 'Без времени')}</p><p role="status">Загружаем цель…</p>`;
   modal.showModal(); modal.querySelector('[type=submit]').disabled = true;
   if (record.readonly) { modal.querySelector('[type=submit]').hidden = true; modal.querySelector('[role=status]').textContent = 'Изменения и удаление — в приложении-источнике. Начало дня отмечается отдельно.';
+    if (isDigitalActivity(record)) {
+      modal.querySelector('[role=status]').textContent = 'Источник: ActivityWatch. Автоимпорт управляется в настройках → Ограничения.';
+      appendDigitalActivityDetails(modal.querySelector('.cm-fields'), record);
+    }
     if (record.health_kind === 'sleep') {
       const details = document.createElement('p');
       const origin = record.health_origin === 'com.sec.android.app.shealth' ? 'Samsung Health' : record.health_origin || 'Health Connect';

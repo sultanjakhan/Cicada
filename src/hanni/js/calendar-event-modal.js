@@ -6,6 +6,7 @@ import { escapeHtml } from './utils.js';
 import { loadCategories } from './calendar-categories.js';
 import { showCategoryManager, showAddCategory } from './calendar-category-manager.js';
 import { createCalendarDialog } from './calendar-dialog.js';
+import { appendDigitalActivityDetails, isDigitalActivity } from './digital-activity-details.js';
 import { CREATE_TYPES, SCHEDULE_TYPES, createType, createTypeButtons } from './calendar-create-types.js';
 import { TASK_SPHERES, PERSONAL_SPHERES } from './task-model.js';
 import { DELETED_STAGE_LABEL, findProcess, loadProcesses, mountStageTime, taskProcessId } from './task-processes.js';
@@ -110,10 +111,12 @@ export async function showEventModal(eventId = null, initialDate = null, options
 
   if (event?.readonly) {
     const details = createCalendarDialog({ document, title: event.title,
-      hint: event.description || 'Изменения и удаление — в приложении-источнике.', returnFocus: options.returnFocus });
+      hint: isDigitalActivity(event) ? 'Дневной итог ActivityWatch. Автоимпорт управляется в настройках → Ограничения.' : event.description || 'Изменения и удаление — в приложении-источнике.', returnFocus: options.returnFocus });
     const time = document.createElement('p');
     time.textContent = `${event.date || ''} · ${event.time || ''}`;
-    details.body.append(time); details.open();
+    details.body.append(time);
+    if (isDigitalActivity(event)) appendDigitalActivityDetails(details.body, event);
+    details.open();
     return;
   }
 
