@@ -530,7 +530,7 @@ export async function loadCalendarWorkspace(el) {
   };
   const taskOptions = { invoke, mountMenu:mountRecordMenu, openTask:(row,returnFocus)=>showRecord(calendarRecord(row),returnFocus), executeAction:(row,action)=>executeCalendarTaskAction(calendarRecord(row),action), notifyChange:changed };
   let renderLauncherState = null;
-  const showAllTasks = (button = null) => {
+  const showAllTasks = (button = null, initialScope = null) => {
     if(tasksDialog)return;
     const revision = workspaceRevision;
     const dialog=createCalendarDialog({document,title:'Что начнём?',
@@ -582,9 +582,9 @@ export async function loadCalendarWorkspace(el) {
       scopes.querySelectorAll('button').forEach(button => button.setAttribute('aria-pressed',String(button.dataset.launchScope === scope)));
     };
     scopes.addEventListener('click', event => { const button = event.target.closest('[data-launch-scope]'); if (button) setScope(button.dataset.launchScope); });
-    setScope(S._unifiedPane.calendar === 'routines' ? 'routines' : S._unifiedPane.calendar === 'tasks' ? 'tasks' : 'all');
+    setScope(initialScope || (S._unifiedPane.calendar === 'routines' ? 'routines' : S._unifiedPane.calendar === 'tasks' ? 'tasks' : 'all'));
     disposeRoutineChoices = mountCalendarRoutineChoices(routines, { invoke, notifyChange:changed,
-      openRoutine:options => { dialog.close({restoreFocus:false}); openRecurringRun({document,invoke,...options,returnFocus:() => el.querySelector('[data-calendar-launch]')?.focus()}); },
+      openRoutine:options => { dialog.close({restoreFocus:false}); openRecurringRun({document,invoke,...options,returnFocus:() => (button?.isConnected?button:el.querySelector('[data-calendar-launch]'))?.focus({preventScroll:true})}); },
       openManager:() => { dialog.close(); window.dispatchEvent(new CustomEvent('hanni:open-recurring-settings')); },
     });
     disposeTasks=mountCalendarDashboardTasks(list,taskOptions);
@@ -683,7 +683,7 @@ export async function loadCalendarWorkspace(el) {
       pane.innerHTML = `<section class="calendar-today" aria-label="Сегодня">
         <div data-calendar-day-banner></div><div data-calendar-next-action></div>
         <div data-calendar-in-progress></div>
-        <nav class="calendar-today-links" aria-label="План и рутины"><button type="button" data-today-tasks>Все задачи</button><button type="button" data-today-routines>Рутины</button></nav>
+        <nav class="calendar-today-links" aria-label="План и рутины"><button type="button" data-today-pick-routine>${ICONS.cycle} Выбрать рутину</button><button type="button" data-today-tasks>Все задачи</button></nav>
       </section><div data-calendar-now-slot></div>`;
       pane.querySelector('[data-calendar-now-slot]').replaceWith(nowHost);
       nowHost.hidden = false;
@@ -705,7 +705,7 @@ export async function loadCalendarWorkspace(el) {
         },
       });
       pane.querySelector('[data-today-tasks]').onclick = () => void openPane('tasks');
-      pane.querySelector('[data-today-routines]').onclick = () => window.dispatchEvent(new CustomEvent('hanni:open-routines-pane'));
+      pane.querySelector('[data-today-pick-routine]').onclick = event => showAllTasks(event.currentTarget,'routines');
     },
     renderTable: pane => mountCalendarTable(pane),
     renderTasks: pane => {

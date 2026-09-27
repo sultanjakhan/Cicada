@@ -4,7 +4,7 @@ import { JSDOM } from 'jsdom';
 import { openRecurringRun } from '../src/hanni/js/calendar-routine-execution.js';
 import { recurringSourceId } from '../src/hanni/js/calendar-recurring-store.js';
 const settle=async()=>{for(let i=0;i<8;i++)await new Promise(resolve=>setImmediate(resolve));};
-function setup(t,{other=null,mode='chain',graphSteps=null}={}){
+function setup(t,{other=null,mode='chain',graphSteps=null,changingForeignSchedule=false}={}){
   const dom=new JSDOM('<main></main>');t.after(()=>dom.window.close());
   dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};
   dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;this.dispatchEvent(new dom.window.Event('close'));};
@@ -12,12 +12,12 @@ function setup(t,{other=null,mode='chain',graphSteps=null}={}){
   const steps=graphSteps||[{title:'Подготовить'},{title:'Сделать'}];
   const plan={id,kind:'action',mode,title:'Практика',weekdays:[0,1,2,3,4,5,6],startsOn:'',endsOn:'',time:'',active:true,required:true,createdOn:date,steps};
   const record={snapshot:plan,status:'pending',run:{steps:plan.steps.map(step=>mode==='graph'?{...step,dependsOn:step.dependsOn||[],trackingMode:step.trackingMode||'track',optional:step.optional??false,status:'pending'}:{title:step.title,status:'pending'})}};
-  let state={version:1,plans:[plan],days:{[date]:{[id]:record}}},active=null,hasWork=false,fail=false,onRead=null;
+  let state={version:1,plans:[plan],days:{[date]:{[id]:record}}},active=null,hasWork=false,fail=false,onRead=null,foreignSeconds=0;
   const calls=[];
   const invoke=async(name,args)=>{
     calls.push({name,args});
-    if(name==='get_ui_state'){onRead?.();onRead=null;return JSON.stringify(state);}
-    if(name==='get_schedules')return record.run.steps.map((step,index)=>({id:recurringSourceId(id,date,index),title:step.title,is_active:active?.source_id===recurringSourceId(id,date,index),has_work:hasWork&&active?.source_id!==recurringSourceId(id,date,index)&&index===0,block_id:hasWork&&index===0?1:null}));
+    if(name==='get_ui_state'){const hook=onRead;onRead=null;hook?.();return JSON.stringify(state);}
+    if(name==='get_schedules')return [...record.run.steps.map((step,index)=>({id:recurringSourceId(id,date,index),title:step.title,is_active:active?.source_id===recurringSourceId(id,date,index),has_work:hasWork&&active?.source_id!==recurringSourceId(id,date,index)&&index===0,block_id:hasWork&&index===0?1:null})),...(changingForeignSchedule?[{id:'unrelated-schedule',actual_seconds:++foreignSeconds}]:[])];
     if(name==='get_active_block')return active;
     if(name==='get_active_blocks')return [active,other].filter(Boolean);
     if(name==='start_task_block'){if(fail)throw Error('Проверочная ошибка');hasWork=true;active={id:1,source_type:'schedule',source_id:args.sourceId};return 1;}
@@ -78,14 +78,13 @@ test('a routine step starts, pauses and finishes beside unrelated running work',
   assert.equal(other.is_active,true);
 });
 
-test('graph with multiple available roots waits for the user to choose and never autostarts',async t=>{
+test('graph shows direct actions for available roots and waits for an explicit start',async t=>{
   const x=setup(t,{mode:'graph',graphSteps:[{title:'First root',dependsOn:[]},{title:'Second root',dependsOn:[]}]});
   x.open(true);await settle();
   assert.equal(x.calls.filter(call=>call.name==='start_task_block').length,0);
-  assert.equal(x.document.querySelector('[data-run-action=start]'),null);
-  x.document.querySelector('[data-routine-step="1"]').focus();x.document.querySelector('[data-routine-step="1"]').click();
-  assert.equal(x.document.activeElement,x.document.querySelector('[data-routine-step="1"]'),'step selection keeps keyboard focus');
-  x.document.querySelector('[data-run-action=start]').click();await settle();
+  assert.equal(x.document.querySelectorAll('[data-run-action=start]').length,2);
+  assert.equal(x.document.querySelector('[data-run-plan]').open,false);
+  x.document.querySelector('[data-routine-step="1"]').click();await settle();
   assert.equal(x.calls.filter(call=>call.name==='start_task_block')[0].args.sourceId,recurringSourceId(x.id,x.date,1));
 });
 
@@ -98,22 +97,20 @@ test('graph branch choices unlock a join after parents are done or skipped',asyn
     {title:'Join',dependsOn:[1,2],trackingMode:'track'},
   ]});
   x.open();await settle();
-  assert.match(x.document.querySelector('[data-routine-step="1"]').textContent,/После: Prepare/);
-  assert.match(x.document.querySelector('[data-routine-step="2"]').textContent,/После: Prepare/);
-  assert.match(x.document.querySelector('[data-routine-step="3"]').textContent,/После: Write, Check/);
-  assert.equal(x.document.querySelector('[data-routine-step="1"]').disabled,true);
+  assert.match(x.document.querySelector('[data-plan-step="1"]').textContent,/После: Prepare/);
+  assert.match(x.document.querySelector('[data-plan-step="2"]').textContent,/После: Prepare/);
+  assert.match(x.document.querySelector('[data-plan-step="3"]').textContent,/После: Write, Check/);
+  assert.equal(x.document.querySelector('[data-routine-step="1"]'),null,'locked steps have no executable control');
   const click=async action=>{x.document.querySelector(`[data-run-action=${action}]`).click();await settle();};
   await click('start');await click('finish');
   assert.equal(x.calls.some(call=>call.name==='pause_task_block'),false,'graph execution leaves other running tasks untouched');
   assert.equal(other.is_active,true);
   assert.equal(x.document.querySelector('[data-routine-step="1"]').disabled,false);
   assert.equal(x.document.querySelector('[data-routine-step="2"]').disabled,false);
-  assert.match(x.document.querySelector('[data-routine-step="2"] small').textContent,/Можно отметить/);
-  assert.doesNotMatch(x.document.querySelector('[data-routine-step="2"] small').textContent,/Выполнено/);
-  x.document.querySelector('[data-routine-step="1"]').click();await click('skip');
+  assert.match(x.document.querySelector('[data-run-step-card="2"]').textContent,/Отметка без таймера/);
+  x.document.querySelector('[data-run-step="1"][data-run-action=skip]').click();await settle();
   assert.equal(x.record.run.steps[1].status,'skipped');
-  x.document.querySelector('[data-routine-step="2"]').click();
-  assert.equal(x.document.querySelector('[data-run-action="complete"]').textContent,'Готово');
+  assert.equal(x.document.querySelector('[data-run-action="complete"]').textContent,'Отметить шаг');
   await click('complete');
   assert.equal(x.record.run.steps[2].status,'done');
   assert.equal(x.calls.filter(call=>call.name==='complete_recurring_step').at(-1).args.sourceId,recurringSourceId(x.id,x.date,2));
@@ -127,7 +124,7 @@ test('a sole check step opens as an explicit check action and never autostarts a
   const x=setup(t,{mode:'graph',graphSteps:[{title:'Отметить',dependsOn:[],trackingMode:'check'}]});
   x.open(true);await settle();
   assert.equal(x.calls.filter(call=>call.name==='start_task_block').length,0);
-  assert.equal(x.document.querySelector('[data-run-action="complete"]').textContent,'Готово');
+  assert.equal(x.document.querySelector('[data-run-action="complete"]').textContent,'Отметить шаг');
 });
 
 test('completing a check step with multiple unlocked successors focuses the first step choice',async t=>{
@@ -151,4 +148,26 @@ test('graph start revalidates unlocked dependencies before writing',async t=>{
   x.document.querySelector('[data-run-action=start]').click();await settle();
   assert.equal(x.calls.filter(call=>call.name==='start_task_block').length,0);
   assert.match(x.document.querySelector('[role=alert]').textContent,/недоступен|изменился/i);
+});
+
+test('quiet routine refresh preserves the current action, focus and expanded plan',async t=>{
+  const x=setup(t,{changingForeignSchedule:true});x.open();await settle();
+  const action=x.document.querySelector('[data-run-action=start]'),plan=x.document.querySelector('[data-run-plan]');
+  action.focus();plan.open=true;
+  x.document.defaultView.dispatchEvent(new x.document.defaultView.Event('hanni:calendar-refresh'));await settle();
+  assert.equal(x.document.querySelector('[data-run-action=start]'),action);
+  assert.equal(x.document.activeElement,action);
+  assert.equal(x.document.querySelector('[data-run-plan]'),plan);
+  assert.equal(plan.open,true);
+  assert.equal(x.calls.some(call=>call.name==='start_task_block'),false);
+});
+
+test('a failed initial read can be retried without implicitly starting the timer',async t=>{
+  const x=setup(t);x.race(()=>{throw Error('Нет ответа');});x.open(true);await settle();
+  assert.equal(x.document.querySelector('[data-dialog-retry]').hidden,false);
+  assert.match(x.document.querySelector('[role=alert]').textContent,/Нет ответа/);
+  x.document.querySelector('[data-dialog-retry]').click();await settle();
+  assert.equal(x.document.querySelector('[data-dialog-retry]').hidden,true);
+  assert.ok(x.document.querySelector('[data-run-action=start]'));
+  assert.equal(x.calls.some(call=>call.name==='start_task_block'),false);
 });

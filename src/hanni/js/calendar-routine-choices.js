@@ -6,7 +6,7 @@ export function mountCalendarRoutineChoices(element, { invoke, openRoutine, open
   const store = createRecurringStore(invoke, { now });
   let disposed = false, busy = false, revision = 0, items = [], signature = '';
   element.className = 'calendar-routine-choices';
-  element.innerHTML = '<div class="calendar-routine-choices__heading"><h3>Рутины</h3><button type="button" data-routine-manager>Настроить</button></div><p data-routine-empty>Загружаем рутины…</p><ul data-routine-list></ul><p role="alert" data-routine-error hidden></p><button type="button" data-routine-retry hidden>Повторить</button>';
+  element.innerHTML = '<div class="calendar-routine-choices__heading"><h3>Рутины</h3><button type="button" data-routine-manager>Мои рутины</button></div><p data-routine-empty>Загружаем рутины…</p><ul data-routine-list></ul><p role="alert" data-routine-error hidden></p><button type="button" data-routine-retry hidden>Повторить</button>';
   const list = element.querySelector('[data-routine-list]'), empty = element.querySelector('[data-routine-empty]'), error = element.querySelector('[data-routine-error]'), retry = element.querySelector('[data-routine-retry]');
   const fail = cause => { error.textContent = cause?.message || (typeof cause === 'string' ? cause : 'Не удалось загрузить рутины. Повтори попытку.'); error.hidden = false; retry.hidden = false; };
   const candidates = state => {
