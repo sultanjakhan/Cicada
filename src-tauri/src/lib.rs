@@ -638,6 +638,7 @@ pub fn run() {
             calendar_compat::cancel_task_block,
             calendar_compat::finish_task_block,
             calendar_compat::skip_recurring_step,
+            calendar_compat::complete_recurring_step,
             calendar_compat::get_calendar_task_minutes,
             calendar_compat::get_calendar_task_seconds,
             calendar_compat::get_schedules,

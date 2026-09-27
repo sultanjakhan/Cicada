@@ -47,6 +47,7 @@ fn fixture_with_connection(
             api::cancel_task_block,
             api::finish_task_block,
             api::skip_recurring_step,
+            api::complete_recurring_step,
             api::get_active_block,
             api::get_active_blocks,
             api::get_timeline_blocks,
@@ -1998,6 +1999,45 @@ fn recurring_activity_resumes_and_cannot_finish_an_obsolete_block() {
     assert!(call(&view,"finish_task_block",json!({"blockId":second})).is_err());
     let row=call(&view,"get_schedules",json!({})).unwrap();
     assert_eq!(row[0]["status_extra"],"skipped");
+}
+
+#[test]
+fn graph_check_completes_without_timer_and_track_step_uses_existing_identity() {
+    let (_app, view) = fixture();
+    let mut recurring: Value = serde_json::from_str(include_str!("../../tests/fixtures/recurring-chain.json")).unwrap();
+    let steps = json!([
+        {"title":"Check root","dependsOn":[],"trackingMode":"check","optional":false},
+        {"title":"Timed child","dependsOn":[0],"trackingMode":"track","optional":true}
+    ]);
+    recurring["plans"][0]["mode"] = json!("graph");
+    recurring["plans"][0]["steps"] = steps.clone();
+    recurring["days"]["2026-09-20"]["p"]["snapshot"]["mode"] = json!("graph");
+    recurring["days"]["2026-09-20"]["p"]["snapshot"]["steps"] = steps;
+    recurring["days"]["2026-09-20"]["p"]["run"]["steps"] = json!([
+        {"title":"Check root","status":"pending"},
+        {"title":"Timed child","status":"pending"}
+    ]);
+    call(&view, "set_ui_state", json!({"key":"calendar_recurring_v1","value":recurring.to_string()})).unwrap();
+
+    let check = json!(["p", "2026-09-20", 0]).to_string();
+    assert!(call(&view, "start_task_block", json!({"sourceType":"schedule","sourceId":check})).is_err());
+    call(&view, "complete_recurring_step", json!({"sourceId":check})).unwrap();
+    let child = json!(["p", "2026-09-20", 1]).to_string();
+    let projections = call(&view, "get_schedules", json!({})).unwrap();
+    let check_row = projections.as_array().unwrap().iter().find(|row| row["source_id"] == check).unwrap();
+    let child_row = projections.as_array().unwrap().iter().find(|row| row["source_id"] == child).unwrap();
+    assert_eq!(check_row["tracking_mode"], "check");
+    assert_eq!(child_row["tracking_mode"], "track");
+    assert_eq!(child_row["optional"], true);
+    let block = call(&view, "start_task_block", json!({"sourceType":"schedule","sourceId":child})).unwrap();
+    let active = call(&view, "get_active_blocks", json!({})).unwrap();
+    assert_eq!(active.as_array().unwrap().len(), 1);
+    assert_eq!(active[0]["source_id"], child);
+    assert_eq!(active[0]["title"], "Chain · Timed child");
+    assert_eq!(call(&view, "complete_recurring_step", json!({"sourceId":child})).unwrap_err(), json!("schedule step is not a check"));
+    call(&view, "finish_task_block", json!({"blockId":block})).unwrap();
+    let state: Value = serde_json::from_str(&call(&view, "get_ui_state", json!({"key":"calendar_recurring_v1"})).unwrap().as_str().unwrap()).unwrap();
+    assert_eq!(state["days"]["2026-09-20"]["p"]["run"]["steps"][0]["status"], "done");
 }
 
 #[test]
