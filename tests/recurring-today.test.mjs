@@ -197,7 +197,10 @@ test('History is secondary, cancel keeps Today, past date applies, and Today ret
   dialog.querySelector('[data-dialog-close]').click();
   assert.equal(host.querySelector('[data-recurring-heading]').textContent,'Сегодня');
   host.querySelector('[data-recurring-history]').click(); dialog=dom.window.document.querySelector('dialog[open]');
-  const input=dialog.querySelector('[data-history-date]'); input.value='2026-09-12'; dialog.querySelector('form').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));
+  const input=dialog.querySelector('[data-history-date]');
+  input.value='2026-09-14';dialog.querySelector('form').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));
+  assert.equal(input.value,today);assert.match(dialog.querySelector('[data-dialog-error]').textContent,/прошедший день/);
+  input.value='2026-09-12'; dialog.querySelector('form').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));
   assert.equal(host.querySelector('[data-recurring-heading]').textContent,'Дневные отметки');
   assert.match(host.querySelector('[data-recurring-history]').textContent,/История/);
   const todayButton=host.querySelector('[data-recurring-today]'); assert.equal(todayButton.hidden,false); todayButton.focus(); todayButton.click();
