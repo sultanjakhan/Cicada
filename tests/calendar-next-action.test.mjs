@@ -94,6 +94,56 @@ test('an already-running task remains the primary recommendation over new work',
   assert.equal(selected.action, 'open');
 });
 
+test('current task survives pause, can be deferred or changed, and clears after confirmed completion', async t => {
+  const activeTask=task('current',{is_active:true});
+  const x=setup(t,{tasks:[activeTask,task('backlog',{date:'2026-09-26'}),task('explicit',{date:'2026-09-26'})]});
+  const changes=[];
+  const dispose=mountCalendarNextAction(x.host,{invoke:x.invoke,clock:now,compactRunning:true,onSelectionChange:value=>changes.push(value)});
+  t.after(dispose); await settle();
+  assert.equal(changes.at(-1).task.source_id,'current');
+  assert.equal(changes.at(-1).action,'open');
+  assert.ok(x.host.querySelector('.calendar-next-action__item'),'keep a fallback until the focused task row is confirmed');
+  dispose.setFocusedTaskVisible(changes.at(-1).key,true);
+  assert.equal(x.host.querySelector('.calendar-next-action__item'),null,'the confirmed work row replaces the duplicate recommendation card');
+  assert.equal(x.host.dataset.running,'true');
+
+  x.active=[];
+  x.tasks=[task('current',{has_work:true,actual_seconds:90}),task('backlog',{date:'2026-09-26'}),task('explicit',{date:'2026-09-26'})];
+  assert.equal(rankNextAction({now:now(),tasks:x.tasks,routines:[{...plan('lunch',{title:'Lunch'}),status:'pending'}]}).type,'routine','ordinary ranking still prefers the eligible lunch routine');
+  x.dom.window.dispatchEvent(new x.dom.window.Event('task-state-changed')); await settle();
+  assert.equal(changes.at(-1).task.source_id,'current');
+  assert.equal(changes.at(-1).action,'start');
+
+  dispose.setFocusedTaskVisible(changes.at(-1).key,false);
+  x.host.querySelector('[data-next-action-action="later"]').click();
+  assert.equal(changes.at(-1).task.source_id,'backlog','deferring the selected task clears its session-local override');
+
+  dispose.setCurrentTask(task('explicit',{date:'2026-09-26'})); await settle();
+  assert.equal(changes.at(-1).task.source_id,'explicit','an explicit task choice replaces session-local current selection');
+  x.tasks=[task('explicit',{completed:true}),task('backlog',{date:'2026-09-26'})];
+  x.dom.window.dispatchEvent(new x.dom.window.Event('task-state-changed')); await settle();
+  assert.equal(changes.at(-1).task.source_id,'backlog','a completed selected task clears after a successful snapshot');
+  assert.equal(x.calls.some(call=>['start_task_block','pause_task_block','finish_task_block','set_ui_state'].includes(call.name)),false);
+});
+
+test('focused-row handoff is reentrant-safe when selection changes', async t => {
+  const x=setup(t,{tasks:[task('first',{is_active:true}),task('second',{is_active:true})]});
+  let dispose, selected=null, callbacks=0;
+  const onSelectionChange = value => {
+    callbacks++;
+    const previousKey=selected?.key || '', nextKey=value?.key || '';
+    selected=value;
+    if(previousKey && previousKey!==nextKey) dispose?.setFocusedTaskVisible(previousKey,false);
+    if(nextKey) dispose?.setFocusedTaskVisible(nextKey,true);
+  };
+  dispose=mountCalendarNextAction(x.host,{invoke:x.invoke,clock:now,compactRunning:true,onSelectionChange});
+  t.after(dispose); await settle();
+  dispose.setCurrentTask(task('second',{is_active:true})); await settle();
+  assert.equal(selected.task.source_id,'second');
+  assert.equal(x.host.dataset.running,'true');
+  assert.ok(callbacks < 12,'focus callbacks settle after one nested rerender instead of recursing');
+});
+
 test('goal association is display context only and never changes task ranking', () => {
   const linked = task('linked', { date: today }), unlinked = task('unlinked', { priority: 5 });
   const goals = [{ id: 'parent', title: 'Главная цель', parent_goal_id: null }, { id: 'child', title: 'Подцель', parent_goal_id: 'parent' }];
@@ -147,10 +197,12 @@ test('an unfinished routine from a non-applicable day stays primary and opens it
   const record = { snapshot: saved, status: 'pending', run: { steps: [{ title: 'Шаг', status: 'pending' }], createdAt: `${runDate}T08:00:00.000Z` } };
   const x = setup(t, { tasks: [task('new-task')], plans: [saved], days: { [runDate]: { [id]: record } }, active: [{ id: 9, source_type: 'schedule', source_id: JSON.stringify([id, runDate, 0]), is_active: true }] });
   const opened = [];
-  const dispose = mountCalendarNextAction(x.host, { invoke: x.invoke, clock: now, openRoutine: value => opened.push(value) });
+  const dispose = mountCalendarNextAction(x.host, { invoke: x.invoke, clock: now, compactRunning:true, openRoutine: value => opened.push(value) });
   t.after(dispose); await settle();
   assert.match(x.host.textContent, /Подготовка/);
   x.host.querySelector('[data-next-action-action="open"]').click(); await settle();
+  assert.equal(x.host.dataset.running,'false','an open routine must retain its recommendation surface, never enter compact task mode');
+  assert.ok(x.host.querySelector('.calendar-next-action__item'));
   assert.deepEqual(opened, [{ id, date: runDate, start: false }]);
 });
 

@@ -35,6 +35,9 @@
 .calendar-main-goal .calendar-now__goal-glance { margin-top:8px; }
 .calendar-today .cip-card { margin:10px 0 0; padding:0; border:0; border-radius:0; background:transparent; }
 .calendar-today .cip-heading { display:none; }
+.calendar-today .calendar-in-progress { margin-bottom:0; }
+.calendar-today .calendar-next-action__surface:empty { padding:0; }
+.calendar-today .cip-stage-time { color:var(--text-primary,#252525); font-size:13px; font-weight:600; white-space:normal; }
 .calendar-today:has(.calendar-next-action[data-running="true"]) .calendar-next-action__item { margin-top:2px; }
 .calendar-today .calendar-next-action[data-running="true"] .calendar-next-action__reason { display:none; }
 .calendar-today-links { display:flex; gap:18px; padding-top:14px; }

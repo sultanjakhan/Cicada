@@ -19,10 +19,42 @@ test('inline routine is excluded only from presentation while parallel task cont
   assert.equal(data.calls.some(call=>['pause_task_block','cancel_task_block','finish_task_block'].includes(call.name)),false);
 });
 
+test('Today selection shows one chosen row, keeps it after pause, and leaves parallel blocks alone', async t => {
+  const data=backend();
+  data.blocks.push({id:17,source_type:'note',source_id:'call',date:TODAY,start_time:'10:55:00',completion_date:TODAY,is_active:true,created_at:'3'});
+  const x=await mount(t,data,{activeOnly:true,hideWhenEmpty:true,singleSelection:true,selectedTask:{source_type:'note',source_id:'draft'}});
+  assert.deepEqual(x.rows().map(row=>row.dataset.contextRecord),['note:draft']);
+  x.control('note:draft','toggle').click(); await settle();
+  assert.deepEqual(x.rows().map(row=>row.dataset.contextRecord),['note:draft'],'the paused current task stays selected');
+  assert.deepEqual(data.blocks.filter(block=>block.is_active).map(block=>`${block.source_type}:${block.source_id}`).sort(),[`schedule:${routine}`,'note:call'].sort());
+  assert.equal(data.calls.filter(call=>call.name==='pause_task_block').length,1,'only the selected task block was paused');
+  x.dispose.setSelectedTask(null);
+  assert.equal(x.host.hidden,true,'no work row is shown while Today has no selected task');
+});
+
+test('selection is retained with an explicit stale-data error when a refresh fails', async t => {
+  const data=backend(), x=await mount(t,data,{activeOnly:true,hideWhenEmpty:true,singleSelection:true,selectedTask:{source_type:'note',source_id:'draft'}});
+  data.failReads=true;
+  x.dom.window.dispatchEvent(new x.dom.window.Event('task-state-changed')); await settle();
+  assert.deepEqual(x.rows().map(row=>row.dataset.contextRecord),['note:draft']);
+  assert.equal(x.host.querySelector('[data-cip-message]').getAttribute('role'),'alert');
+  assert.equal(data.calls.some(call=>['pause_task_block','start_task_block','complete_calendar_task'].includes(call.name)),false);
+});
+
+test('a selected task paused yesterday can be shown from its saved total without starting it', async t => {
+  const data=backend();
+  data.blocks=data.blocks.filter(block=>block.source_type!=='note'||block.source_id!=='draft');
+  data.tasks.find(task=>task.source_id==='draft').earlier=125;
+  const x=await mount(t,data,{activeOnly:true,hideWhenEmpty:true,singleSelection:true,selectedTask:{source_type:'note',source_id:'draft'}});
+  assert.deepEqual(x.rows().map(row=>row.dataset.contextRecord),['note:draft']);
+  assert.match(x.text()[0][1],/02:05/);
+  assert.equal(data.calls.some(call=>call.name==='start_task_block'),false);
+});
+
 // Fictional records only: two running tasks, one paused today and records that must stay out.
 function backend() {
   const state = {
-    now: new Date(`${TODAY}T11:00:00`), calls: [], nextId: 50, ui: new Map(),
+    now: new Date(`${TODAY}T11:00:00`), calls: [], nextId: 50, ui: new Map(), failReads:false,
     tasks: [
       { source_type:'note', source_id:'draft', title:'Черновик отчёта', status_extra:'task', date:TODAY, duration_minutes:60, task_kind:'normal', stage:'description', waiting:false, earlier:0 },
       { source_type:'note', source_id:'call', title:'Позвонить поставщику', status_extra:'task', date:null, duration_minutes:null, task_kind:'normal', stage:'', waiting:false, earlier:0 },
@@ -53,6 +85,7 @@ function backend() {
   });
   state.invoke = async (name, args = {}) => {
     state.calls.push({ name, args });
+    if (state.failReads && name === 'get_active_blocks') throw Error('offline');
     if (name === 'get_active_blocks') return state.blocks.filter(block => block.is_active).sort((a, b) => b.created_at.localeCompare(a.created_at))
       .map(block => ({ ...block, title:block.source_type === 'note' ? state.tasks.find(task => task.source_id === block.source_id)?.title : null }));
     if (name === 'get_timeline_blocks') return state.blocks.filter(block => block.date === args.date);

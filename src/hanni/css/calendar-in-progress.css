@@ -134,6 +134,9 @@
   .cip-actions { gap: 0; }
   .cip-icon { width: 36px; height: 36px; }
   .cip-stage-next { min-height: 36px; }
+  .cip-stage { align-items: baseline; }
+  .cip-stage-prefix { flex: none; }
+  .cip-stage-text { white-space: normal; overflow-wrap: anywhere; }
   .cip-group { padding-left: 10px; }
   /* The confirmation text takes its own line; both answers share the next one. */
   .cip-confirm-text { flex-basis: 100%; }

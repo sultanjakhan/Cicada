@@ -33,7 +33,7 @@ import { openCalendarCreateMenu } from './calendar-create-menu.js';
 
 let disposeNow = null, disposeTable = null, disposePanel = null, disposeTasks = null;
 let disposeRecurring = null, goalPopup = null, tasksDialog = null;
-let disposeDayBanner = null, disposeInProgress = null;
+let disposeDayBanner = null, disposeInProgress = null, todayTaskSelection = null;
 let disposeDigitalActivityRefresh = null;
 let disposeNextAction = null, disposeTaskDetails = null, disposeRoutineChoices = null;
 let routinesRouteHandler = null;
@@ -702,12 +702,26 @@ export async function loadCalendarWorkspace(el) {
       disposeNextAction = mountCalendarTodayAction(pane.querySelector('[data-calendar-next-action]'), {
         invoke, preferences:nextActionPreferences(), notifyChange:changed, compactRunning:true,
         taskOptions, openRoutines:() => void openPane('routines'),
+        onCurrentTaskChange:task => {
+          const key = value => value ? `task:${value.source_type}:${String(value.source_id)}` : '';
+          const previousKey = key(todayTaskSelection), nextKey = key(task);
+          // Update first: clearing old focus can synchronously rerender NextAction
+          // and call back into this handler.
+          todayTaskSelection = task;
+          if (previousKey && previousKey !== nextKey) disposeNextAction?.setFocusedTaskVisible(previousKey,false);
+          disposeInProgress?.setSelectedTask(task);
+        },
         onRoutineFocusChange:options => disposeInProgress?.setExcludedRoutine(options?.id || null),
         openTask:task => showRecord(calendarRecord(task), () => disposeNextAction?.focus()),
         executeTask:(task,action) => executeCalendarTaskAction(calendarRecord(task),action),
       });
       disposeInProgress = mountCalendarInProgress(pane.querySelector('[data-calendar-in-progress]'), {
         invoke, notifyChange:changed, title:'Идёт сейчас', activeOnly:true, hideWhenEmpty:true, embedded:true,
+        singleSelection:true, selectedTask:todayTaskSelection,
+        onSelectedTaskState:state => {
+          if (!todayTaskSelection || state.key !== `${todayTaskSelection.source_type}:${String(todayTaskSelection.source_id)}`) return;
+          disposeNextAction?.setFocusedTaskVisible(`task:${todayTaskSelection.source_type}:${String(todayTaskSelection.source_id)}`,state.visible);
+        },
         onEmptyFocus:() => disposeNextAction?.focus(),
         openLauncher:button => showAllTasks(button),
         openTask:(row, restore) => {
@@ -715,6 +729,7 @@ export async function loadCalendarWorkspace(el) {
           else showRecord(calendarRecord({ ...row, date: row.date || null }), restore);
         },
       });
+      disposeInProgress.setSelectedTask(todayTaskSelection);
     },
     renderTable: pane => mountCalendarTable(pane),
     renderTasks: pane => {
