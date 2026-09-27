@@ -82,6 +82,19 @@ test('an already-running task remains the primary recommendation over new work',
   assert.equal(selected.action, 'open');
 });
 
+test('an unfinished routine from a non-applicable day stays primary and opens its original run', async t => {
+  const id = 'yesterday-chain', runDate = '2026-09-26';
+  const saved = plan(id, { mode: 'chain', weekdays: [6], title: 'Подготовка', steps: [{ title: 'Шаг' }] });
+  const record = { snapshot: saved, status: 'pending', run: { steps: [{ title: 'Шаг', status: 'pending' }], createdAt: `${runDate}T08:00:00.000Z` } };
+  const x = setup(t, { tasks: [task('new-task')], plans: [saved], days: { [runDate]: { [id]: record } }, active: [{ id: 9, source_type: 'schedule', source_id: JSON.stringify([id, runDate, 0]), is_active: true }] });
+  const opened = [];
+  const dispose = mountCalendarNextAction(x.host, { invoke: x.invoke, clock: now, openRoutine: value => opened.push(value) });
+  t.after(dispose); await settle();
+  assert.match(x.host.textContent, /Подготовка/);
+  x.host.querySelector('[data-next-action-action="open"]').click(); await settle();
+  assert.deepEqual(opened, [{ id, date: runDate, start: false }]);
+});
+
 test('task start rechecks the selected candidate and never pauses parallel work', async t => {
   const x = setup(t, { tasks: [task('initial')] }); let started = 0;
   const dispose = mountCalendarNextAction(x.host, { invoke: x.invoke, clock: now, executeTask: async (row, action) => { assert.equal(action, 'start'); assert.equal(row.source_id, 'initial'); started++; } });

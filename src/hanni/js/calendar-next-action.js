@@ -77,13 +77,14 @@ export function rankNextAction({ now = new Date(), tasks = [], routines = [], ac
   }
   for (const item of routines) {
     if (!item || item.kind !== 'action' || item.status !== 'pending') continue;
-    const run = item.run || unfinishedRun({ days: item.days || {} }, item.id)?.record?.run;
+    const run = item.run;
     const active = activeRoutineKeys.has(String(item.id));
-    if (active) { activeRoutines.push({ key: keyOfRoutine(item.id, today), type: 'routine', title: safeText(item.title) || 'Повторяющееся дело', reason: 'Выполнение уже запущено.', action: 'open', routine: item, date: today, run }); continue; }
+    const date = item.runDate || today;
+    if (active) { activeRoutines.push({ key: keyOfRoutine(item.id, date), type: 'routine', title: safeText(item.title) || 'Повторяющееся дело', reason: 'Выполнение уже запущено.', action: 'open', routine: item, date, run }); continue; }
     // Only actual routine activities can be launched; a check-only action is explicitly marked done.
     if (!['check', 'activity', 'chain'].includes(item.mode)) continue;
     const urgency = explainRoutine(item, instant, today);
-    candidates.push({ key: keyOfRoutine(item.id, today), type: 'routine', title: safeText(item.title) || 'Повторяющееся дело', reason: run ? `На паузе. ${urgency.reason}` : urgency.reason, action: item.mode === 'check' ? 'done' : 'start', routine: item, date: today, run, score: urgency.score + (run ? 90 : 0) });
+    candidates.push({ key: keyOfRoutine(item.id, date), type: 'routine', title: safeText(item.title) || 'Повторяющееся дело', reason: run ? `На паузе. ${urgency.reason}` : urgency.reason, action: item.mode === 'check' ? 'done' : 'start', routine: item, date, run, score: urgency.score + (run ? 90 : 0) });
   }
   const available = candidates.filter(item => !deferredKeys.has(item.key));
   available.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title, 'ru') || a.key.localeCompare(b.key));
@@ -115,7 +116,15 @@ export function mountCalendarNextAction(element, dependencies) {
   };
   const selection = data => {
     const now = getNow();
-    return rankNextAction({ now, tasks: preferences.includeTasks ? data.tasks : [], routines: preferences.includeRoutines ? data.routines.map(item => { const unfinished = unfinishedRun(data.state, item.id); return unfinished ? { ...item, run: unfinished.record.run, runDate: unfinished.date } : item; }) : [], activeBlocks: data.activeBlocks, deferredKeys: getDeferred(now) });
+    const routines = new Map(data.routines.map(item => [item.id, item]));
+    if (preferences.includeRoutines) {
+      const ids = new Set([...data.state.plans.map(plan => plan.id), ...Object.values(data.state.days).flatMap(records => Object.keys(records))]);
+      for (const id of ids) {
+        const unfinished = unfinishedRun(data.state, id);
+        if (unfinished) routines.set(id, { ...(routines.get(id) || unfinished.record.snapshot), status: 'pending', run: unfinished.record.run, runDate: unfinished.date });
+      }
+    }
+    return rankNextAction({ now, tasks: preferences.includeTasks ? data.tasks : [], routines: preferences.includeRoutines ? [...routines.values()] : [], activeBlocks: data.activeBlocks, deferredKeys: getDeferred(now) });
   };
 
   function render() {
