@@ -331,3 +331,6 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+.calendar-settings-dialog--recommendations { width:min(500px,calc(100vw - 24px)); }
+.calendar-settings-dialog--recommendations .calendar-setting-hint { margin-top:0; }

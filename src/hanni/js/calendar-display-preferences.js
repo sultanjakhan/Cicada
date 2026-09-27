@@ -4,3 +4,19 @@ export function normalizeCalendarPreferences(value={}){if(!value||typeof value!=
 const nativeTransport=(command,args)=>window.__TAURI__?.core?.invoke(command,args)||Promise.reject(new Error('Требуется установленная Cicada.'));
 export async function loadCalendarPreferences(transport=nativeTransport){const raw=await transport('get_ui_state',{key:KEY});if(raw!==null&&raw!==undefined&&raw!==''){try{return normalizeCalendarPreferences(JSON.parse(raw));}catch(error){throw error;}}const [first_day,default_view]=await Promise.all([transport('get_app_setting',{key:'tab_calendar_first_day'}),transport('get_app_setting',{key:'tab_calendar_default_view'})]);return normalizeCalendarPreferences({...DEFAULT_CALENDAR_PREFERENCES,first_day:first_day??'mon',default_view:default_view??'Месяц'});}
 export async function saveCalendarPreferences(value,transport=nativeTransport){const preferences=normalizeCalendarPreferences(value);await transport('set_ui_state',{key:KEY,value:JSON.stringify(preferences)});return preferences;}
+
+// The focused Today dialog changes only recommendation fields. Preserve a fresh
+// calendar snapshot and reject concurrent writes through the existing CAS API.
+export async function saveRecommendationPreferences(value, transport=nativeTransport) {
+  const requested=normalizeCalendarPreferences(value);
+  const raw=await transport('get_ui_state',{key:KEY});
+  const current=raw ? normalizeCalendarPreferences(JSON.parse(raw)) : await loadCalendarPreferences(transport);
+  const next={...current};
+  for(const key of ['recommendationsEnabled','recommendTasks','recommendRoutines']) if(Object.hasOwn(value,key)) next[key]=requested[key];
+  try { await transport('set_ui_state',{key:KEY,value:JSON.stringify(next),expectedValue:raw??''}); }
+  catch(error) {
+    if(String(error?.message||error).includes('mvp_sync_stale_ui_state')) throw Error('Настройки изменились на другом устройстве. Нажми «Сохранить» ещё раз.');
+    throw error;
+  }
+  return next;
+}

@@ -4,6 +4,12 @@
 `https://github.com/sultanjakhan/Cicada`. Остальной интерфейс остаётся на русском;
 технические идентификаторы, ключи, package/bundle IDs и лицензии не переименовывать.
 
+Owner release request, 2026-09-28: prepare and publish Cicada 0.4.0 from the
+accepted DEV work. The Today heading has its settings icon on the left and opens
+only next-action selection settings. General application settings remain in the
+sidebar. Task processes stay optional; automated process assignment or per-task
+stage filtering needs an explicit product rule, not a hidden heuristic.
+
 Owner design rule, 2026-09-27: before designing or substantially changing UI,
 apply `hanni-ux-ui-research`; accept composition with `hanni-visual-review`.
 Show the complete relevant scenario and make the primary action, stage and time

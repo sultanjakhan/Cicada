@@ -1,7 +1,7 @@
 import { IS_MOBILE, invoke } from './state.js';
 import { createCalendarDialog } from './calendar-dialog.js';
 import { escapeHtml } from './utils.js';
-import { loadCalendarPreferences, saveCalendarPreferences } from './calendar-display-preferences.js';
+import { loadCalendarPreferences, saveCalendarPreferences, saveRecommendationPreferences } from './calendar-display-preferences.js';
 import { mountSyncSettings } from './sync-settings.js';
 import { mountSleepSettings } from './health-sleep.js';
 import { mountHealthActivitySettings } from './health-activity.js';
@@ -36,20 +36,21 @@ function sectionFor(section) {
   return SECTIONS.some(item => item.id === section) ? section : 'today';
 }
 
-export function showCalendarSettings(trigger, { section, returnFocus, activityHistory } = {}) {
+export function showCalendarSettings(trigger, { section, returnFocus, activityHistory, recommendationsOnly = false } = {}) {
   if (settingsDialog || document.querySelector('dialog[open]')) return;
 
   let original = null, draft = null, closed = false, disposeSync = null;
   let disposeUpdates = null, disposeSleep = null, disposeActivity = null, disposeDigitalActivity = null;
   let processSettings = null, processObserver = null, preferencesLoading = true, preferencesLoadBusy = false;
-  const requestedSection = sectionFor(section);
+  const requestedSection = recommendationsOnly ? 'today' : sectionFor(section);
+  const title = recommendationsOnly ? 'Выбор следующего действия' : 'Настройки Cicada';
   const window = document.defaultView;
 
   const api = createCalendarDialog({
     document,
-    title: 'Настройки Cicada',
+    title,
     hint: '',
-    submitLabel: 'Сохранить календарь',
+    submitLabel: recommendationsOnly ? 'Сохранить' : 'Сохранить календарь',
     returnFocus: () => {
       if (returnFocus) { returnFocus(); return; }
       const target = IS_MOBILE ? document.getElementById('mobile-hamburger') : trigger;
@@ -66,7 +67,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, activityHi
 
   settingsDialog = api;
   api.modal.classList.add('calendar-settings-dialog');
-  api.modal.querySelector('#' + api.modal.getAttribute('aria-labelledby')).textContent = 'Настройки Cicada';
+  api.modal.querySelector('#' + api.modal.getAttribute('aria-labelledby')).textContent = title;
   api.modal.querySelector('#' + api.modal.getAttribute('aria-describedby')).textContent = '';
 
   const nav = document.createElement('div');
@@ -96,11 +97,19 @@ export function showCalendarSettings(trigger, { section, returnFocus, activityHi
     panel.setAttribute('aria-labelledby', tab.id);
     panel.tabIndex = 0;
     panel.hidden = true;
-    panels.append(panel); hosts[item.id] = panel;
+    if (!recommendationsOnly || item.id === 'today') panels.append(panel);
+    hosts[item.id] = panel;
   }
 
   api.body.classList.add('calendar-settings-body');
-  api.body.append(nav, panels);
+  if (!recommendationsOnly) api.body.append(nav);
+  else {
+    api.modal.classList.add('calendar-settings-dialog--recommendations');
+    hosts.today.removeAttribute('aria-labelledby');
+    hosts.today.setAttribute('role', 'region');
+    hosts.today.setAttribute('aria-label', title);
+  }
+  api.body.append(panels);
   api.form.classList.add('calendar-settings-form');
   api.modal.querySelector('.calendar-editor-header').classList.add('calendar-settings-header');
   api.modal.querySelector('.calendar-editor-feedback').classList.add('calendar-settings-feedback');
@@ -123,7 +132,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, activityHi
   prefsRetry.dataset.prefsRetry = '';
   const prefsLoading = document.createElement('p');
   prefsLoading.className = 'calendar-settings-loading';
-  prefsLoading.textContent = 'Загружаем настройки календаря…';
+  prefsLoading.textContent = recommendationsOnly ? 'Загружаем настройки выбора…' : 'Загружаем настройки календаря…';
   prefsLoading.setAttribute('role', 'status'); prefsLoading.setAttribute('aria-live', 'polite');
   const prefsLoadState = document.createElement('div');
   prefsLoadState.className = 'calendar-settings-load-state';
@@ -175,7 +184,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, activityHi
     const dirty = preferenceDirty();
     saveButton.hidden = !dirty;
     saveButton.disabled = api.pending || !original || !closeConfirmation.hidden;
-    saveButton.textContent = 'Сохранить календарь';
+    saveButton.textContent = recommendationsOnly ? 'Сохранить' : 'Сохранить календарь';
     cancelButton.textContent = hasUnsavedChanges() ? 'Отмена' : 'Закрыть';
     api.modal.querySelector('.calendar-settings-actions').dataset.dirty = String(hasUnsavedChanges());
     if (!settingsStatus.hidden && !processSettings?.isDirty() && !disposeSync?.isDirty?.() && !disposeDigitalActivity?.isDirty?.()) settingsStatus.hidden = true;
@@ -254,7 +263,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, activityHi
   const today = hosts.today;
   today.innerHTML = `<section data-next-action-settings>
     <h3>Рекомендация в «Сегодня»</h3>
-    <p class="calendar-setting-hint">Одно действие по текущему времени, задачам и отметкам рутин. Запуск — только по твоему нажатию.</p>
+    <p class="calendar-setting-hint">Учитываем текущую работу, даты и важность задач, время суток и отметки рутин. Запуск — только по твоему нажатию.</p>
     <label class="calendar-setting calendar-settings-toggle"><input type="checkbox" data-key="recommendationsEnabled"> Предлагать, чем заняться</label>
     <div class="calendar-settings-option-group" data-recommendation-sources>
       <label class="calendar-setting calendar-settings-toggle"><input type="checkbox" data-key="recommendTasks"> Задачи</label>
@@ -266,6 +275,10 @@ export function showCalendarSettings(trigger, { section, returnFocus, activityHi
     <label class="calendar-setting calendar-settings-toggle"><input type="checkbox" data-key="showCompleted"> Раскрывать отмеченные рутины</label>
     <button type="button" class="text-button" data-recurring>Рутины и правила</button>
   </section>`;
+  if (recommendationsOnly) {
+    today.querySelector('h3').remove();
+    today.querySelector('.calendar-settings-subsection').remove();
+  }
   let lastEditedSection = requestedSection === 'today' ? 'today' : 'calendar';
   const settingsStatus = document.createElement('p');
   settingsStatus.className = 'calendar-settings-status';
@@ -329,7 +342,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, activityHi
       prefsError.hidden = true; refreshFooter();
     });
   }
-  today.querySelector('[data-recurring]').addEventListener('click', () => {
+  today.querySelector('[data-recurring]')?.addEventListener('click', () => {
     requestClose('routines');
   });
   prefsRetry.addEventListener('click', () => { void loadPreferences(); });
@@ -339,7 +352,8 @@ export function showCalendarSettings(trigger, { section, returnFocus, activityHi
     if (api.pending || !draft || !preferenceDirty()) return;
     api.setPending(true); prefsError.hidden = true;
     try {
-      const saved = await saveCalendarPreferences(draft);
+      const changedRecommendations = Object.fromEntries(['recommendationsEnabled','recommendTasks','recommendRoutines'].filter(key => draft[key] !== original[key]).map(key => [key,draft[key]]));
+      const saved = await (recommendationsOnly ? saveRecommendationPreferences(changedRecommendations) : saveCalendarPreferences(draft));
       if (closed) return;
       original = saved; draft = { ...saved };
       window.dispatchEvent(new window.CustomEvent('hanni:calendar-settings-changed', { detail: { changes: saved } }));
@@ -359,7 +373,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, activityHi
       }
     } catch (error) {
       if (closed) return;
-      prefsError.textContent = `${error?.message || 'Ошибка сохранения.'} Сохранение календаря не подтверждено; черновик остался в форме.`;
+      prefsError.textContent = `${error?.message || 'Ошибка сохранения.'} Сохранение ${recommendationsOnly ? 'настроек выбора' : 'календаря'} не подтверждено; черновик остался в форме.`;
       prefsError.hidden = false; setActive(lastEditedSection, true); prefsError.tabIndex = -1; prefsError.focus();
     } finally {
       if (!closed) { api.setPending(false); refreshFooter(); }
@@ -368,28 +382,30 @@ export function showCalendarSettings(trigger, { section, returnFocus, activityHi
 
   setActive(requestedSection);
   saveButton.hidden = true;
-  api.open(tabs[requestedSection]);
-  processSettings = mountProcessSettings(hosts.processes, {
-    invoke,
-    setPending: value => { api.setPending(value); refreshFooter(); },
-  });
-  hosts.processes.classList.add('calendar-settings-panel');
-  hosts.processes.append(settingsStatus);
-  hosts.processes.addEventListener('input', scheduleFooterRefresh);
-  hosts.processes.addEventListener('click', scheduleFooterRefresh);
-  processObserver = new window.MutationObserver(scheduleFooterRefresh);
-  processObserver.observe(hosts.processes, { childList: true, subtree: true, attributes: true });
-  disposeSync = mountSyncSettings(sync, { invoke, setPending: value => { api.setPending(value); refreshFooter(); } });
-  sync.addEventListener('input', scheduleFooterRefresh);
-  sync.addEventListener('change', scheduleFooterRefresh);
-  sync.addEventListener('click', scheduleFooterRefresh);
-  disposeSleep = mountSleepSettings(sleep, { invoke, setPending: value => api.setPending(value) });
-  disposeActivity = mountHealthActivitySettings(activity, { invoke, setPending: value => api.setPending(value) });
-  disposeDigitalActivity = mountDigitalActivitySettings(digitalActivity, { invoke, setPending: value => api.setPending(value), initialHistory:activityHistory });
-  digitalActivity.addEventListener('input', scheduleFooterRefresh);
-  digitalActivity.addEventListener('change', scheduleFooterRefresh);
-  digitalActivity.addEventListener('click', scheduleFooterRefresh);
-  disposeUpdates = mountAppUpdates(updates, { invoke });
+  api.open(recommendationsOnly ? null : tabs[requestedSection]);
+  if (!recommendationsOnly) {
+    processSettings = mountProcessSettings(hosts.processes, {
+      invoke,
+      setPending: value => { api.setPending(value); refreshFooter(); },
+    });
+    hosts.processes.classList.add('calendar-settings-panel');
+    hosts.processes.append(settingsStatus);
+    hosts.processes.addEventListener('input', scheduleFooterRefresh);
+    hosts.processes.addEventListener('click', scheduleFooterRefresh);
+    processObserver = new window.MutationObserver(scheduleFooterRefresh);
+    processObserver.observe(hosts.processes, { childList: true, subtree: true, attributes: true });
+    disposeSync = mountSyncSettings(sync, { invoke, setPending: value => { api.setPending(value); refreshFooter(); } });
+    sync.addEventListener('input', scheduleFooterRefresh);
+    sync.addEventListener('change', scheduleFooterRefresh);
+    sync.addEventListener('click', scheduleFooterRefresh);
+    disposeSleep = mountSleepSettings(sleep, { invoke, setPending: value => api.setPending(value) });
+    disposeActivity = mountHealthActivitySettings(activity, { invoke, setPending: value => api.setPending(value) });
+    disposeDigitalActivity = mountDigitalActivitySettings(digitalActivity, { invoke, setPending: value => api.setPending(value), initialHistory:activityHistory });
+    digitalActivity.addEventListener('input', scheduleFooterRefresh);
+    digitalActivity.addEventListener('change', scheduleFooterRefresh);
+    digitalActivity.addEventListener('click', scheduleFooterRefresh);
+    disposeUpdates = mountAppUpdates(updates, { invoke });
+  }
   setPreferenceControlsEnabled(false);
   async function loadPreferences() {
     if (closed || preferencesLoadBusy) return;

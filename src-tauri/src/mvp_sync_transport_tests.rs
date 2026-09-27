@@ -88,6 +88,241 @@ fn task(conn: &Connection, id: &str, title: &str) {
     conn.execute("INSERT INTO items(id,kind,title,duration_minutes,version,created_at,updated_at) VALUES(?1,'task',?2,30,1,'2026-09-14T00:00:00Z','2026-09-14T00:00:00Z')",params![id,title]).unwrap();
 }
 
+fn recurring_state(plan_mode: &str, title: &str) -> Value {
+    json!({
+        "version":1,
+        "plans":[
+            {"id":"graph-plan","title":title,"mode":plan_mode,"steps":[{"title":"Step"}]},
+            {"id":"legacy-plan","title":"Legacy","mode":"chain","steps":[{"title":"Old step"}]}
+        ],
+        "days":{
+            "2026-09-28":{
+                "graph-plan":{"id":"graph-plan","snapshot":{"id":"graph-plan","title":title,"mode":plan_mode,"steps":[{"title":"Step"}]}},
+                "legacy-plan":{"id":"legacy-plan","snapshot":{"id":"legacy-plan","title":"Legacy","mode":"chain","steps":[{"title":"Old step"}]}}
+            }
+        }
+    })
+}
+
+fn recurring_version(conn: &Connection, record_id: &str) -> u8 {
+    let data: String = conn
+        .query_row("SELECT data FROM mvp_records WHERE id=?1", [record_id], |r| r.get(0))
+        .unwrap();
+    serde_json::from_str::<Value>(&data).unwrap()["v"].as_u64().unwrap() as u8
+}
+
+#[test]
+fn graph_records_are_v2_and_that_identity_stays_v2_after_graph_is_edited_away() {
+    let (conn, _) = replica("graph-version");
+    crate::mvp_sync_db::set_ui(
+        &conn,
+        "calendar_recurring_v1",
+        &recurring_state("graph", "Graph" ).to_string(),
+        None,
+    )
+    .unwrap();
+
+    let graph_plan = json!(["ui", ["calendar_recurring_v1", "plans", "graph-plan"]]).to_string();
+    let graph_day = json!(["ui", ["calendar_recurring_v1", "days", "2026-09-28", "graph-plan"]]).to_string();
+    let legacy_plan = json!(["ui", ["calendar_recurring_v1", "plans", "legacy-plan"]]).to_string();
+    let legacy_day = json!(["ui", ["calendar_recurring_v1", "days", "2026-09-28", "legacy-plan"]]).to_string();
+    assert_eq!(recurring_version(&conn, &graph_plan), 2);
+    assert_eq!(recurring_version(&conn, &graph_day), 2);
+    assert_eq!(recurring_version(&conn, &legacy_plan), 1);
+    assert_eq!(recurring_version(&conn, &legacy_day), 1);
+
+    crate::mvp_sync_db::set_ui(
+        &conn,
+        "calendar_recurring_v1",
+        &json!({"version":1,"plans":[{"id":"legacy-plan","title":"Legacy","mode":"chain","steps":[{"title":"Old step"}]}],"days":{"2026-09-28":{"legacy-plan":{"id":"legacy-plan","snapshot":{"id":"legacy-plan","title":"Legacy","mode":"chain","steps":[{"title":"Old step"}]}}}}}).to_string(),
+        None,
+    )
+    .unwrap();
+    for id in [&graph_plan, &graph_day] {
+        let data: Value = serde_json::from_str(
+            &conn.query_row("SELECT data FROM mvp_records WHERE id=?1", [id], |r| r.get::<_, String>(0)).unwrap(),
+        ).unwrap();
+        assert_eq!(data["v"], 2, "tombstones retain the upgraded identity version");
+        assert_eq!(data["deleted"], true);
+    }
+
+    crate::mvp_sync_db::set_ui(
+        &conn,
+        "calendar_recurring_v1",
+        &recurring_state("chain", "Edited chain").to_string(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(recurring_version(&conn, &graph_plan), 2);
+    assert_eq!(recurring_version(&conn, &graph_day), 2);
+    assert_eq!(recurring_version(&conn, &legacy_plan), 1);
+    assert_eq!(recurring_version(&conn, &legacy_day), 1);
+}
+
+#[test]
+fn initialize_upgrades_historical_local_graph_envelopes_and_queues_them() {
+    let (conn, _) = replica("graph-migration");
+    crate::mvp_sync_db::set_ui(
+        &conn,
+        "calendar_recurring_v1",
+        &recurring_state("graph", "Graph").to_string(),
+        None,
+    )
+    .unwrap();
+    let graph_plan = json!(["ui", ["calendar_recurring_v1", "plans", "graph-plan"]]).to_string();
+    let graph_day = json!(["ui", ["calendar_recurring_v1", "days", "2026-09-28", "graph-plan"]]).to_string();
+    let before: (String, String) = conn
+        .query_row(
+            "SELECT updated_at,device_id FROM sync_row_versions WHERE row_id=?1",
+            [&graph_plan],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    let before_record: Value = serde_json::from_str(
+        &conn.query_row("SELECT data FROM mvp_records WHERE id=?1", [&graph_plan], |r| r.get::<_, String>(0)).unwrap(),
+    ).unwrap();
+    for id in [&graph_plan, &graph_day] {
+        let mut data: Value = serde_json::from_str(
+            &conn
+                .query_row("SELECT data FROM mvp_records WHERE id=?1", [id], |r| r.get::<_, String>(0))
+                .unwrap(),
+        )
+        .unwrap();
+        data["v"] = json!(1);
+        conn.execute("UPDATE mvp_records SET data=?1 WHERE id=?2", params![data.to_string(), id])
+            .unwrap();
+    }
+    conn.execute(
+        "DELETE FROM content_sync_dirty WHERE row_id IN (?1,?2)",
+        params![graph_plan, graph_day],
+    )
+    .unwrap();
+
+    crate::mvp_sync_db::initialize(&conn).unwrap();
+
+    assert_eq!(recurring_version(&conn, &graph_plan), 2);
+    assert_eq!(recurring_version(&conn, &graph_day), 2);
+    let after: (String, String, String) = conn
+        .query_row(
+            "SELECT r.updated_at,v.device_id,r.data FROM mvp_records r JOIN sync_row_versions v ON v.row_id=r.id WHERE r.id=?1",
+            [&graph_plan],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    let promoted: Value = serde_json::from_str(&after.2).unwrap();
+    assert_eq!(promoted["parent"], before.0);
+    assert_eq!(promoted["parent_writer"], before.1);
+    assert!(after.0 > before.0);
+    assert_eq!(
+        conn.query_row(
+            "SELECT count(*) FROM content_sync_dirty WHERE row_id IN (?1,?2)",
+            params![graph_plan, graph_day],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap(),
+        2
+    );
+    let mut ancestor = before_record;
+    ancestor["v"] = json!(1);
+    ancestor["value"]["row"]["title"] = json!("Older divergent payload");
+    let ancestor_fields = json!({
+        "id":graph_plan,
+        "data":ancestor.to_string(),
+        "updated_at":before.0,
+        "_updated_at":before.0,
+        "_device_id":before.1
+    });
+    assert!(!crate::mvp_sync_db::apply_record(&conn, ancestor_fields.as_object().unwrap()).unwrap());
+    assert_eq!(
+        conn.query_row("SELECT count(*) FROM mvp_sync_conflicts", [], |r| r.get::<_, i64>(0)).unwrap(),
+        0,
+        "a known pre-upgrade ancestor is not a divergence"
+    );
+}
+
+#[test]
+fn stale_v1_recurring_edit_and_delete_are_quarantined_and_cursor_advances() {
+    let (mut receiver, receiver_cfg) = replica("receiver");
+    crate::mvp_sync_db::set_ui(
+        &receiver,
+        "calendar_recurring_v1",
+        &recurring_state("graph", "Local graph").to_string(),
+        None,
+    )
+    .unwrap();
+    let id = json!(["ui", ["calendar_recurring_v1", "plans", "graph-plan"]]).to_string();
+    let mut stale = row(&receiver, &id);
+    let mut record: Value = serde_json::from_str(stale.f["data"].as_str().unwrap()).unwrap();
+    record["v"] = json!(1);
+    stale.f["data"] = json!(record.to_string());
+    stale.f["updated_at"] = json!("2026-09-28T12:00:00.000Z");
+    stale.f["_updated_at"] = stale.f["updated_at"].clone();
+    stale.f["_device_id"] = json!("legacy-peer");
+    let legacy_cfg = derive_config(&config("legacy-peer")).unwrap();
+    apply(&mut receiver, &receiver_cfg, stored(&legacy_cfg, vec![stale.clone()], 1, 1)).unwrap();
+    assert_eq!(
+        receiver
+            .query_row("SELECT count(*) FROM mvp_sync_conflicts", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        0,
+        "an identical v1 replay is harmless and should not create a conflict"
+    );
+
+    record["value"]["row"]["title"] = json!("Old v1 edit");
+    stale.f["data"] = json!(record.to_string());
+    stale.f["updated_at"] = json!("2026-09-28T12:01:00.000Z");
+    stale.f["_updated_at"] = stale.f["updated_at"].clone();
+    apply(&mut receiver, &receiver_cfg, stored(&legacy_cfg, vec![stale.clone()], 2, 2)).unwrap();
+
+    record["deleted"] = json!(true);
+    record["value"] = Value::Null;
+    stale.f["data"] = json!(record.to_string());
+    stale.f["updated_at"] = json!("2026-09-28T12:02:00.000Z");
+    stale.f["_updated_at"] = stale.f["updated_at"].clone();
+    apply(&mut receiver, &receiver_cfg, stored(&legacy_cfg, vec![stale], 3, 3)).unwrap();
+
+    let saved: Value = serde_json::from_str(
+        &crate::mvp_sync_db::read_ui(&receiver, "calendar_recurring_v1")
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved["plans"][0]["title"], "Local graph");
+    assert_eq!(recurring_version(&receiver, &id), 2);
+    assert_eq!(
+        receiver
+            .query_row("SELECT count(*) FROM mvp_sync_conflicts", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        receiver
+            .query_row("SELECT receive_seq FROM content_sync_state", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        3
+    );
+}
+
+#[test]
+fn v2_is_rejected_for_unscoped_rows_before_receive_cursor_advances() {
+    let (mut receiver, cfg) = replica("scope-check");
+    task(&receiver, "plain-task", "Plain task");
+    let id = json!(["items", ["plain-task"]]).to_string();
+    let mut incoming = row(&receiver, &id);
+    let mut record: Value = serde_json::from_str(incoming.f["data"].as_str().unwrap()).unwrap();
+    record["v"] = json!(2);
+    incoming.f["data"] = json!(record.to_string());
+    let peer_cfg = derive_config(&config("scope-peer")).unwrap();
+    let error = apply(&mut receiver, &cfg, stored(&peer_cfg, vec![incoming], 1, 1)).unwrap_err();
+    assert_eq!(error, "content_sync_unknown_schema");
+    assert_eq!(
+        receiver
+            .query_row("SELECT receive_seq FROM content_sync_state", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}
+
 #[test]
 fn profile_and_aad_are_separate_from_legacy() {
     let cfg = derive_config(&config("mac")).unwrap();

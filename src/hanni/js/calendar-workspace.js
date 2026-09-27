@@ -700,7 +700,7 @@ export async function loadCalendarWorkspace(el) {
       nowHost.hidden = false;
       disposeDayBanner = mountCalendarDayBanner(pane.querySelector('[data-calendar-day-banner]'), {
         invoke,
-        onOpenSettings:button => showCalendarSettings(button, {section:'next-action',returnFocus:() => button.isConnected ? button.focus({preventScroll:true}) : disposeNextAction?.focus()}),
+        onOpenSettings:button => showCalendarSettings(button, {section:'next-action',recommendationsOnly:true,returnFocus:() => button.isConnected ? button.focus({preventScroll:true}) : disposeNextAction?.focus()}),
       });
       disposeNextAction = mountCalendarTodayAction(pane.querySelector('[data-calendar-next-action]'), {
         invoke, preferences:nextActionPreferences(), notifyChange:changed, compactRunning:true,
