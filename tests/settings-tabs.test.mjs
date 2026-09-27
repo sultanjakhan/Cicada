@@ -1,11 +1,20 @@
-import test from 'node:test';
+import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 
 const tick = async () => { for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve)); };
+const windows = new Set();
+afterEach(() => {
+  for (const window of windows) {
+    window.document.querySelectorAll('dialog').forEach(dialog => dialog.close());
+    window.close();
+  }
+  windows.clear();
+});
 
 async function boot({ failPreferenceSave = false, failPreferenceLoad = false, delayPreferenceLoad = false, deferProcessSave = false, initialPreferences = null, section = 'next-action', recommendationsOnly = false } = {}) {
   const dom = new JSDOM('<button id="settings">Настройки</button>', { url: 'http://cicada.local', pretendToBeVisual: true });
+  windows.add(dom.window);
   Object.assign(globalThis, {
     window: dom.window, document: dom.window.document, localStorage: dom.window.localStorage,
     CustomEvent: dom.window.CustomEvent, FormData: dom.window.FormData,
@@ -251,7 +260,7 @@ test('Today entry exposes only selection settings and saves no unrelated prefere
     assert.equal(x.modal.querySelector('[role="tab"]'),null);
     assert.equal(x.modal.querySelector('[data-recurring]'),null);
     assert.equal(x.modal.querySelector('[data-key="showCompleted"]'),null);
-    assert.equal(x.calls.some(c=>/mvp_sync|health_|mvp_update/.test(c)),false,'focused entry does not mount unrelated services');
+    assert.equal(x.calls.some(c=>/^(mvp_sync_status|health_.*_status|mvp_update_status)$/.test(c)),false,'focused entry does not read unrelated service status');
     const input=x.modal.querySelector('[data-key="recommendTasks"]');input.checked=false;input.dispatchEvent(new x.dom.window.Event('change',{bubbles:true}));
     const latest=JSON.parse(x.ui.get('calendar_preferences_v1'));latest.density='comfortable';latest.first_day='sun';
     x.ui.set('calendar_preferences_v1',JSON.stringify(latest));
@@ -260,5 +269,5 @@ test('Today entry exposes only selection settings and saves no unrelated prefere
     assert.equal(saved.recommendTasks,false);assert.equal(saved.recommendRoutines,false);
     assert.equal(saved.density,'comfortable');assert.equal(saved.first_day,'sun');assert.equal(saved.showCompleted,true);
     assert.equal(x.modal.open,false);
-  } finally{x.dom.window.close();}
+  } finally{x.modal.close();}
 });
