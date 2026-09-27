@@ -404,6 +404,7 @@ fn item_value(
     }
     crate::health_sleep::decorate(&mut value, &item.id, &tags);
     crate::health_activity::decorate(&mut value, &item.id, &tags);
+            crate::digital_activity::decorate(&mut value, &item.id, &tags);
     value
 }
 fn load(conn: &Connection, id: &str) -> Result<Value, String> {
@@ -782,6 +783,7 @@ fn calendar_list(
             }
             crate::health_sleep::decorate(&mut value, &row.get::<_,String>(0)?, &tags);
             crate::health_activity::decorate(&mut value, &row.get::<_,String>(0)?, &tags);
+            crate::digital_activity::decorate(&mut value, &row.get::<_,String>(0)?, &tags);
             Ok(value)
         })
         .map_err(|e| fail(e.to_string()))?;

@@ -1,5 +1,6 @@
 mod health_sleep;
 mod health_activity;
+mod digital_activity;
 use chrono::{NaiveDate, NaiveTime, Utc};
 use rusqlite::{
     backup::{Backup, StepResult},
@@ -245,6 +246,7 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
     mvp_sync_db::initialize(conn)?;
     health_sleep::initialize(conn)?;
     health_activity::initialize(conn)?;
+    digital_activity::initialize(conn)?;
     Ok(())
 }
 
@@ -543,6 +545,9 @@ pub fn run() {
                 init_schema(&connection)?;
                 app.manage(AppState(Mutex::new(connection)));
                 app.manage(instance_lock);
+                if !startup_options.is_update_background() {
+                    digital_activity::start_background(app.handle().clone());
+                }
                 #[cfg(target_os = "macos")]
                 if !startup_options.is_one_shot() {
                     window_placement_macos::restore(
@@ -579,6 +584,10 @@ pub fn run() {
             health_activity::health_activity_status,
             health_activity::health_activity_connect,
             health_activity::health_activity_import,
+            digital_activity::digital_activity_get_connections,
+            digital_activity::digital_activity_save_connection,
+            digital_activity::digital_activity_status,
+            digital_activity::digital_activity_import_now,
             list_items,
             save_item,
             set_completed,

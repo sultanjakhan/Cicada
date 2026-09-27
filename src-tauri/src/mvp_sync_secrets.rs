@@ -17,7 +17,7 @@ fn account(database_path: &Path) -> Result<String, String> {
 }
 
 #[cfg(target_os = "macos")]
-fn read_options(account: &str) -> security_framework::passwords::PasswordOptions {
+fn read_options(service: &str, account: &str) -> security_framework::passwords::PasswordOptions {
     use core_foundation::{
         base::TCFType,
         string::{CFString, CFStringRef},
@@ -28,7 +28,7 @@ fn read_options(account: &str) -> security_framework::passwords::PasswordOptions
         static kSecUseAuthenticationUI: CFStringRef;
         static kSecUseAuthenticationUIFail: CFStringRef;
     }
-    let mut options = PasswordOptions::new_generic_password(SERVICE, account);
+    let mut options = PasswordOptions::new_generic_password(service, account);
     // This flag covers the modern backend; the file-based Keychain also needs
     // SecKeychainSetUserInteractionAllowed below (Apple FB16959400).
     #[allow(deprecated)]
@@ -56,22 +56,26 @@ fn forbid_keychain_dialogs() -> Result<(), String> {
 }
 
 pub(crate) fn read(database_path: &Path) -> Result<Option<String>, String> {
+    read_for(database_path, SERVICE)
+}
+
+pub(crate) fn read_for(database_path: &Path, service: &str) -> Result<Option<String>, String> {
     let slot = account(database_path)?;
     #[cfg(target_os = "macos")]
     forbid_keychain_dialogs()?;
     #[cfg(target_os = "macos")]
-    let bytes = match security_framework::passwords::generic_password(read_options(&slot)) {
+    let bytes = match security_framework::passwords::generic_password(read_options(service, &slot)) {
         Ok(bytes) => bytes,
         Err(error) if error.code() == -25300 => return Ok(None),
         Err(_) => return Err("mvp_sync_credentials_unavailable".into()),
     };
     #[cfg(any(windows, target_os = "android"))]
     let bytes = {
-        let Some(stored) = read_file(database_path)? else {
+        let Some(stored) = read_file(database_path, service)? else {
             return Ok(None);
         };
         #[cfg(windows)]
-        let stored = dpapi_unprotect(&stored, format!("{SERVICE}:{slot}").as_bytes())?;
+        let stored = dpapi_unprotect(&stored, format!("{service}:{slot}").as_bytes())?;
         #[cfg(target_os = "android")]
         let _ = slot;
         stored
@@ -93,6 +97,10 @@ pub(crate) fn read(database_path: &Path) -> Result<Option<String>, String> {
 }
 
 pub(crate) fn write(database_path: &Path, raw: &str) -> Result<(), String> {
+    write_for(database_path, SERVICE, raw)
+}
+
+pub(crate) fn write_for(database_path: &Path, service: &str, raw: &str) -> Result<(), String> {
     if raw.len() > LIMIT {
         return Err("mvp_sync_credentials_invalid".into());
     }
@@ -100,9 +108,9 @@ pub(crate) fn write(database_path: &Path, raw: &str) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         forbid_keychain_dialogs()?;
-        security_framework::passwords::set_generic_password(SERVICE, &slot, raw.as_bytes())
+        security_framework::passwords::set_generic_password(service, &slot, raw.as_bytes())
             .map_err(|_| "mvp_sync_credentials_write_failed")?;
-        if read(database_path)?.as_deref() != Some(raw) {
+        if read_for(database_path, service)?.as_deref() != Some(raw) {
             return Err("mvp_sync_credentials_verify_failed".into());
         }
         Ok(())
@@ -111,7 +119,7 @@ pub(crate) fn write(database_path: &Path, raw: &str) -> Result<(), String> {
     {
         #[cfg(windows)]
         let stored = {
-            let entropy = format!("{SERVICE}:{slot}");
+            let entropy = format!("{service}:{slot}");
             let protected = dpapi_protect(raw.as_bytes(), entropy.as_bytes())?;
             if dpapi_unprotect(&protected, entropy.as_bytes())? != raw.as_bytes() {
                 return Err("mvp_sync_credentials_verify_failed".into());
@@ -123,7 +131,7 @@ pub(crate) fn write(database_path: &Path, raw: &str) -> Result<(), String> {
             let _ = slot;
             raw.as_bytes().to_vec()
         };
-        write_file(database_path, &stored)
+        write_file(database_path, service, &stored)
     }
     #[cfg(not(any(windows, target_os = "macos", target_os = "android")))]
     {
@@ -133,16 +141,16 @@ pub(crate) fn write(database_path: &Path, raw: &str) -> Result<(), String> {
 }
 
 #[cfg(any(windows, target_os = "android"))]
-fn credential_path(database_path: &Path) -> Result<std::path::PathBuf, String> {
+fn credential_path(database_path: &Path, service: &str) -> Result<std::path::PathBuf, String> {
     Ok(database_path
         .canonicalize()
         .map_err(|_| "mvp_sync_credentials_path_invalid")?
-        .with_file_name("mvp-sync.credentials"))
+        .with_file_name(if service == SERVICE { "mvp-sync.credentials" } else { "mvp-activity.credentials" }))
 }
 
 #[cfg(any(windows, target_os = "android"))]
-fn read_file(database_path: &Path) -> Result<Option<Vec<u8>>, String> {
-    let path = credential_path(database_path)?;
+fn read_file(database_path: &Path, service: &str) -> Result<Option<Vec<u8>>, String> {
+    let path = credential_path(database_path, service)?;
     let metadata = match std::fs::symlink_metadata(&path) {
         Ok(value) => value,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -157,9 +165,9 @@ fn read_file(database_path: &Path) -> Result<Option<Vec<u8>>, String> {
 }
 
 #[cfg(any(windows, target_os = "android"))]
-fn write_file(database_path: &Path, stored: &[u8]) -> Result<(), String> {
+fn write_file(database_path: &Path, service: &str, stored: &[u8]) -> Result<(), String> {
     use std::io::Write;
-    let path = credential_path(database_path)?;
+    let path = credential_path(database_path, service)?;
     if let Ok(metadata) = std::fs::symlink_metadata(&path) {
         if !metadata.is_file() {
             return Err("mvp_sync_credentials_invalid".into());
