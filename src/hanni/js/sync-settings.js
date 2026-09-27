@@ -81,5 +81,7 @@ export function mountSyncSettings(element, { invoke, setPending = () => {} }) {
   const onStatus = event => { if (disposed || busy) return; try { accept(event.detail); } catch { /* Ignore incomplete status events. */ } };
   window.addEventListener('hanni:sync-status', onStatus); window.addEventListener('online', render); window.addEventListener('offline', render);
   void refresh();
-  return () => { disposed = true; ++revision; conflicts.dispose(); clearCode(); window.removeEventListener('hanni:sync-status', onStatus); window.removeEventListener('online', render); window.removeEventListener('offline', render); };
+  const dispose = () => { disposed = true; ++revision; dirty = false; conflicts.dispose(); clearCode(); window.removeEventListener('hanni:sync-status', onStatus); window.removeEventListener('online', render); window.removeEventListener('offline', render); };
+  dispose.isDirty = () => dirty;
+  return dispose;
 }
