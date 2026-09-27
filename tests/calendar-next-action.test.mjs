@@ -46,7 +46,7 @@ test('routine timing cues use existing title/steps and only apply in their time 
   const lunch = { ...plan('lunch', { title: 'Пообедать' }), status: 'pending' };
   assert.equal(rankNextAction({ now: now(), routines: [lunch] }).key, 'routine:lunch:2026-09-27');
   const morning = rankNextAction({ now: new Date(`${today}T08:00:00`), routines: [{ ...plan('morning', { title: 'Утреннее умывание' }), status: 'pending' }] });
-  assert.match(morning.reason, /утро/);
+  assert.match(morning.reason, /утро/i);
   const evening = rankNextAction({ now: new Date(`${today}T18:00:00`), routines: [{ ...plan('morning', { title: 'Утреннее умывание' }), status: 'pending' }], tasks: [task('ordinary')] });
   assert.equal(evening.type, 'task', 'a title cue outside its time window does not displace an ordinary task');
 });
@@ -134,7 +134,7 @@ test('not now suppresses only this candidate for one hour without storing state'
   const first = x.host.querySelector('[data-next-action-key]').dataset.nextActionKey;
   x.host.querySelector('[data-next-action-action="later"]').click();
   assert.notEqual(x.host.querySelector('[data-next-action-key]').dataset.nextActionKey, first);
-  assert.match(x.host.textContent, /Не буду предлагать это дело в течение часа/);
+  assert.match(x.host.textContent, /не будет предлагаться в течение часа/);
   assert.equal(x.calls.some(call => call.name === 'set_ui_state'), false);
   const reads = x.calls.filter(call => call.name === 'get_calendar_tasks').length;
   instant = new Date(instant.getTime() + 61 * 60 * 1000); x.tick(); await settle();

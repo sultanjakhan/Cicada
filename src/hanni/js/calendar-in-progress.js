@@ -69,6 +69,7 @@ export function mountCalendarInProgress(element, dependencies) {
   </section>`;
   const q = name => element.querySelector(`[data-cip-${name}]`);
   const card = q('card'), title = q('title'), list = q('list'), message = q('message'), announcement = q('announcement');
+  if (dependencies.title) title.textContent = dependencies.title;
   const node = (tag, className, text) => { const value = doc.createElement(tag); if (className) value.className = className; if (text != null) value.textContent = text; return value; };
   const iconButton = (className, icon, label, control, row) => {
     const button = node('button', `cip-icon ${className}`); button.type = 'button';
@@ -77,7 +78,7 @@ export function mountCalendarInProgress(element, dependencies) {
     return button;
   };
   const findControl = (key, control) => [...element.querySelectorAll('[data-cip-control]')].find(button => button.dataset.cipKey === key && button.dataset.cipControl === control);
-  const focusFallback = () => { if (!disposed && element.isConnected) (rows?.length ? title : q('empty-launch')).focus({ preventScroll: true }); };
+  const focusFallback = () => { if (!disposed && element.isConnected) { if (element.hidden) dependencies.onEmptyFocus?.(); else (rows?.length ? title : q('empty-launch')).focus({ preventScroll: true }); } };
   const restore = (key, control) => { if (disposed || !element.isConnected) return; const button = findControl(key, control) || findControl(key, 'open'); if (button) button.focus({ preventScroll: true }); else focusFallback(); };
   const rowSignatures = new WeakMap();
 
@@ -200,9 +201,10 @@ export function mountCalendarInProgress(element, dependencies) {
     const focused = doc.activeElement, focusKey = element.contains(focused) ? focused.dataset.cipKey : null, focusControl = focused?.dataset?.cipControl;
     if (confirming && !rows?.some(row => row.key === confirming && row.running)) confirming = null;
     const empty = !rows?.length;
+    element.hidden = !!dependencies.hideWhenEmpty && rows !== null && empty && !failed && !feedback?.error;
     card.classList.toggle('is-empty', empty);
     card.setAttribute('aria-busy', String(busy || rows === null));
-    q('heading').hidden = empty; list.hidden = empty; q('footer').hidden = empty; q('empty').hidden = !empty;
+    q('heading').hidden = empty; list.hidden = empty; q('footer').hidden = empty || !!dependencies.embedded; q('empty').hidden = !empty;
     q('empty-text').textContent = rows === null ? (failed ? 'Не удалось загрузить задачи в работе.' : 'Загружаем задачи в работе…') : 'Ничего не запущено';
     q('empty-launch').hidden = rows === null; q('retry').hidden = !(rows === null && failed);
     q('count').textContent = empty ? '' : summaryOf(rows);
@@ -276,6 +278,7 @@ export function mountCalendarInProgress(element, dependencies) {
     }
     const result = [];
     for (const row of entries.values()) {
+      if (dependencies.activeOnly && !row.running) continue;
       if (!row.running && nextHidden[row.key]) continue;
       let record;
       if (row.source_type === 'note') record = tasks.find(task => task.source_type === 'note' && String(task.source_id) === row.source_id);

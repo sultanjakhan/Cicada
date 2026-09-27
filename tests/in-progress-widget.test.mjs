@@ -96,6 +96,14 @@ async function mount(t, data = backend(), extra = {}) {
   return { dom, doc, host, data, dispose, opened, launched, rows, row, control, menu, menuItems, choose, text, refresh };
 }
 
+test('Today only shows running work and hides after last pause without finishing tasks', async t => {
+  let fallback=0;const x=await mount(t,backend(),{activeOnly:true,hideWhenEmpty:true,embedded:true,title:'Идёт сейчас',onEmptyFocus:()=>fallback++});
+  assert.equal(x.rows().length,2);assert.equal(x.host.querySelector('[data-cip-title]').textContent,'Идёт сейчас');
+  assert.equal(x.row('note:letters'),undefined);assert.equal(x.host.querySelector('[data-cip-footer]').hidden,true);
+  for(const row of [...x.rows()]){const key=row.dataset.contextRecord;x.control(key,'toggle').focus();x.control(key,'toggle').click();await settle();}
+  assert.equal(x.host.hidden,true);assert.equal(x.data.count('complete_calendar_task'),0);assert.ok(fallback>0);
+});
+
 test('work time reads as mm:ss under an hour and against the estimate in minutes', () => {
   assert.equal(formatWorkTime(0), '00:00');
   assert.equal(formatWorkTime(754), '12:34');

@@ -74,6 +74,8 @@ export function mountCalendarNow(element, dependencies = {}) {
     header.innerHTML = `<button type="button" class="calendar-running__button" data-header-action="in-progress"><span class="calendar-running__dot" aria-hidden="true" hidden></span><span data-header-label>Текущие задачи</span><span data-header-count aria-hidden="true" hidden></span></button>`;
   }
   const headerInProgress = header?.querySelector('[data-header-action="in-progress"]');
+  const headerLabel = dependencies.headerLabel || 'Текущие задачи';
+  if (header) header.querySelector('[data-header-label]').textContent = headerLabel;
   const runningCount = () => snapshot?.activeBlocks?.length || 0;
   const hideTaskCard = dependencies.hideTaskCard === true;
 
@@ -272,7 +274,7 @@ export function mountCalendarNow(element, dependencies = {}) {
   }
   function renderHeader() {
     if (!header || disposed) return;
-    const count = runningCount(), label = `Текущие задачи · запущено: ${count}`;
+    const count = runningCount(), label = `${headerLabel} · запущено: ${count}`;
     header.hidden = !snapshot;
     header.dataset.count = String(count);
     const dot = headerInProgress.querySelector('.calendar-running__dot');

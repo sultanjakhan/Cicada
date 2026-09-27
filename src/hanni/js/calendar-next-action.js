@@ -54,9 +54,9 @@ function explainRoutine(item, now, today) {
     return { score: 180, reason: `По расписанию — ${clock}.` };
   }
   const period = routinePeriod(item), hour = now.getHours();
-  if (period === 'morning' && hour >= 5 && hour < 12) return { score: 560, reason: 'В названии или шагах указано утро.' };
-  if (period === 'lunch' && hour >= 11 && hour < 16) return { score: 560, reason: 'В названии или шагах указан обед.' };
-  if (period === 'evening' && hour >= 17 && hour < 24) return { score: 560, reason: 'В названии или шагах указан вечер.' };
+  if (period === 'morning' && hour >= 5 && hour < 12) return { score: 560, reason: 'Утро — рутина ещё не отмечена.' };
+  if (period === 'lunch' && hour >= 11 && hour < 16) return { score: 560, reason: 'Время обеда — рутина ещё не отмечена.' };
+  if (period === 'evening' && hour >= 17 && hour < 24) return { score: 560, reason: 'Вечер — рутина ещё не отмечена.' };
   return { score: 250, reason: item.required === false ? 'Необязательное дело на сегодня.' : 'Повторяющееся дело на сегодня.' };
 }
 
@@ -130,6 +130,8 @@ export function mountCalendarNextAction(element, dependencies) {
   function render() {
     if (disposed) return;
     const selected = recommendation;
+    const compactRunning = dependencies.compactRunning && selected?.action === 'open';
+    element.dataset.running = String(!!compactRunning);
     const signature = JSON.stringify([preferences, selected && [selected.key, selected.type, selected.title, selected.reason, selected.action], Boolean(error), feedback, Boolean(snapshot), busy]);
     if (signature === renderedKey) {
       const retry = element.querySelector('[data-next-action-retry]'); if (retry) retry.disabled = busy;
@@ -140,7 +142,7 @@ export function mountCalendarNextAction(element, dependencies) {
     renderedKey = signature;
     const section = document.createElement('section'); section.className = 'calendar-next-action__surface';
     const header = document.createElement('header');
-    const heading = document.createElement('h2'); heading.id = 'calendar-next-action-title'; heading.tabIndex = -1; heading.textContent = 'Что сделать сейчас'; header.append(heading);
+    const heading = document.createElement('h2'); heading.id = 'calendar-next-action-title'; heading.tabIndex = -1; heading.textContent = compactRunning ? 'Сейчас' : 'Что сделать сейчас'; header.append(heading);
     if (onOpenSettings) { const settings = document.createElement('button'); settings.type = 'button'; settings.dataset.nextActionSetting = 'settings'; settings.textContent = 'Настроить'; settings.disabled = busy; settings.addEventListener('click', () => onOpenSettings(settings)); header.append(settings); }
     section.append(header);
     if (!preferences.enabled) {
@@ -149,8 +151,8 @@ export function mountCalendarNextAction(element, dependencies) {
       const copy = document.createElement('p'); copy.textContent = 'Загружаем задачи и дела…'; section.append(copy);
     } else if (selected) {
       const card = document.createElement('div'); card.className = 'calendar-next-action__item'; card.dataset.nextActionKey = selected.key;
-      const title = document.createElement('h3'); title.textContent = selected.title; card.append(title);
-      const why = document.createElement('p'); why.className = 'calendar-next-action__reason'; why.textContent = selected.reason; card.append(why);
+      const title = document.createElement('h3'); title.textContent = selected.title; if (!compactRunning) card.append(title);
+      const why = document.createElement('p'); why.className = 'calendar-next-action__reason'; why.textContent = compactRunning ? 'Время начатых дел учитывается.' : selected.reason; card.append(why);
       const actions = document.createElement('div'); actions.className = 'calendar-next-action__actions';
       if (selected.action === 'open') {
         const open = button('Открыть текущее', 'open', () => activate('open')); actions.append(open);
@@ -158,10 +160,10 @@ export function mountCalendarNextAction(element, dependencies) {
         actions.append(button('Отметить выполненным', 'done', () => activate('done')));
       } else {
         actions.append(button(selected.action === 'start' && (selected.task?.has_work || selected.task?.actual_seconds > 0 || selected.task?.actual_minutes > 0 || selected.run) ? 'Продолжить' : 'Начать', 'start', () => activate('start')));
-        actions.append(button('Открыть', 'open', () => activate('details')));
+        if (selected.type === 'task' || selected.run) actions.append(button('Открыть', 'open', () => activate('details')));
       }
       actions.append(button('Не предлагать час', 'later', () => deferCurrent()));
-      card.append(actions); section.append(card);
+      if (!compactRunning) card.append(actions); section.append(card);
     } else if (snapshot) {
       const copy = document.createElement('p'); copy.textContent = 'Подходящей задачи или дела сейчас нет.'; section.append(copy);
     }
@@ -204,9 +206,9 @@ export function mountCalendarNextAction(element, dependencies) {
 
   function deferCurrent() {
     if (!recommendation) return;
-    const now = getNow(), key = recommendation.key;
+    const now = getNow(), key = recommendation.key, title = recommendation.title;
     deferred.set(key, { until: now.getTime() + 60 * 60 * 1000, day: dateKey(now) });
-    focusTarget = 'later'; recommendation = snapshot ? selection(snapshot) : null; feedback = 'Не буду предлагать это дело в течение часа.'; render();
+    focusTarget = 'later'; recommendation = snapshot ? selection(snapshot) : null; feedback = `«${title}» не будет предлагаться в течение часа.`; render();
   }
 
   async function activate(kind) {
@@ -238,7 +240,7 @@ export function mountCalendarNextAction(element, dependencies) {
         await store.setStatus(current.routine.id, 'done', current.date);
       } else throw new Error('Действие больше недоступно. Обнови список.');
       notifyChange?.();
-      feedback = current.action === 'done' || kind === 'done' ? 'Отмечено выполненным.' : 'Действие открыто.';
+      feedback = current.action === 'done' || kind === 'done' ? `«${current.title}» — выполнено.` : '';
       snapshot = await readSnapshot();
       if (disposed || own !== revision) return;
       recommendation = selection(snapshot);

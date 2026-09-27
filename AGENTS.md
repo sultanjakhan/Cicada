@@ -6,6 +6,17 @@
 
 Перед новой постановкой прочитай [подтверждённый контекст продукта](docs/product-context.md), затем проверь исходный код и относящиеся к задаче Issues. Не повторяй вопросы, на которые уже есть ответ в этом контексте; уточняй только новые отсутствующие факты.
 
+Owner approval, 2026-09-27 (later): implement one coherent Today dashboard with
+one date, a compact goal context, one explained task/routine recommendation and
+controls for running work. Full task lists and paused-today work belong in Tasks.
+The shared Start picker includes routines. Recommendations use current time and
+existing records; routines do not require fixed times. No invented user routines,
+inferred location/hunger, autonomous starts or silent pauses of parallel work.
+Offer explicit feedback and minimal recommendation settings. The approved task
+card keeps stage choice and time accessible, collapses time history and moves
+goal/date/process editing to Edit. Keep the inline next-stage arrows in lists.
+This supersedes the older routine deferral and Edit-only stage rule below.
+
 Owner correction, 2026-09-27: keep the current-task widget aligned to the full
 dashboard width. Restore the inline next-stage arrow; the stage label is text,
 and arbitrary stage selection remains in task details -> Edit -> Stage. Remove

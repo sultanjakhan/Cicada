@@ -3,11 +3,11 @@ import { createRecurringStore, recurringSourceId, unfinishedRun } from './calend
 import { startCalendarExecution, readActiveBlocks } from './calendar-execution.js';
 const openDialogs=new WeakMap();
 
-export function openRecurringRun({document,invoke,id,date,start=false}) {
+export function openRecurringRun({document,invoke,id,date,start=false,returnFocus}) {
   if(openDialogs.has(document))return openDialogs.get(document);
   const win=document.defaultView,store=createRecurringStore(invoke);
   let disposed=false,busy=false,origin=date||store.today(),record=null,rows=[],current=-1,readVersion=0;
-  const dialog=createCalendarDialog({document,title:'Выполнение рутины',onClose:()=>{disposed=true;win.removeEventListener('task-state-changed',onExternal);win.removeEventListener('hanni:calendar-refresh',onExternal);openDialogs.delete(document);}});
+  const dialog=createCalendarDialog({document,title:'Выполнение рутины',returnFocus,onClose:()=>{disposed=true;win.removeEventListener('task-state-changed',onExternal);win.removeEventListener('hanni:calendar-refresh',onExternal);openDialogs.delete(document);}});
   dialog.modal.classList.add('calendar-routine-dialog');
   dialog.modal.querySelector('footer [data-dialog-close]').textContent='Закрыть';
   openDialogs.set(document,dialog);
