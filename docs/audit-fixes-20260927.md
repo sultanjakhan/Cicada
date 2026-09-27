@@ -117,3 +117,58 @@ Main integration, installation over stable, macOS live UI and production relay
 or update deployment are outside this DEV acceptance. Hosted CI and cache
 restore evidence must be read from the linked run, not inferred from local
 checks. No paid provider, deployment or repository spending limit was enabled.
+
+## Combined candidate acceptance, 2026-09-28
+
+Merge `a263c5b7a8b0b7294e287d0f6d02a0c7c8e465da` combines audited
+`5f6fad0` with accepted Today/routine UX through `cd891b5`.
+Conflict resolutions retain indexed task relationships and unchanged DOM
+rows, plus exact seconds and graph tracking modes. Later parallel Today
+settings and version changes are outside this checkpoint.
+
+The combination passed 486 JavaScript tests, 177 Rust tests (five explicitly
+ignored), frontend/native debug builds, privacy (300 first-party files) and
+history scans (322 commits, 1,570 first-party revisions; zero findings).
+
+Root acceptance used real Windows WebView2/Rust/SQLite, with executable SHA-256
+`d86b055ede23645e8435a995527ef66850e06e68edbfcd8fd2802884391cf782`
+and separate fictional profiles on an inactive desktop:
+
+- A closed 100-second block displays `01:40`. Advancing a stage preserves two
+  parallel blocks; pause/resume retains selection and the other block's ID.
+- With 5,000 tasks/100 goals, single-result search took 3.3–5.1 ms in seven
+  synchronous input-handler samples. This differs from the earlier benchmark
+  query; it is not a before/after comparison or paint timing. Unchanged refresh
+  retained its DOM row; a real goal-link change appeared after refresh.
+- All 1,000 active notes and one archived note are accessible, including rich
+  content on the last active note, without the unsupported 200-note warning.
+- A three-step graph initially exposes only its root check. Completion unlocks
+  dependent track/check branches without starting a timer. Explicit tracking
+  and completion return to Today with no running block.
+- Native restart preserved tasks, all 1,001 notes, stages, exact recorded seconds
+  and the completed routine. Note drafts survive tab changes/reopening; explicit
+  note save survives process restart.
+- Calendar Save persists the first day; Cancel/discard leaves the stored
+  snapshot byte-identical. At 360 x 740 normal settings opening puts the dialog
+  within x=12..348, y=12..690 and its 44-pixel close/cancel controls in view.
+- Screenshots cover empty/paused Today, routine branches, note drafts and
+  settings at 1,100 and 360 CSS pixels, with selected light/dark states.
+  This is desktop WebView resizing, not physical Android/keyboard acceptance.
+- Successful scenario console checks reported zero errors. Runtime receipts
+  record no QA desktop activation and all owned sessions stopped.
+
+Ignored raw plans/receipts/logs: `.local/integration-5c8e/`.
+Screenshots and fictional stores:
+`.local/background-qa/integrate-5c8e-{combined,empty}/`.
+Initial harness attempts had tool-selection, startup-readiness and selector
+failures; corrected plans produced the results above.
+
+Release remains conditional on graph compatibility. An executed synthetic
+harness confirms that 0.3.35 rejects graph reads/saves before any write and
+preserves raw JSON byte-for-byte. The new frontend preserves dependency,
+tracking and optional fields, but this does not make the old routine screen
+usable. Record-format protection is being developed by the parallel release
+owner. A separate marker experiment is deliberately excluded.
+
+Stable installation, physical Mac/Android upgrades, production sync and
+release/update-service deployment are not established by this checkpoint.
