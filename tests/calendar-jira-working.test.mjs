@@ -82,8 +82,16 @@ test('per-row start confirms Jira, preserves every row and order, runs timers in
 
 test('internal-stage arrow still advances only that task without starting a timer',async t=>{
   const x=await setup(t);
+  x.rows[0].actual_seconds=600;
+  x.rows[0].stage_log=[{stage:'analysis',at:`${TODAY}T11:00:00`}];
+  await x.refresh();
+  const row=()=>x.button(1,'open').closest('.cip-row');
+  assert.equal(row().querySelector('[data-cip-time]').textContent,'10:00');
+  assert.equal(row().querySelector('.cip-time-label').textContent,'Время работы');
+  assert.equal(row().querySelector('.cip-stage-time'),null);
   x.button(1,'stage-next').click();await settle();
   assert.equal(x.rows[0].stage,'description');assert.match(x.button(1,'open').closest('.cip-row').textContent,/Этап:Описание/);
+  assert.equal(row().querySelector('[data-cip-time]').textContent,'10:00','changing the stage preserves total task time');
   assert.deepEqual(x.writes().map(call=>call.command),['set_calendar_task_stage']);
   assert.equal(x.visibleRows().length,4);
 });

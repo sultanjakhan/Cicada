@@ -168,15 +168,18 @@ export function mountCalendarInProgress(element, dependencies) {
     if (row.record.jira_status) meta.append(node('span', 'cip-jira-status', `Jira: ${row.record.jira_status}`));
     if (row.stageState) {
       meta.append(stageControl(row));
-      const elapsed = stageSeconds({ blocks: row.stageBlocks, log: row.stageLog, stage: row.stageState.stage, now: clock() }).get(row.stageState.stage) || 0;
-      const stageTime = node('span', 'cip-stage-time', row.stageTimeAvailable ? `Учтено на этапе ${formatAgainstEstimate(elapsed, 0)}` : 'Время этапа недоступно');
-      if (!row.stageTimeAvailable) stageTime.title = 'Не удалось загрузить время по стадиям';
-      meta.append(stageTime);
+      if (!dependencies.includeJiraWorking) {
+        const elapsed = stageSeconds({ blocks: row.stageBlocks, log: row.stageLog, stage: row.stageState.stage, now: clock() }).get(row.stageState.stage) || 0;
+        const stageTime = node('span', 'cip-stage-time', row.stageTimeAvailable ? `Учтено на этапе ${formatAgainstEstimate(elapsed, 0)}` : 'Время этапа недоступно');
+        if (!row.stageTimeAvailable) stageTime.title = 'Не удалось загрузить время по стадиям';
+        meta.append(stageTime);
+      }
     }
     if (row.goal) { const goal = node('span', 'cip-goal', row.goal); goal.title = `Цель: ${row.goal}`; meta.append(goal); }
     content.append(meta);
     const meter = node('div', 'cip-time-meter');
-    meter.append(node('span', 'cip-time-label', row.estimate > 0 ? 'Всего / оценка' : 'Затрачено'), time);
+    const timeLabel = dependencies.includeJiraWorking ? (row.estimate > 0 ? 'Время работы / оценка' : 'Время работы') : (row.estimate > 0 ? 'Всего / оценка' : 'Затрачено');
+    meter.append(node('span', 'cip-time-label', timeLabel), time);
     let bar = null;
     if (row.estimate > 0) { bar = node('span', 'cip-progress'); bar.dataset.cipProgress = ''; bar.setAttribute('aria-hidden', 'true'); bar.append(node('span')); meter.append(bar); }
     paintTime(row, time, bar);

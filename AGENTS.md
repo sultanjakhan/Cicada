@@ -6,6 +6,10 @@ task above the list or recommend new work while started work is present.
 Preserve per-task stages, time and execution controls. Time means actual work:
 explicit Start confirms Jira and starts that task's timer; imported In Progress
 tasks remain idle until the owner presses Start. Import never starts clocks.
+The Dashboard shows one timer per task: total actual work across every session
+and day, including the running session. Pause adds no time; changing the internal
+stage never resets this total. Keep stage breakdown in task details/tooltips,
+not a second timer in the current-work list. See docs/task-time-and-recommendations.md.
 
 Owner approval, 2026-09-28 (unified process settings): keep project status rules,
 their visibility and optional process templates in general Cicada settings under
