@@ -1,5 +1,12 @@
 # Cicada
 
+Owner correction, 2026-09-28 (after the Jira Today preview): show current work
+in one list with a count matching its visible rows. Do not move one selected
+task above the list or recommend new work while started work is present.
+Preserve per-task stages, time and execution controls. Time means actual work:
+explicit Start confirms Jira and starts that task's timer; imported In Progress
+tasks remain idle until the owner presses Start. Import never starts clocks.
+
 Owner approval, 2026-09-28 (unified process settings): keep project status rules,
 their visibility and optional process templates in general Cicada settings under
 «Процессы задач», replacing «Этапы задач». Do not add a main workspace pane.
