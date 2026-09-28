@@ -11,10 +11,16 @@
 .calendar-jira .calendar-jira-hint { color:var(--text-secondary); }
 .calendar-jira .calendar-jira-error { color:var(--danger, #b42318); }
 .calendar-jira-form { display:grid; gap:10px; }
+.calendar-jira-pair { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(0,1fr); gap:12px; }
+.calendar-jira-help summary { cursor:pointer; font-size:12px; color:var(--text-secondary); }
+.calendar-jira-help p { margin-top:10px; }
 .calendar-jira-form label { display:grid; gap:6px; font-size:12px; font-weight:550; color:var(--text-secondary); }
 .calendar-jira-form input, .calendar-jira-form select { box-sizing:border-box; width:100%; min-width:0; min-height:38px; padding:7px 10px; border:1px solid var(--border-default); border-radius:8px; background:var(--bg-page); color:var(--text-primary); font:inherit; font-size:13px; font-weight:400; }
 .calendar-jira-form button { min-height:38px; padding:0 12px; font-size:13px; }
+.calendar-jira-form select { appearance:none; padding-right:26px; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%23666' stroke-width='1.5'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right 8px center; }
+.calendar-jira-form [data-jira-save] { background:var(--accent-fill); color:var(--accent-contrast); border-color:var(--accent-fill); }
 .calendar-jira [hidden] { display:none; }
+@media (max-width:600px) { .calendar-jira-pair { grid-template-columns:minmax(0,1fr); } }
 .calendar-settings-dialog { width:min(560px,calc(100% - 32px)); }
 .calendar-settings-dialog .calendar-setting { min-width:0; border:0; padding:0; margin:0 0 24px; }
 .calendar-settings-dialog .calendar-setting legend { padding:0; margin:0 0 10px; color:var(--text-primary); font-size:14px; font-weight:600; }

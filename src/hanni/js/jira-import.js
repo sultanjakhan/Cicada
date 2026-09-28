@@ -46,7 +46,7 @@ function announce(window, status) {
 
 export function mountJiraSettings(element, { invoke, setPending = () => {} }) {
   const window = element.ownerDocument.defaultView;
-  let status = null, busy = false, disposed = false, dirty = false, failure = '';
+  let status = null, busy = false, disposed = false, dirty = false, failure = '', statusRevision = 0;
   element.className = 'calendar-jira calendar-setting';
   element.innerHTML = `<h3>Jira</h3>
     <p class="calendar-jira-hint">Cicada только читает открытые задачи проекта, назначенные на тебя, и ничего не меняет в Jira. Сохраняются только названия: без описаний, комментариев, вложений, ключей и ссылок Jira.</p>
@@ -54,13 +54,19 @@ export function mountJiraSettings(element, { invoke, setPending = () => {} }) {
     <p data-jira-status role="status">Загружаем состояние…</p><p class="calendar-jira-error" data-jira-error role="alert" hidden></p>
     <p class="calendar-jira-hint" data-jira-unsupported hidden>На телефоне импорт недоступен: задачи из Jira приходят сюда через синхронизацию с Mac или ПК.</p>
     <div class="calendar-jira-form" data-jira-form>
-      <label>Сайт Jira<input type="text" data-jira-site placeholder="example.atlassian.net" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="url"></label>
-      <label>Email<input type="email" data-jira-email autocomplete="off" autocapitalize="off" spellcheck="false"></label>
-      <label>Тип API-токена<select data-jira-token-mode><option value="scoped">С ограниченными правами (scopes)</option><option value="classic">Без scopes</option></select></label>
+      <div class="calendar-jira-pair">
+        <label>Сайт Jira<input type="text" data-jira-site placeholder="example.atlassian.net" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="url"></label>
+        <label>Ключ проекта<input type="text" data-jira-project placeholder="DEMO" autocomplete="off" autocapitalize="characters" spellcheck="false"></label>
+      </div>
+      <div class="calendar-jira-pair">
+        <label>Email<input type="email" data-jira-email autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+        <label>Тип API-токена<select data-jira-token-mode><option value="scoped">С правами (scopes)</option><option value="classic">Без scopes</option></select></label>
+      </div>
       <label>API-токен<input type="password" data-jira-token autocomplete="off" autocapitalize="off" spellcheck="false"></label>
-      <p class="calendar-jira-hint">Токен создаётся на id.atlassian.com → Security → API tokens. Выбери права только на чтение Jira. Email и токен хранятся в защищённом хранилище этого компьютера и отправляются только в Atlassian для подключения к выбранному сайту.</p>
-      <label>Ключ проекта<input type="text" data-jira-project placeholder="DEMO" autocomplete="off" autocapitalize="characters" spellcheck="false"></label>
-      <p class="calendar-jira-hint">Подключай Jira только на одном компьютере — иначе переименования из Jira попадут в разбор версий.</p>
+      <details class="calendar-jira-help"><summary>Как получить токен и где он хранится</summary>
+        <p class="calendar-jira-hint">Токен создаётся на id.atlassian.com → Security → API tokens. Для Jira выбери права чтения read:jira-work. Email и токен хранятся в защищённом хранилище этого компьютера и отправляются только в Atlassian для подключения к выбранному сайту.</p>
+        <p class="calendar-jira-hint">Подключай Jira только на одном компьютере — иначе переименования из Jira попадут в разбор версий.</p>
+      </details>
       <div class="calendar-sync-actions"><button type="button" data-jira-save>Сохранить подключение</button><button type="button" data-jira-now>Загрузить сейчас</button><button type="button" data-jira-disable>Отключить</button></div>
     </div>`;
   const q = name => element.querySelector(`[data-jira-${name}]`);
@@ -80,10 +86,10 @@ export function mountJiraSettings(element, { invoke, setPending = () => {} }) {
     q('now').disabled = busy || !status?.enabled || status.running === true;
     q('disable').disabled = busy || !(status?.enabled || status?.tokenSaved);
   }
-  function accept(next) { if (next && typeof next === 'object') status = next; }
+  function accept(next) { if (next && typeof next === 'object') { status = next; statusRevision++; } }
   async function perform(steps) {
     if (busy || disposed) return;
-    busy = true; failure = ''; setPending(true); render();
+    busy = true; statusRevision++; failure = ''; setPending(true); render();
     try {
       for (const step of steps) { const next = await step(); if (disposed) return; accept(next); announce(window, next); }
     } catch (cause) { if (!disposed) failure = jiraErrorText(errorCode(cause)); }
@@ -112,8 +118,9 @@ export function mountJiraSettings(element, { invoke, setPending = () => {} }) {
   const onStatus = event => { if (!busy && !disposed) { accept(event.detail); render(); } };
   window.addEventListener('hanni:jira-status', onStatus);
   // The initial lookup must not lock the surrounding settings form.
-  void Promise.resolve().then(() => invoke('jira_import_status')).then(next => { if (!disposed && !busy) { accept(next); render(); } })
-    .catch(() => { if (!disposed && !busy) { failure = 'Не удалось прочитать состояние импорта из Jira.'; render(); } });
+  const initialRevision = statusRevision;
+  void Promise.resolve().then(() => invoke('jira_import_status')).then(next => { if (!disposed && !busy && statusRevision === initialRevision) { accept(next); render(); } })
+    .catch(() => { if (!disposed && !busy && statusRevision === initialRevision) { failure = 'Не удалось прочитать состояние импорта из Jira.'; render(); } });
   render();
   const dispose = () => { disposed = true; fields.token.value = ''; window.removeEventListener('hanni:jira-status', onStatus); };
   dispose.isDirty = () => dirty;

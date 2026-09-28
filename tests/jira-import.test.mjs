@@ -29,7 +29,7 @@ test('the section explains the read-only boundary and where the API token comes 
   assert.match(x.host.textContent, /только читает открытые задачи проекта, назначенные на тебя, и ничего не меняет в Jira/);
   assert.match(x.host.textContent, /id\.atlassian\.com → Security → API tokens/);
   assert.match(x.host.textContent, /Подключай Jira только на одном компьютере — иначе переименования из Jira попадут в разбор версий\./);
-  assert.deepEqual([...x.host.querySelectorAll('label')].map(label => label.firstChild.textContent), ['Сайт Jira', 'Email', 'Тип API-токена', 'API-токен', 'Ключ проекта']);
+  assert.deepEqual([...x.host.querySelectorAll('label')].map(label => label.firstChild.textContent), ['Сайт Jira', 'Ключ проекта', 'Email', 'Тип API-токена', 'API-токен']);
   assert.equal(x.q('token').type, 'password');
   assert.deepEqual([...x.host.querySelectorAll('button')].map(button => button.textContent), ['Сохранить подключение', 'Загрузить сейчас', 'Отключить']);
   assert.match(x.q('status').textContent, /не подключена/);
@@ -61,6 +61,20 @@ test('Save stores the connection, clears the token and checks it with an import'
   assert.deepEqual(x.pending, [true, false]);
   assert.equal(x.q('error').hidden, true);
   assert.equal(x.dispose.isDirty(), false);
+});
+
+test('a late initial status or error cannot overwrite a newer connected state', async t => {
+  for (const rejected of [false, true]) {
+    let finish;
+    const x = mount(t, () => new Promise((resolve, reject) => { finish = rejected ? reject : resolve; }));
+    await settle();
+    x.dom.window.dispatchEvent(new x.dom.window.CustomEvent('hanni:jira-status', { detail: connected() }));
+    finish(rejected ? new Error('old failure') : idle());
+    await settle();
+    assert.equal(x.q('project').value, 'DEMO');
+    assert.equal(x.q('now').disabled, false);
+    assert.equal(x.q('error').hidden, true);
+  }
 });
 
 test('a scoped token is the default; changing its type sends an explicit native choice', async t => {
