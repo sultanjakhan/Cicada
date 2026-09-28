@@ -45,6 +45,10 @@ export function mountJiraWorkflowSettings(element, { invoke, setPending = () => 
     if (busy || disposed) return;
     busy = true; const own = ++generation; setPending(true); controls(); say('Загружаем все статусы проекта…');
     try {
+      const imported = await invoke('jira_import_now');
+      if (disposed || own !== generation) return;
+      if (imported?.lastError) throw imported.lastError;
+      win.dispatchEvent(new win.Event('hanni:jira-imported'));
       const [next, templates] = await Promise.all([invoke('jira_workflow_options'), loadProcesses(invoke)]);
       if (disposed || own !== generation) return;
       snapshot = next; processes = templates; dirty = false; render();
