@@ -54,7 +54,13 @@ pub fn initialize(conn: &Connection) -> Result<(), String> {
         truncated INTEGER NOT NULL DEFAULT 0);
         INSERT OR IGNORE INTO jira_import_state(singleton) VALUES(1);
         CREATE TABLE IF NOT EXISTS jira_import_links (
-        item_id TEXT PRIMARY KEY, last_summary TEXT NOT NULL);",
+        item_id TEXT PRIMARY KEY, last_summary TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS jira_create_requests (
+        request_id TEXT PRIMARY KEY, scope_hash TEXT NOT NULL, binding_hash TEXT NOT NULL,
+        state TEXT NOT NULL CHECK(state IN ('prepared','pending','done','acknowledged')),
+        fingerprint TEXT, title TEXT, item_id TEXT, status TEXT, created_at TEXT NOT NULL);
+        CREATE UNIQUE INDEX IF NOT EXISTS jira_create_unresolved
+        ON jira_create_requests(scope_hash) WHERE state IN ('pending','done');",
     )
     .map_err(storage)
 }
@@ -1485,6 +1491,663 @@ pub async fn jira_task_transition(
     .await
 }
 
+// ---- Explicit Jira creation ----
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+struct CreateIssueType {
+    id: String,
+    name: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateTypesPage {
+    start_at: usize,
+    total: usize,
+    issue_types: Vec<CreateTypeBody>,
+}
+#[derive(Deserialize)]
+struct CreateTypeBody {
+    id: String,
+    name: String,
+    subtask: bool,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateFieldsPage {
+    start_at: usize,
+    total: usize,
+    fields: Vec<CreateFieldBody>,
+}
+// Metadata is deliberately projected during deserialization. Names, defaults,
+// descriptions, allowedValues and people never become application data.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateFieldBody {
+    field_id: String,
+    required: bool,
+    #[serde(default)]
+    has_default_value: bool,
+    operations: Vec<String>,
+}
+
+fn metadata_next(
+    start: usize,
+    actual: usize,
+    total: usize,
+    expected: usize,
+) -> Result<Option<usize>, Failure> {
+    if start != expected
+        || actual > PAGE_SIZE
+        || total > PAGE_SIZE * MAX_PAGES
+        || start > total
+        || actual > total - start
+        || (actual == 0 && start < total)
+    {
+        return Err(failure("jira_response_invalid"));
+    }
+    Ok((start + actual < total).then_some(start + actual))
+}
+
+fn collect_create_types(
+    mut fetch: impl FnMut(usize) -> Result<Vec<u8>, Failure>,
+) -> Result<Vec<CreateIssueType>, Failure> {
+    let mut start = 0;
+    let mut types = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..MAX_PAGES {
+        let page: CreateTypesPage =
+            serde_json::from_slice(&fetch(start)?).map_err(|_| failure("jira_response_invalid"))?;
+        let next = metadata_next(page.start_at, page.issue_types.len(), page.total, start)?;
+        for row in page.issue_types {
+            if !valid_remote_id(&row.id)
+                || !seen.insert(row.id.clone())
+                || row.name.trim().is_empty()
+                || row.name.chars().count() > 200
+                || row.name.chars().any(char::is_control)
+            {
+                return Err(failure("jira_response_invalid"));
+            }
+            if !row.subtask {
+                types.push(CreateIssueType {
+                    id: row.id,
+                    name: row.name,
+                });
+            }
+        }
+        match next {
+            Some(next) => start = next,
+            None => return Ok(types),
+        }
+    }
+    Err(failure("jira_response_invalid"))
+}
+
+fn check_create_fields(
+    mut fetch: impl FnMut(usize) -> Result<Vec<u8>, Failure>,
+) -> Result<(), Failure> {
+    let mut start = 0;
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..MAX_PAGES {
+        let page: CreateFieldsPage =
+            serde_json::from_slice(&fetch(start)?).map_err(|_| failure("jira_response_invalid"))?;
+        let next = metadata_next(page.start_at, page.fields.len(), page.total, start)?;
+        for row in page.fields {
+            if row.field_id.is_empty()
+                || row.field_id.len() > 100
+                || !seen.insert(row.field_id.clone())
+            {
+                return Err(failure("jira_response_invalid"));
+            }
+            if matches!(row.field_id.as_str(), "summary" | "project" | "issuetype") {
+                if row.field_id == "summary" && !row.operations.iter().any(|op| op == "set") {
+                    return Err(failure("jira_create_required_fields"));
+                }
+            } else if row.required && !row.has_default_value {
+                return Err(failure("jira_create_required_fields"));
+            }
+        }
+        match next {
+            Some(next) => start = next,
+            None => {
+                return if ["summary", "project", "issuetype"]
+                    .iter()
+                    .all(|field| seen.contains(*field))
+                {
+                    Ok(())
+                } else {
+                    Err(failure("jira_create_required_fields"))
+                }
+            }
+        }
+    }
+    Err(failure("jira_response_invalid"))
+}
+
+enum CreateRequest<'a> {
+    Types(usize),
+    Fields { issue_type: &'a str, start: usize },
+    Create { issue_type: &'a str, title: &'a str },
+}
+fn create_request(
+    client: &reqwest::blocking::Client,
+    config: &Config,
+    credential: &Credential,
+    cloud_id: Option<&str>,
+    operation: CreateRequest<'_>,
+) -> Result<reqwest::blocking::Request, Failure> {
+    let base = api_base(config, credential, cloud_id)?;
+    let metadata = format!(
+        "{base}/rest/api/3/issue/createmeta/{}/issuetypes",
+        config.project
+    );
+    let request =
+        match operation {
+            CreateRequest::Types(start) => client
+                .get(metadata)
+                .query(&[("startAt", start), ("maxResults", PAGE_SIZE)]),
+            CreateRequest::Fields { issue_type, start } => {
+                if !valid_remote_id(issue_type) {
+                    return Err(failure("jira_issue_type_invalid"));
+                }
+                client
+                    .get(format!("{metadata}/{issue_type}"))
+                    .query(&[("startAt", start), ("maxResults", PAGE_SIZE)])
+            }
+            CreateRequest::Create { issue_type, title } => {
+                if !valid_remote_id(issue_type) {
+                    return Err(failure("jira_issue_type_invalid"));
+                }
+                if !valid_edit_title(title) {
+                    return Err(failure("jira_title_invalid"));
+                }
+                client.post(format!("{base}/rest/api/3/issue")).json(&json!({"fields":{
+                "summary":title, "project":{"key":config.project}, "issuetype":{"id":issue_type}
+            }}))
+            }
+        };
+    request
+        .basic_auth(&credential.email, Some(&credential.token))
+        .header(reqwest::header::ACCEPT, "application/json")
+        .build()
+        .map_err(|_| failure("jira_network_unavailable"))
+}
+
+fn create_status(status: u16, retry_after: Option<&str>) -> Result<(), Failure> {
+    match status {
+        201 => Ok(()),
+        300..=399 | 400 | 401 | 403 | 404 | 422 | 429 => Err(http_failure(status, retry_after)),
+        _ => Err(failure("jira_create_outcome_unknown")),
+    }
+}
+fn created_id(body: &[u8]) -> Result<String, Failure> {
+    #[derive(Deserialize)]
+    struct Created {
+        id: String,
+    }
+    let created: Created =
+        serde_json::from_slice(body).map_err(|_| failure("jira_create_outcome_unknown"))?;
+    if !valid_remote_id(&created.id) {
+        return Err(failure("jira_create_outcome_unknown"));
+    }
+    Ok(created.id)
+}
+
+trait CreateApi {
+    fn issue_types(&mut self) -> Result<Vec<CreateIssueType>, Failure>;
+    fn check_fields(&mut self, issue_type: &str) -> Result<(), Failure>;
+    fn create(&mut self, issue_type: &str, title: &str) -> Result<String, Failure>;
+    fn created_issue(&mut self, id: &str) -> Result<Issue, Failure>;
+}
+impl CreateApi for HttpTaskApi<'_> {
+    fn issue_types(&mut self) -> Result<Vec<CreateIssueType>, Failure> {
+        collect_create_types(|start| {
+            read_response(
+                self.client,
+                create_request(
+                    self.client,
+                    self.config,
+                    self.credential,
+                    self.cloud_id.as_deref(),
+                    CreateRequest::Types(start),
+                )?,
+                MAX_BODY,
+            )
+        })
+    }
+    fn check_fields(&mut self, issue_type: &str) -> Result<(), Failure> {
+        check_create_fields(|start| {
+            read_response(
+                self.client,
+                create_request(
+                    self.client,
+                    self.config,
+                    self.credential,
+                    self.cloud_id.as_deref(),
+                    CreateRequest::Fields { issue_type, start },
+                )?,
+                MAX_BODY,
+            )
+        })
+    }
+    fn create(&mut self, issue_type: &str, title: &str) -> Result<String, Failure> {
+        use std::io::Read;
+        let request = create_request(
+            self.client,
+            self.config,
+            self.credential,
+            self.cloud_id.as_deref(),
+            CreateRequest::Create { issue_type, title },
+        )?;
+        let response = self
+            .client
+            .execute(request)
+            .map_err(|_| failure("jira_create_outcome_unknown"))?;
+        create_status(
+            response.status().as_u16(),
+            response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok()),
+        )?;
+        let mut body = Vec::new();
+        response
+            .take(MAX_BODY + 1)
+            .read_to_end(&mut body)
+            .map_err(|_| failure("jira_create_outcome_unknown"))?;
+        if body.len() as u64 > MAX_BODY {
+            return Err(failure("jira_create_outcome_unknown"));
+        }
+        created_id(&body)
+    }
+    fn created_issue(&mut self, id: &str) -> Result<Issue, Failure> {
+        self.read_issue(id)
+    }
+}
+
+const CREATE_JOURNAL_LIMIT: i64 = 128;
+
+#[derive(Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateLocal {
+    due_date: Option<String>,
+    estimate_minutes: Option<i64>,
+    goal_id: Option<String>,
+    important: Option<bool>,
+    time: Option<String>,
+    task_kind: Option<String>,
+    process: Option<String>,
+    stage: Option<String>,
+    waiting: Option<bool>,
+}
+impl CreateLocal {
+    fn fields(&self) -> crate::calendar_compat::TaskFields {
+        crate::calendar_compat::TaskFields {
+            time: self.time.clone(),
+            task_kind: self.task_kind.clone(),
+            sphere: Some("work".into()),
+            process: self.process.clone(),
+            stage: self.stage.clone(),
+            waiting: self.waiting,
+        }
+    }
+    fn validate(&self, conn: &Connection, title: &str) -> Result<(), String> {
+        crate::calendar_compat::validate_task_input(
+            conn,
+            title,
+            &self.due_date,
+            self.estimate_minutes,
+            &self.goal_id,
+            &self.fields(),
+        )
+        .map_err(|_| "jira_create_local_invalid".into())
+    }
+}
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateResult {
+    request_id: String,
+    item_id: String,
+    title: String,
+    status: String,
+    changed: usize,
+}
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateRecovery {
+    request_id: String,
+    state: &'static str,
+    title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    item_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status: Option<String>,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateOptions {
+    project: String,
+    issue_types: Vec<CreateIssueType>,
+    request_id: Option<String>,
+    recovery: Option<CreateRecovery>,
+}
+fn create_scope(config: &Config) -> String {
+    hex::encode(Sha256::digest(
+        format!("{}\n{}", config.site, config.project).as_bytes(),
+    ))
+}
+fn create_binding(config: &Config) -> String {
+    hex::encode(Sha256::digest(
+        format!("{}\n{}", create_scope(config), config.token_mode.as_str()).as_bytes(),
+    ))
+}
+fn create_fingerprint(
+    title: &str,
+    issue_type: &str,
+    local: &CreateLocal,
+) -> Result<String, String> {
+    Ok(hex::encode(Sha256::digest(
+        serde_json::to_vec(&json!([title.trim(), issue_type, local])).map_err(storage)?,
+    )))
+}
+fn create_recovery(conn: &Connection, config: &Config) -> Result<Option<CreateRecovery>, String> {
+    conn.query_row("SELECT request_id,state,title,item_id,status FROM jira_create_requests WHERE scope_hash=?1 AND state IN ('pending','done')",
+        [create_scope(config)], |row| {
+            let state: String = row.get(1)?;
+            Ok(CreateRecovery { request_id:row.get(0)?, state:if state == "done" { "created" } else { "unknown" },
+                title:row.get(2)?, item_id:row.get(3)?, status:row.get(4)? })
+        }).optional().map_err(storage)
+}
+fn prepare_create(conn: &Connection, config: &Config) -> Result<String, String> {
+    // Only native-issued, still-retained tickets may dispatch POST. Pruning a
+    // completed or unused ticket therefore cannot turn an old replay into a write.
+    let tx = conn.unchecked_transaction().map_err(storage)?;
+    if create_recovery(&tx, config)?.is_some() {
+        return Err("jira_create_recovery_required".into());
+    }
+    tx.execute(
+        "DELETE FROM jira_create_requests WHERE request_id IN (
+        SELECT request_id FROM jira_create_requests WHERE state NOT IN ('pending','done')
+        ORDER BY rowid LIMIT MAX(0,(SELECT COUNT(*) FROM jira_create_requests)-?1+1))",
+        [CREATE_JOURNAL_LIMIT],
+    )
+    .map_err(storage)?;
+    let count: i64 = tx
+        .query_row("SELECT COUNT(*) FROM jira_create_requests", [], |r| {
+            r.get(0)
+        })
+        .map_err(storage)?;
+    if count >= CREATE_JOURNAL_LIMIT {
+        return Err("jira_create_recovery_required".into());
+    }
+    let request_id = uuid::Uuid::new_v4().to_string();
+    tx.execute("INSERT INTO jira_create_requests(request_id,scope_hash,binding_hash,state,created_at) VALUES(?1,?2,?3,'prepared',?4)",
+        params![request_id,create_scope(config),create_binding(config),stamp(Utc::now())]).map_err(storage)?;
+    tx.commit().map_err(storage)?;
+    Ok(request_id)
+}
+fn acknowledge_create(conn: &Connection, config: &Config, request_id: &str) -> Result<(), String> {
+    let changed = conn.execute("UPDATE jira_create_requests SET state='acknowledged' WHERE request_id=?1 AND scope_hash=?2 AND state IN ('pending','done','acknowledged')",
+        params![request_id,create_scope(config)]).map_err(storage)?;
+    if changed == 1 {
+        Ok(())
+    } else {
+        Err("jira_create_request_invalid".into())
+    }
+}
+fn create_replay(
+    conn: &Connection,
+    config: &Config,
+    request_id: &str,
+    fingerprint: &str,
+) -> Result<Option<CreateResult>, String> {
+    let ticket: Option<(String,String,Option<String>,Option<String>,Option<String>,Option<String>)> = conn.query_row(
+        "SELECT binding_hash,state,fingerprint,item_id,title,status FROM jira_create_requests WHERE request_id=?1",
+        [request_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional().map_err(storage)?;
+    let (binding, state, stored, item, title, status) =
+        ticket.ok_or("jira_create_request_invalid")?;
+    if binding != create_binding(config) {
+        return Err("jira_create_configuration_changed".into());
+    }
+    if stored.as_deref().is_some_and(|value| value != fingerprint) {
+        return Err("jira_create_request_conflict".into());
+    }
+    match state.as_str() {
+        "prepared" => Ok(None),
+        "pending" => Err("jira_create_outcome_unknown".into()),
+        "done" | "acknowledged" if item.is_some() => Ok(Some(CreateResult {
+            request_id: request_id.into(),
+            item_id: item.unwrap(),
+            title: title.unwrap_or_default(),
+            status: status.unwrap_or_default(),
+            changed: 0,
+        })),
+        _ => Err("jira_create_request_invalid".into()),
+    }
+}
+
+fn perform_create(
+    db: &Mutex<Connection>,
+    config: &Config,
+    request_id: &str,
+    title: &str,
+    issue_type: &str,
+    local: &CreateLocal,
+    api: &mut impl CreateApi,
+) -> Result<CreateResult, String> {
+    if !valid_edit_title(title) {
+        return Err("jira_title_invalid".into());
+    }
+    if !valid_remote_id(issue_type) {
+        return Err("jira_issue_type_invalid".into());
+    }
+    let title = title.trim();
+    let fingerprint = create_fingerprint(title, issue_type, local)?;
+    {
+        let conn = lock(db)?;
+        if let Some(result) = create_replay(&conn, config, request_id, &fingerprint)? {
+            return Ok(result);
+        }
+        if create_recovery(&conn, config)?.is_some() {
+            return Err("jira_create_recovery_required".into());
+        }
+        local.validate(&conn, title)?;
+    }
+    if !api
+        .issue_types()
+        .map_err(|e| e.code)?
+        .iter()
+        .any(|kind| kind.id == issue_type)
+    {
+        return Err("jira_issue_type_invalid".into());
+    }
+    api.check_fields(issue_type).map_err(|e| e.code)?;
+    {
+        let mut conn = lock(db)?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage)?;
+        if read_config(&tx)? != *config {
+            return Err("jira_create_configuration_changed".into());
+        }
+        if let Some(result) = create_replay(&tx, config, request_id, &fingerprint)? {
+            return Ok(result);
+        }
+        if create_recovery(&tx, config)?.is_some() {
+            return Err("jira_create_recovery_required".into());
+        }
+        local.validate(&tx, title)?;
+        tx.execute("UPDATE jira_create_requests SET state='pending',fingerprint=?2,title=?3 WHERE request_id=?1 AND state='prepared'",
+            params![request_id,fingerprint,title]).map_err(storage)?;
+        // Commit before dispatch. A crash anywhere from here to the final
+        // transaction requires explicit recovery, never another automatic POST.
+        tx.commit().map_err(storage)?;
+    }
+    let remote_id = match api.create(issue_type, title) {
+        Ok(id) => id,
+        Err(error) if error.code == "jira_create_outcome_unknown" => return Err(error.code),
+        Err(error) => {
+            // A definitive Jira rejection is safe to correct and submit again.
+            lock(db)?.execute("UPDATE jira_create_requests SET state='prepared',fingerprint=NULL,title=NULL WHERE request_id=?1 AND state='pending'",
+                [request_id]).map_err(|_| "jira_create_outcome_unknown")?;
+            return Err(error.code);
+        }
+    };
+    let current = api
+        .created_issue(&remote_id)
+        .map_err(|_| "jira_create_outcome_unknown")?;
+    if current.id != remote_id || current.project.as_deref() != Some(config.project.as_str()) {
+        return Err("jira_create_outcome_unknown".into());
+    }
+    let store = || -> Result<CreateResult, String> {
+        let mut conn = lock(db)?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage)?;
+        if read_config(&tx)? != *config {
+            return Err("jira_create_configuration_changed".into());
+        }
+        let item = item_id(&config.site, &current.id);
+        let changed = apply(
+            &tx,
+            &config.site,
+            std::slice::from_ref(&current),
+            &stamp(Utc::now()),
+        )?;
+        crate::calendar_compat::save_task_in_transaction(
+            &tx,
+            Some(item.clone()),
+            current.title.clone(),
+            local.due_date.clone(),
+            local.estimate_minutes,
+            local.goal_id.clone(),
+            None,
+            local.important,
+            local.fields(),
+        )?;
+        tx.execute("UPDATE jira_create_requests SET state='done',item_id=?2,title=?3,status=?4 WHERE request_id=?1 AND state='pending'",
+            params![request_id,item,current.title,current.status]).map_err(storage)?;
+        tx.commit().map_err(storage)?;
+        Ok(CreateResult {
+            request_id: request_id.into(),
+            item_id: item,
+            title: current.title.clone(),
+            status: current.status.clone(),
+            changed,
+        })
+    };
+    store().map_err(|_| "jira_create_outcome_unknown".into())
+}
+
+#[tauri::command]
+pub async fn jira_create_options(app: tauri::AppHandle) -> Result<Value, String> {
+    blocking(app, |app| {
+        let runtime = app.state::<Runtime>();
+        let _running = runtime
+            .import
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let db = &app.state::<crate::AppState>().0;
+        let config = read_config(&*lock(db)?)?;
+        if !config.ready() {
+            return Err("jira_not_configured".into());
+        }
+        let recovery = create_recovery(&*lock(db)?, &config)?;
+        let (issue_types, request_id) = if recovery.is_some() {
+            (Vec::new(), None)
+        } else {
+            let credential = runtime.credential()?.ok_or("jira_token_required")?;
+            if credential.site != config.site {
+                return Err("jira_token_required_for_site".into());
+            }
+            if credential.token_mode != config.token_mode {
+                return Err("jira_token_required_for_mode".into());
+            }
+            let mut api = HttpTaskApi::new(&config, &credential).map_err(|e| e.code)?;
+            let types = api.issue_types().map_err(|e| e.code)?;
+            let conn = lock(db)?;
+            if read_config(&conn)? != config {
+                return Err("jira_create_configuration_changed".into());
+            }
+            (types, Some(prepare_create(&conn, &config)?))
+        };
+        serde_json::to_value(CreateOptions {
+            project: config.project,
+            issue_types,
+            request_id,
+            recovery,
+        })
+        .map_err(storage)
+    })
+    .await
+}
+#[tauri::command(rename_all = "camelCase")]
+pub async fn jira_task_create(
+    app: tauri::AppHandle,
+    request_id: String,
+    title: String,
+    issue_type_id: String,
+    local: CreateLocal,
+) -> Result<Value, String> {
+    blocking(app, move |app| {
+        let runtime = app.state::<Runtime>();
+        let _running = runtime
+            .import
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let db = &app.state::<crate::AppState>().0;
+        let config = read_config(&*lock(db)?)?;
+        if !config.ready() {
+            return Err("jira_not_configured".into());
+        }
+        if let Some(result) = create_replay(
+            &*lock(db)?,
+            &config,
+            &request_id,
+            &create_fingerprint(&title, &issue_type_id, &local)?,
+        )? {
+            return serde_json::to_value(result).map_err(storage);
+        }
+        let credential = runtime.credential()?.ok_or("jira_token_required")?;
+        if credential.site != config.site {
+            return Err("jira_token_required_for_site".into());
+        }
+        if credential.token_mode != config.token_mode {
+            return Err("jira_token_required_for_mode".into());
+        }
+        let mut api = HttpTaskApi::new(&config, &credential).map_err(|e| e.code)?;
+        serde_json::to_value(perform_create(
+            db,
+            &config,
+            &request_id,
+            &title,
+            &issue_type_id,
+            &local,
+            &mut api,
+        )?)
+        .map_err(storage)
+    })
+    .await
+}
+#[tauri::command(rename_all = "camelCase")]
+pub async fn jira_create_acknowledge(
+    app: tauri::AppHandle,
+    request_id: String,
+) -> Result<Value, String> {
+    blocking(app, move |app| {
+        let runtime = app.state::<Runtime>();
+        let _running = runtime
+            .import
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let state = app.state::<crate::AppState>();
+        let conn = lock(&state.0)?;
+        let config = read_config(&conn)?;
+        acknowledge_create(&conn, &config, &request_id)?;
+        Ok(json!({"acknowledged":true}))
+    })
+    .await
+}
+
 // ---- Commands ----
 
 fn current_status(app: &tauri::AppHandle, changed: usize) -> Result<Value, String> {
@@ -1706,6 +2369,455 @@ mod tests {
         changed
     }
 
+    struct FakeCreateApi<'a> {
+        calls: Vec<&'static str>,
+        failure: Option<&'static str>,
+        fields_failure: bool,
+        read_failure: bool,
+        current: Issue,
+        before_post: Option<Box<dyn FnOnce() + 'a>>,
+        after_post: Option<Box<dyn FnOnce() + 'a>>,
+    }
+    impl FakeCreateApi<'_> {
+        fn new() -> Self {
+            Self {
+                calls: vec![],
+                failure: None,
+                fields_failure: false,
+                read_failure: false,
+                current: issue("987654321987654", "BE: Fictional check"),
+                before_post: None,
+                after_post: None,
+            }
+        }
+    }
+    impl CreateApi for FakeCreateApi<'_> {
+        fn issue_types(&mut self) -> Result<Vec<CreateIssueType>, Failure> {
+            self.calls.push("types");
+            Ok(vec![CreateIssueType {
+                id: "100".into(),
+                name: "Task".into(),
+            }])
+        }
+        fn check_fields(&mut self, _: &str) -> Result<(), Failure> {
+            self.calls.push("fields");
+            if let Some(hook) = self.before_post.take() {
+                hook();
+            }
+            if self.fields_failure {
+                Err(failure("jira_create_required_fields"))
+            } else {
+                Ok(())
+            }
+        }
+        fn create(&mut self, _: &str, title: &str) -> Result<String, Failure> {
+            self.calls.push("POST");
+            self.current.title = title.into();
+            if let Some(hook) = self.after_post.take() {
+                hook();
+            }
+            match self.failure {
+                Some(code) => Err(failure(code)),
+                None => Ok(self.current.id.clone()),
+            }
+        }
+        fn created_issue(&mut self, id: &str) -> Result<Issue, Failure> {
+            self.calls.push("read");
+            assert_eq!(id, self.current.id);
+            if self.read_failure {
+                Err(failure("jira_timeout"))
+            } else {
+                Ok(self.current.clone())
+            }
+        }
+    }
+    fn create_fixture() -> (Mutex<Connection>, Config, String) {
+        let (db, _, _) = configured();
+        let config = read_config(&lock(&db).unwrap()).unwrap();
+        let request = prepare_create(&lock(&db).unwrap(), &config).unwrap();
+        (db, config, request)
+    }
+    fn submit(
+        db: &Mutex<Connection>,
+        config: &Config,
+        request: &str,
+        api: &mut impl CreateApi,
+    ) -> Result<CreateResult, String> {
+        perform_create(
+            db,
+            config,
+            request,
+            "BE: Fictional check",
+            "100",
+            &CreateLocal::default(),
+            api,
+        )
+    }
+
+    #[test]
+    fn create_success_preserves_local_options_and_replays_without_post() {
+        let (db, config, request) = create_fixture();
+        let mut api = FakeCreateApi::new();
+        {
+            let conn = lock(&db).unwrap();
+            conn.execute("INSERT INTO calendar_goals(id,title,created_at,updated_at) VALUES('fictional-goal','Goal',?1,?1)",[T0]).unwrap();
+            import(&conn, &[issue("54321", "Other active task")]);
+            conn.execute("INSERT INTO timeline_blocks(source_type,source_id,date,start_time,is_active,created_at,updated_at) VALUES('note',?1,'2026-09-25','09:00',1,?2,?2)",
+                params![item_id(SITE,"54321"),T0]).unwrap();
+        }
+        let local = CreateLocal {
+            due_date: Some("2026-10-01".into()),
+            estimate_minutes: Some(30),
+            important: Some(true),
+            time: Some("10:30".into()),
+            task_kind: Some("normal".into()),
+            process: Some("custom".into()),
+            stage: Some("review".into()),
+            waiting: Some(true),
+            goal_id: Some("fictional-goal".into()),
+            ..CreateLocal::default()
+        };
+        let result = perform_create(
+            &db,
+            &config,
+            &request,
+            "BE: Fictional check",
+            "100",
+            &local,
+            &mut api,
+        )
+        .unwrap();
+        assert_eq!(api.calls, vec!["types", "fields", "POST", "read"]);
+        assert_eq!(result.item_id, item_id(SITE, "987654321987654"));
+        let conn = lock(&db).unwrap();
+        let stored = row(&conn, &result.item_id);
+        assert_eq!(attributes::sphere(&stored.1), Some("work"));
+        assert_eq!(attributes::process(&stored.1), Some("custom"));
+        assert_eq!(attributes::stage(&stored.1), Some("review"));
+        assert!(attributes::waiting(&stored.1));
+        assert!(!stored.4);
+        let planning: (String, String, i64, i64, String) = conn
+            .query_row(
+                "SELECT date,time,duration_minutes,priority,notes FROM items WHERE id=?1",
+                [&result.item_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            planning,
+            ("2026-10-01".into(), "10:30".into(), 30, 5, "".into())
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT goal_id FROM calendar_task_goals WHERE source_id=?1",
+                [&result.item_id],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+            "fictional-goal"
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM timeline_blocks WHERE is_active=1 AND source_id=?1",
+                [item_id(SITE, "54321")],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM timeline_blocks WHERE source_id=?1",
+                [&result.item_id],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+        let recovery = create_recovery(&conn, &config).unwrap().unwrap();
+        assert_eq!(recovery.state, "created");
+        assert_eq!(recovery.item_id.as_deref(), Some(result.item_id.as_str()));
+        assert_eq!(
+            prepare_create(&conn, &config).unwrap_err(),
+            "jira_create_recovery_required"
+        );
+        let sync: String = conn
+            .query_row("SELECT group_concat(data) FROM mvp_records", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(!sync.contains(&request));
+        assert!(!sync.contains("987654321987654"));
+        assert!(!sync.contains("jira_create_requests"));
+        drop(conn);
+        let again = perform_create(
+            &db,
+            &config,
+            &request,
+            "BE: Fictional check",
+            "100",
+            &local,
+            &mut api,
+        )
+        .unwrap();
+        assert_eq!(again.item_id, result.item_id);
+        assert_eq!(again.changed, 0);
+        assert_eq!(api.calls.len(), 4);
+        assert_eq!(
+            submit(&db, &config, &request, &mut api).unwrap_err(),
+            "jira_create_request_conflict"
+        );
+        acknowledge_create(&lock(&db).unwrap(), &config, &request).unwrap();
+        assert!(create_recovery(&lock(&db).unwrap(), &config)
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            perform_create(
+                &db,
+                &config,
+                &request,
+                "BE: Fictional check",
+                "100",
+                &local,
+                &mut api
+            )
+            .unwrap()
+            .item_id,
+            result.item_id
+        );
+        assert_eq!(api.calls.len(), 4);
+    }
+
+    #[test]
+    fn create_unknown_survives_reopen_blocks_new_tickets_and_never_replays() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("synthetic.db");
+        let conn = Connection::open(&path).unwrap();
+        crate::init_schema(&conn).unwrap();
+        save_config(&conn, SITE, "DEMO", TokenMode::Classic, T0).unwrap();
+        let config = read_config(&conn).unwrap();
+        let request = prepare_create(&conn, &config).unwrap();
+        let db = Mutex::new(conn);
+        let mut api = FakeCreateApi::new();
+        api.failure = Some("jira_create_outcome_unknown");
+        assert_eq!(
+            submit(&db, &config, &request, &mut api).unwrap_err(),
+            "jira_create_outcome_unknown"
+        );
+        drop(db);
+        let conn = Connection::open(&path).unwrap();
+        crate::init_schema(&conn).unwrap();
+        let pending = create_recovery(&conn, &config).unwrap().unwrap();
+        assert_eq!(pending.state, "unknown");
+        assert_eq!(pending.title, "BE: Fictional check");
+        assert_eq!(pending.item_id, None);
+        assert_eq!(
+            prepare_create(&conn, &config).unwrap_err(),
+            "jira_create_recovery_required"
+        );
+        let db = Mutex::new(conn);
+        let mut retry = FakeCreateApi::new();
+        assert_eq!(
+            submit(&db, &config, &request, &mut retry).unwrap_err(),
+            "jira_create_outcome_unknown"
+        );
+        assert!(retry.calls.is_empty());
+        let conn = lock(&db).unwrap();
+        let mode = Config {
+            token_mode: TokenMode::Scoped,
+            ..config.clone()
+        };
+        assert_eq!(
+            create_recovery(&conn, &mode).unwrap().unwrap().request_id,
+            request
+        );
+        let other = Config {
+            project: "OTHER".into(),
+            ..config.clone()
+        };
+        assert!(create_recovery(&conn, &other).unwrap().is_none());
+        assert_eq!(
+            acknowledge_create(&conn, &other, &request).unwrap_err(),
+            "jira_create_request_invalid"
+        );
+        assert!(create_recovery(&conn, &config).unwrap().is_some());
+        acknowledge_create(&conn, &config, &request).unwrap();
+        let new_request = prepare_create(&conn, &config).unwrap();
+        assert_ne!(new_request, request);
+        drop(conn);
+        assert_eq!(
+            submit(&db, &config, &request, &mut retry).unwrap_err(),
+            "jira_create_request_invalid"
+        );
+        assert!(retry.calls.is_empty());
+    }
+
+    #[test]
+    fn create_validates_request_fields_and_binding_before_post() {
+        let (db, config, request) = create_fixture();
+        let mut api = FakeCreateApi::new();
+        assert_eq!(
+            submit(&db, &config, "forged-request", &mut api).unwrap_err(),
+            "jira_create_request_invalid"
+        );
+        let other = Config {
+            project: "OTHER".into(),
+            ..config.clone()
+        };
+        assert_eq!(
+            submit(&db, &other, &request, &mut api).unwrap_err(),
+            "jira_create_configuration_changed"
+        );
+        for local in [
+            CreateLocal {
+                due_date: Some("invalid".into()),
+                ..CreateLocal::default()
+            },
+            CreateLocal {
+                time: Some("10:00".into()),
+                ..CreateLocal::default()
+            },
+            CreateLocal {
+                goal_id: Some("missing".into()),
+                ..CreateLocal::default()
+            },
+            CreateLocal {
+                estimate_minutes: Some(0),
+                ..CreateLocal::default()
+            },
+            CreateLocal {
+                process: Some("bad,id".into()),
+                ..CreateLocal::default()
+            },
+        ] {
+            assert_eq!(
+                perform_create(&db, &config, &request, "Title", "100", &local, &mut api)
+                    .unwrap_err(),
+                "jira_create_local_invalid"
+            );
+        }
+        assert!(api.calls.is_empty());
+        assert!(serde_json::from_value::<CreateLocal>(json!({"description":"forbidden"})).is_err());
+        assert_eq!(
+            perform_create(
+                &db,
+                &config,
+                &request,
+                "Title",
+                "999",
+                &CreateLocal::default(),
+                &mut api
+            )
+            .unwrap_err(),
+            "jira_issue_type_invalid"
+        );
+        api.fields_failure = true;
+        assert_eq!(
+            submit(&db, &config, &request, &mut api).unwrap_err(),
+            "jira_create_required_fields"
+        );
+        assert!(!api.calls.contains(&"POST"));
+        api.fields_failure = false;
+        api.before_post = Some(Box::new(|| {
+            save_config(&lock(&db).unwrap(), SITE, "OTHER", TokenMode::Classic, T0).unwrap()
+        }));
+        assert_eq!(
+            submit(&db, &config, &request, &mut api).unwrap_err(),
+            "jira_create_configuration_changed"
+        );
+        assert!(!api.calls.contains(&"POST"));
+    }
+
+    #[test]
+    fn create_readback_or_local_failure_retains_unknown_and_rolls_back() {
+        for fault in 0..3 {
+            let (db, config, request) = create_fixture();
+            let mut api = FakeCreateApi::new();
+            match fault {
+                0 => api.read_failure = true,
+                1 => api.current.project = Some("OTHER".into()),
+                _ => lock(&db).unwrap().execute_batch("CREATE TRIGGER fail_create_journal BEFORE UPDATE ON jira_create_requests WHEN NEW.state='done' BEGIN SELECT RAISE(FAIL,'synthetic'); END").unwrap(),
+            }
+            assert_eq!(
+                submit(&db, &config, &request, &mut api).unwrap_err(),
+                "jira_create_outcome_unknown"
+            );
+            let conn = lock(&db).unwrap();
+            assert_eq!(count(&conn), 0);
+            assert_eq!(
+                conn.query_row("SELECT COUNT(*) FROM jira_import_links", [], |r| r
+                    .get::<_, i64>(0))
+                    .unwrap(),
+                0
+            );
+            assert_eq!(
+                create_recovery(&conn, &config).unwrap().unwrap().state,
+                "unknown"
+            );
+            drop(conn);
+            assert_eq!(
+                submit(&db, &config, &request, &mut api).unwrap_err(),
+                "jira_create_outcome_unknown"
+            );
+            assert_eq!(api.calls.iter().filter(|op| **op == "POST").count(), 1);
+        }
+    }
+
+    #[test]
+    fn create_rejection_can_be_corrected_but_concurrent_submission_is_blocked() {
+        let (db, config, request) = create_fixture();
+        let second = prepare_create(&lock(&db).unwrap(), &config).unwrap();
+        let mut api = FakeCreateApi::new();
+        api.failure = Some("jira_forbidden");
+        assert_eq!(
+            submit(&db, &config, &request, &mut api).unwrap_err(),
+            "jira_forbidden"
+        );
+        assert!(create_recovery(&lock(&db).unwrap(), &config)
+            .unwrap()
+            .is_none());
+        api.failure = None;
+        api.after_post = Some(Box::new(|| {
+            let mut concurrent = FakeCreateApi::new();
+            assert_eq!(
+                submit(&db, &config, &second, &mut concurrent).unwrap_err(),
+                "jira_create_recovery_required"
+            );
+            assert_eq!(
+                submit(&db, &config, &request, &mut concurrent).unwrap_err(),
+                "jira_create_outcome_unknown"
+            );
+            assert!(concurrent.calls.is_empty());
+        }));
+        let result = submit(&db, &config, &request, &mut api).unwrap();
+        let tags = row(&lock(&db).unwrap(), &result.item_id).1;
+        assert_eq!(attributes::process(&tags), None);
+        assert_eq!(attributes::stage(&tags), None);
+        assert_eq!(api.calls.iter().filter(|op| **op == "POST").count(), 2);
+    }
+
+    #[test]
+    fn create_journal_is_bounded_and_eviction_cannot_authorize_an_old_ticket() {
+        let (db, config, request) = create_fixture();
+        for _ in 0..CREATE_JOURNAL_LIMIT + 2 {
+            prepare_create(&lock(&db).unwrap(), &config).unwrap();
+        }
+        assert_eq!(
+            lock(&db)
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM jira_create_requests", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            CREATE_JOURNAL_LIMIT
+        );
+        let mut api = FakeCreateApi::new();
+        assert_eq!(
+            submit(&db, &config, &request, &mut api).unwrap_err(),
+            "jira_create_request_invalid"
+        );
+        assert!(api.calls.is_empty());
+    }
+
     #[test]
     fn site_project_email_and_token_input_are_validated() {
         assert_eq!(
@@ -1762,6 +2874,147 @@ mod tests {
         assert!(valid_token("fictional-TOKEN_123="));
         assert!(!valid_token("") && !valid_token("with space") && !valid_token(&"a".repeat(1025)));
         assert!(jql("DEMO").starts_with("project = \"DEMO\""));
+    }
+
+    #[test]
+    fn create_metadata_is_paginated_projected_and_fail_closed() {
+        let mut starts = Vec::new();
+        let types = collect_create_types(|start| {
+            starts.push(start);
+            Ok(if start == 0 {
+                json!({"startAt":0,"total":2,"issueTypes":[{"id":"100","name":"Task","subtask":false,
+                    "description":"FORBIDDEN_DESCRIPTION","self":"https://forbidden.invalid/","avatarUrl":"FORBIDDEN"}]})
+            } else {
+                json!({"startAt":1,"total":2,"issueTypes":[{"id":"101","name":"Subtask","subtask":true}]})
+            }.to_string().into_bytes())
+        }).unwrap();
+        assert_eq!(starts, vec![0, 1]);
+        assert_eq!(
+            serde_json::to_value(types).unwrap(),
+            json!([{"id":"100","name":"Task"}])
+        );
+        for page in [
+            json!({"startAt":1,"total":1,"issueTypes":[]}),
+            json!({"startAt":0,"total":1,"issueTypes":[]}),
+            json!({"startAt":0,"total":3000,"issueTypes":[]}),
+            json!({"startAt":0,"total":1,"issueTypes":[{"id":"100","name":"Task"}]}),
+            json!({"startAt":0,"total":1,"issueTypes":[{"id":"../100","name":"Task","subtask":false}]}),
+        ] {
+            assert_eq!(
+                collect_create_types(|_| Ok(page.to_string().into_bytes()))
+                    .unwrap_err()
+                    .code,
+                "jira_response_invalid"
+            );
+        }
+        let supported = json!([
+            {"fieldId":"summary","required":true,"operations":["set"]},
+            {"fieldId":"project","required":true,"operations":[]},
+            {"fieldId":"issuetype","required":true,"operations":[]},
+            {"fieldId":"assignee","required":true,"hasDefaultValue":true,"operations":["set"],
+                "allowedValues":[{"accountId":"FORBIDDEN_PERSON"}],"defaultValue":{"displayName":"FORBIDDEN_PERSON"}}
+        ]);
+        let fields = supported.as_array().unwrap();
+        assert!(check_create_fields(|start| Ok(
+            json!({"startAt":start,"total":4,"fields":&fields[start..start+1]})
+                .to_string()
+                .into_bytes()
+        ))
+        .is_ok());
+        let mut required = fields.clone();
+        required[3]["hasDefaultValue"] = json!(false);
+        assert_eq!(
+            check_create_fields(|_| Ok(json!({"startAt":0,"total":4,"fields":required})
+                .to_string()
+                .into_bytes()))
+            .unwrap_err()
+            .code,
+            "jira_create_required_fields"
+        );
+        assert_eq!(
+            check_create_fields(|_| Ok(json!({"startAt":0,"total":0,"fields":[]})
+                .to_string()
+                .into_bytes()))
+            .unwrap_err()
+            .code,
+            "jira_create_required_fields"
+        );
+    }
+
+    #[test]
+    fn create_requests_only_send_three_fields_to_the_bound_project() {
+        let (_, _, _) = configured();
+        let config = Config {
+            site: SITE.into(),
+            project: "DEMO".into(),
+            enabled: true,
+            token_mode: TokenMode::Classic,
+        };
+        let client = client().unwrap();
+        let credential = credential();
+        let request = create_request(
+            client,
+            &config,
+            &credential,
+            None,
+            CreateRequest::Create {
+                issue_type: "100",
+                title: "BE: Fictional check",
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            request.url().as_str(),
+            "https://example.atlassian.net/rest/api/3/issue"
+        );
+        assert_eq!(request.method(), reqwest::Method::POST);
+        assert_eq!(
+            serde_json::from_slice::<Value>(request.body().unwrap().as_bytes().unwrap()).unwrap(),
+            json!({"fields":{"summary":"BE: Fictional check","project":{"key":"DEMO"},"issuetype":{"id":"100"}}})
+        );
+        let fields = create_request(
+            client,
+            &config,
+            &credential,
+            None,
+            CreateRequest::Fields {
+                issue_type: "100",
+                start: 100,
+            },
+        )
+        .unwrap();
+        assert_eq!(fields.url().as_str(), "https://example.atlassian.net/rest/api/3/issue/createmeta/DEMO/issuetypes/100?startAt=100&maxResults=100");
+        assert!(create_request(
+            client,
+            &config,
+            &credential,
+            None,
+            CreateRequest::Fields {
+                issue_type: "../100",
+                start: 0
+            }
+        )
+        .is_err());
+        let wrong = Config {
+            site: "other.atlassian.net".into(),
+            ..config
+        };
+        assert!(
+            create_request(client, &wrong, &credential, None, CreateRequest::Types(0)).is_err()
+        );
+        assert!(create_status(201, None).is_ok());
+        for status in [200, 204, 408, 500, 502, 503] {
+            assert_eq!(
+                create_status(status, None).unwrap_err().code,
+                "jira_create_outcome_unknown"
+            );
+        }
+        assert_eq!(create_status(403, None).unwrap_err().code, "jira_forbidden");
+        assert_eq!(
+            created_id(br#"{"id":"10001","key":"FORBIDDEN-1","self":"FORBIDDEN_URL"}"#).unwrap(),
+            "10001"
+        );
+        assert!(created_id(br#"{"key":"DEMO-1"}"#).is_err());
     }
 
     #[test]

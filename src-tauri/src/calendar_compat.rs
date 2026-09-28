@@ -857,8 +857,20 @@ pub(crate) fn save_task(
     important: Option<bool>,
     fields: TaskFields,
 ) -> Result<String, String> {
-    validate_title(&title)?;
-    date(&due_date)?;
+    let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| fail(e.to_string()))?;
+    let item_id = save_task_in_transaction(&transaction, id, title, due_date, estimate_minutes,
+        goal_id, expected_version, important, fields)?;
+    transaction.commit().map_err(|e| fail(e.to_string()))?;
+    Ok(item_id)
+}
+
+pub(crate) fn validate_task_input(
+    conn: &Connection, title: &str, due_date: &Option<String>, estimate_minutes: Option<i64>,
+    goal_id: &Option<String>, fields: &TaskFields,
+) -> Result<(), String> {
+    validate_title(title)?;
+    date(due_date)?;
     if let Some(value) = estimate_minutes {
         duration(value)?;
     }
@@ -880,6 +892,20 @@ pub(crate) fn save_task(
     if let Some(value) = fields.process.as_deref() {
         crate::task_attributes::validate_process(value)?;
     }
+    if let Some(goal) = goal_id.as_deref() {
+        let exists: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM calendar_goals WHERE id=?1)",
+            [goal], |r| r.get(0)).map_err(|e| fail(e.to_string()))?;
+        if !exists { return Err(fail("goal not found")); }
+    }
+    Ok(())
+}
+
+pub(crate) fn save_task_in_transaction(
+    transaction: &Connection, id: Option<String>, title: String, due_date: Option<String>,
+    estimate_minutes: Option<i64>, goal_id: Option<String>, expected_version: Option<i64>,
+    important: Option<bool>, fields: TaskFields,
+) -> Result<String, String> {
+    validate_task_input(transaction, &title, &due_date, estimate_minutes, &goal_id, &fields)?;
     // Without a date the time of day is cleared. An omitted time keeps the stored
     // one only while the task already had a date: «Без даты» on 0.3.29 leaves a
     // stale time behind, and assigning a day again must not revive it.
@@ -888,10 +914,6 @@ pub(crate) fn save_task(
     // Omitted importance preserves existing priorities for date-only edits and
     // older clients. The task UI exposes only the explicit highest priority.
     let priority = important.map(|value| if value { 5_i64 } else { 0_i64 });
-    // Immediate: the stored tags are read and rewritten under one write lock.
-    let transaction = conn
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|e| fail(e.to_string()))?;
     // A stage change is recorded with this time; a task that already had a
     // stage and no history (0.3.33) keeps its earlier work with it from `since`.
     let edited_at = now();
@@ -902,18 +924,6 @@ pub(crate) fn save_task(
         // Every edit also writes the process a 0.3.33 stage belongs to.
         with_process(&edit_stage(&attributes, edit, &edited_at, since))
     };
-    if let Some(goal) = goal_id.as_deref() {
-        let exists: bool = transaction
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM calendar_goals WHERE id=?1)",
-                [goal],
-                |r| r.get(0),
-            )
-            .map_err(|e| fail(e.to_string()))?;
-        if !exists {
-            return Err(fail("goal not found"));
-        }
-    }
     let item_id = match id {
         Some(id) => {
             let current: Option<(String, String)> = transaction
@@ -951,7 +961,6 @@ pub(crate) fn save_task(
             )
             .map_err(|e| fail(e.to_string()))?;
     }
-    transaction.commit().map_err(|e| fail(e.to_string()))?;
     Ok(item_id)
 }
 #[tauri::command]
