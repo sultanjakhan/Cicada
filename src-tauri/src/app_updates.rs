@@ -510,9 +510,11 @@ fn installed_windows_binary() -> Option<std::path::PathBuf> {
 pub fn enroll_desktop_task(app: AppHandle) {
     #[cfg(target_os = "macos")]
     if config().is_ok() {
-        let result = crate::update_macos::enroll(&app);
-        app.state::<UpdateState>().change(&app, |s| {
-            s.background_error = result.err();
+        tauri::async_runtime::spawn_blocking(move || {
+            let result = crate::update_macos::enroll(&app);
+            app.state::<UpdateState>().change(&app, |s| {
+                s.background_error = result.err();
+            });
         });
     }
     #[cfg(windows)]
