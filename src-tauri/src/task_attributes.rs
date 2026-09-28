@@ -58,6 +58,24 @@ fn tokens(tags: &str) -> impl Iterator<Item = &str> {
     tags.split(',').map(str::trim).filter(|token| !token.is_empty())
 }
 
+const JIRA_STATUS_PREFIX: &str = "task-jira-status:";
+
+pub fn jira_status(tags: &str) -> Option<String> {
+    use base64::Engine;
+    tokens(tags).filter_map(|token| token.strip_prefix(JIRA_STATUS_PREFIX)).find_map(|encoded| {
+        if encoded.len() > 1600 { return None; }
+        let value = String::from_utf8(base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(encoded).ok()?).ok()?;
+        (!value.trim().is_empty() && value.chars().count() <= 200 && !value.chars().any(char::is_control)).then_some(value)
+    })
+}
+
+pub fn with_jira_status(tags: &str, status: &str) -> String {
+    use base64::Engine;
+    let mut out: Vec<String> = tokens(tags).filter(|token| !token.starts_with(JIRA_STATUS_PREFIX)).map(str::to_owned).collect();
+    out.push(format!("{JIRA_STATUS_PREFIX}{}", base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(status.as_bytes())));
+    out.join(",")
+}
+
 /// Process and stage ids: 1–64 of `a-z 0-9 _ -`, starting with a letter or digit.
 /// They never contain the `,` `:` `@` separators of the tag tokens.
 pub fn valid_id(value: &str) -> bool {
@@ -484,4 +502,18 @@ mod tests {
         assert!(validate_process("").is_ok() && validate_process(DEFAULT_PROCESS).is_ok());
         assert!(validate_process("Системный").is_err());
     }
+    #[test]
+    fn jira_status_roundtrips_without_touching_local_task_attributes() {
+        let local = "task-sphere:home,task-process:p,task-stage:review,task-stage-log:review@2026-09-25T09:00:00Z,task-waiting,custom";
+        let tags = with_jira_status(local, "На ревью, ожидает ответа");
+        assert_eq!(jira_status(&tags).as_deref(), Some("На ревью, ожидает ответа"));
+        assert_eq!((sphere(&tags), process(&tags), stage(&tags), waiting(&tags)), (Some("home"), Some("p"), Some("review"), true));
+        let replacement = with_jira_status(&tags, "Готово");
+        assert_eq!(replacement, with_jira_status(local, "Готово"));
+        assert_eq!(jira_status(&write(&replacement, Some("instant"), Some("work"))).as_deref(), Some("Готово"));
+        assert_eq!(jira_status("task-jira-status:invalid#"), None);
+        assert_eq!(jira_status(&with_jira_status("", "bad\nname")), None);
+        assert_eq!(jira_status(&with_jira_status("", "")), None);
+    }
+
 }

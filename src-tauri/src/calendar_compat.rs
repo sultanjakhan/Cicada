@@ -376,6 +376,7 @@ fn task_time(date: Option<&str>, time: Option<String>) -> Option<String> {
 fn decorate_task(value: &mut Value, tags: &str) {
     use crate::task_attributes as attributes;
     value["task_kind"] = json!(attributes::kind(tags));
+    if let Some(status) = attributes::jira_status(tags) { value["jira_status"] = json!(status); }
     value["sphere"] = json!(attributes::sphere(tags));
     value["process"] = json!(attributes::effective_process(tags).unwrap_or(""));
     value["stage"] = json!(attributes::stage(tags).unwrap_or(""));
@@ -1746,6 +1747,19 @@ mod task_model_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn calendar_task_serialization_exposes_jira_name_separately_from_local_stage() {
+        let tags = crate::task_attributes::with_jira_status("task-process:local,task-stage:review", "Готово");
+        let mut value = json!({"completed":false});
+        decorate_task(&mut value, &tags);
+        assert_eq!(value["jira_status"], "Готово");
+        assert_eq!(value["stage"], "review");
+        assert_eq!(value["completed"], false);
+        let mut ordinary = json!({});
+        decorate_task(&mut ordinary, "");
+        assert_eq!(ordinary["jira_status"], Value::Null);
+    }
+
     #[test]
     fn health_events_are_readonly_in_calendar_lists_and_native_actions() {
         use tauri::Manager;

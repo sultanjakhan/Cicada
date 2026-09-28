@@ -1,5 +1,5 @@
-//! Read-only Jira title import. Only titles enter ordinary task records; the
-//! stable source identity is hashed and source fields never enter task tags.
+//! Jira titles and status names only. Source IDs are hashed; descriptions,
+//! comments, source keys, links and raw IDs never enter storage or sync.
 //! Connection settings and import bookkeeping are device-local. Credentials
 //! use a separate OS-secret slot and never enter SQLite or synchronization.
 use crate::mvp_sync::secrets;
@@ -380,8 +380,12 @@ impl Runtime {
 
 // ---- Jira response ----
 
+#[derive(Clone)]
 struct Issue {
     id: String,
+    // Transient membership proof from the current top-level issue key; never stored.
+    project: Option<String>,
+    status: String,
     /// The cleaned summary: the task title.
     title: String,
 }
@@ -417,6 +421,8 @@ struct PageBody {
 struct IssueBody {
     id: String,
     #[serde(default)]
+    key: Option<String>,
+    #[serde(default)]
     fields: Option<FieldsBody>,
 }
 #[derive(Deserialize)]
@@ -424,6 +430,26 @@ struct IssueBody {
 struct FieldsBody {
     #[serde(default)]
     summary: Option<String>,
+    status: StatusBody,
+}
+
+#[derive(Deserialize)]
+struct StatusBody {
+    id: String,
+    name: String,
+}
+fn valid_remote_id(value: &str) -> bool {
+    (1..=20).contains(&value.len()) && value.bytes().all(|c| c.is_ascii_digit())
+}
+fn status_name(status: StatusBody) -> Result<String, Failure> {
+    if !valid_remote_id(&status.id)
+        || status.name.trim().is_empty()
+        || status.name.chars().count() > 200
+        || status.name.chars().any(char::is_control)
+    {
+        return Err(failure("jira_response_invalid"));
+    }
+    Ok(status.name)
 }
 
 /// Empty titles fail closed instead of substituting source metadata.
@@ -441,26 +467,37 @@ fn clean_title(summary: &str) -> Result<String, Failure> {
     }
 }
 
+fn decode_issue(issue: IssueBody) -> Result<Issue, Failure> {
+    if !valid_remote_id(&issue.id) {
+        return Err(failure("jira_response_invalid"));
+    }
+    let fields = issue
+        .fields
+        .ok_or_else(|| failure("jira_response_invalid"))?;
+    let project = issue
+        .key
+        .as_deref()
+        .and_then(|key| key.rsplit_once('-'))
+        .filter(|(project, number)| valid_jira_project(project) && valid_remote_id(number))
+        .map(|(project, _)| project.to_owned());
+    Ok(Issue {
+        id: issue.id,
+        project,
+        title: clean_title(&fields.summary.unwrap_or_default())?,
+        status: status_name(fields.status)?,
+    })
+}
+
 /// A page of the enhanced JQL search. `nextPageToken` is absent on the last
 /// page; `isLast` confirms it.
 fn parse_page(body: &[u8]) -> Result<Page, Failure> {
     let page: PageBody =
         serde_json::from_slice(body).map_err(|_| failure("jira_response_invalid"))?;
-    let mut issues = Vec::with_capacity(page.issues.len());
-    for issue in page.issues {
-        if !(1..=20).contains(&issue.id.len()) || !issue.id.bytes().all(|b| b.is_ascii_digit()) {
-            return Err(failure("jira_response_invalid"));
-        }
-        let summary = issue
-            .fields
-            .and_then(|fields| fields.summary)
-            .unwrap_or_default();
-        let title = clean_title(&summary)?;
-        issues.push(Issue {
-            id: issue.id,
-            title,
-        });
-    }
+    let issues = page
+        .issues
+        .into_iter()
+        .map(decode_issue)
+        .collect::<Result<Vec<_>, _>>()?;
     let next = page
         .next_page_token
         .filter(|token| !token.is_empty() && page.is_last != Some(true));
@@ -535,7 +572,7 @@ fn http_failure(status: u16, retry_after: Option<&str>) -> Failure {
 }
 
 fn jql(project: &str) -> String {
-    format!("project = \"{project}\" AND assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC")
+    format!("project = \"{project}\" ORDER BY updated DESC")
 }
 
 /// Hardened like the sync transport: short timeouts, HTTPS only, no redirects.
@@ -547,6 +584,7 @@ fn client() -> Result<&'static reqwest::blocking::Client, Failure> {
                 .connect_timeout(Duration::from_secs(10))
                 .timeout(Duration::from_secs(25))
                 .redirect(reqwest::redirect::Policy::none())
+                .retry(reqwest::retry::never())
                 .https_only(true)
                 .build()
                 .ok()
@@ -584,20 +622,21 @@ fn parse_cloud_id(body: &[u8]) -> Result<String, Failure> {
         .map_err(|_| failure("jira_cloud_id_invalid"))
 }
 
-fn search_request(
-    client: &reqwest::blocking::Client,
+fn api_base(
     config: &Config,
     credential: &Credential,
     cloud_id: Option<&str>,
-    page_token: Option<&str>,
-) -> Result<reqwest::blocking::Request, Failure> {
+) -> Result<String, Failure> {
+    if !valid_jira_project(&config.project) {
+        return Err(failure("jira_project_invalid"));
+    }
     if !valid_jira_host(&credential.site) || config.site != credential.site {
         return Err(failure("jira_token_required_for_site"));
     }
     if config.token_mode != credential.token_mode {
         return Err(failure("jira_token_required_for_mode"));
     }
-    let base = match credential.token_mode {
+    Ok(match credential.token_mode {
         TokenMode::Classic => format!("https://{}", credential.site),
         TokenMode::Scoped => {
             let id = cloud_id
@@ -605,14 +644,24 @@ fn search_request(
                 .ok_or_else(|| failure("jira_cloud_id_invalid"))?;
             format!("https://api.atlassian.com/ex/jira/{}", id.hyphenated())
         }
-    };
+    })
+}
+
+fn search_request(
+    client: &reqwest::blocking::Client,
+    config: &Config,
+    credential: &Credential,
+    cloud_id: Option<&str>,
+    page_token: Option<&str>,
+) -> Result<reqwest::blocking::Request, Failure> {
+    let base = api_base(config, credential, cloud_id)?;
     let mut url = reqwest::Url::parse(&format!("{base}/rest/api/3/search/jql"))
         .map_err(|_| failure("jira_site_invalid"))?;
     {
         let mut query = url.query_pairs_mut();
         query
             .append_pair("jql", &jql(&config.project))
-            .append_pair("fields", "summary")
+            .append_pair("fields", "summary,status")
             .append_pair("maxResults", &PAGE_SIZE.to_string());
         if let Some(token) = page_token {
             query.append_pair("nextPageToken", token);
@@ -701,9 +750,10 @@ fn deleted_by_sync(conn: &Connection, id: &str) -> Result<bool, String> {
 /// created or changed tasks. An existing task keeps its status, completion,
 /// sphere, process, stage, goal and timers. Its title follows Jira only while
 /// it still equals the last imported summary; source metadata is never stored.
-/// Closed tasks are left alone, nothing is deleted, and issues missing from the
-/// result are not touched. A task created by another device (same id, no local
-/// link) is adopted without a change. A closed task keeps the summary it was
+/// Jira status names refresh independently, including on closed tasks. Nothing
+/// is deleted, and issues missing from the result are not touched. A task from
+/// another device (same id, no local link) keeps its local title while adopting
+/// the current Jira status. A closed task keeps the summary it was
 /// last imported with, so after reopening in Cicada its title follows Jira again.
 fn apply(conn: &Connection, site: &str, issues: &[Issue], now: &str) -> Result<usize, String> {
     let mut changed = 0;
@@ -717,9 +767,9 @@ fn apply(conn: &Connection, site: &str, issues: &[Issue], now: &str) -> Result<u
             )
             .optional()
             .map_err(storage)?;
-        let row: Option<(String, String, bool, bool, String)> = conn
+        let row: Option<(String, String, bool, bool, String, String)> = conn
             .query_row(
-                "SELECT kind,status,completed,archived,title FROM items WHERE id=?1",
+                "SELECT kind,status,completed,archived,title,tags FROM items WHERE id=?1",
                 [&id],
                 |r| {
                     Ok((
@@ -728,6 +778,7 @@ fn apply(conn: &Connection, site: &str, issues: &[Issue], now: &str) -> Result<u
                         r.get::<_, i64>(2)? != 0,
                         r.get::<_, i64>(3)? != 0,
                         r.get(4)?,
+                        r.get(5)?,
                     ))
                 },
             )
@@ -739,21 +790,23 @@ fn apply(conn: &Connection, site: &str, issues: &[Issue], now: &str) -> Result<u
             None if deleted_by_sync(conn, &id)? => false,
             None => {
                 conn.execute("INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,status) VALUES(?1,'task',?2,'',NULL,NULL,0,0,1,?3,?3,'task','#9B9B9B',0,0,?4,'task')",
-                    params![id, issue.title, now, new_task_tags()]).map_err(storage)?;
+                    params![id, issue.title, now, attributes::with_jira_status(&new_task_tags(), &issue.status)]).map_err(storage)?;
                 changed += 1;
                 true
             }
-            Some((kind, status, completed, archived, title)) => {
-                let open = kind == "task" && status == "task" && !completed && !archived;
-                if open {
-                    // Adoption keeps the synchronized title: the other device tracks it.
-                    let follows =
-                        link.as_deref().is_some_and(|last| last == title) && title != issue.title;
-                    let next_title = follows.then(|| issue.title.clone());
-                    if next_title.is_some() {
-                        changed += conn.execute("UPDATE items SET title=?1,version=version+1,updated_at=?2 WHERE id=?3",
-                            params![next_title, now, id]).map_err(storage)?;
-                    }
+            Some((kind, status, completed, archived, title, tags)) => {
+                let task = kind == "task" && matches!(status.as_str(), "task" | "done");
+                let open = task && status == "task" && !completed && !archived;
+                let follows = open
+                    && link.as_deref().is_some_and(|last| last == title)
+                    && title != issue.title;
+                let next_title = follows.then_some(&issue.title);
+                let next_tags = (task
+                    && attributes::jira_status(&tags).as_deref() != Some(issue.status.as_str()))
+                .then(|| attributes::with_jira_status(&tags, &issue.status));
+                if next_title.is_some() || next_tags.is_some() {
+                    changed += conn.execute("UPDATE items SET title=COALESCE(?1,title),tags=COALESCE(?2,tags),version=version+1,updated_at=?3 WHERE id=?4",
+                        params![next_title, next_tags, now, id]).map_err(storage)?;
                 }
                 open
             }
@@ -1000,6 +1053,438 @@ fn status(runtime: &Runtime, db: &Mutex<Connection>, changed: usize) -> Result<V
     status_value(&conn, credential.as_ref(), running, changed)
 }
 
+// ---- Explicit Jira task actions ----
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+struct Transition {
+    id: String,
+    name: String,
+    status: String,
+}
+#[derive(Deserialize)]
+struct TransitionsBody {
+    transitions: Vec<TransitionBody>,
+}
+#[derive(Deserialize)]
+struct TransitionBody {
+    id: String,
+    name: String,
+    to: StatusBody,
+    #[serde(rename = "isAvailable", default)]
+    is_available: Option<bool>,
+}
+fn parse_transitions(body: &[u8]) -> Result<Vec<Transition>, Failure> {
+    let body: TransitionsBody =
+        serde_json::from_slice(body).map_err(|_| failure("jira_response_invalid"))?;
+    if body.transitions.len() > 500 {
+        return Err(failure("jira_response_invalid"));
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut transitions = Vec::new();
+    for transition in body.transitions {
+        if !valid_remote_id(&transition.id)
+            || !seen.insert(transition.id.clone())
+            || transition.name.trim().is_empty()
+            || transition.name.chars().count() > 200
+            || transition.name.chars().any(char::is_control)
+        {
+            return Err(failure("jira_response_invalid"));
+        }
+        let status = status_name(transition.to)?;
+        if transition.is_available != Some(false) {
+            transitions.push(Transition {
+                id: transition.id,
+                name: transition.name,
+                status,
+            });
+        }
+    }
+    Ok(transitions)
+}
+
+#[derive(Debug, Serialize)]
+struct TaskDetails {
+    title: String,
+    status: String,
+    transitions: Vec<Transition>,
+    editable: bool,
+    changed: usize,
+}
+
+enum TaskAction {
+    Details,
+    Rename {
+        title: String,
+        expected_title: String,
+    },
+    Transition {
+        id: String,
+        expected_status: String,
+    },
+}
+fn valid_edit_title(title: &str) -> bool {
+    !title.trim().is_empty()
+        && title.chars().count() <= MAX_TITLE
+        && !title.chars().any(char::is_control)
+}
+
+/// Only typed requests can reach Jira: callers cannot supply a URL or JSON body.
+enum IssueRequest<'a> {
+    Read,
+    Transitions,
+    Rename(&'a str),
+    Transition(&'a str),
+}
+fn issue_request(
+    client: &reqwest::blocking::Client,
+    config: &Config,
+    credential: &Credential,
+    cloud_id: Option<&str>,
+    id: &str,
+    operation: IssueRequest<'_>,
+) -> Result<reqwest::blocking::Request, Failure> {
+    if !valid_remote_id(id) {
+        return Err(failure("jira_task_not_found"));
+    }
+    let base = api_base(config, credential, cloud_id)?;
+    let url = format!("{base}/rest/api/3/issue/{id}");
+    let request = match operation {
+        IssueRequest::Read => client.get(url).query(&[("fields", "summary,status")]),
+        IssueRequest::Transitions => client.get(format!("{url}/transitions")),
+        IssueRequest::Rename(title) => {
+            if !valid_edit_title(title) {
+                return Err(failure("jira_title_invalid"));
+            }
+            client.put(url).json(&json!({"fields":{"summary":title}}))
+        }
+        IssueRequest::Transition(transition) => {
+            if !valid_remote_id(transition) {
+                return Err(failure("jira_transition_invalid"));
+            }
+            client
+                .post(format!("{url}/transitions"))
+                .json(&json!({"transition":{"id":transition}}))
+        }
+    };
+    request
+        .basic_auth(&credential.email, Some(&credential.token))
+        .header(reqwest::header::ACCEPT, "application/json")
+        .build()
+        .map_err(|_| failure("jira_network_unavailable"))
+}
+
+/// A dispatched mutation is never retried. A transport failure or uncertain
+/// server response cannot tell us whether Jira applied it; only a refresh can.
+fn write_status(status: u16, retry_after: Option<&str>) -> Result<(), Failure> {
+    match status {
+        200 | 204 => Ok(()),
+        300..=399 | 400 | 401 | 403 | 404 | 422 | 429 => Err(http_failure(status, retry_after)),
+        _ => Err(failure("jira_write_outcome_unknown")),
+    }
+}
+fn write_response(
+    client: &reqwest::blocking::Client,
+    request: reqwest::blocking::Request,
+) -> Result<(), Failure> {
+    let response = client
+        .execute(request)
+        .map_err(|_| failure("jira_write_outcome_unknown"))?;
+    write_status(
+        response.status().as_u16(),
+        response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|value| value.to_str().ok()),
+    )
+}
+
+trait TaskApi {
+    fn project_issues(&mut self) -> Result<Fetched, Failure>;
+    fn read_issue(&mut self, id: &str) -> Result<Issue, Failure>;
+    fn transitions(&mut self, id: &str) -> Result<Vec<Transition>, Failure>;
+    fn rename(&mut self, id: &str, title: &str) -> Result<(), Failure>;
+    fn transition(&mut self, id: &str, transition: &str) -> Result<(), Failure>;
+}
+struct HttpTaskApi<'a> {
+    client: &'static reqwest::blocking::Client,
+    config: &'a Config,
+    credential: &'a Credential,
+    cloud_id: Option<String>,
+}
+impl<'a> HttpTaskApi<'a> {
+    fn new(config: &'a Config, credential: &'a Credential) -> Result<Self, Failure> {
+        let client = client()?;
+        let cloud_id = match credential.token_mode {
+            TokenMode::Classic => None,
+            TokenMode::Scoped => Some(parse_cloud_id(&read_response(
+                client,
+                tenant_request(client, &credential.site)?,
+                4096,
+            )?)?),
+        };
+        Ok(Self {
+            client,
+            config,
+            credential,
+            cloud_id,
+        })
+    }
+    fn request(
+        &self,
+        id: &str,
+        operation: IssueRequest<'_>,
+    ) -> Result<reqwest::blocking::Request, Failure> {
+        issue_request(
+            self.client,
+            self.config,
+            self.credential,
+            self.cloud_id.as_deref(),
+            id,
+            operation,
+        )
+    }
+}
+impl TaskApi for HttpTaskApi<'_> {
+    fn project_issues(&mut self) -> Result<Fetched, Failure> {
+        collect(|token| {
+            let request = search_request(
+                self.client,
+                self.config,
+                self.credential,
+                self.cloud_id.as_deref(),
+                token,
+            )?;
+            parse_page(&read_response(self.client, request, MAX_BODY)?)
+        })
+    }
+    fn read_issue(&mut self, id: &str) -> Result<Issue, Failure> {
+        let body = read_response(self.client, self.request(id, IssueRequest::Read)?, MAX_BODY)?;
+        let issue = decode_issue(
+            serde_json::from_slice(&body).map_err(|_| failure("jira_response_invalid"))?,
+        )?;
+        if issue.id != id {
+            return Err(failure("jira_response_invalid"));
+        }
+        Ok(issue)
+    }
+    fn transitions(&mut self, id: &str) -> Result<Vec<Transition>, Failure> {
+        parse_transitions(&read_response(
+            self.client,
+            self.request(id, IssueRequest::Transitions)?,
+            MAX_BODY,
+        )?)
+    }
+    fn rename(&mut self, id: &str, title: &str) -> Result<(), Failure> {
+        write_response(self.client, self.request(id, IssueRequest::Rename(title))?)
+    }
+    fn transition(&mut self, id: &str, transition: &str) -> Result<(), Failure> {
+        write_response(
+            self.client,
+            self.request(id, IssueRequest::Transition(transition))?,
+        )
+    }
+}
+
+fn local_task_exists(conn: &Connection, id: &str) -> Result<bool, String> {
+    let valid = id.strip_prefix(ID_PREFIX).is_some_and(|hash| {
+        hash.len() == 64
+            && hash
+                .bytes()
+                .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+    });
+    if !valid {
+        return Ok(false);
+    }
+    conn.query_row("SELECT EXISTS(SELECT 1 FROM items WHERE id=?1 AND kind='task' AND status IN ('task','done'))",
+        [id], |r| r.get(0)).map_err(storage)
+}
+
+/// Search can lag after a project move. The current issue key from direct GET
+/// is checked in memory too; even that cannot make a later mutation atomic.
+fn read_project_issue(api: &mut impl TaskApi, id: &str, project: &str) -> Result<Issue, Failure> {
+    let issue = api.read_issue(id)?;
+    if issue.id != id || issue.project.as_deref() != Some(project) {
+        return Err(failure("jira_task_not_found"));
+    }
+    Ok(issue)
+}
+
+fn perform_task(
+    db: &Mutex<Connection>,
+    config: &Config,
+    item: &str,
+    action: TaskAction,
+    api: &mut impl TaskApi,
+) -> Result<TaskDetails, String> {
+    if !local_task_exists(&*lock(db)?, item)? {
+        return Err("jira_task_not_found".into());
+    }
+    if matches!(&action, TaskAction::Rename { title, .. } if !valid_edit_title(title)) {
+        return Err("jira_title_invalid".into());
+    }
+    if matches!(&action, TaskAction::Transition { id, .. } if !valid_remote_id(id)) {
+        return Err("jira_transition_invalid".into());
+    }
+    // Resolve the opaque local identity anew inside the configured project. A
+    // stale link, a task moved elsewhere or a forged id cannot authorize a write.
+    let resolved = api
+        .project_issues()
+        .map_err(|e| e.code)?
+        .issues
+        .into_iter()
+        .find(|issue| item_id(&config.site, &issue.id) == item)
+        .ok_or("jira_task_not_found")?;
+    let mut current = read_project_issue(api, &resolved.id, &config.project).map_err(|e| e.code)?;
+    let mut transitions = api.transitions(&resolved.id).map_err(|e| e.code)?;
+    let wrote = match action {
+        TaskAction::Details => false,
+        TaskAction::Rename {
+            title,
+            expected_title,
+        } => {
+            if current.title != expected_title {
+                return Err("jira_task_conflict".into());
+            }
+            api.rename(&resolved.id, &title).map_err(|e| e.code)?;
+            // The API has no conditional compare-and-set for summary. Another
+            // Jira editor can still race the check; do not claim atomicity.
+            current = read_project_issue(api, &resolved.id, &config.project)
+                .map_err(|_| "jira_write_outcome_unknown")?;
+            if current.title != title {
+                return Err("jira_write_outcome_unknown".into());
+            }
+            transitions = api
+                .transitions(&resolved.id)
+                .map_err(|_| "jira_write_outcome_unknown")?;
+            true
+        }
+        TaskAction::Transition {
+            id,
+            expected_status,
+        } => {
+            if current.status != expected_status {
+                return Err("jira_task_conflict".into());
+            }
+            let target = transitions
+                .iter()
+                .find(|transition| transition.id == id)
+                .ok_or("jira_transition_invalid")?
+                .status
+                .clone();
+            api.transition(&resolved.id, &id).map_err(|e| e.code)?;
+            current = read_project_issue(api, &resolved.id, &config.project)
+                .map_err(|_| "jira_write_outcome_unknown")?;
+            if current.status != target {
+                return Err("jira_write_outcome_unknown".into());
+            }
+            transitions = api
+                .transitions(&resolved.id)
+                .map_err(|_| "jira_write_outcome_unknown")?;
+            true
+        }
+    };
+    let store = || -> Result<usize, String> {
+        let mut conn = lock(db)?;
+        let transaction = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage)?;
+        // Local deletion during the network roundtrip must not resurrect a task.
+        if !local_task_exists(&transaction, item)? {
+            return Err("jira_task_not_found".into());
+        }
+        let changed = apply(
+            &transaction,
+            &config.site,
+            std::slice::from_ref(&current),
+            &stamp(Utc::now()),
+        )?;
+        transaction.commit().map_err(storage)?;
+        Ok(changed)
+    };
+    let changed = store().map_err(|code| {
+        if wrote {
+            "jira_write_outcome_unknown".into()
+        } else {
+            code
+        }
+    })?;
+    Ok(TaskDetails {
+        title: current.title,
+        status: current.status,
+        transitions,
+        editable: true,
+        changed,
+    })
+}
+
+fn task_action(app: &tauri::AppHandle, item_id: &str, action: TaskAction) -> Result<Value, String> {
+    let runtime = app.state::<Runtime>();
+    let _running = runtime
+        .import
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    let db = &app.state::<crate::AppState>().0;
+    let config = read_config(&*lock(db)?)?;
+    if !config.ready() {
+        return Err("jira_not_configured".into());
+    }
+    let credential = runtime.credential()?.ok_or("jira_token_required")?;
+    if credential.site != config.site {
+        return Err("jira_token_required_for_site".into());
+    }
+    if credential.token_mode != config.token_mode {
+        return Err("jira_token_required_for_mode".into());
+    }
+    let mut api = HttpTaskApi::new(&config, &credential).map_err(|e| e.code)?;
+    serde_json::to_value(perform_task(db, &config, item_id, action, &mut api)?).map_err(storage)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn jira_task_details(app: tauri::AppHandle, item_id: String) -> Result<Value, String> {
+    blocking(app, move |app| {
+        task_action(app, &item_id, TaskAction::Details)
+    })
+    .await
+}
+#[tauri::command(rename_all = "camelCase")]
+pub async fn jira_task_rename(
+    app: tauri::AppHandle,
+    item_id: String,
+    title: String,
+    expected_title: String,
+) -> Result<Value, String> {
+    blocking(app, move |app| {
+        task_action(
+            app,
+            &item_id,
+            TaskAction::Rename {
+                title,
+                expected_title,
+            },
+        )
+    })
+    .await
+}
+#[tauri::command(rename_all = "camelCase")]
+pub async fn jira_task_transition(
+    app: tauri::AppHandle,
+    item_id: String,
+    transition_id: String,
+    expected_status: String,
+) -> Result<Value, String> {
+    blocking(app, move |app| {
+        task_action(
+            app,
+            &item_id,
+            TaskAction::Transition {
+                id: transition_id,
+                expected_status,
+            },
+        )
+    })
+    .await
+}
+
 // ---- Commands ----
 
 fn current_status(app: &tauri::AppHandle, changed: usize) -> Result<Value, String> {
@@ -1052,6 +1537,11 @@ pub async fn jira_import_configure(
     token_mode: Option<TokenMode>,
 ) -> Result<Value, String> {
     blocking(app, move |app| {
+        let runtime = app.state::<Runtime>();
+        let running = runtime
+            .import
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         configure(
             &app.state::<Runtime>(),
             &app.state::<crate::AppState>().0,
@@ -1062,6 +1552,7 @@ pub async fn jira_import_configure(
             token_mode.unwrap_or_default(),
             Utc::now(),
         )?;
+        drop(running);
         current_status(app, 0)
     })
     .await
@@ -1070,11 +1561,17 @@ pub async fn jira_import_configure(
 #[tauri::command]
 pub async fn jira_import_disable(app: tauri::AppHandle) -> Result<Value, String> {
     blocking(app, |app| {
+        let runtime = app.state::<Runtime>();
+        let running = runtime
+            .import
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         disable(
             &app.state::<Runtime>(),
             &app.state::<crate::AppState>().0,
             Utc::now(),
         )?;
+        drop(running);
         current_status(app, 0)
     })
     .await
@@ -1114,7 +1611,9 @@ mod tests {
     fn issue(id: &str, summary: &str) -> Issue {
         Issue {
             id: id.into(),
+            project: Some("DEMO".into()),
             title: clean_title(summary).unwrap(),
+            status: "В работе".into(),
         }
     }
     fn credential() -> Credential {
@@ -1262,9 +1761,7 @@ mod tests {
         }
         assert!(valid_token("fictional-TOKEN_123="));
         assert!(!valid_token("") && !valid_token("with space") && !valid_token(&"a".repeat(1025)));
-        assert!(jql("DEMO").starts_with(
-            "project = \"DEMO\" AND assignee = currentUser() AND statusCategory != Done"
-        ));
+        assert!(jql("DEMO").starts_with("project = \"DEMO\""));
     }
 
     #[test]
@@ -1334,7 +1831,10 @@ mod tests {
             (title.as_str(), version, status.as_str(), completed),
             ("Fictional requirement", 1, "task", false)
         );
-        assert_eq!(tags, "task-sphere:work");
+        assert_eq!(
+            tags,
+            attributes::with_jira_status("task-sphere:work", "В работе")
+        );
         assert!(attributes::process(&tags).is_none());
         assert!(attributes::stage_log(&tags).is_empty() && attributes::stage(&tags).is_none());
         let (kind, category, duration, date): (String, String, i64, Option<String>) = conn
@@ -1506,7 +2006,10 @@ mod tests {
             (title.as_str(), version, status.as_str(), completed),
             ("Done in Cicada", 2, "done", true)
         );
-        assert_eq!(tags, "task-sphere:work");
+        assert_eq!(
+            tags,
+            attributes::with_jira_status("task-sphere:work", "В работе")
+        );
         assert_eq!(count(&conn), 1);
     }
 
@@ -1515,7 +2018,7 @@ mod tests {
         let conn = db();
         let id = item_id(SITE, "10001");
         // Arrived through the sync: same deterministic id, renamed there, no local link.
-        let tags = new_task_tags();
+        let tags = attributes::with_jira_status(&new_task_tags(), "В работе");
         conn.execute("INSERT INTO items(id,kind,title,notes,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,status) VALUES(?1,'task','Renamed on the other desktop','',0,0,3,?2,?2,'task','#9B9B9B',0,0,?3,'task')", params![id, T0, tags]).unwrap();
         assert_eq!(import(&conn, &[issue("10001", "Jira summary")]), 0);
         assert_eq!(
@@ -1567,7 +2070,7 @@ mod tests {
     #[test]
     fn pages_follow_the_next_page_token_and_stop_at_the_cap() {
         let body = |ids: std::ops::Range<u32>, next: Option<&str>, last: bool| {
-            let issues: Vec<Value> = ids.map(|n| json!({"id":format!("{}", 10000 + n),"key":format!("DEMO-{n}"),"fields":{"summary":format!("Fictional {n}")}})).collect();
+            let issues: Vec<Value> = ids.map(|n| json!({"id":format!("{}", 10000 + n),"key":format!("DEMO-{n}"),"fields":{"summary":format!("Fictional {n}"),"status":{"id":"3","name":"В работе"}}})).collect();
             let mut page = json!({"issues":issues,"isLast":last});
             if let Some(next) = next {
                 page["nextPageToken"] = json!(next);
@@ -1631,12 +2134,12 @@ mod tests {
             "",
             "{}",
             r#"{"issues":[{"id":"x1","fields":{"summary":"a"}}]}"#,
-            r#"{"issues":[{"id":"10001","fields":{"summary":null}}]}"#,
+            r#"{"issues":[{"id":"10001","fields":{"summary":null,"status":{"id":"3","name":"Open"}}}]}"#,
             r#"{"issues":[{"id":"10001"}]}"#,
-            r#"{"issues":[{"id":"10001","fields":{"summary":"  "}}]}"#,
-            r#"{"issues":[{"id":"10001","fields":{"summary":"a","description":"FORBIDDEN-DESCRIPTION"}}]}"#,
-            r#"{"issues":[{"id":"10001","fields":{"summary":"a","comment":"FORBIDDEN-COMMENT"}}]}"#,
-            r#"{"issues":[{"id":"10001","fields":{"summary":"a","attachment":[]}}]}"#,
+            r#"{"issues":[{"id":"10001","fields":{"summary":"  ","status":{"id":"3","name":"Open"}}}]}"#,
+            r#"{"issues":[{"id":"10001","fields":{"summary":"a","status":{"id":"3","name":"Open"},"description":"FORBIDDEN-DESCRIPTION"}}]}"#,
+            r#"{"issues":[{"id":"10001","fields":{"summary":"a","status":{"id":"3","name":"Open"},"comment":"FORBIDDEN-COMMENT"}}]}"#,
+            r#"{"issues":[{"id":"10001","fields":{"summary":"a","status":{"id":"3","name":"Open"},"attachment":[]}}]}"#,
         ] {
             assert_eq!(
                 parse_page(raw.as_bytes()).err().unwrap().code,
@@ -2152,14 +2655,14 @@ mod tests {
     }
 
     #[test]
-    fn only_titles_and_generated_identity_enter_storage_and_sync() {
+    fn only_titles_status_names_and_generated_identity_enter_storage_and_sync() {
         let conn = db();
         let raw = json!({"issues":[{
             "id":"987654321987654", "key":"SECRET-777",
             "self":"https://private.example/SECRET-LINK",
             "description":"SECRET-DESCRIPTION", "comment":"SECRET-COMMENT",
             "attachment":"SECRET-ATTACHMENT", "assignee":{"emailAddress":"private@example.org"},
-            "fields":{"summary":"Approved fictional title"}
+            "fields":{"summary":"Approved fictional title","status":{"id":"987651234","name":"В работе","self":"SECRET-STATUS-LINK"}}
         }], "isLast":true});
         let fetched = parse_page(&serde_json::to_vec(&raw).unwrap()).unwrap();
         assert_eq!(import(&conn, &fetched.issues), 1);
@@ -2182,7 +2685,8 @@ mod tests {
             "private@example.org",
             SITE,
             "fictional-token",
-            "task-jira",
+            "987651234",
+            "SECRET-STATUS-LINK",
             "task-process",
             "task-stage",
         ] {
@@ -2207,7 +2711,10 @@ mod tests {
             .collect::<Result<_, _>>()
             .unwrap();
         assert_eq!(columns, ["item_id", "last_summary"]);
-        assert_eq!(row(&conn, &id).1, "task-sphere:work");
+        assert_eq!(
+            row(&conn, &id).1,
+            attributes::with_jira_status("task-sphere:work", "В работе")
+        );
         let synced: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM mvp_records WHERE id LIKE '%jira_import%'",
@@ -2256,7 +2763,7 @@ mod tests {
         );
         let query: std::collections::BTreeMap<_, _> =
             request.url().query_pairs().into_owned().collect();
-        assert_eq!(query["fields"], "summary");
+        assert_eq!(query["fields"], "summary,status");
         assert_eq!(query["nextPageToken"], "opaque&cursor");
         assert_eq!(query["jql"], jql("DEMO"));
         assert_eq!(query.len(), 4);
@@ -2288,7 +2795,7 @@ mod tests {
                 .find(|(key, _)| key == "fields")
                 .unwrap()
                 .1,
-            "summary"
+            "summary,status"
         );
         config.site = "other.atlassian.net".into();
         assert_eq!(
@@ -2408,9 +2915,9 @@ mod tests {
         let changed = run(&db, &runtime, Trigger::Manual, at(T0), |_,_| {
             collect(|cursor| {
                 if cursor.is_none() {
-                    parse_page(br#"{"issues":[{"id":"10001","fields":{"summary":"Approved"}}],"nextPageToken":"next"}"#)
+                    parse_page(br#"{"issues":[{"id":"10001","fields":{"summary":"Approved","status":{"id":"3","name":"Open"}}}],"nextPageToken":"next"}"#)
                 } else {
-                    parse_page(br#"{"issues":[{"id":"10002","fields":{"summary":"Approved too","description":"PRIVATE-CONTENT"}}],"isLast":true}"#)
+                    parse_page(br#"{"issues":[{"id":"10002","fields":{"summary":"Approved too","status":{"id":"3","name":"Open"},"description":"PRIVATE-CONTENT"}}],"isLast":true}"#)
                 }
             })
         }).unwrap();
@@ -2419,5 +2926,593 @@ mod tests {
         let status = state(&db);
         assert_eq!(status["lastError"], "jira_response_invalid");
         assert!(!status.to_string().contains("PRIVATE-CONTENT"));
+    }
+    struct FakeTaskApi {
+        current: Issue,
+        included: bool,
+        transitions: Vec<Transition>,
+        calls: Vec<&'static str>,
+        write_error: bool,
+        fail_readback: bool,
+    }
+    impl FakeTaskApi {
+        fn new() -> Self {
+            Self {
+                current: issue("10001", "Fictional"),
+                included: true,
+                transitions: vec![Transition {
+                    id: "31".into(),
+                    name: "Finish".into(),
+                    status: "Готово".into(),
+                }],
+                calls: vec![],
+                write_error: false,
+                fail_readback: false,
+            }
+        }
+    }
+    impl TaskApi for FakeTaskApi {
+        fn project_issues(&mut self) -> Result<Fetched, Failure> {
+            self.calls.push("project");
+            Ok(Fetched {
+                issues: if self.included {
+                    vec![self.current.clone()]
+                } else {
+                    vec![]
+                },
+                truncated: false,
+            })
+        }
+        fn read_issue(&mut self, id: &str) -> Result<Issue, Failure> {
+            assert_eq!(id, self.current.id);
+            self.calls.push("read");
+            if self.fail_readback
+                && self
+                    .calls
+                    .iter()
+                    .any(|call| matches!(*call, "rename" | "transition"))
+            {
+                return Err(failure("jira_timeout"));
+            }
+            Ok(self.current.clone())
+        }
+        fn transitions(&mut self, id: &str) -> Result<Vec<Transition>, Failure> {
+            assert_eq!(id, self.current.id);
+            self.calls.push("transitions");
+            Ok(self.transitions.clone())
+        }
+        fn rename(&mut self, id: &str, title: &str) -> Result<(), Failure> {
+            assert_eq!(id, self.current.id);
+            self.calls.push("rename");
+            self.current.title = title.into();
+            if self.write_error {
+                Err(failure("jira_write_outcome_unknown"))
+            } else {
+                Ok(())
+            }
+        }
+        fn transition(&mut self, id: &str, transition: &str) -> Result<(), Failure> {
+            assert_eq!(id, self.current.id);
+            self.calls.push("transition");
+            self.current.status = self
+                .transitions
+                .iter()
+                .find(|entry| entry.id == transition)
+                .unwrap()
+                .status
+                .clone();
+            if self.write_error {
+                Err(failure("jira_write_outcome_unknown"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+    fn editable_fixture() -> (Mutex<Connection>, Config, String, FakeTaskApi) {
+        let (db, _, _) = configured();
+        let config = read_config(&lock(&db).unwrap()).unwrap();
+        let api = FakeTaskApi::new();
+        import(&lock(&db).unwrap(), &[api.current.clone()]);
+        (db, config, item_id(SITE, "10001"), api)
+    }
+
+    #[test]
+    fn full_project_includes_done_without_completing_local_tasks() {
+        assert_eq!(jql("PL"), "project = \"PL\" ORDER BY updated DESC");
+        let body = json!({"issues":[
+            {"id":"1","fields":{"summary":"Other assignee","status":{"id":"2","name":"В работе","statusCategory":{"key":"indeterminate"}}}},
+            {"id":"2","fields":{"summary":"Completed in Jira","status":{"id":"3","name":"Готово","statusCategory":{"key":"done"}}}}
+        ],"isLast":true});
+        let page = parse_page(&serde_json::to_vec(&body).unwrap()).unwrap();
+        let conn = db();
+        assert_eq!(import(&conn, &page.issues), 2);
+        for issue in &page.issues {
+            let task = row(&conn, &item_id(SITE, &issue.id));
+            assert_eq!(task.3, "task");
+            assert!(!task.4);
+            assert_eq!(
+                attributes::jira_status(&task.1).as_deref(),
+                Some(issue.status.as_str())
+            );
+            assert_eq!(attributes::process(&task.1), None);
+        }
+    }
+
+    #[test]
+    fn source_status_requires_id_and_name_and_ignores_normal_metadata() {
+        for status in [
+            json!(null),
+            json!({}),
+            json!({"id":"2","name":""}),
+            json!({"id":"2","name":"a\nb"}),
+            json!({"id":"../../x","name":"Open"}),
+        ] {
+            let body = json!({"issues":[{"id":"1","fields":{"summary":"Title","status":status}}]});
+            assert_eq!(
+                parse_page(&serde_json::to_vec(&body).unwrap())
+                    .err()
+                    .unwrap()
+                    .code,
+                "jira_response_invalid"
+            );
+        }
+        let body = json!({"transitions":[
+            {"id":"31","name":"Finish","to":{"id":"999876","name":"Готово","self":"SECRET-LINK","iconUrl":"SECRET-ICON","statusCategory":{"name":"Done"}}},
+            {"id":"32","name":"Unavailable","isAvailable":false,"to":{"id":"3","name":"Blocked"}}
+        ]});
+        let transitions = parse_transitions(&serde_json::to_vec(&body).unwrap()).unwrap();
+        assert_eq!(
+            transitions,
+            vec![Transition {
+                id: "31".into(),
+                name: "Finish".into(),
+                status: "Готово".into()
+            }]
+        );
+        let safe = serde_json::to_string(&transitions).unwrap();
+        for forbidden in ["999876", "SECRET", "icon", "category"] {
+            assert!(!safe.contains(forbidden));
+        }
+        assert!(parse_transitions(br#"{"transitions":[{"id":"1","name":"Go","to":{"id":"3","name":"X"}},{"id":"1","name":"Other","to":{"id":"4","name":"Y"}}]}"#).is_err());
+    }
+
+    #[test]
+    fn write_requests_are_typed_and_bound_to_the_configured_tenant() {
+        let (_, config, _, _) = editable_fixture();
+        let credential = credential();
+        let client = client().unwrap();
+        let rename = issue_request(
+            client,
+            &config,
+            &credential,
+            None,
+            "10001",
+            IssueRequest::Rename("New title"),
+        )
+        .unwrap();
+        assert_eq!(rename.method(), reqwest::Method::PUT);
+        assert_eq!(
+            rename.url().as_str(),
+            format!("https://{SITE}/rest/api/3/issue/10001")
+        );
+        let body: Value =
+            serde_json::from_slice(rename.body().unwrap().as_bytes().unwrap()).unwrap();
+        assert_eq!(body, json!({"fields":{"summary":"New title"}}));
+        let transition = issue_request(
+            client,
+            &config,
+            &credential,
+            None,
+            "10001",
+            IssueRequest::Transition("31"),
+        )
+        .unwrap();
+        assert_eq!(transition.method(), reqwest::Method::POST);
+        assert_eq!(
+            transition.url().path(),
+            "/rest/api/3/issue/10001/transitions"
+        );
+        let body: Value =
+            serde_json::from_slice(transition.body().unwrap().as_bytes().unwrap()).unwrap();
+        assert_eq!(body, json!({"transition":{"id":"31"}}));
+        let read = issue_request(
+            client,
+            &config,
+            &credential,
+            None,
+            "10001",
+            IssueRequest::Read,
+        )
+        .unwrap();
+        assert_eq!(
+            read.url().query_pairs().collect::<Vec<_>>(),
+            vec![("fields".into(), "summary,status".into())]
+        );
+        assert!(issue_request(
+            client,
+            &config,
+            &credential,
+            None,
+            "../../other",
+            IssueRequest::Read
+        )
+        .is_err());
+        assert!(issue_request(
+            client,
+            &config,
+            &credential,
+            None,
+            "10001",
+            IssueRequest::Transition("31?x=1")
+        )
+        .is_err());
+        let mut scoped_config = config.clone();
+        scoped_config.token_mode = TokenMode::Scoped;
+        let mut scoped_credential = credential.clone();
+        scoped_credential.token_mode = TokenMode::Scoped;
+        let request = issue_request(
+            client,
+            &scoped_config,
+            &scoped_credential,
+            Some("11111111-2222-4333-8444-555555555555"),
+            "10001",
+            IssueRequest::Rename("Scoped"),
+        )
+        .unwrap();
+        assert_eq!(request.url().host_str(), Some("api.atlassian.com"));
+        assert_eq!(
+            request.url().path(),
+            "/ex/jira/11111111-2222-4333-8444-555555555555/rest/api/3/issue/10001"
+        );
+        scoped_config.site = "other.atlassian.net".into();
+        assert_eq!(
+            issue_request(
+                client,
+                &scoped_config,
+                &scoped_credential,
+                None,
+                "10001",
+                IssueRequest::Read
+            )
+            .unwrap_err()
+            .code,
+            "jira_token_required_for_site"
+        );
+    }
+
+    #[test]
+    fn writes_resolve_membership_and_reject_conflicts_or_forged_transitions() {
+        let (db, config, id, mut api) = editable_fixture();
+        api.included = false;
+        assert_eq!(
+            perform_task(
+                &db,
+                &config,
+                &id,
+                TaskAction::Rename {
+                    title: "New".into(),
+                    expected_title: "Fictional".into()
+                },
+                &mut api
+            )
+            .unwrap_err(),
+            "jira_task_not_found"
+        );
+        assert_eq!(api.calls, ["project"]);
+        api.included = true;
+        api.calls.clear();
+        assert_eq!(
+            perform_task(
+                &db,
+                &config,
+                &id,
+                TaskAction::Rename {
+                    title: "New".into(),
+                    expected_title: "Stale".into()
+                },
+                &mut api
+            )
+            .unwrap_err(),
+            "jira_task_conflict"
+        );
+        assert_eq!(api.calls, ["project", "read", "transitions"]);
+        api.calls.clear();
+        assert_eq!(
+            perform_task(
+                &db,
+                &config,
+                &id,
+                TaskAction::Transition {
+                    id: "31".into(),
+                    expected_status: "Stale".into()
+                },
+                &mut api
+            )
+            .unwrap_err(),
+            "jira_task_conflict"
+        );
+        assert_eq!(api.calls, ["project", "read", "transitions"]);
+        api.calls.clear();
+        assert_eq!(
+            perform_task(
+                &db,
+                &config,
+                &id,
+                TaskAction::Transition {
+                    id: "999".into(),
+                    expected_status: "В работе".into()
+                },
+                &mut api
+            )
+            .unwrap_err(),
+            "jira_transition_invalid"
+        );
+        assert_eq!(api.calls, ["project", "read", "transitions"]);
+        api.calls.clear();
+        assert_eq!(
+            perform_task(
+                &db,
+                &config,
+                "https://foreign.test/issue/10001",
+                TaskAction::Details,
+                &mut api
+            )
+            .unwrap_err(),
+            "jira_task_not_found"
+        );
+        assert!(api.calls.is_empty());
+    }
+
+    #[test]
+    fn stale_project_search_cannot_authorize_a_moved_issue() {
+        let (db, config, id, mut api) = editable_fixture();
+        let body = json!({"id":"10001","key":"OTHER-72","fields":{"summary":"Fictional","status":{"id":"3","name":"В работе"}}});
+        api.current = decode_issue(serde_json::from_value(body).unwrap()).unwrap();
+        assert_eq!(
+            perform_task(
+                &db,
+                &config,
+                &id,
+                TaskAction::Rename {
+                    title: "New".into(),
+                    expected_title: "Fictional".into()
+                },
+                &mut api
+            )
+            .unwrap_err(),
+            "jira_task_not_found"
+        );
+        assert_eq!(api.calls, ["project", "read"]);
+        api.calls.clear();
+        assert_eq!(
+            perform_task(
+                &db,
+                &config,
+                &id,
+                TaskAction::Transition {
+                    id: "31".into(),
+                    expected_status: "В работе".into()
+                },
+                &mut api
+            )
+            .unwrap_err(),
+            "jira_task_not_found"
+        );
+        assert_eq!(api.calls, ["project", "read"]);
+        for key in [
+            None,
+            Some("PL-not-numeric"),
+            Some("https://outside.test/PL-1"),
+        ] {
+            let body = json!({"id":"10001","key":key,"fields":{"summary":"Fictional","status":{"id":"3","name":"В работе"}}});
+            api.current = decode_issue(serde_json::from_value(body).unwrap()).unwrap();
+            assert_eq!(
+                read_project_issue(&mut api, "10001", "PL")
+                    .err()
+                    .unwrap()
+                    .code,
+                "jira_task_not_found"
+            );
+        }
+        let body = json!({"id":"10001","key":"PL-72","fields":{"summary":"Fictional","status":{"id":"3","name":"В работе"}}});
+        api.current = decode_issue(serde_json::from_value(body).unwrap()).unwrap();
+        assert!(read_project_issue(&mut api, "10001", "PL").is_ok());
+    }
+
+    #[test]
+    fn confirmed_actions_read_back_and_refresh_safe_local_state() {
+        let (db, config, id, mut api) = editable_fixture();
+        let renamed = perform_task(
+            &db,
+            &config,
+            &id,
+            TaskAction::Rename {
+                title: "Renamed".into(),
+                expected_title: "Fictional".into(),
+            },
+            &mut api,
+        )
+        .unwrap();
+        assert_eq!(
+            (
+                renamed.title.as_str(),
+                renamed.status.as_str(),
+                renamed.changed,
+                renamed.editable
+            ),
+            ("Renamed", "В работе", 1, true)
+        );
+        assert_eq!(
+            api.calls,
+            [
+                "project",
+                "read",
+                "transitions",
+                "rename",
+                "read",
+                "transitions"
+            ]
+        );
+        assert_eq!(row(&lock(&db).unwrap(), &id).0, "Renamed");
+        api.calls.clear();
+        let transitioned = perform_task(
+            &db,
+            &config,
+            &id,
+            TaskAction::Transition {
+                id: "31".into(),
+                expected_status: "В работе".into(),
+            },
+            &mut api,
+        )
+        .unwrap();
+        assert_eq!(
+            (transitioned.status.as_str(), transitioned.changed),
+            ("Готово", 1)
+        );
+        assert_eq!(
+            api.calls,
+            [
+                "project",
+                "read",
+                "transitions",
+                "transition",
+                "read",
+                "transitions"
+            ]
+        );
+        let task = row(&lock(&db).unwrap(), &id);
+        assert_eq!(attributes::jira_status(&task.1).as_deref(), Some("Готово"));
+        assert_eq!((task.3.as_str(), task.4), ("task", false));
+        let serialized = serde_json::to_value(transitioned).unwrap();
+        assert_eq!(
+            serialized
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["changed", "editable", "status", "title", "transitions"]
+        );
+        assert!(!serialized.to_string().contains("10001"));
+        assert!(!serialized.to_string().contains(SITE));
+    }
+
+    #[test]
+    fn unknown_write_is_not_replayed_and_details_can_reconcile_it() {
+        let (db, config, id, mut api) = editable_fixture();
+        api.write_error = true;
+        assert_eq!(
+            perform_task(
+                &db,
+                &config,
+                &id,
+                TaskAction::Rename {
+                    title: "Applied before timeout".into(),
+                    expected_title: "Fictional".into()
+                },
+                &mut api
+            )
+            .unwrap_err(),
+            "jira_write_outcome_unknown"
+        );
+        assert_eq!(api.calls, ["project", "read", "transitions", "rename"]);
+        assert_eq!(row(&lock(&db).unwrap(), &id).0, "Fictional");
+        let refreshed = perform_task(&db, &config, &id, TaskAction::Details, &mut api).unwrap();
+        assert_eq!(
+            (refreshed.title.as_str(), refreshed.changed),
+            ("Applied before timeout", 1)
+        );
+        assert_eq!(
+            api.calls.iter().filter(|call| **call == "rename").count(),
+            1
+        );
+        assert_eq!(row(&lock(&db).unwrap(), &id).0, "Applied before timeout");
+        for status in [202, 409, 500, 502, 503, 504] {
+            assert_eq!(
+                write_status(status, None).unwrap_err().code,
+                "jira_write_outcome_unknown"
+            );
+        }
+        assert_eq!(
+            write_status(400, None).unwrap_err().code,
+            "jira_bad_request"
+        );
+        assert_eq!(write_status(403, None).unwrap_err().code, "jira_forbidden");
+        assert_eq!(
+            write_status(429, Some("60")).unwrap_err(),
+            http_failure(429, Some("60"))
+        );
+        let (db, config, id, mut api) = editable_fixture();
+        api.fail_readback = true;
+        assert_eq!(
+            perform_task(
+                &db,
+                &config,
+                &id,
+                TaskAction::Transition {
+                    id: "31".into(),
+                    expected_status: "В работе".into()
+                },
+                &mut api
+            )
+            .unwrap_err(),
+            "jira_write_outcome_unknown"
+        );
+        assert_eq!(
+            api.calls,
+            ["project", "read", "transitions", "transition", "read"]
+        );
+    }
+
+    #[test]
+    fn details_and_mutations_preserve_manual_title_completion_process_and_timers() {
+        let (db, config, id, mut api) = editable_fixture();
+        let tags = "personal-tag,task-sphere:home,task-process:local-process,task-stage:review,task-stage-log:review@2026-09-25T09:00:00Z,task-waiting";
+        {
+            let conn = lock(&db).unwrap();
+            conn.execute("UPDATE items SET title='My local title',status='done',completed=1,tags=?1 WHERE id=?2",params![tags,id]).unwrap();
+            conn.execute("INSERT INTO timeline_blocks(source_type,source_id,date,start_time,is_active,completion_date,created_at,updated_at) VALUES('note',?1,'2026-09-25','09:00:00',1,'2026-09-25',?2,?2)",params![id,T0]).unwrap();
+        }
+        let remote = perform_task(
+            &db,
+            &config,
+            &id,
+            TaskAction::Rename {
+                title: "Remote new title".into(),
+                expected_title: "Fictional".into(),
+            },
+            &mut api,
+        )
+        .unwrap();
+        assert_eq!(remote.title, "Remote new title");
+        let transitioned = perform_task(
+            &db,
+            &config,
+            &id,
+            TaskAction::Transition {
+                id: "31".into(),
+                expected_status: "В работе".into(),
+            },
+            &mut api,
+        )
+        .unwrap();
+        assert_eq!(transitioned.status, "Готово");
+        let conn = lock(&db).unwrap();
+        let task = row(&conn, &id);
+        assert_eq!(
+            (task.0.as_str(), task.3.as_str(), task.4),
+            ("My local title", "done", true)
+        );
+        assert_eq!(task.1, attributes::with_jira_status(tags, "Готово"));
+        assert_eq!(
+            conn.query_row(
+                "SELECT is_active FROM timeline_blocks WHERE source_id=?1",
+                [&id],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
     }
 }
