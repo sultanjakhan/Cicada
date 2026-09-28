@@ -585,6 +585,7 @@ pub fn run() {
             jira_import::jira_task_rename,
             jira_import::jira_task_transition,
             jira_import::workflow::jira_workflow_options,
+            jira_import::workflow::jira_workflow_cached,
             jira_import::workflow::jira_workflow_save,
             jira_import::workflow::jira_task_workflow_action,
             jira_import::jira_create_options,

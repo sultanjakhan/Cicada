@@ -138,6 +138,29 @@ fn require_config(conn: &Connection) -> Result<Config, String> {
     }
     Ok(config)
 }
+fn cached_snapshot(conn: &Connection) -> Result<Option<Value>, String> {
+    let config = require_config(conn)?;
+    let exists: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM jira_workflow_catalog WHERE scope_hash=?1)",
+            [create_scope(&config)],
+            |row| row.get(0),
+        )
+        .map_err(storage)?;
+    if !exists {
+        return Ok(None);
+    }
+    snapshot(conn, &config).map(Some)
+}
+
+/// Reads only local projected data. No Jira runtime or credential is needed.
+#[tauri::command]
+pub fn jira_workflow_cached(
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<Option<Value>, String> {
+    cached_snapshot(&*lock(&state.0)?)
+}
+
 fn bound_credential(runtime: &Runtime, config: &Config) -> Result<Credential, String> {
     let credential = runtime.credential()?.ok_or("jira_token_required")?;
     if credential.site != config.site {
@@ -728,6 +751,61 @@ mod tests {
             .all(|r| r["bucket"].is_null()));
         assert!(result["defaultProcessId"].is_null());
         assert!(!result.to_string().contains("PRIVATE"));
+    }
+    #[test]
+    fn workflow_cached_returns_only_snapshot_without_a_credential_runtime() {
+        let (db, config) = fixture();
+        save(&db, &config, Some(attributes::DEFAULT_PROCESS), false);
+        let expected = snapshot(&lock(&db).unwrap(), &config).unwrap();
+        // No Jira Runtime is registered: touching the vault would fail this command.
+        let app = tauri::test::mock_builder()
+            .manage(crate::AppState(db))
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let cached = jira_workflow_cached(app.state()).unwrap().unwrap();
+        assert_eq!(cached, expected);
+        assert_eq!(
+            cached
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            [
+                "defaultProcessId",
+                "project",
+                "revision",
+                "scope",
+                "statuses"
+            ]
+        );
+        for status in cached["statuses"].as_array().unwrap() {
+            assert_eq!(
+                status
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+                ["bucket", "name"]
+            );
+        }
+    }
+    #[test]
+    fn workflow_cached_distinguishes_absent_corrupt_and_disabled_configuration() {
+        let (db, config) = fixture();
+        let conn = lock(&db).unwrap();
+        conn.execute("DELETE FROM jira_workflow_catalog", [])
+            .unwrap();
+        assert_eq!(cached_snapshot(&conn).unwrap(), None);
+        conn.execute(
+            "INSERT INTO jira_workflow_catalog(scope_hash,names) VALUES(?1,'invalid-json')",
+            [create_scope(&config)],
+        )
+        .unwrap();
+        assert_eq!(cached_snapshot(&conn).unwrap_err(), "jira_storage_failed");
+        disable_config(&conn, AT).unwrap();
+        assert_eq!(cached_snapshot(&conn).unwrap_err(), "jira_not_configured");
     }
     #[test]
     fn workflow_save_is_local_scoped_and_rejects_stale_or_unknown_rules() {
