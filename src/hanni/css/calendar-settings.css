@@ -186,13 +186,6 @@
 .calendar-settings-actions button {
   min-width: 132px;
 }
-.calendar-settings-actions[data-dirty="true"]::before {
-  content: "Сохранение календаря не меняет подключение и этапы задач.";
-  margin-right: auto;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.4;
-}
 .calendar-settings-dialog .calendar-processes,
 .calendar-settings-dialog .calendar-sync-settings,
 .calendar-settings-dialog .calendar-app-updates,

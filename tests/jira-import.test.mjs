@@ -137,7 +137,9 @@ test('errors are shown in Russian, including a token that has to be entered agai
   assert.equal(x.q('error').hidden, false);
   assert.equal(x.q('error').textContent, 'Токен недоступен — введите заново.');
   for (const code of ['jira_unauthorized', 'jira_forbidden', 'jira_not_found', 'jira_rate_limited', 'jira_network_unavailable', 'jira_bad_request']) assert.notEqual(jiraErrorText(code), jiraErrorText('unknown'), code);
-  assert.match(jiraErrorText('jira_unauthorized'), /email или API-токен/);
+  assert.match(jiraErrorText('jira_unauthorized'), /email, API-токен/);
+  assert.match(jiraErrorText('jira_scope_missing'), /не хватает прав.*scopes/);
+  assert.match(jiraErrorText('jira_scope_missing'), /read:jira-work/);
   assert.equal(jiraErrorText('jira_token_required_for_site'), 'При смене сайта или типа токена введи API-токен заново.');
   const failing = mount(t, command => { if (command === 'jira_import_status') return idle(); throw 'jira_site_invalid'; });
   await settle();

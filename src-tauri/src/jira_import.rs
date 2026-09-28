@@ -577,6 +577,31 @@ fn http_failure(status: u16, retry_after: Option<&str>) -> Failure {
     }
 }
 
+/// Only recognize a fixed gateway error; arbitrary server text never leaves native code.
+fn authorization_failure(body: &[u8]) -> Failure {
+    #[derive(Deserialize)]
+    struct GatewayError {
+        message: String,
+    }
+    let missing_scope = body.len() <= 4096
+        && serde_json::from_slice::<GatewayError>(body)
+            .is_ok_and(|error| error.message == "Unauthorized; scope does not match");
+    failure(if missing_scope {
+        "jira_scope_missing"
+    } else {
+        "jira_unauthorized"
+    })
+}
+
+fn response_authorization_failure(response: reqwest::blocking::Response) -> Failure {
+    use std::io::Read;
+    let mut body = Vec::new();
+    if response.take(4097).read_to_end(&mut body).is_err() {
+        return failure("jira_unauthorized");
+    }
+    authorization_failure(&body)
+}
+
 fn jql(project: &str) -> String {
     format!("project = \"{project}\" ORDER BY updated DESC")
 }
@@ -695,6 +720,9 @@ fn read_response(
         })
     })?;
     let status = response.status().as_u16();
+    if status == 401 {
+        return Err(response_authorization_failure(response));
+    }
     if status != 200 {
         let retry_after = response
             .headers()
@@ -1195,6 +1223,9 @@ fn write_response(
     let response = client
         .execute(request)
         .map_err(|_| failure("jira_write_outcome_unknown"))?;
+    if response.status().as_u16() == 401 {
+        return Err(response_authorization_failure(response));
+    }
     write_status(
         response.status().as_u16(),
         response
@@ -1742,6 +1773,9 @@ impl CreateApi for HttpTaskApi<'_> {
             .client
             .execute(request)
             .map_err(|_| failure("jira_create_outcome_unknown"))?;
+        if response.status().as_u16() == 401 {
+            return Err(response_authorization_failure(response));
+        }
         create_status(
             response.status().as_u16(),
             response
@@ -3977,6 +4011,33 @@ mod tests {
             .unwrap();
         assert_eq!(synced, 0);
     }
+    #[test]
+    fn gateway_scope_failure_is_distinct_without_returning_server_text() {
+        assert_eq!(
+            authorization_failure(
+                br#"{"code":401,"message":"Unauthorized; scope does not match"}"#
+            )
+            .code,
+            "jira_scope_missing"
+        );
+        for body in [
+            br#"{"message":"fictional-secret"}"#.as_slice(),
+            b"invalid json",
+            b"",
+            br#"{"message":"Unauthorized; scope does not match: fictional-secret"}"#,
+        ] {
+            assert_eq!(authorization_failure(body).code, "jira_unauthorized");
+        }
+        let oversized = format!(
+            "{{\"message\":\"Unauthorized; scope does not match\",\"padding\":\"{}\"}}",
+            "x".repeat(4096)
+        );
+        assert_eq!(
+            authorization_failure(oversized.as_bytes()).code,
+            "jira_unauthorized"
+        );
+    }
+
     #[test]
     fn scoped_discovery_has_no_credentials_and_only_search_authenticates() {
         let cloud = "11111111-2222-4333-8444-555555555555";
