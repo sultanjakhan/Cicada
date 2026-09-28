@@ -37,15 +37,18 @@ export function openJiraTaskEditor(record, { document, invoke, returnFocus, onCh
     q('refresh').disabled = busy;
     q('reset').hidden = !dirty(); q('reset').disabled = busy;
   }
-  function accept(next, { keepDraft = false } = {}) {
+  function accept(next, { keepDraft = false, keepTransition = false } = {}) {
     const titleDraft = snapshot && title.value !== snapshot.title ? title.value : null;
+    const transitionDraft = transition.value;
     snapshot = next;
     title.value = keepDraft && titleDraft !== null ? titleDraft : next.title;
     q('current').textContent = `Сейчас в Jira: ${next.title} · Статус: ${next.status}`;
     transition.replaceChildren(new window.Option(next.transitions.length ? 'Выбери переход' : 'Доступных переходов нет', ''));
     for (const item of next.transitions) transition.append(new window.Option(`${item.status} · ${item.name}`, item.id));
     transition.value = '';
+    if (keepTransition && next.transitions.some(item => item.id === transitionDraft)) transition.value = transitionDraft;
     mustRefresh = false;
+    return keepTransition && transitionDraft && !transition.value;
   }
   const notify = () => {
     onChanged?.();
@@ -58,12 +61,14 @@ export function openJiraTaskEditor(record, { document, invoke, returnFocus, onCh
     try {
       const next = await invoke(command, { itemId: String(record.source_id), ...args });
       if (!live()) return;
-      accept(next, { keepDraft: command !== 'jira_task_rename' });
-      q('editor-status').textContent = mutation ? 'Изменение подтверждено Jira.' : 'Состояние обновлено.';
+      const lostTransition = accept(next, { keepDraft: command !== 'jira_task_rename', keepTransition: command !== 'jira_task_transition' });
+      q('editor-status').textContent = (mutation ? 'Изменение подтверждено Jira.' : 'Состояние обновлено.')
+        + (lostTransition ? ' Ранее выбранный переход больше недоступен. Выбери новый статус.' : '');
       if (mutation || next.changed > 0) notify();
     } catch (cause) {
       if (!live()) return;
-      const code = typeof cause === 'string' ? cause : cause?.message;
+      let code = typeof cause === 'string' ? cause : cause?.message;
+      if (mutation && jiraErrorText(code) === jiraErrorText(undefined)) code = 'jira_write_outcome_unknown';
       // An ambiguous write must be read back before another explicit write is allowed.
       if (code === 'jira_write_outcome_unknown' || code === 'jira_task_conflict') mustRefresh = true;
       q('editor-status').textContent = '';

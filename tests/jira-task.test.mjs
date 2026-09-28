@@ -58,6 +58,18 @@ test('a transition writes only on its own button and preserves an unsent title d
   assert.equal(x.calls.some(call => call.command === 'jira_task_rename'), false);
 });
 
+test('rename preserves an available status draft; refresh explains when its transition disappears', async t => {
+  let available = true;
+  const x = fixture(t, command => state({ title: command === 'jira_task_rename' ? 'Renamed' : 'Fictional Jira title', transitions: available ? state().transitions : [] }));
+  await settle(); x.type('Renamed'); x.select(); x.q('rename').click(); await settle();
+  assert.equal(x.q('transition').value, '31');
+  assert.equal(x.q('move').disabled, false);
+  assert.equal(x.calls.some(call => call.command === 'jira_task_transition'), false);
+  available = false; x.q('refresh').click(); await settle();
+  assert.equal(x.q('transition').value, '');
+  assert.match(x.q('editor-status').textContent, /Ранее выбранный переход больше недоступен/);
+});
+
 test('unknown write outcome locks mutation until a successful refresh; it never retries automatically', async t => {
   let failRead = false;
   const x = fixture(t, command => {
@@ -111,6 +123,11 @@ test('unknown backend errors never render response bodies; Jira text is plain te
   assert.equal(x.q('current').querySelector('img,b'), null);
   x.type('New title'); x.q('rename').click(); await settle();
   assert.doesNotMatch(x.window.document.body.textContent, /private server|credential/);
+  assert.equal(x.q('rename').disabled, true, 'an unknown IPC error cannot authorize replay');
+  assert.match(x.window.document.querySelector('[data-dialog-error]').textContent, /могла принять/);
+  x.q('refresh').click(); await settle();
+  assert.equal(x.q('rename').disabled, false);
+  assert.equal(x.calls.filter(call => call.command === 'jira_task_rename').length, 1);
 });
 
 test('disposal suppresses a late read and does not trigger a refresh callback', async t => {
