@@ -6,7 +6,7 @@ const ERRORS = {
   jira_workflow_process_invalid: 'Этот процесс больше недоступен. Выбери другой процесс или «Без этапов».',
   jira_workflow_unmapped: 'Настрой статусы проекта в «Настройки → Процессы задач → Работа».',
   jira_workflow_action_unavailable: 'Для этого статуса действие недоступно. Проверь статус в карточке Jira.',
-  jira_token_unavailable: 'Сохранённый API-токен недоступен этой версии Cicada. Вставь новый токен и нажми «Сохранить и подключить».',
+  jira_token_unavailable: 'Сохранённый API-токен недоступен. Подключение приостановлено; уже загруженные задачи сохранены.',
   jira_token_required: 'Введи API-токен.',
   jira_token_required_for_site: 'При смене сайта или типа токена введи API-токен заново.',
   jira_token_required_for_mode: 'При смене типа токена введи API-токен заново.',
@@ -50,11 +50,13 @@ const ERRORS = {
 };
 const errorCode = cause => typeof cause === 'string' ? cause : cause?.message;
 export const jiraErrorText = (code, fallback = 'Не удалось выполнить запрос к Jira. Повтори попытку позже.') => ERRORS[code] || fallback;
+const tokenUnavailable = status => status?.tokenSaved !== true && status?.lastError === 'jira_token_unavailable';
 
 export function jiraStatusText(status) {
   if (!status) return 'Состояние импорта из Jira недоступно.';
   if (status.running) return 'Загружаем задачи из Jira…';
   if (!status.enabled) return 'Jira не подключена. Уже загруженные задачи остаются в Cicada.';
+  if (tokenUnavailable(status)) return 'Подключение приостановлено: сохранённый токен недоступен.';
   if (!status.tokenSaved) return 'Для подключения нужен API-токен.';
   const date = status.lastSuccess ? new Date(status.lastSuccess) : null;
   if (!date || !Number.isFinite(date.getTime())) return status.lastError ? 'Токен сохранён, но подключиться к Jira не удалось.' : 'Токен сохранён. Связь с Jira ещё не проверена.';
@@ -110,7 +112,7 @@ export function mountJiraSettings(element, { invoke, setPending = () => {}, open
     q('status').textContent = busy ? 'Подключаемся к Jira…' : jiraStatusText(status);
     const text = failure || (status?.enabled && status.lastError ? jiraErrorText(status.lastError) : '');
     q('error').textContent = text; q('error').hidden = !text;
-    fields.token.placeholder = status?.tokenSaved ? 'Сохранён — оставь пустым, чтобы не менять' : 'Вставь API-токен';
+    fields.token.placeholder = status?.tokenSaved ? 'Сохранён — оставь пустым, чтобы не менять' : tokenUnavailable(status) ? 'Сохранённый токен недоступен' : 'Вставь API-токен';
     if (!dirty && status) { fields.site.value = status.site || ''; fields.email.value = status.email || ''; fields.project.value = status.project || ''; fields.tokenMode.value = status.tokenMode || 'scoped'; }
     Object.values(fields).forEach(field => { field.disabled = busy || !status; });
     q('edit-destination').disabled = busy;
@@ -153,6 +155,7 @@ export function mountJiraSettings(element, { invoke, setPending = () => {}, open
   function save() {
     if (busy || disposed || status?.running) return;
     const site = fields.site.value.trim(), email = fields.email.value.trim(), project = fields.project.value.trim(), token = fields.token.value.trim();
+    if (!token && tokenUnavailable(status)) { failure = jiraErrorText('jira_token_unavailable'); render(); return; }
     if (!site || !email || !project) { failure = 'Заполни сайт, email и ключ проекта.'; q('connection').open = true; q('destination-fields').hidden = false; render(); (!site ? fields.site : !project ? fields.project : fields.email).focus(); return; }
     if (!token && !status?.tokenSaved) { failure = jiraErrorText('jira_token_required'); render(); fields.token.focus(); return; }
     // A saved connection is checked at once, so a wrong token shows up here.

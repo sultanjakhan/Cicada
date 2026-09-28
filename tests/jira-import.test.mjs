@@ -145,7 +145,19 @@ test('a saved token with rejected scopes is not presented as a working connectio
   assert.equal(x.q('help').open, true);
 });
 
-test('an inaccessible old token can be replaced in the settings; failed storage keeps the new draft', async t => {
+for (const email of ['', 'demo@example.com']) test(`an inaccessible token is not treated as missing, including after Save (email readable: ${!!email})`, async t => {
+  const x = mount(t, () => connected({ email, tokenSaved: false, lastError: 'jira_token_unavailable' }));
+  await settle();
+  assert.match(x.q('status').textContent, /Подключение приостановлено/);
+  assert.equal(x.q('token').placeholder, 'Сохранённый токен недоступен');
+  x.q('save').click(); await settle();
+  assert.match(x.q('error').textContent, /Сохранённый API-токен недоступен/);
+  assert.doesNotMatch(x.q('error').textContent, /Введи|Вставь|Заполни/);
+  assert.deepEqual(x.commands(), ['jira_import_status'], 'a failed credential read never reconfigures or deletes the saved connection');
+  assert.equal(x.dispose.isDirty(), false);
+});
+
+test('an inaccessible old token can be explicitly replaced in the settings; failed storage keeps the new draft', async t => {
   let writeFails = true;
   const x = mount(t, command => {
     if (command === 'jira_import_status') return connected({ tokenSaved: false, lastError: 'jira_token_unavailable' });
@@ -153,7 +165,7 @@ test('an inaccessible old token can be replaced in the settings; failed storage 
     return connected({ lastSuccess: '2026-09-25T09:00:00Z', lastCount: 2 });
   });
   await settle();
-  assert.match(x.q('status').textContent, /нужен API-токен/);
+  assert.match(x.q('status').textContent, /сохранённый токен недоступен/);
   x.type('token', TOKEN); x.q('save').click(); await settle();
   assert.equal(x.q('token').value, TOKEN);
   assert.match(x.q('error').textContent, /Не удалось сохранить новый токен/);
@@ -222,11 +234,11 @@ test('an empty token keeps the saved one and missing fields are explained withou
   assert.equal(saved.calls[1].args.token, null);
 });
 
-test('errors are shown in Russian, including a token that has to be entered again', async t => {
+test('errors distinguish unavailable credential access from Jira authorization failures', async t => {
   const x = mount(t, () => connected({ lastError: 'jira_token_unavailable' }));
   await settle();
   assert.equal(x.q('error').hidden, false);
-  assert.match(x.q('error').textContent, /Сохранённый API-токен недоступен.*Вставь новый токен/);
+  assert.match(x.q('error').textContent, /Сохранённый API-токен недоступен/);
   for (const code of ['jira_unauthorized', 'jira_forbidden', 'jira_not_found', 'jira_rate_limited', 'jira_network_unavailable', 'jira_bad_request']) assert.notEqual(jiraErrorText(code), jiraErrorText('unknown'), code);
   assert.match(jiraErrorText('jira_unauthorized'), /email, API-токен/);
   assert.match(jiraErrorText('jira_scope_missing'), /несовпадении прав токена и запроса.*scopes/);
