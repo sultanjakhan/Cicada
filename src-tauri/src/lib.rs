@@ -21,6 +21,7 @@ mod update_macos;
 mod update_journal;
 mod calendar_compat;
 mod task_attributes;
+mod jira_import;
 mod external_url;
 mod desktop_launch;
 #[cfg(target_os = "macos")]
@@ -245,6 +246,7 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
     mvp_sync_db::initialize(conn)?;
     health_sleep::initialize(conn)?;
     health_activity::initialize(conn)?;
+    jira_import::initialize(conn)?;
     Ok(())
 }
 
@@ -542,6 +544,7 @@ pub fn run() {
                 connection.busy_timeout(Duration::from_secs(5))?;
                 init_schema(&connection)?;
                 app.manage(AppState(Mutex::new(connection)));
+                app.manage(jira_import::Runtime::new(data_dir.join("calendar.db")));
                 app.manage(instance_lock);
                 #[cfg(target_os = "macos")]
                 if !startup_options.is_one_shot() {
@@ -573,6 +576,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            jira_import::jira_import_status,
+            jira_import::jira_import_configure,
+            jira_import::jira_import_disable,
+            jira_import::jira_import_now,
+            jira_import::jira_import_tick,
             health_sleep::health_sleep_status,
             health_sleep::health_sleep_connect,
             health_sleep::health_sleep_import,

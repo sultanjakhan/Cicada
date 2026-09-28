@@ -20,7 +20,7 @@ use tokio_tungstenite::tungstenite::{
 #[path = "mvp_sync_schedule.rs"]
 mod schedule;
 #[path = "mvp_sync_secrets.rs"]
-mod secrets;
+pub(crate) mod secrets;
 #[path = "mvp_sync_transport.rs"]
 mod transport;
 #[cfg(any(target_os = "android", test))]
