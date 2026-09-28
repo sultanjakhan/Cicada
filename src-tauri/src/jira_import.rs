@@ -18,6 +18,7 @@ use std::{
     time::Duration,
 };
 use tauri::Manager;
+pub(crate) mod workflow;
 
 /// The phone never holds the token; it gets the tasks through the sync.
 const SUPPORTED: bool = cfg!(not(any(target_os = "android", target_os = "ios")));
@@ -62,7 +63,8 @@ pub fn initialize(conn: &Connection) -> Result<(), String> {
         CREATE UNIQUE INDEX IF NOT EXISTS jira_create_unresolved
         ON jira_create_requests(scope_hash) WHERE state IN ('pending','done');",
     )
-    .map_err(storage)
+    .map_err(storage)?;
+    workflow::initialize(conn)
 }
 
 // ---- Settings and credential ----
@@ -985,7 +987,7 @@ fn store(
     }
     let changed = match outcome {
         Ok(fetched) => {
-            let changed = apply(&transaction, &config.site, &fetched.issues, &stamp(now))?;
+            let changed = workflow::apply_confirmed(&transaction, config, &fetched.issues, &stamp(now))?;
             record_success(&transaction, now, fetched.issues.len(), fetched.truncated)?;
             changed
         }
@@ -1154,6 +1156,11 @@ enum TaskAction {
     Transition {
         id: String,
         expected_status: String,
+    },
+    WorkflowTransition {
+        id: String,
+        expected_status: String,
+        target_status: String,
     },
 }
 fn valid_edit_title(title: &str) -> bool {
@@ -1359,9 +1366,13 @@ fn perform_task(
     if matches!(&action, TaskAction::Rename { title, .. } if !valid_edit_title(title)) {
         return Err("jira_title_invalid".into());
     }
-    if matches!(&action, TaskAction::Transition { id, .. } if !valid_remote_id(id)) {
+    if matches!(&action, TaskAction::Transition { id, .. } | TaskAction::WorkflowTransition { id, .. } if !valid_remote_id(id)) {
         return Err("jira_transition_invalid".into());
     }
+    let expected_target = match &action {
+        TaskAction::WorkflowTransition { target_status, .. } => Some(target_status.clone()),
+        _ => None,
+    };
     // Resolve the opaque local identity anew inside the configured project. A
     // stale link, a task moved elsewhere or a forged id cannot authorize a write.
     let resolved = api
@@ -1398,6 +1409,10 @@ fn perform_task(
         TaskAction::Transition {
             id,
             expected_status,
+        } | TaskAction::WorkflowTransition {
+            id,
+            expected_status,
+            ..
         } => {
             if current.status != expected_status {
                 return Err("jira_task_conflict".into());
@@ -1408,6 +1423,9 @@ fn perform_task(
                 .ok_or("jira_transition_invalid")?
                 .status
                 .clone();
+            if expected_target.as_deref().is_some_and(|expected| expected != target) {
+                return Err("jira_task_conflict".into());
+            }
             api.transition(&resolved.id, &id).map_err(|e| e.code)?;
             current = read_project_issue(api, &resolved.id, &config.project)
                 .map_err(|_| "jira_write_outcome_unknown")?;
@@ -1429,9 +1447,9 @@ fn perform_task(
         if !local_task_exists(&transaction, item)? {
             return Err("jira_task_not_found".into());
         }
-        let changed = apply(
+        let changed = workflow::apply_confirmed(
             &transaction,
-            &config.site,
+            config,
             std::slice::from_ref(&current),
             &stamp(Utc::now()),
         )?;
@@ -1865,6 +1883,7 @@ struct CreateRecovery {
 #[serde(rename_all = "camelCase")]
 struct CreateOptions {
     project: String,
+    default_process_id: Option<String>,
     issue_types: Vec<CreateIssueType>,
     request_id: Option<String>,
     recovery: Option<CreateRecovery>,
@@ -2046,9 +2065,9 @@ fn perform_create(
             return Err("jira_create_configuration_changed".into());
         }
         let item = item_id(&config.site, &current.id);
-        let changed = apply(
+        let changed = workflow::apply_confirmed(
             &tx,
-            &config.site,
+            config,
             std::slice::from_ref(&current),
             &stamp(Utc::now()),
         )?;
@@ -2110,6 +2129,7 @@ pub async fn jira_create_options(app: tauri::AppHandle) -> Result<Value, String>
             (types, Some(prepare_create(&conn, &config)?))
         };
         serde_json::to_value(CreateOptions {
+            default_process_id: workflow::default_process(&*lock(db)?, &config)?,
             project: config.project,
             issue_types,
             request_id,

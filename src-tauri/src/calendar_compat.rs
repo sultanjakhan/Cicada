@@ -426,9 +426,11 @@ fn load(conn: &Connection, id: &str) -> Result<Value, String> {
             },
         )
         .map_err(|e| fail(format!("read calendar item: {e}")))?;
-    Ok(item_value(
+    let mut value = item_value(
         &item, meta.0, meta.1, meta.2, meta.3, meta.4, meta.5, meta.6,
-    ))
+    );
+    crate::jira_import::workflow::decorate_records(conn, std::slice::from_mut(&mut value))?;
+    Ok(value)
 }
 fn item_id(value: &str) -> Result<&str, String> {
     if value.is_empty() {
@@ -787,8 +789,10 @@ fn calendar_list(
             Ok(value)
         })
         .map_err(|e| fail(e.to_string()))?;
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|e| fail(e.to_string()))
+    let mut values = rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| fail(e.to_string()))?;
+    crate::jira_import::workflow::decorate_records(conn, &mut values)?;
+    Ok(values)
 }
 #[tauri::command]
 pub fn get_calendar_task(id: String, state: State<'_, AppState>) -> Result<Value, String> {
@@ -1483,6 +1487,7 @@ pub fn get_active_blocks(state: State<'_, AppState>) -> Result<Vec<Value>, Strin
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| fail(e.to_string()))?;
     drop(statement);
+    crate::jira_import::workflow::decorate_records(&conn, &mut rows)?;
     // Routine steps are titled by their saved run; an unreadable run keeps a null title.
     if rows.iter().any(|row| row["source_type"] == "schedule") {
         let titles: HashMap<String, Value> = schedule_projections(&conn, None, None)
