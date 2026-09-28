@@ -147,7 +147,7 @@ test('Enter saves a task with its time, kind and sphere; an instant task skips t
   x.key('#evm-title', 'Enter');
   await settle();
   const [saved] = x.saved('save_calendar_task');
-  assert.deepEqual({ ...saved }, { id: null, title: 'Полить цветы', dueDate: '2026-09-24', time: '08:15', estimateMinutes: null, goalId: null, expectedVersion: null, important: false, taskKind: 'instant', sphere: 'home', stage: null, waiting: null, process: null });
+  assert.deepEqual({ ...saved }, { id: null, title: 'Полить цветы', dueDate: '2026-09-24', time: '08:15', estimateMinutes: null, goalId: null, expectedVersion: null, important: false, taskKind: 'instant', sphere: 'home', stage: null, waiting: null, process: null, stageIds: null });
   assert.equal(x.shown('#evm-stage'), false, 'an instant task has no stage');
   assert.equal(x.q('#evm-form'), null, 'saving closes the dialog');
 
@@ -285,7 +285,7 @@ test('the task dialog shows time per stage with the current stage live', async t
   await showEventModal(null, null, { kind: 'task', taskId: 't4' }); await settle();
   const line = x.q('#evm-stage-time');
   assert.ok(x.shown('#evm-stage-time'));
-  assert.equal(line.textContent, 'Время по стадиям: Понимание 25 мин · Требования 1 ч 10 мин · Анализ и модели 12 мин');
+  assert.equal(line.textContent, 'Время по стадиям: Понимание и сбор информации 25 мин · Требования 1 ч 10 мин · Анализ и модели 12 мин');
   assert.equal(line.querySelector('[data-stage-time-current]').textContent, 'Анализ и модели 12 мин', 'the current stage is marked');
   assert.deepEqual(x.saved('get_calendar_task_blocks'), [{ sourceIds: ['t4'] }]);
 });

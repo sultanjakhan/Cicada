@@ -52,6 +52,7 @@ const SPHERE_PREFIX: &str = "task-sphere:";
 const PROCESS_PREFIX: &str = "task-process:";
 const STAGE_PREFIX: &str = "task-stage:";
 const LOG_PREFIX: &str = "task-stage-log:";
+const STAGE_SET_PREFIX: &str = "task-stage-set:";
 const WAITING: &str = "task-waiting";
 
 fn tokens(tags: &str) -> impl Iterator<Item = &str> {
@@ -122,6 +123,37 @@ pub fn effective_process(tags: &str) -> Option<&str> {
     process(tags).or_else(|| (stage(tags).is_some() || waiting(tags)).then_some(DEFAULT_PROCESS))
 }
 
+/// The optional subset is bound to its process. Old clients preserve this token
+/// but can change the process or stage without understanding the selection.
+pub fn stage_ids(tags: &str) -> Option<Vec<&str>> {
+    let process = effective_process(tags)?;
+    tokens(tags).filter_map(|token| token.strip_prefix(STAGE_SET_PREFIX)).find_map(|value| {
+        let (bound, values) = value.split_once(':')?;
+        let ids: Vec<_> = values.split('|').collect();
+        let mut seen = std::collections::HashSet::new();
+        (bound == process && (1..=50).contains(&ids.len())
+            && ids.iter().all(|id| valid_id(id) && seen.insert(*id))).then_some(ids)
+    })
+}
+
+pub fn validate_stage_ids(ids: &[String]) -> Result<(), String> {
+    let mut seen = std::collections::HashSet::new();
+    if ids.len() <= 50 && ids.iter().all(|id| valid_id(id) && seen.insert(id)) { Ok(()) }
+    else { Err("invalid task stage selection".into()) }
+}
+
+/// None preserves even an unknown token; an empty list removes the restriction.
+pub fn write_stage_ids(tags: &str, ids: Option<&[String]>) -> String {
+    let Some(ids) = ids else { return tags.to_owned(); };
+    let mut out: Vec<String> = tokens(tags).filter(|token| !token.starts_with(STAGE_SET_PREFIX)).map(str::to_owned).collect();
+    if !ids.is_empty() {
+        if let Some(process) = effective_process(tags) {
+            out.push(format!("{STAGE_SET_PREFIX}{process}:{}", ids.join("|")));
+        }
+    }
+    out.join(",")
+}
+
 /// «Жду ответа» is shown over any stage, including none.
 pub fn waiting(tags: &str) -> bool {
     tokens(tags).any(|token| token == WAITING)
@@ -154,7 +186,7 @@ pub fn sphere_label(sphere: &str) -> &'static str {
 /// Built-in stage names; a stage added in the settings has only its stored name.
 pub fn stage_label(stage: &str) -> &'static str {
     match stage {
-        "understanding" => "Понимание",
+        "understanding" => "Понимание и сбор информации",
         "requirements" => "Требования",
         "analysis" => "Анализ и модели",
         "description" => "Описание",
@@ -344,6 +376,24 @@ mod tests {
             out.push("task-waiting".to_owned());
         }
         out.join(",")
+    }
+
+    #[test]
+    fn stage_subset_is_bound_and_survives_older_stage_writers() {
+        let ids = vec!["understanding".into(), "acceptance".into()];
+        let tags = write_stage_ids("custom,task-process:system-analysis,task-stage:requirements", Some(&ids));
+        assert_eq!(stage_ids(&tags), Some(vec!["understanding", "acceptance"]));
+        let old = write_stage_0333(&tags, Some("agreement"), Some(true));
+        assert_eq!(stage_ids(&old), stage_ids(&tags));
+        assert_eq!(stage(&old), Some("agreement"));
+        assert_eq!(stage_ids(&old.replace("task-process:system-analysis", "task-process:other")), None);
+        assert_eq!(write_stage_ids(&tags, None), tags);
+        let cleared = write_stage_ids(&tags, Some(&[]));
+        assert_eq!(stage_ids(&cleared), None);
+        assert!(cleared.contains("task-stage:requirements"));
+        for ids in [vec!["bad,id".into()], vec!["a".into(), "a".into()], vec!["a".into(); 51]] {
+            assert!(validate_stage_ids(&ids).is_err());
+        }
     }
 
     #[test]

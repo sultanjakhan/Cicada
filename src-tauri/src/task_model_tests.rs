@@ -500,3 +500,47 @@ fn running_blocks_carry_task_stage_and_cancel_is_a_registered_command() {
     let conn = state.0.lock().unwrap();
     assert_eq!(calendar_task_seconds(&conn, "note", &id).unwrap(), 0, "as if it was never started");
 }
+
+#[test]
+fn task_subset_preserves_history_and_rejects_only_new_excluded_stages() {
+    let mut conn = replica();
+    let id = create(&mut conn, "Fictional subset", None, TaskFields {
+        process: Some("system-analysis".into()), stage: Some("requirements".into()), ..Default::default()
+    });
+    let before = load(&conn, &id).unwrap()["stage_log"].clone();
+    edit(&mut conn, &id, None, TaskFields { stage_ids: Some(vec!["understanding".into(), "acceptance".into()]), ..Default::default() }).unwrap();
+    let row = listed(&conn, &id, true);
+    assert_eq!(row["stage_ids"], json!(["understanding", "acceptance"]));
+    assert_eq!(row["stage"], "requirements");
+    assert_eq!(row["stage_log"], before);
+    edit(&mut conn, &id, Some("2026-09-28"), TaskFields { stage: Some("requirements".into()), ..Default::default() }).unwrap();
+    assert!(set_task_stage(&mut conn, &id, Some("analysis"), None).is_err());
+    assert!(edit(&mut conn, &id, None, TaskFields { stage: Some("analysis".into()), ..Default::default() }).is_err());
+    assert_eq!(set_task_stage(&mut conn, &id, Some("acceptance"), None).unwrap()["stage_ids"], row["stage_ids"]);
+    edit(&mut conn, &id, None, TaskFields { stage_ids: Some(vec![]), ..Default::default() }).unwrap();
+    assert!(load(&conn, &id).unwrap()["stage_ids"].is_null());
+    assert!(set_task_stage(&mut conn, &id, Some("analysis"), None).is_ok());
+}
+
+#[test]
+fn task_subset_survives_sync_and_orphans_but_cannot_be_assigned_without_process() {
+    let mut a = replica(); let mut b = replica();
+    let id = create(&mut a, "Fictional sync subset", None, TaskFields {
+        process: Some("system-analysis".into()), stage_ids: Some(vec!["understanding".into(), "acceptance".into()]), ..Default::default()
+    });
+    let record = wire(&a, &id);
+    crate::mvp_sync_db::validate_record(&b, &record).unwrap();
+    assert!(deliver(&b, &record).unwrap());
+    assert_eq!(load(&b, &id).unwrap()["stage_ids"], json!(["understanding", "acceptance"]));
+    // Stored tags include a stage deleted on another device. Ordinary saves keep it.
+    a.execute("UPDATE items SET tags=tags||',task-stage:orphan,task-stage-log:orphan@2026-09-28T00:00:00Z' WHERE id=?1", [&id]).unwrap();
+    let history = load(&a, &id).unwrap()["stage_log"].clone();
+    edit(&mut a, &id, None, TaskFields::default()).unwrap();
+    assert_eq!(load(&a, &id).unwrap()["stage"], "orphan");
+    assert_eq!(load(&a, &id).unwrap()["stage_log"], history);
+    assert!(save_task(&mut b, None, "No process".into(), None, None, None, None, None,
+        TaskFields { stage_ids: Some(vec!["understanding".into()]), ..Default::default() }).is_err());
+    assert!(edit(&mut a, &id, None, TaskFields { stage_ids: Some(vec!["foreign".into()]), ..Default::default() }).is_err());
+    edit(&mut a, &id, None, TaskFields { process: Some("other".into()), stage: Some("".into()), ..Default::default() }).unwrap();
+    assert!(load(&a, &id).unwrap()["stage_ids"].is_null());
+}

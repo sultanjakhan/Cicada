@@ -18,7 +18,7 @@ const custom = { id: 'p-report', title: 'Отчёт', stages: [{ id: 's-draft', 
 test('nothing stored means the built-in «Системный анализ»; a stored list keeps it and drops malformed entries', () => {
   for (const raw of [null, '']) assert.deepEqual(normalizeProcessState(raw).processes, [{ ...DEFAULT_PROCESS, stages: DEFAULT_PROCESS.stages.map(stage => ({ ...stage })) }]);
   assert.equal(DEFAULT_PROCESS.title, 'Системный анализ');
-  assert.deepEqual(DEFAULT_PROCESS.stages.map(stage => stage.title), ['Понимание', 'Требования', 'Анализ и модели', 'Описание', 'Согласование', 'Декомпозиция', 'В разработке', 'Приёмка']);
+  assert.deepEqual(DEFAULT_PROCESS.stages.map(stage => stage.title), ['Понимание и сбор информации', 'Требования', 'Анализ и модели', 'Описание', 'Согласование', 'Декомпозиция', 'В разработке', 'Приёмка']);
   const state = normalizeProcessState(JSON.stringify({ version: 1, future: true, processes: [
     { ...custom, color: 'blue' }, { id: 'Bad', title: 'x', stages: [{ id: 's', title: 's' }] }, { id: 'p-empty', title: 'Пусто', stages: [] },
     { id: 'p-report', title: 'Дубль', stages: [{ id: 's', title: 's' }] },
@@ -98,7 +98,7 @@ test('intervals, periods and formatting are pure helpers', () => {
   assert.deepEqual([0, 59, 60, 25 * 60, 60 * 60, 70 * 60, 125 * 60].map(formatStageDuration), ['0 мин', '0 мин', '1 мин', '25 мин', '1 ч', '1 ч 10 мин', '2 ч 5 мин']);
   const state = taskStage({ stage: 'requirements' }, [DEFAULT_PROCESS]);
   assert.equal(stageTimeTitle(state, new Map()), 'Время по стадиям пока не учтено');
-  assert.equal(stageTimeTitle(state, new Map([['understanding', 1500], ['requirements', 4200], ['', 30]])), 'Время по стадиям: Понимание 25 мин · Требования 1 ч 10 мин');
+  assert.equal(stageTimeTitle(state, new Map([['understanding', 1500], ['requirements', 4200], ['', 30]])), 'Время по стадиям: Понимание и сбор информации 25 мин · Требования 1 ч 10 мин');
 });
 
 test('validation names the field and a stale save is reported without overwriting', async () => {

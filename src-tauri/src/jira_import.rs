@@ -1810,6 +1810,8 @@ pub struct CreateLocal {
     time: Option<String>,
     task_kind: Option<String>,
     process: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stage_ids: Option<Vec<String>>,
     stage: Option<String>,
     waiting: Option<bool>,
 }
@@ -1820,11 +1822,14 @@ impl CreateLocal {
             task_kind: self.task_kind.clone(),
             sphere: Some("work".into()),
             process: self.process.clone(),
+            stage_ids: self.stage_ids.clone(),
             stage: self.stage.clone(),
             waiting: self.waiting,
         }
     }
     fn validate(&self, conn: &Connection, title: &str) -> Result<(), String> {
+        crate::calendar_compat::edited_task_tags(conn, "", "1970-01-01T00:00:00Z", &self.fields(), "1970-01-01T00:00:00Z")
+            .map_err(|_| "jira_create_local_invalid".to_string())?;
         crate::calendar_compat::validate_task_input(
             conn,
             title,
@@ -2486,6 +2491,21 @@ mod tests {
             &CreateLocal::default(),
             api,
         )
+    }
+
+    #[test]
+    fn absent_subset_keeps_the_existing_create_fingerprint_shape() {
+        let local = CreateLocal::default();
+        let encoded = serde_json::to_value(&local).unwrap();
+        assert!(encoded.get("stageIds").is_none());
+        let with_subset = CreateLocal { process: Some("system-analysis".into()), stage_ids: Some(vec!["understanding".into(), "acceptance".into()]), ..Default::default() };
+        assert_eq!(serde_json::to_value(&with_subset).unwrap()["stageIds"], json!(["understanding", "acceptance"]));
+        assert_ne!(create_fingerprint("Fictional", "1", &local).unwrap(), create_fingerprint("Fictional", "1", &with_subset).unwrap());
+        let conn = Connection::open_in_memory().unwrap();
+        crate::init_schema(&conn).unwrap();
+        with_subset.validate(&conn, "Fictional").unwrap();
+        let excluded = CreateLocal { stage: Some("requirements".into()), ..with_subset };
+        assert_eq!(excluded.validate(&conn, "Fictional").unwrap_err(), "jira_create_local_invalid");
     }
 
     #[test]

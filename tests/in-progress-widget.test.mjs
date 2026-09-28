@@ -454,7 +454,7 @@ test('a process without a stage advances to its first stage; no process has no a
   assert.match(x.row('note:letters').querySelector('.cip-stage').textContent, /Этап:\s*Не выбран/);
   x.control('note:letters', 'stage-next').click(); await settle();
   assert.deepEqual(data.args('set_calendar_task_stage'), [{ id:'letters', stage:'understanding', waiting:null }]);
-  assert.equal(x.row('note:letters').querySelector('.cip-stage-text').textContent, 'Понимание');
+  assert.equal(x.row('note:letters').querySelector('.cip-stage-text').textContent, 'Понимание и сбор информации');
 });
 
 test('custom process order drives the arrow, with safe focus at its last or deleted stage', async t => {

@@ -8,7 +8,7 @@ import { showCategoryManager, showAddCategory } from './calendar-category-manage
 import { createCalendarDialog } from './calendar-dialog.js';
 import { CREATE_TYPES, SCHEDULE_TYPES, createType, createTypeButtons } from './calendar-create-types.js';
 import { TASK_SPHERES, PERSONAL_SPHERES } from './task-model.js';
-import { DELETED_STAGE_LABEL, findProcess, loadProcesses, mountStageTime, taskProcessId } from './task-processes.js';
+import { DELETED_STAGE_LABEL, findProcess, loadProcesses, mountStageTime, taskProcessId, taskStage } from './task-processes.js';
 import { mountJiraCreate } from './jira-create.js';
 import { jiraErrorText } from './jira-import.js';
 // Default time is the exact current local minute. Rounding made a modal opened
@@ -134,6 +134,8 @@ export async function showEventModal(eventId = null, initialDate = null, options
   const loadedProcess = task ? taskProcessId(task) : '';
   const loadedStage = typeof task?.stage === 'string' ? task.stage : '';
   const loadedWaiting = task?.waiting === true;
+  let stageIdsDraft = Array.isArray(task?.stage_ids) ? [...task.stage_ids] : null, stageIdsChanged = false;
+  let processTouched = false, projectDefaultProcess = '', defaultProcessApplied = false;
   // Work or personal first (2026-09-25); a personal task may name its sphere.
   const personalOptions = (value, withNone) => `${withNone ? `<option value=""${value === '' ? ' selected' : ''}>Без сферы</option>` : ''}${PERSONAL_SPHERES.map(([id, label]) => `<option value="${id}"${id === value ? ' selected' : ''}>${label}</option>`).join('')}`;
   const processOptions = value => `<option value="">Без процесса</option>${processes.map(process => `<option value="${escapeHtml(process.id)}"${process.id === value ? ' selected' : ''}>${escapeHtml(process.title)}</option>`).join('')}${value && !findProcess(processes, value) ? `<option value="${escapeHtml(value)}" selected>Процесс не найден</option>` : ''}`;
@@ -203,6 +205,10 @@ export async function showEventModal(eventId = null, initialDate = null, options
           <select class="form-select" id="evm-stage"></select></label>
         <label class="evm-untimed evm-waiting" for="evm-waiting"><input type="checkbox" id="evm-waiting"${loadedWaiting ? ' checked' : ''}> Жду ответа</label>
       </div>
+      <fieldset class="evm-stage-subset" data-editor-task data-editor-stage data-stage-subset>
+        <legend>Нужные этапы</legend><p>Выбери этапы для этой задачи. Время по остальным этапам сохранится.</p>
+        <div data-stage-subset-options></div><button type="button" class="btn-secondary" data-stage-subset-all>Все этапы процесса</button>
+      </fieldset>
       <p class="evm-stage-time" id="evm-stage-time" data-editor-task data-editor-stage hidden></p>
       <div class="evm-when-row" data-editor-event>
         <label class="evm-field" for="evm-time" data-evm-timing><span class="evm-field-label">Время начала</span>
@@ -312,19 +318,44 @@ export async function showEventModal(eventId = null, initialDate = null, options
     overlay.querySelector('[data-evm-personal]').hidden = scope !== 'personal';
   };
   overlay.querySelectorAll('[data-evm-scope]').forEach(button => button.addEventListener('click', () => { scope = button.dataset.evmScope; showError(''); updateScope(); updateEditorType(); }));
-  // The stage select follows the chosen process; a deleted stage stays selectable as it is.
+  const subset = overlay.querySelector('[data-stage-subset]'), subsetOptions = overlay.querySelector('[data-stage-subset-options]');
   const fillStages = (processId, value) => {
-    const stages = findProcess(processes, processId)?.stages || [];
-    stageSelect.replaceChildren(new Option('—', ''), ...stages.map(stage => new Option(stage.title, stage.id)));
-    if (value && !stages.some(stage => stage.id === value)) stageSelect.add(new Option(DELETED_STAGE_LABEL, value));
+    const state = taskStage({ process: processId, stage: value, stage_ids: stageIdsDraft }, processes);
+    stageSelect.replaceChildren(new Option('—', ''), ...(state?.stages || []).map(stage => new Option(stage.title, stage.id)));
+    if (value && !state?.stages.some(stage => stage.id === value)) {
+      const preserved = new Option(state?.label || DELETED_STAGE_LABEL, value); preserved.disabled = true; stageSelect.add(preserved);
+    }
     stageSelect.value = value || '';
+    subsetOptions.replaceChildren();
+    const stages = findProcess(processes, processId)?.stages || [];
+    const missing = (stageIdsDraft || []).filter(id => !stages.some(stage => stage.id === id)).map(id => ({ id, title: `${DELETED_STAGE_LABEL} (${id})` }));
+    for (const stage of [...stages, ...missing]) {
+      const label = document.createElement('label'), check = document.createElement('input'), name = document.createElement('span');
+      check.type = 'checkbox'; check.dataset.stageSubsetId = stage.id; check.checked = !stageIdsDraft || stageIdsDraft.includes(stage.id);
+      name.textContent = stage.title; label.append(check, name); subsetOptions.append(label);
+    }
+  };
+  const applyDefaultProcess = () => {
+    if (isEdit || kind !== 'task' || scope !== 'work' || processTouched || defaultProcessApplied || !findProcess(processes, projectDefaultProcess)) return;
+    defaultProcessApplied = true; processSelect.value = projectDefaultProcess; fillStages(projectDefaultProcess, '');
   };
   fillStages(loadedProcess, loadedStage);
+  processSelect.addEventListener('pointerdown', () => { processTouched = true; });
   processSelect.addEventListener('change', () => {
+    processTouched = true; stageIdsDraft = null; stageIdsChanged = true;
     const stages = findProcess(processes, processSelect.value)?.stages || [];
-    // Another process starts at its first stage unless the current one belongs to it.
     fillStages(processSelect.value, stages.some(stage => stage.id === stageSelect.value) ? stageSelect.value : stages[0]?.id || '');
     updateTiming();
+  });
+  subsetOptions.addEventListener('change', event => {
+    const checkbox = event.target.closest('[data-stage-subset-id]'); if (!checkbox) return;
+    stageIdsDraft = [...subsetOptions.querySelectorAll('input:checked')].map(input => input.dataset.stageSubsetId); stageIdsChanged = true;
+    const focusId = checkbox.dataset.stageSubsetId;
+    fillStages(processSelect.value, stageSelect.value);
+    [...subsetOptions.querySelectorAll('input')].find(input => input.dataset.stageSubsetId === focusId)?.focus();
+  });
+  overlay.querySelector('[data-stage-subset-all]').addEventListener('click', () => {
+    stageIdsDraft = null; stageIdsChanged = true; fillStages(processSelect.value, stageSelect.value);
   });
   const waitingInput = overlay.querySelector('#evm-waiting');
   const kindHint = overlay.querySelector('#evm-kind-hint');
@@ -388,6 +419,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
     overlay.querySelector('[data-editor-work]').hidden = kind !== 'task' || instant;
     // Without a process a task has no stage (2026-09-25).
     overlay.querySelector('[data-evm-stage-fields]').hidden = kind !== 'task' || instant || !processSelect.value;
+    subset.hidden = kind !== 'task' || instant || !processSelect.value;
     overlay.querySelector('#evm-stage-time').hidden = kind !== 'task' || instant || !retryLoaded.process || taskId == null;
     kindHint.textContent = instant ? 'Отмечается одним нажатием, без таймера.' : 'С оценкой времени, таймером и фактом.';
     updateRangeHint();
@@ -411,6 +443,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
     } else if (message) { error.tabIndex = -1; error.focus(); }
   };
   const updateEditorType = () => {
+    applyDefaultProcess();
     const other = SCHEDULE_TYPES.includes(kind) ? null : createType(kind);
     const createInJira = !isEdit && kind === 'task' && scope === 'work' && !acknowledgedTask;
     jiraCreate?.setActive(createInJira);
@@ -506,6 +539,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
       overlay.querySelector(`[name="evm-task-kind"][value="${retryLoaded.kind}"]`).checked = true;
       scope = retryLoaded.sphere === 'work' ? 'work' : 'personal';
       sphereSelect.innerHTML = personalOptions(retryLoaded.sphere === 'work' ? 'personal' : retryLoaded.sphere, retryLoaded.sphere === ''); updateScope();
+      stageIdsDraft = Array.isArray(task.stage_ids) ? [...task.stage_ids] : null; stageIdsChanged = false;
       processSelect.innerHTML = processOptions(retryLoaded.process); fillStages(retryLoaded.process, retryLoaded.stage); waitingInput.checked = retryLoaded.waiting;
       showStageTime();
       importantInput.checked = Number(task.priority) >= 5; importantChanged = false;
@@ -525,6 +559,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
   };
   new MutationObserver((_, observer) => { if (!overlay.isConnected) { stopStageTime?.(); observer.disconnect(); } }).observe(document.body, { childList: true });
   jiraCreate = mountJiraCreate(overlay.querySelector('#evm-jira-create'), { invoke, onChange: updateEditorType, onPending: setPending,
+    onOptions: data => { projectDefaultProcess = data.defaultProcessId || ''; applyDefaultProcess(); updateTiming(); },
     onRecovered: async (result, local) => { if (local && options.onTaskSaved) await options.onTaskSaved({id:result.itemId,goalId:local.goalId}); },
     onCompleted: () => { changed = true; overlay.remove(); notifyChange(); } });
   updateScope(); showRecordState(); updateEditorType(); showStageTime();
@@ -624,6 +659,8 @@ export async function showEventModal(eventId = null, initialDate = null, options
       // «Без процесса» sends '' (it removes stage and «Жду ответа» too) only when it is a change.
       const process = instant ? null : processSelect.value, dropsProcess = process === '' && (!isEdit || retryLoaded.process !== '');
       const processChanged = process !== null && (!isEdit || process !== retryLoaded.process);
+      if (!instant && process && Array.isArray(stageIdsDraft) && !stageIdsDraft.length) { showError('Выбери хотя бы один этап или нажми «Все этапы процесса».', subsetOptions.querySelector('input')); return; }
+      const stageIds = instant ? null : stageIdsChanged ? stageIdsDraft || [] : null;
       const stage = instant ? null : process === '' ? (dropsProcess ? '' : null) : !isEdit || processChanged || stageSelect.value !== retryLoaded.stage ? stageSelect.value : null;
       const waiting = instant ? null : process === '' ? (dropsProcess ? false : null) : !isEdit || waitingInput.checked !== retryLoaded.waiting ? waitingInput.checked : null;
       // An instant task hides its estimate: a new one gets none and an edit keeps
@@ -644,12 +681,12 @@ export async function showEventModal(eventId = null, initialDate = null, options
           // Editing sends kind and sphere only when they change, so a value this
           // version does not know is kept.
           if (createInJira) {
-            const result = await jiraCreate.create(title, { dueDate, time, estimateMinutes, goalId: desiredGoalId, important, taskKind, stage, waiting, process });
+            const result = await jiraCreate.create(title, { dueDate, time, estimateMinutes, goalId: desiredGoalId, important, taskKind, stage, waiting, process, stageIds });
             savedEventId = result.itemId; jiraCreatedRequestId = result.requestId;
           } else {
             savedEventId = await invoke('save_calendar_task', { id: savedEventId, title, dueDate, time, estimateMinutes, goalId: desiredGoalId, expectedVersion: savedVersion, important,
               taskKind: !isEdit || taskKind !== retryLoaded.kind ? taskKind : null, sphere: !isEdit || sphere !== retryLoaded.sphere ? sphere : null,
-              stage, waiting, process: processChanged ? process : null });
+              stage, waiting, process: processChanged ? process : null, stageIds });
           }
           acknowledgedTask = { id:savedEventId, goalId:desiredGoalId };
         }

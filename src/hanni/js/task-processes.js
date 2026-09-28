@@ -21,7 +21,7 @@ const VERSION = 1;
 const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const freeze = process => Object.freeze({ ...process, stages: Object.freeze(process.stages.map(stage => Object.freeze(stage))) });
 export const DEFAULT_PROCESS = freeze({ id: DEFAULT_PROCESS_ID, title: 'Системный анализ', stages: [
-  ['understanding', 'Понимание'], ['requirements', 'Требования'], ['analysis', 'Анализ и модели'], ['description', 'Описание'],
+  ['understanding', 'Понимание и сбор информации'], ['requirements', 'Требования'], ['analysis', 'Анализ и модели'], ['description', 'Описание'],
   ['agreement', 'Согласование'], ['decomposition', 'Декомпозиция'], ['development', 'В разработке'], ['acceptance', 'Приёмка'],
 ].map(([id, title]) => ({ id, title })) });
 const copy = process => ({ ...process, stages: process.stages.map(stage => ({ ...stage })) });
@@ -142,13 +142,16 @@ export function taskStage(row, processes) {
   const processId = taskProcessId(row);
   if (!processId) return null;
   const process = findProcess(processes, processId);
-  const stages = process?.stages || [];
+  const allStages = process?.stages || [];
+  const selected = Array.isArray(row?.stage_ids) && row.stage_ids.length ? new Set(row.stage_ids) : null;
+  const stages = selected ? allStages.filter(item => selected.has(item.id)) : allStages;
   const stage = typeof row?.stage === 'string' ? row.stage : '';
-  const index = stage ? stages.findIndex(item => item.id === stage) : -1;
-  const deleted = !!stage && index < 0;
-  const label = !stage ? '' : index >= 0 ? stages[index].title : (process ? '' : stageTitleAnywhere(processes, stage)) || DELETED_STAGE_LABEL;
-  const next = deleted ? null : stages[index + 1] || null;
-  return { processId, process, processTitle: process?.title || 'Процесс не найден', stages, stage, index, deleted, label, next, isLast: index >= 0 && index === stages.length - 1, waiting: row?.waiting === true };
+  const index = stage ? allStages.findIndex(item => item.id === stage) : -1;
+  const deleted = !!stage && index < 0, excluded = !!stage && !!selected && !selected.has(stage);
+  const title = !stage ? '' : index >= 0 ? allStages[index].title : (process ? '' : stageTitleAnywhere(processes, stage)) || DELETED_STAGE_LABEL;
+  const label = title && excluded ? `${title} — не выбран для задачи` : title;
+  const next = deleted ? null : allStages.slice(index + 1).find(item => !selected || selected.has(item.id)) || null;
+  return { processId, process, processTitle: process?.title || 'Процесс не найден', stages, allStages, stage, index, deleted, excluded, label, next, isLast: index >= 0 && !next, waiting: row?.waiting === true };
 }
 
 // ---- Time per stage (pure) ----
@@ -215,8 +218,9 @@ export function formatStageDuration(seconds) {
  */
 export function stageTimeParts(state, totals) {
   if (!state) return [];
-  const parts = [], known = new Set(state.stages.map(stage => stage.id));
-  for (const stage of state.stages) {
+  const stages = state.allStages || state.stages;
+  const parts = [], known = new Set(stages.map(stage => stage.id));
+  for (const stage of stages) {
     const seconds = totals.get(stage.id) || 0, current = stage.id === state.stage;
     if (seconds >= 60 || current) parts.push({ id: stage.id, label: stage.title, seconds, current });
   }

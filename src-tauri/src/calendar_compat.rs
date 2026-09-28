@@ -380,6 +380,7 @@ fn decorate_task(value: &mut Value, tags: &str) {
     value["sphere"] = json!(attributes::sphere(tags));
     value["process"] = json!(attributes::effective_process(tags).unwrap_or(""));
     value["stage"] = json!(attributes::stage(tags).unwrap_or(""));
+    value["stage_ids"] = json!(attributes::stage_ids(tags));
     value["waiting"] = json!(attributes::waiting(tags));
     value["stage_log"] = attributes::stage_log(tags).into_iter().map(|(stage, at)| json!({"stage":stage,"at":at})).collect();
 }
@@ -825,6 +826,8 @@ pub(crate) struct TaskFields {
     pub waiting: Option<bool>,
     /// Process (2026-09-25); `Some("")` removes it with the stage and «Жду ответа».
     pub process: Option<String>,
+    /// None preserves the subset; an empty list uses every process stage.
+    pub stage_ids: Option<Vec<String>>,
 }
 #[tauri::command(rename_all = "camelCase")]
 pub fn save_calendar_task(
@@ -841,10 +844,11 @@ pub fn save_calendar_task(
     stage: Option<String>,
     waiting: Option<bool>,
     process: Option<String>,
+    stage_ids: Option<Vec<String>>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let mut conn = lock(&state)?;
-    save_task(&mut conn, id, title, due_date, estimate_minutes, goal_id, expected_version, important, TaskFields { time, task_kind, sphere, stage, waiting, process })
+    save_task(&mut conn, id, title, due_date, estimate_minutes, goal_id, expected_version, important, TaskFields { time, task_kind, sphere, stage, waiting, process, stage_ids })
 }
 pub(crate) fn save_task(
     conn: &mut Connection,
@@ -892,12 +896,47 @@ pub(crate) fn validate_task_input(
     if let Some(value) = fields.process.as_deref() {
         crate::task_attributes::validate_process(value)?;
     }
+    if let Some(ids) = &fields.stage_ids {
+        crate::task_attributes::validate_stage_ids(ids)?;
+    }
     if let Some(goal) = goal_id.as_deref() {
         let exists: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM calendar_goals WHERE id=?1)",
             [goal], |r| r.get(0)).map_err(|e| fail(e.to_string()))?;
         if !exists { return Err(fail("goal not found")); }
     }
     Ok(())
+}
+
+/// Compute tags before any write, including Jira's remote create preflight.
+pub(crate) fn edited_task_tags(conn: &Connection, current: &str, since: &str, fields: &TaskFields, at: &str) -> Result<String, String> {
+    use crate::task_attributes as a;
+    let edit = a::StageEdit { process: fields.process.as_deref(), stage: fields.stage.as_deref(), waiting: fields.waiting };
+    let changed = a::with_process(&a::edit_stage(&a::write(current, fields.task_kind.as_deref(), fields.sphere.as_deref()), edit, at, since));
+    let empty = Vec::new();
+    let process_changed = a::effective_process(current) != a::effective_process(&changed);
+    let selection = fields.stage_ids.as_deref().or_else(|| process_changed.then_some(empty.as_slice()));
+    if let Some(ids) = selection.filter(|ids| !ids.is_empty()) {
+        a::validate_stage_ids(ids)?;
+        let process = a::effective_process(&changed).ok_or_else(|| fail("stage selection requires a process"))?;
+        let state: Value = crate::mvp_sync_db::read_ui(conn, "calendar_processes_v1")?
+            .and_then(|raw| serde_json::from_str(&raw).ok()).unwrap_or(Value::Null);
+        let definition = state["processes"].as_array().and_then(|rows| rows.iter().find(|row| row["id"] == process));
+        let previous = (!process_changed).then(|| a::stage_ids(current)).flatten().unwrap_or_default();
+        for id in ids {
+            let known = match definition {
+                Some(row) => row["stages"].as_array().is_some_and(|stages| stages.iter().any(|stage| stage["id"] == *id)),
+                None => process == a::DEFAULT_PROCESS && a::STAGES.contains(&id.as_str()),
+            };
+            if !known && !previous.contains(&id.as_str()) { return Err(fail("stage is not in the selected process")); }
+        }
+    }
+    let next = a::write_stage_ids(&changed, selection);
+    if let Some(stage) = fields.stage.as_deref().filter(|stage| !stage.is_empty()) {
+        if stage != a::stage(current).unwrap_or("") && a::stage_ids(&next).is_some_and(|ids| !ids.contains(&stage)) {
+            return Err(fail("stage is excluded from this task"));
+        }
+    }
+    Ok(next)
 }
 
 pub(crate) fn save_task_in_transaction(
@@ -910,20 +949,14 @@ pub(crate) fn save_task_in_transaction(
     // one only while the task already had a date: «Без даты» on 0.3.29 leaves a
     // stale time behind, and assigning a day again must not revive it.
     let keep_time = due_date.is_some() && fields.time.is_none();
-    let new_time = fields.time.filter(|value| !value.is_empty() && due_date.is_some());
+    let new_time = fields.time.clone().filter(|value| !value.is_empty() && due_date.is_some());
     // Omitted importance preserves existing priorities for date-only edits and
     // older clients. The task UI exposes only the explicit highest priority.
     let priority = important.map(|value| if value { 5_i64 } else { 0_i64 });
     // A stage change is recorded with this time; a task that already had a
     // stage and no history (0.3.33) keeps its earlier work with it from `since`.
     let edited_at = now();
-    let tags = |current: &str, since: &str| {
-        use crate::task_attributes::{edit_stage, with_process, write, StageEdit};
-        let attributes = write(current, fields.task_kind.as_deref(), fields.sphere.as_deref());
-        let edit = StageEdit { process: fields.process.as_deref(), stage: fields.stage.as_deref(), waiting: fields.waiting };
-        // Every edit also writes the process a 0.3.33 stage belongs to.
-        with_process(&edit_stage(&attributes, edit, &edited_at, since))
-    };
+    let tags = |current: &str, since: &str| edited_task_tags(transaction, current, since, &fields, &edited_at);
     let item_id = match id {
         Some(id) => {
             let current: Option<(String, String)> = transaction
@@ -934,6 +967,7 @@ pub(crate) fn save_task_in_transaction(
             let next_tags = current
                 .as_ref()
                 .map(|(stored, since)| tags(stored, since))
+                .transpose()?
                 .filter(|next| current.as_ref().is_some_and(|(stored, _)| stored != next));
             let changed=transaction.execute("UPDATE items SET title=?1,date=?2,duration_minutes=COALESCE(?3,0),updated_at=?4,version=version+1,priority=COALESCE(?7,priority),time=CASE WHEN ?8 AND date IS NOT NULL THEN time ELSE ?9 END,tags=COALESCE(?10,tags) WHERE id=?5 AND kind='task' AND status IN ('task','done') AND (?6 IS NULL OR version=?6)",params![title.trim(),due_date,estimate_minutes,now(),id,expected_version,priority,keep_time,new_time,next_tags]).map_err(|e|fail(e.to_string()))?;
             if changed != 1 {
@@ -947,7 +981,7 @@ pub(crate) fn save_task_in_transaction(
             }
             let id = Uuid::new_v4().to_string();
             let n = edited_at.clone();
-            transaction.execute("INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,status) VALUES(?1,'task',?2,'',?3,?7,COALESCE(?4,0),0,1,?5,?5,'task','#9B9B9B',COALESCE(?6,0),0,?8,'task')",params![id,title.trim(),due_date,estimate_minutes,n,priority,new_time,tags("", &n)]).map_err(|e|fail(e.to_string()))?;
+            transaction.execute("INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,status) VALUES(?1,'task',?2,'',?3,?7,COALESCE(?4,0),0,1,?5,?5,'task','#9B9B9B',COALESCE(?6,0),0,?8,'task')",params![id,title.trim(),due_date,estimate_minutes,n,priority,new_time,tags("", &n)?]).map_err(|e|fail(e.to_string()))?;
             id
         }
     };
@@ -1010,8 +1044,14 @@ pub(crate) fn set_task_stage(
         .optional()
         .map_err(|e| fail(e.to_string()))?
         .ok_or_else(|| fail("task not found"))?;
-    let edit = crate::task_attributes::StageEdit { process: None, stage, waiting };
-    let edited = crate::task_attributes::edit_stage(&tags, edit, &now(), &since);
+    if stage.is_none_or(|value| value == crate::task_attributes::stage(&tags).unwrap_or(""))
+        && waiting.is_none_or(|value| value == crate::task_attributes::waiting(&tags)) {
+        let value = task_detail(&transaction, id)?;
+        transaction.commit().map_err(|e| fail(e.to_string()))?;
+        return Ok(value);
+    }
+    let fields = TaskFields { stage: stage.map(str::to_owned), waiting, ..TaskFields::default() };
+    let edited = edited_task_tags(&transaction, &tags, &since, &fields, &now())?;
     // An unchanged choice writes nothing, so it creates no sync record. A real
     // change also writes the process a 0.3.33 stage belongs to.
     if edited != tags {

@@ -1,7 +1,7 @@
 import { jiraErrorText } from './jira-import.js';
 
 // Native owns the durable request journal. Reloading options never repeats a POST.
-export function mountJiraCreate(element, { invoke, onChange, onPending, onRecovered, onCompleted }) {
+export function mountJiraCreate(element, { invoke, onChange, onPending, onRecovered, onCompleted, onOptions }) {
   const document = element.ownerDocument;
   let active = false, loaded = false, busy = false, data = null, failure = '';
   let submitted = null;
@@ -39,6 +39,7 @@ export function mountJiraCreate(element, { invoke, onChange, onPending, onRecove
     const selected = type.value;
     try {
       data = await invoke('jira_create_options');
+      if (element.isConnected) onOptions?.(data);
       if (!data.recovery && !data.issueTypes?.length) failure = 'В проекте нет доступных типов задач. Проверь право Create Issues в Jira и обнови подключение.';
       type.replaceChildren(new document.defaultView.Option('Выбери тип задачи', ''), ...(data.issueTypes || []).map(item => new document.defaultView.Option(item.name, item.id)));
       if ((data.issueTypes || []).some(item => item.id === selected)) type.value = selected;

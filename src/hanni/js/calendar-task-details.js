@@ -127,7 +127,9 @@ export function openCalendarTaskDetails(record, dependencies) {
     waiting.hidden = !stageState?.waiting;
     if (!stageState) { stageSelect.replaceChildren(); return; }
     const options = [new window.Option('Без этапа', '')];
-    if (stageState.deleted && stageState.stage) options.push(new window.Option(stageState.label, stageState.stage));
+    if ((stageState.deleted || stageState.excluded) && stageState.stage) {
+      const preserved = new window.Option(stageState.label, stageState.stage); preserved.disabled = true; options.push(preserved);
+    }
     for (const item of stageState.stages) options.push(new window.Option(item.title, item.id));
     stageSelect.replaceChildren(...options);
     stageSelect.value = stageState.stage || '';
