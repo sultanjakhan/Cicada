@@ -209,6 +209,7 @@ jobs:
       - run: npm run build
       - run: cargo test --manifest-path src-tauri/Cargo.toml --locked
       - run: python3 -m unittest discover -s tests -p 'test_mac_archive.py'
+      - run: cargo test --manifest-path native/macos-vault/Cargo.toml --locked
       - name: Build and sign macOS candidate
         run: python3 scripts/package-update.py macos
       - id: artifact

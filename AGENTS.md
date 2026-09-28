@@ -1,5 +1,11 @@
 # Cicada
 
+Owner choice, 2026-09-28 (credential repair): use a protected storage design
+without a paid Apple Developer account. Prove update continuity and deny
+unapproved local clients before deployment. This does not authorize plaintext
+credentials, all-application Keychain access, or replacing the working app
+before its saved connections can be preserved or explicitly migrated.
+
 Owner correction, 2026-09-28 (credential continuity): ordinary updates must
 preserve saved connections and the existing task/time/settings profile. Repeated
 token entry is an update defect, not the normal release workflow. A database

@@ -13,6 +13,11 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import importlib.util
+
+vault_spec = importlib.util.spec_from_file_location('macos_vault_package', Path(__file__).with_name('macos_vault_package.py'))
+vault = importlib.util.module_from_spec(vault_spec)
+vault_spec.loader.exec_module(vault)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -86,8 +91,10 @@ def verify_updater_archive(archive, signature=None, expected_files=None):
         with tempfile.TemporaryDirectory(prefix='cicada-archive-') as temporary:
             with tarfile.open(archive, 'r:gz') as members:
                 members.extractall(temporary, filter='data')
-            actual = verify_signature(Path(temporary) / 'Cicada.app',
-                                      signature['team_id'], signature['certificate_sha1'])
+            bundle = Path(temporary) / 'Cicada.app'
+            actual = ({'type': 'vault', 'cdhash': vault.signature(bundle),
+                       'helper_cdhash': signature['helper_cdhash']} if signature.get('type') == 'vault'
+                      else verify_signature(bundle, signature['team_id'], signature['certificate_sha1']))
             require(actual == signature, 'The updater archive has a different application signature.')
             require(expected_files is None or bundle_hashes(Path(temporary) / 'Cicada.app') == expected_files,
                     'The updater archive differs from the verified application bundle.')
@@ -98,9 +105,14 @@ def main():
     parser.add_argument('--updater', action='store_true')
     args = parser.parse_args()
     require(sys.platform == 'darwin', 'Build this package on macOS.')
-    identity, team = signing_configuration(os.environ)
-    identities = output('/usr/bin/security', 'find-identity', '-v', '-p', 'codesigning')
-    require(identity in identities, 'The configured Apple signing identity is unavailable; no package was built.')
+    use_vault = vault.PIN.is_file()
+    if use_vault:
+        helper, helper_pin = vault.helper()
+        identity, team = '-', None
+    else:
+        identity, team = signing_configuration(os.environ)
+        identities = output('/usr/bin/security', 'find-identity', '-v', '-p', 'codesigning')
+        require(identity in identities, 'The configured Apple signing identity is unavailable; no package was built.')
     commit = output('git', 'rev-parse', 'HEAD')
     require(not output('git', 'status', '--porcelain'), 'Commit source changes before packaging.')
     origin = output('git', 'remote', 'get-url', 'origin')
@@ -112,11 +124,17 @@ def main():
     metadata = json.loads(output('cargo', 'metadata', '--manifest-path', 'src-tauri/Cargo.toml',
                                  '--no-deps', '--format-version', '1', '--locked'))
     environment = dict(os.environ, APPLE_SIGNING_IDENTITY=identity)
+    environment.pop('CICADA_VAULT_CDHASH', None)
+    if use_vault:
+        require(environment.get('TAURI_SIGNING_PRIVATE_KEY'), 'The release signer is required to authorize the vault client.')
+        environment['CICADA_VAULT_CDHASH'] = helper_pin['cdhash']
     for name in ('APPLE_ID', 'APPLE_PASSWORD', 'APPLE_TEAM_ID', 'APPLE_API_ISSUER',
                  'APPLE_API_KEY', 'APPLE_API_KEY_PATH', 'APPLE_CERTIFICATE', 'APPLE_CERTIFICATE_PASSWORD'):
         environment.pop(name, None)
     command = ['npm', 'run', 'tauri', '--', 'build', '--bundles', 'app', '--ci',
                '--config', 'src-tauri/tauri.macos.conf.json']
+    if use_vault:
+        command.extend(['--config', json.dumps({'bundle': {'macOS': {'minimumSystemVersion': '12.0'}}})])
     if args.updater:
         require(environment.get('TAURI_SIGNING_PRIVATE_KEY'), 'The updater signing key is required.')
         command.extend(['--config', json.dumps({'bundle': {'createUpdaterArtifacts': True}})])
@@ -130,12 +148,21 @@ def main():
             info['CFBundleShortVersionString'] == config['version'] and
             info['CFBundleExecutable'] == config['mainBinaryName'] and
             info.get('CFBundleName') == 'Cicada', 'Bundle identity, name or version differs.')
-    signature = verify_signature(bundle, team, identity)
+    if use_vault:
+        subprocess.run(['codesign', '--force', '--sign', '-', '--options', 'runtime',
+                        '--timestamp=none', str(bundle)], check=True)
+        signature = {'type': 'vault', 'cdhash': vault.signature(bundle), 'helper_cdhash': helper_pin['cdhash']}
+    else:
+        signature = verify_signature(bundle, team, identity)
     directory = ROOT / '.local/mac-package' / commit[:12]
     directory.mkdir(parents=True, exist_ok=True)
     destination = directory / 'Cicada.app'
     require(not destination.exists(), 'This commit already has a package; inspect the existing artifact.')
     subprocess.run(['ditto', str(bundle), str(destination)], check=True)
+    if use_vault:
+        import shutil
+        vault.attest(destination, config['version'], helper_pin, directory, environment, helper)
+        shutil.copy2(helper, directory / 'cicada-vault')
     hashes = bundle_hashes(destination)
     archive = directory / 'Cicada-macos.zip'
     subprocess.run(['ditto', '-c', '-k', '--sequesterRsrc', '--keepParent',
@@ -143,6 +170,11 @@ def main():
     if args.updater:
         import shutil
         updater = bundle.with_name(bundle.name + '.tar.gz')
+        if use_vault:
+            # The final hardened signature differs from Tauri's intermediate
+            # app. Repack exactly the verified bytes before signing delivery.
+            with tarfile.open(updater, 'w:gz') as archive_file:
+                archive_file.add(destination, arcname='Cicada.app')
         require(updater.is_file(), 'Tauri did not create the macOS updater archive.')
         verify_updater_archive(updater, signature, hashes)
         shutil.copyfile(updater, directory / updater.name)

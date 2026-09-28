@@ -5,6 +5,10 @@
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
+#[cfg(target_os = "macos")]
+#[path = "macos_vault.rs"]
+pub(crate) mod macos_vault;
+
 /// One secret slot: the Keychain service on macOS; on Windows and Android the
 /// file next to the database, protected on Windows with `<service>:<account>`
 /// as DPAPI entropy.
@@ -168,6 +172,41 @@ pub(crate) fn write(database_path: &Path, raw: &str) -> Result<(), String> {
 }
 
 pub(crate) fn read_from(store: &Store, database_path: &Path) -> Result<Option<String>, String> {
+    #[cfg(target_os = "macos")]
+    if macos_vault::enabled() {
+        use cicada_macos_vault::storage::{Operation, Response};
+        match macos_vault::call(
+            database_path,
+            store.service,
+            account(database_path)?,
+            Operation::Read,
+        )? {
+            Response::Present { value } => return Ok(Some(value)),
+            Response::Disconnected => return Ok(None),
+            Response::Missing => {}
+            _ => return Err("mvp_sync_credentials_unavailable".into()),
+        }
+        // Only a genuinely absent vault record permits migration. Access errors
+        // never become "no token", and a disconnect tombstone blocks old values.
+        let previous = read_legacy(store, database_path)?;
+        if let Some(raw) = previous.as_deref() {
+            return match macos_vault::call(
+                database_path,
+                store.service,
+                account(database_path)?,
+                Operation::ImportIfMissing { value: raw.into() },
+            )? {
+                Response::Present { value } => Ok(Some(value)),
+                Response::Disconnected => Ok(None),
+                _ => Err("mvp_sync_credentials_unavailable".into()),
+            };
+        }
+        return Ok(previous);
+    }
+    read_legacy(store, database_path)
+}
+
+fn read_legacy(store: &Store, database_path: &Path) -> Result<Option<String>, String> {
     let slot = selected_account(store, database_path)?;
     #[cfg(target_os = "macos")]
     forbid_keychain_dialogs()?;
@@ -209,6 +248,10 @@ pub(crate) fn write_to(store: &Store, database_path: &Path, raw: &str) -> Result
         return Err("mvp_sync_credentials_invalid".into());
     }
     let slot = account(database_path)?;
+    #[cfg(target_os = "macos")]
+    if macos_vault::enabled() {
+        return macos_vault::save(database_path, store.service, slot, raw);
+    }
     #[cfg(target_os = "macos")]
     {
         forbid_keychain_dialogs()?;
@@ -272,6 +315,19 @@ pub(crate) fn write_to(store: &Store, database_path: &Path, raw: &str) -> Result
 
 /// Removes a slot on an explicit user action; a missing secret is not an error.
 pub(crate) fn delete_from(store: &Store, database_path: &Path) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    if macos_vault::enabled() {
+        use cicada_macos_vault::storage::{Operation, Response};
+        return match macos_vault::call(
+            database_path,
+            store.service,
+            account(database_path)?,
+            Operation::Disconnect,
+        )? {
+            Response::Saved => Ok(()),
+            _ => Err("mvp_sync_credentials_write_failed".into()),
+        };
+    }
     let slot = selected_account(store, database_path)?;
     #[cfg(target_os = "macos")]
     {

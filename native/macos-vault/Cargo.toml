@@ -1,0 +1,26 @@
+[package]
+name = "cicada-macos-vault"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+base64 = "0.22"
+minisign-verify = "=0.2.5"
+security-framework = "=3.7.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+synthetic-probe = []
+
+[[example]]
+name = "synthetic-client"
+required-features = ["synthetic-probe"]
+
+[[example]]
+name = "synthetic-vault"
+required-features = ["synthetic-probe"]
+
+[build-dependencies]
+cc = "1"

@@ -23,6 +23,17 @@ def archive_with(root, destination):
 
 
 class MacUpdaterArchiveTest(unittest.TestCase):
+    def test_vault_archive_rejects_a_different_client_build(self):
+        signature = {'type': 'vault', 'cdhash': 'a' * 40, 'helper_cdhash': 'b' * 40}
+        with tempfile.TemporaryDirectory() as temp:
+            archive_path = Path(temp) / 'candidate.tar.gz'
+            archive_with('Cicada.app', archive_path)
+            with patch.object(package_macos.vault, 'signature', return_value='a' * 40):
+                package_macos.verify_updater_archive(archive_path, signature)
+            with patch.object(package_macos.vault, 'signature', return_value='c' * 40):
+                with self.assertRaises(SystemExit):
+                    package_macos.verify_updater_archive(archive_path, signature)
+
     def test_packaging_requires_a_persistent_identity_and_team(self):
         for environment in ({}, {'APPLE_SIGNING_IDENTITY': '-'},
                             {'APPLE_SIGNING_IDENTITY': 'A' * 40},

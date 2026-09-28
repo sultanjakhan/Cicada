@@ -399,6 +399,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "cicada-macos-vault"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "cc",
+ "minisign-verify",
+ "security-framework",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cipher"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1398,6 +1410,7 @@ dependencies = [
  "base64 0.22.1",
  "chacha20poly1305",
  "chrono",
+ "cicada-macos-vault",
  "core-foundation 0.10.1",
  "flate2",
  "futures-util",

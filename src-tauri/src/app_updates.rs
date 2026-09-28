@@ -25,6 +25,8 @@ struct Package {
     sha256: String,
     size: u64,
     version_code: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    vault_proof: Option<serde_json::Value>,
 }
 #[derive(Clone, Debug, Deserialize)]
 struct Manifest {
@@ -499,10 +501,13 @@ fn installed_windows_binary() -> Option<std::path::PathBuf> {
     let executable = std::env::current_exe().ok()?;
     // Tauri's older current-user installer used the first path. Existing
     // installations can also have the Programs path; both retain the profile.
-    [local.join("Hanni MVP"), local.join("Programs").join("Hanni MVP")]
-        .into_iter()
-        .map(|folder| folder.join("hanni-mvp.exe"))
-        .find(|expected| expected == &executable && expected.is_file())
+    [
+        local.join("Hanni MVP"),
+        local.join("Programs").join("Hanni MVP"),
+    ]
+    .into_iter()
+    .map(|folder| folder.join("hanni-mvp.exe"))
+    .find(|expected| expected == &executable && expected.is_file())
 }
 
 /// Enrol only the installed current-user binary.  Debug/QA profiles and a
@@ -845,8 +850,19 @@ pub(crate) async fn install_update(
         let bytes = {
             let installed = crate::update_macos::installed_bundle(&app)?;
             let version = candidate.version.clone();
+            let vault_proof = candidate.package.vault_proof.clone();
+            let profile = app
+                .path()
+                .app_data_dir()
+                .map_err(|_| "Не удалось открыть профиль Cicada.")?;
             tauri::async_runtime::spawn_blocking(move || {
-                crate::update_macos::verify_update_archive(&installed, &bytes, &version)?;
+                crate::update_macos::verify_update_archive(
+                    &installed,
+                    &bytes,
+                    &version,
+                    vault_proof.as_ref(),
+                    &profile,
+                )?;
                 Ok::<_, String>(bytes)
             })
             .await
@@ -1086,6 +1102,7 @@ mod tests {
             sha256: hex::encode(Sha256::digest(bytes)),
             size: bytes.len() as u64,
             version_code: None,
+            vault_proof: None,
         };
         verify(bytes, &package, key).unwrap();
         let replaced = vec![b'x'; bytes.len()];

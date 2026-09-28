@@ -116,6 +116,17 @@ async function readCandidate(directory, kind, publicKeyText) {
   requireValue(manifest.size === asset.length && manifest.sha256 === sha256(asset), `${kind} asset hash is invalid.`);
   requireValue(manifest.signature === signature.trim(), `${kind} manifest signature differs from its detached file.`);
   verifyTauriSignature(asset, signature, publicKeyText);
+  if (manifest.vault_proof !== undefined) {
+    const proof = manifest.vault_proof;
+    requireValue(kind === 'macos' && typeof proof?.manifest === 'string' && typeof proof.signature === 'string',
+      'Invalid credential-helper attestation.');
+    verifyTauriSignature(Buffer.from(proof.manifest), proof.signature, publicKeyText);
+    const identity = JSON.parse(proof.manifest);
+    requireValue(identity.purpose === 'cicada-vault-client' && identity.protocol === 1
+      && identity.application === 'app.hanni.mvp' && identity.architecture === 'aarch64'
+      && identity.version === version && /^[a-f0-9]{40}$/.test(identity.cdhash)
+      && /^[a-f0-9]{40}$/.test(identity.helper_cdhash), 'Invalid credential-helper client identity.');
+  }
   if (kind === 'android') {
     requireValue(manifest.version_code === expectedVersionCode(version), 'Android version_code does not match version.');
   } else {
@@ -172,6 +183,7 @@ export async function stageUpdates({ windows, android, macos, notes = '', publis
       sha256: candidate.manifest.sha256,
       size: candidate.manifest.size,
       ...(candidate.kind === 'android' ? { version_code: candidate.manifest.version_code } : {}),
+      ...(candidate.manifest.vault_proof ? { vault_proof: candidate.manifest.vault_proof } : {}),
     };
   }
   const latest = {

@@ -181,6 +181,10 @@ def main() -> None:
     }
     if version_code is not None:
         manifest['version_code'] = version_code
+    if args.platform == 'macos':
+        proof = ROOT / '.local/mac-package' / commit[:12] / 'vault-proof.json'
+        if proof.is_file():
+            manifest['vault_proof'] = json.loads(proof.read_text())
     manifest_path = destination_dir / 'manifest.json'
     manifest_path.write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
     ensure_asset_limit(manifest_path)

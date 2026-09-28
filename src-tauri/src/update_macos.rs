@@ -199,8 +199,13 @@ pub(crate) fn verify_update_archive(
     installed: &Path,
     bytes: &[u8],
     expected_version: &str,
+    vault_proof: Option<&serde_json::Value>,
+    profile: &Path,
 ) -> Result<(), String> {
     use security_framework::os::macos::code_signing::{Flags, SecCode};
+    if crate::mvp_sync::secrets::macos_vault::enabled() {
+        return verify_vault_update(bytes, expected_version, vault_proof, profile);
+    }
     let current = bundle_signature(installed).map_err(|_| UPDATE_SIGNER_REQUIRED)?;
     // The running app must still be the identity validated at its installed
     // path; an independently replaced on-disk bundle cannot change this trust.
@@ -215,6 +220,72 @@ pub(crate) fn verify_update_archive(
         .code
         .check_validity(signature_flags(), &current.requirement)
         .map_err(|_| UPDATE_SIGNER_CHANGED.into())
+}
+
+fn verify_vault_update(
+    bytes: &[u8],
+    expected_version: &str,
+    value: Option<&serde_json::Value>,
+    profile: &Path,
+) -> Result<(), String> {
+    use cicada_macos_vault::{Proof, PUBLIC_KEY};
+    use security_framework::os::macos::code_signing::{Flags, SecCode, SecRequirement};
+    use std::io::Write;
+    let unavailable = "Обновление остановлено: не подтверждён доступ новой версии к защищённому хранилищу. Текущая Cicada сохранена.";
+    let proof: Proof =
+        serde_json::from_value(value.ok_or(unavailable)?.clone()).map_err(|_| unavailable)?;
+    let identity = proof.verify(PUBLIC_KEY).map_err(|_| unavailable)?;
+    if identity.version != expected_version
+        || Some(identity.helper_cdhash.as_str())
+            != crate::mvp_sync::secrets::macos_vault::helper_cdhash()
+    {
+        return Err(unavailable.into());
+    }
+    let database = profile.join("calendar.db");
+    let current = crate::mvp_sync::secrets::macos_vault::proof(&database)?;
+    let current_identity = current.verify(PUBLIC_KEY).map_err(|_| unavailable)?;
+    let current_requirement: SecRequirement = format!("cdhash H\"{}\"", current_identity.cdhash)
+        .parse()
+        .map_err(|_| unavailable)?;
+    SecCode::for_self(Flags::NONE)
+        .and_then(|code| code.check_validity(Flags::NONE, &current_requirement))
+        .map_err(|_| unavailable)?;
+    // Check both saved connections before replacing the only running client.
+    // These reads also migrate legacy items when this identity still owns them.
+    for store in [
+        &crate::mvp_sync::secrets::JIRA,
+        &crate::mvp_sync::secrets::RELAY,
+    ] {
+        crate::mvp_sync::secrets::read_from(store, &database)?;
+    }
+    let temporary = extract_update_archive(bytes)?;
+    let bundle = temporary.path().join("Cicada.app");
+    cicada_macos_vault::verify_file(&bundle, &identity.cdhash).map_err(|_| unavailable)?;
+    for (field, expected) in [
+        ("CFBundleIdentifier", "app.hanni.mvp"),
+        ("CFBundleExecutable", "hanni-mvp"),
+        ("CFBundleShortVersionString", expected_version),
+    ] {
+        let output = Command::new("/usr/libexec/PlistBuddy")
+            .args(["-c", &format!("Print :{field}")])
+            .arg(bundle.join("Contents/Info.plist"))
+            .output()
+            .map_err(|_| unavailable)?;
+        if !output.status.success() || String::from_utf8_lossy(&output.stdout).trim() != expected {
+            return Err(UPDATE_ARCHIVE_INVALID.into());
+        }
+    }
+    // The detached proof avoids a circular hash in the signed app resource seal.
+    // Retain older proofs so rollback can still authenticate to the same helper.
+    let directory = profile.join("vault/proofs");
+    std::fs::create_dir_all(&directory).map_err(|_| unavailable)?;
+    let mut file = tempfile::NamedTempFile::new_in(&directory).map_err(|_| unavailable)?;
+    file.write_all(&serde_json::to_vec(&proof).map_err(|_| unavailable)?)
+        .map_err(|_| unavailable)?;
+    file.as_file().sync_all().map_err(|_| unavailable)?;
+    file.persist(directory.join(format!("{}.json", identity.cdhash)))
+        .map_err(|_| unavailable)?;
+    Ok(())
 }
 
 fn compatible_update_identity(
@@ -715,7 +786,7 @@ mod tests {
             .success());
         assert!(bundle_signature(&bundle).is_err());
         assert_eq!(
-            verify_update_archive(&bundle, b"not used", "0.0.2"),
+            verify_update_archive(&bundle, b"not used", "0.0.2", None, &bundle),
             Err(UPDATE_SIGNER_REQUIRED.into())
         );
         assert!(executable.is_file());

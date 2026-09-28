@@ -87,3 +87,37 @@ test('stages matching candidates and rejects traversal, source mismatch and tamp
     await rm(temporary, { recursive: true, force: true });
   }
 });
+
+test('keeps a verified Mac vault proof and rejects altered or wrong-version proofs', async () => {
+  const temporary = await mkdtemp(path.join(tmpdir(), 'cicada-vault-stage-'));
+  try {
+    const keys = keyMaterial();
+    const windows = await candidate(temporary, 'windows', keys);
+    const android = await candidate(temporary, 'android', keys);
+    const macos = await candidate(temporary, 'macos', keys);
+    const filename = path.join(macos, 'manifest.json');
+    const manifest = JSON.parse(await readFile(filename));
+    const identity = { purpose: 'cicada-vault-client', protocol: 1, application: 'app.hanni.mvp',
+      architecture: 'aarch64', version: manifest.version, cdhash: 'a'.repeat(40), helper_cdhash: 'b'.repeat(40) };
+    const proofFor = value => {
+      const text = JSON.stringify(value);
+      return { manifest: text, signature: tauriSignature(Buffer.from(text), keys) };
+    };
+    const options = { windows, android, macos, root: temporary, publicKeyText: keys.publicText };
+    manifest.vault_proof = proofFor(identity);
+    await writeFile(filename, JSON.stringify(manifest));
+    const result = await stageUpdates(options);
+    assert.deepEqual(result.latest.platforms['darwin-aarch64'].vault_proof, manifest.vault_proof);
+    manifest.vault_proof.manifest += ' ';
+    await writeFile(filename, JSON.stringify(manifest));
+    await assert.rejects(stageUpdates(options));
+    manifest.vault_proof = proofFor({ ...identity, version: '9.9.9' });
+    await writeFile(filename, JSON.stringify(manifest));
+    await assert.rejects(stageUpdates(options));
+    manifest.vault_proof = proofFor({ ...identity, helper_cdhash: 'invalid' });
+    await writeFile(filename, JSON.stringify(manifest));
+    await assert.rejects(stageUpdates(options));
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
