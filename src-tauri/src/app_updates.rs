@@ -841,6 +841,17 @@ pub(crate) async fn install_update(
             verify(&bytes, &candidate.package, PUBLIC_KEY)?;
             bytes
         };
+        #[cfg(target_os = "macos")]
+        let bytes = {
+            let installed = crate::update_macos::installed_bundle(&app)?;
+            let version = candidate.version.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                crate::update_macos::verify_update_archive(&installed, &bytes, &version)?;
+                Ok::<_, String>(bytes)
+            })
+            .await
+            .map_err(|_| "Не удалось проверить подпись обновления Mac.")??
+        };
         // Consistent backup before either platform installer may stop the process.
         crate::create_backup(app.clone(), app.state::<crate::AppState>())?;
         if automatic {

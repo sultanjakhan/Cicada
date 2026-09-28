@@ -14,6 +14,222 @@ use tauri::{AppHandle, Manager};
 const LABEL: &str = "app.hanni.mvp.updates";
 const EXECUTABLE: &str = "Contents/MacOS/hanni-mvp";
 const BACKGROUND_UNAVAILABLE: &str = "macOS не запустила фоновое обновление Cicada. Проверка обновлений внутри приложения остаётся доступна.";
+const UPDATE_ARCHIVE_INVALID: &str = "Пакет обновления Mac повреждён или имеет неподдерживаемую структуру. Установленная Cicada сохранена.";
+const UPDATE_SIGNER_REQUIRED: &str = "Обновление остановлено: не удалось подтвердить постоянную подпись Apple у установленной Cicada. Текущая версия и подключения сохранены.";
+const UPDATE_SIGNER_CHANGED: &str = "Обновление остановлено: подпись новой Cicada не соответствует установленной. Текущая версия и подключения сохранены.";
+const MAX_EXPANDED_UPDATE: u64 = 512 * 1024 * 1024;
+const MAX_UPDATE_ENTRIES: usize = 20_000;
+
+struct BundleSignature {
+    code: security_framework::os::macos::code_signing::SecStaticCode,
+    requirement: security_framework::os::macos::code_signing::SecRequirement,
+    identity: BundleIdentity,
+}
+
+#[derive(Clone)]
+struct BundleIdentity {
+    requirement_data: Vec<u8>,
+    team: String,
+    version: String,
+}
+
+fn bundle_signature(bundle: &Path) -> Result<BundleSignature, ()> {
+    use core_foundation::{
+        base::{CFType, CFTypeRef, TCFType},
+        data::{CFData, CFDataRef},
+        dictionary::{CFDictionary, CFDictionaryRef},
+        string::{CFString, CFStringRef},
+        url::CFURL,
+    };
+    use security_framework::os::macos::code_signing::{Flags, SecRequirement, SecStaticCode};
+    #[link(name = "Security", kind = "framework")]
+    extern "C" {
+        fn SecCodeCopySigningInformation(
+            code: CFTypeRef,
+            flags: u32,
+            information: *mut CFDictionaryRef,
+        ) -> i32;
+        fn SecRequirementCopyData(requirement: CFTypeRef, flags: u32, data: *mut CFDataRef) -> i32;
+        static kSecCodeInfoTeamIdentifier: CFStringRef;
+        static kSecCodeInfoDesignatedRequirement: CFStringRef;
+        static kSecCodeInfoPList: CFStringRef;
+    }
+    let url = CFURL::from_path(bundle, true).ok_or(())?;
+    let code = SecStaticCode::from_path(&url, Flags::NONE).map_err(|_| ())?;
+    let apple: SecRequirement = "anchor apple generic and identifier \"app.hanni.mvp\""
+        .parse()
+        .map_err(|_| ())?;
+    code.check_validity(signature_flags(), &apple)
+        .map_err(|_| ())?;
+    // A matching self-signed DR is insufficient for file-Keychain continuity:
+    // its partition can still bind each build to a different cdhash.
+    let mut raw_info = std::ptr::null();
+    let info: CFDictionary<CFString, CFType> = unsafe {
+        // kSecCSSigningInformation | kSecCSRequirementInformation (SecCode.h).
+        if SecCodeCopySigningInformation(code.as_CFTypeRef(), (1 << 1) | (1 << 2), &mut raw_info)
+            != 0
+            || raw_info.is_null()
+        {
+            return Err(());
+        }
+        CFDictionary::wrap_under_create_rule(raw_info)
+    };
+    let team = info
+        .find(unsafe { CFString::wrap_under_get_rule(kSecCodeInfoTeamIdentifier) })
+        .and_then(|value| value.downcast::<CFString>())
+        .map(|value| value.to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or(())?;
+    let requirement = info
+        .find(unsafe { CFString::wrap_under_get_rule(kSecCodeInfoDesignatedRequirement) })
+        .and_then(|value| value.downcast::<SecRequirement>())
+        .ok_or(())?;
+    let raw_plist = info
+        .find(unsafe { CFString::wrap_under_get_rule(kSecCodeInfoPList) })
+        .and_then(|value| value.downcast::<CFDictionary>())
+        .ok_or(())?;
+    let plist: CFDictionary<CFString, CFType> =
+        unsafe { CFDictionary::wrap_under_get_rule(raw_plist.as_concrete_TypeRef()) };
+    let field = |key: &str| {
+        plist
+            .find(CFString::new(key))
+            .and_then(|value| value.downcast::<CFString>())
+            .map(|value| value.to_string())
+    };
+    if field("CFBundleIdentifier").as_deref() != Some("app.hanni.mvp")
+        || field("CFBundleExecutable").as_deref() != Some("hanni-mvp")
+    {
+        return Err(());
+    }
+    let version = field("CFBundleShortVersionString").ok_or(())?;
+    let mut raw_requirement = std::ptr::null();
+    let requirement_data = unsafe {
+        if SecRequirementCopyData(requirement.as_CFTypeRef(), 0, &mut raw_requirement) != 0
+            || raw_requirement.is_null()
+        {
+            return Err(());
+        }
+        CFData::wrap_under_create_rule(raw_requirement)
+            .bytes()
+            .to_vec()
+    };
+    Ok(BundleSignature {
+        code,
+        requirement,
+        identity: BundleIdentity {
+            requirement_data,
+            team,
+            version,
+        },
+    })
+}
+
+fn signature_flags() -> security_framework::os::macos::code_signing::Flags {
+    use security_framework::os::macos::code_signing::Flags;
+    Flags::STRICT_VALIDATE
+        | Flags::CHECK_NESTED_CODE
+        | Flags::CHECK_ALL_ARCHITECTURES
+        | Flags::NO_NETWORK_ACCESS
+}
+
+fn extract_update_archive(bytes: &[u8]) -> Result<tempfile::TempDir, String> {
+    use std::{collections::HashSet, path::Component};
+    let temporary = tempfile::Builder::new()
+        .prefix("cicada-update-verification-")
+        .tempdir()
+        .map_err(|_| UPDATE_ARCHIVE_INVALID)?;
+    let decoder = flate2::read::GzDecoder::new(bytes).take(MAX_EXPANDED_UPDATE);
+    let mut archive = tar::Archive::new(decoder);
+    let mut paths = HashSet::new();
+    let mut expanded = 0u64;
+    for entry in archive.entries().map_err(|_| UPDATE_ARCHIVE_INVALID)? {
+        let mut entry = entry.map_err(|_| UPDATE_ARCHIVE_INVALID)?;
+        let path = entry
+            .path()
+            .map_err(|_| UPDATE_ARCHIVE_INVALID)?
+            .into_owned();
+        let parts: Vec<_> = path.components().collect();
+        let kind = entry.header().entry_type();
+        let size = entry.size();
+        expanded = expanded.checked_add(size).ok_or(UPDATE_ARCHIVE_INVALID)?;
+        if parts.first() != Some(&Component::Normal(OsStr::new("Cicada.app")))
+            || parts
+                .iter()
+                .any(|part| !matches!(part, Component::Normal(_)))
+            || (parts.len() > 1 && parts[1] != Component::Normal(OsStr::new("Contents")))
+            || (parts.len() == 1 && !kind.is_dir())
+            || !(kind.is_file() || kind.is_dir())
+            || (kind.is_dir() && size != 0)
+            || entry.header().mode().map_err(|_| UPDATE_ARCHIVE_INVALID)? & 0o7000 != 0
+            || expanded > MAX_EXPANDED_UPDATE
+            || paths.len() >= MAX_UPDATE_ENTRIES
+            || !paths.insert(path)
+        {
+            return Err(UPDATE_ARCHIVE_INVALID.into());
+        }
+        // Current Cicada bundles contain only files/directories. Reject links,
+        // including in-bundle links, before either this check or Tauri extracts.
+        if !entry
+            .unpack_in(temporary.path())
+            .map_err(|_| UPDATE_ARCHIVE_INVALID)?
+        {
+            return Err(UPDATE_ARCHIVE_INVALID.into());
+        }
+    }
+    if archive.into_inner().limit() == 0 {
+        return Err(UPDATE_ARCHIVE_INVALID.into());
+    }
+    let bundle = temporary.path().join("Cicada.app");
+    if !bundle.join("Contents/Info.plist").is_file()
+        || !bundle.join(EXECUTABLE).is_file()
+        || bundle
+            .join(EXECUTABLE)
+            .metadata()
+            .map_err(|_| UPDATE_ARCHIVE_INVALID)?
+            .mode()
+            & 0o111
+            == 0
+    {
+        return Err(UPDATE_ARCHIVE_INVALID.into());
+    }
+    Ok(temporary)
+}
+
+pub(crate) fn verify_update_archive(
+    installed: &Path,
+    bytes: &[u8],
+    expected_version: &str,
+) -> Result<(), String> {
+    use security_framework::os::macos::code_signing::{Flags, SecCode};
+    let current = bundle_signature(installed).map_err(|_| UPDATE_SIGNER_REQUIRED)?;
+    // The running app must still be the identity validated at its installed
+    // path; an independently replaced on-disk bundle cannot change this trust.
+    SecCode::for_self(Flags::NONE)
+        .and_then(|code| code.check_validity(Flags::NONE, &current.requirement))
+        .map_err(|_| UPDATE_SIGNER_REQUIRED)?;
+    let temporary = extract_update_archive(bytes)?;
+    let candidate = bundle_signature(&temporary.path().join("Cicada.app"))
+        .map_err(|_| UPDATE_SIGNER_CHANGED)?;
+    compatible_update_identity(&current.identity, &candidate.identity, expected_version)?;
+    candidate
+        .code
+        .check_validity(signature_flags(), &current.requirement)
+        .map_err(|_| UPDATE_SIGNER_CHANGED.into())
+}
+
+fn compatible_update_identity(
+    current: &BundleIdentity,
+    candidate: &BundleIdentity,
+    expected_version: &str,
+) -> Result<(), String> {
+    if candidate.version != expected_version {
+        return Err(UPDATE_ARCHIVE_INVALID.into());
+    }
+    if candidate.team != current.team || candidate.requirement_data != current.requirement_data {
+        return Err(UPDATE_SIGNER_CHANGED.into());
+    }
+    Ok(())
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AgentState {
@@ -344,6 +560,166 @@ mod tests {
     use super::*;
     use std::os::unix::fs::{symlink, PermissionsExt};
     use std::os::unix::process::ExitStatusExt;
+
+    #[test]
+    fn verified_signatures_must_preserve_team_and_requirement_and_match_the_offered_version() {
+        // These are policy fixtures, not evidence of an Apple-signed install.
+        let current = BundleIdentity {
+            team: "EXAMPLETEAM".into(),
+            requirement_data: vec![1, 2, 3],
+            version: "0.0.1".into(),
+        };
+        let candidate = BundleIdentity {
+            version: "0.0.2".into(),
+            ..current.clone()
+        };
+        assert!(compatible_update_identity(&current, &candidate, "0.0.2").is_ok());
+        let wrong_team = BundleIdentity {
+            team: "OTHERTEAM".into(),
+            ..candidate.clone()
+        };
+        let wrong_requirement = BundleIdentity {
+            requirement_data: vec![1, 2, 4],
+            ..candidate.clone()
+        };
+        for incompatible in [&wrong_team, &wrong_requirement] {
+            assert_eq!(
+                compatible_update_identity(&current, incompatible, "0.0.2"),
+                Err(UPDATE_SIGNER_CHANGED.into())
+            );
+        }
+        assert_eq!(
+            compatible_update_identity(&current, &candidate, "0.0.3"),
+            Err(UPDATE_ARCHIVE_INVALID.into())
+        );
+    }
+
+    fn archive_fixture(entries: &[(&str, u8, &[u8])]) -> Vec<u8> {
+        let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let mut archive = tar::Builder::new(encoder);
+        for (name, kind, data) in entries {
+            let mut header = tar::Header::new_gnu();
+            header.set_mode(0o755);
+            header.set_size(data.len() as u64);
+            header.set_entry_type(tar::EntryType::new(*kind));
+            if *kind == b'1' || *kind == b'2' {
+                header.set_link_name("../../outside").unwrap();
+            }
+            // Raw names allow tests to construct paths a safe archive writer rejects.
+            header.as_mut_bytes()[..name.len()].copy_from_slice(name.as_bytes());
+            header.set_cksum();
+            archive.append(&header, *data).unwrap();
+        }
+        archive.into_inner().unwrap().finish().unwrap()
+    }
+
+    #[test]
+    fn regular_update_is_checked_in_an_isolated_directory_without_changing_bytes() {
+        let bytes = archive_fixture(&[
+            (
+                "Cicada.app/Contents/MacOS/hanni-mvp",
+                b'0',
+                b"fictional executable",
+            ),
+            ("Cicada.app/Contents/Info.plist", b'0', b"fictional plist"),
+        ]);
+        let before = bytes.clone();
+        let temporary = extract_update_archive(&bytes).unwrap();
+        let path = temporary.path().to_path_buf();
+        assert_eq!(
+            std::fs::read(path.join("Cicada.app").join(EXECUTABLE)).unwrap(),
+            b"fictional executable"
+        );
+        assert_eq!(bytes, before);
+        drop(temporary);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn update_rejects_paths_outside_the_single_bundle_contents() {
+        for path in [
+            "../outside",
+            "/outside",
+            "Cicada.app/Contents/../../outside",
+            "Other.app/Contents/MacOS/hanni-mvp",
+            "Cicada.app/outside",
+            "Cicada.app",
+        ] {
+            assert!(
+                extract_update_archive(&archive_fixture(&[(path, b'0', b"content")])).is_err(),
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn update_rejects_links_devices_and_duplicate_members_before_unpacking_them() {
+        for kind in [b'1', b'2', b'3', b'4', b'6'] {
+            assert!(extract_update_archive(&archive_fixture(&[(
+                "Cicada.app/Contents/link",
+                kind,
+                b""
+            )]))
+            .is_err());
+        }
+        assert!(extract_update_archive(&archive_fixture(&[
+            ("Cicada.app/Contents/Info.plist", b'0', b"first"),
+            ("Cicada.app/Contents/Info.plist", b'0', b"second"),
+        ]))
+        .is_err());
+    }
+
+    #[test]
+    fn incomplete_or_oversized_update_is_rejected() {
+        assert!(extract_update_archive(b"not an archive").is_err());
+        assert!(extract_update_archive(&archive_fixture(&[(
+            "Cicada.app/Contents/Info.plist",
+            b'0',
+            b"plist"
+        )]))
+        .is_err());
+        let mut header = tar::Header::new_gnu();
+        header
+            .set_path("Cicada.app/Contents/MacOS/hanni-mvp")
+            .unwrap();
+        header.set_mode(0o755);
+        header.set_size(MAX_EXPANDED_UPDATE + 1);
+        header.set_entry_type(tar::EntryType::Regular);
+        header.set_cksum();
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::Write::write_all(&mut encoder, header.as_bytes()).unwrap();
+        assert!(extract_update_archive(&encoder.finish().unwrap()).is_err());
+    }
+
+    #[test]
+    fn valid_ad_hoc_bundle_cannot_enable_an_update_or_access_migration() {
+        let temporary = tempfile::tempdir().unwrap();
+        let bundle = temporary.path().join("Cicada.app");
+        let executable = bundle.join(EXECUTABLE);
+        std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        std::fs::copy("/usr/bin/true", &executable).unwrap();
+        std::fs::write(bundle.join("Contents/Info.plist"), br#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>app.hanni.mvp</string><key>CFBundleExecutable</key><string>hanni-mvp</string><key>CFBundleShortVersionString</key><string>0.0.1</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>"#).unwrap();
+        assert!(Command::new("/usr/bin/codesign")
+            .args(["--force", "--sign", "-", "--timestamp=none"])
+            .arg(&bundle)
+            .output()
+            .unwrap()
+            .status
+            .success());
+        assert!(Command::new("/usr/bin/codesign")
+            .args(["--verify", "--deep", "--strict"])
+            .arg(&bundle)
+            .output()
+            .unwrap()
+            .status
+            .success());
+        assert!(bundle_signature(&bundle).is_err());
+        assert_eq!(
+            verify_update_archive(&bundle, b"not used", "0.0.2"),
+            Err(UPDATE_SIGNER_REQUIRED.into())
+        );
+        assert!(executable.is_file());
+    }
 
     fn output(code: i32, stdout: &str) -> Output {
         Output {

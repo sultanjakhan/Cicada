@@ -36,6 +36,8 @@ semver = "1"
 hanni-mvp-android-installer = { path = "plugins/android-installer" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+flate2 = "1"
+tar = "0.4"
 security-framework = "3.7"
 core-foundation = "0.10"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSWindow", "NSResponder", "NSScreen"] }
