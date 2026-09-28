@@ -1,5 +1,19 @@
 # Cicada
 
+Owner approval, 2026-09-28 (unified process settings): keep project status rules,
+their visibility and optional process templates in general Cicada settings under
+«Процессы задач», replacing «Этапы задач». Do not add a main workspace pane.
+The same editor serves Work/project and Personal contexts; Connections keeps
+credentials, health and a link to this editor. Show every Jira project status,
+including empty/unmapped statuses, and preview destinations from the draft rules.
+Task cards change an individual task's status/stage/process; project settings
+change defaults and templates. Existing-task assignment remains explicit.
+
+Owner repair approval, 2026-09-28: restore the installed Cicada background update
+agent after a macOS Launch Constraint Violation. Validate actual launch state,
+not merely registration. Preserve the app identity and OS security constraints;
+never weaken launch constraints or repeatedly retry a denied launch.
+
 Owner continuation, 2026-09-28: Jira project status meanings are explicitly
 configured by the owner, never inferred from Jira categories or status spelling.
 The working queue includes ready and working tasks; review, completed and other
