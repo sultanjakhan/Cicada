@@ -11,24 +11,40 @@
 ## Подключение
 
 1. Создай [API-токен Atlassian](https://id.atlassian.com/manage-profile/security/api-tokens).
-   Для токена со scopes выбери Jira: `read:jira-work` (тип scope Classic),
-   `write:issue:jira` и `write:issue.property:jira` (Granular).
+   Выбери создание токена со scopes, приложение Jira и два права типа Classic:
+   `read:jira-work` и `write:jira-work`. Это полный набор для загрузки,
+   создания, переименования и смены статуса задач в Cicada.
    Чтение описано в [контракте поиска](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-search/#api-rest-api-3-search-jql-get),
    запись — в [Edit issue и Transition issue](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issues/).
    Для одного чтения достаточно `read:jira-work`. Названия scope-категорий
    Classic/Granular не определяют тип токена в настройках Cicada.
-   Для [Create issue](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issues/#api-rest-api-3-issue-post)
-   Atlassian дополнительно перечисляет `read:issue:jira`, `write:comment:jira`,
-   `write:comment.property:jira`, `write:attachment:jira` (вместе с уже указанным
-   `write:issue:jira`). Коннектор не использует комментарии и вложения;
-   scopes самого токена шире полей запроса.
+   `write:jira-work` также покрывает [Create issue](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issues/#api-rest-api-3-issue-post);
+   дополнительно выбирать Granular scopes не нужно. Коннектор не использует
+   комментарии и вложения; scopes самого токена шире полей запроса.
+   Права готового токена не редактируются: если набор неполный, создай новый.
 2. В приложении введи сайт вида `example.atlassian.net`, email аккаунта,
    тип токена «С правами (scopes)», сам токен и ключ проекта, например `DEMO`.
-   Для токена без scopes выбери соответствующий тип. Сохрани подключение.
+   Для токена без scopes выбери соответствующий тип. Нажми «Сохранить и подключить».
    Токен вводится только в приложении, не в чате, репозитории или Issue.
 3. Проверь результат загрузки в этом же разделе; названия появятся в рабочих
    задачах с отдельным статусом Jira, без назначенного процесса и этапа. Пустой результат может означать,
    что подходящих задач нет или у аккаунта нет права их видеть.
+
+Поле токена очищается после сохранения: секрет остаётся в системном хранилище.
+Сохранение и успешное подключение показаны раздельно. Несовпадение scopes,
+отказ авторизации и недоступность локального ключа имеют разные сообщения.
+Весь сценарий выполняется в настройках Cicada, без Terminal и отдельных окон
+ввода токена или пароля Mac.
+
+На Mac новая локальная сборка может потерять доступ к Keychain-записи предыдущей
+сборки. При явном вводе нового токена Cicada создаёт свою защищённую запись,
+проверяет чтение и только затем атомарно сохраняет её UUID в локальном файле
+`jira-import.keychain-slot` рядом с базой. Этот файл не содержит токена или email
+и не синхронизируется. Прежние записи и их права доступа не меняются.
+После отключения указатель сохраняется, чтобы старый токен не подключился снова.
+Это восстановление через новый токен, а не перенос доступа между подписями;
+старые версии Cicada этот указатель не понимают. Хранилище ключа синхронизации
+устройств остаётся отдельным.
 
 Токены [со scopes](https://support.atlassian.com/atlassian-account/docs/manage-api-tokens-for-your-atlassian-account/)
 используют `api.atlassian.com/ex/jira/{cloudId}`; обычные — выбранный сайт.

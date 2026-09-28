@@ -34,6 +34,87 @@ fn account(database_path: &Path) -> Result<String, String> {
     Ok(format!("device-v1-{:x}", Sha256::digest(path.as_bytes())))
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn jira_pointer_path(database_path: &Path) -> Result<std::path::PathBuf, String> {
+    Ok(database_path
+        .canonicalize()
+        .map_err(|_| "mvp_sync_credentials_path_invalid")?
+        .with_file_name("jira-import.keychain-slot"))
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn jira_account(database_path: &Path) -> Result<String, String> {
+    let base = account(database_path)?;
+    let pointer = jira_pointer_path(database_path)?;
+    let metadata = match std::fs::symlink_metadata(&pointer) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(base),
+        Err(_) => return Err("mvp_sync_credentials_unavailable".into()),
+    };
+    if !metadata.is_file() || metadata.len() != 36 {
+        return Err("mvp_sync_credentials_invalid".into());
+    }
+    let generation =
+        std::fs::read_to_string(pointer).map_err(|_| "mvp_sync_credentials_unavailable")?;
+    let id = uuid::Uuid::parse_str(&generation).map_err(|_| "mvp_sync_credentials_invalid")?;
+    if id.to_string() != generation {
+        return Err("mvp_sync_credentials_invalid".into());
+    }
+    // A selected generation never falls back to an older credential, even
+    // after disconnecting. The database path still isolates copied profiles.
+    Ok(format!("{base}-jira-{generation}"))
+}
+
+fn selected_account(store: &Store, database_path: &Path) -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    if store.service == JIRA.service {
+        return jira_account(database_path);
+    }
+    let _ = store;
+    account(database_path)
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn save_jira_generation(
+    database_path: &Path,
+    raw: &str,
+    add: impl FnOnce(&str, &[u8]) -> Result<(), String>,
+    read: impl FnOnce(&str) -> Result<Vec<u8>, String>,
+) -> Result<(), String> {
+    use std::io::Write;
+    let pointer = jira_pointer_path(database_path)?;
+    jira_account(database_path)?;
+    let generation = uuid::Uuid::new_v4().to_string();
+    let slot = format!("{}-jira-{generation}", account(database_path)?);
+    // An updated ad-hoc application may not own its predecessor's Keychain
+    // item. Explicit replacement creates its own item without changing old ACLs.
+    add(&slot, raw.as_bytes())?;
+    if read(&slot)?.as_slice() != raw.as_bytes() {
+        return Err("mvp_sync_credentials_verify_failed".into());
+    }
+    let parent = pointer
+        .parent()
+        .ok_or("mvp_sync_credentials_path_invalid")?;
+    let mut temporary =
+        tempfile::NamedTempFile::new_in(parent).map_err(|_| "mvp_sync_credentials_write_failed")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        temporary
+            .as_file()
+            .set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(|_| "mvp_sync_credentials_write_failed")?;
+    }
+    temporary
+        .write_all(generation.as_bytes())
+        .and_then(|_| temporary.as_file().sync_all())
+        .map_err(|_| "mvp_sync_credentials_write_failed")?;
+    temporary
+        .persist(pointer)
+        .map_err(|_| "mvp_sync_credentials_write_failed")?;
+    Ok(())
+}
+
 #[cfg(any(windows, test))]
 fn entropy(store: &Store, account: &str) -> String {
     format!("{}:{account}", store.service)
@@ -87,7 +168,7 @@ pub(crate) fn write(database_path: &Path, raw: &str) -> Result<(), String> {
 }
 
 pub(crate) fn read_from(store: &Store, database_path: &Path) -> Result<Option<String>, String> {
-    let slot = account(database_path)?;
+    let slot = selected_account(store, database_path)?;
     #[cfg(target_os = "macos")]
     forbid_keychain_dialogs()?;
     #[cfg(target_os = "macos")]
@@ -131,6 +212,32 @@ pub(crate) fn write_to(store: &Store, database_path: &Path, raw: &str) -> Result
     #[cfg(target_os = "macos")]
     {
         forbid_keychain_dialogs()?;
+        if store.service == JIRA.service {
+            return save_jira_generation(
+                database_path,
+                raw,
+                |new_slot, bytes| {
+                    use core_foundation::data::CFData;
+                    use security_framework::item::{
+                        ItemAddOptions, ItemAddValue, ItemClass, Location,
+                    };
+                    let mut add = ItemAddOptions::new(ItemAddValue::Data {
+                        class: ItemClass::generic_password(),
+                        data: CFData::from_buffer(bytes),
+                    });
+                    add.set_service(store.service)
+                        .set_account_name(new_slot)
+                        .set_location(Location::DefaultFileKeychain);
+                    add.add()
+                        .map(|_| ())
+                        .map_err(|_| "mvp_sync_credentials_write_failed".into())
+                },
+                |new_slot| {
+                    security_framework::passwords::generic_password(read_options(store, new_slot))
+                        .map_err(|_| "mvp_sync_credentials_verify_failed".into())
+                },
+            );
+        }
         security_framework::passwords::set_generic_password(store.service, &slot, raw.as_bytes())
             .map_err(|_| "mvp_sync_credentials_write_failed")?;
         if read_from(store, database_path)?.as_deref() != Some(raw) {
@@ -165,7 +272,7 @@ pub(crate) fn write_to(store: &Store, database_path: &Path, raw: &str) -> Result
 
 /// Removes a slot on an explicit user action; a missing secret is not an error.
 pub(crate) fn delete_from(store: &Store, database_path: &Path) -> Result<(), String> {
-    let slot = account(database_path)?;
+    let slot = selected_account(store, database_path)?;
     #[cfg(target_os = "macos")]
     {
         forbid_keychain_dialogs()?;
@@ -253,6 +360,158 @@ fn write_file(store: &Store, database_path: &Path, stored: &[u8]) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn jira_fixture() -> (tempfile::TempDir, std::path::PathBuf) {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("calendar.db");
+        std::fs::write(&database, b"").unwrap();
+        (directory, database)
+    }
+
+    #[test]
+    fn jira_replacement_publishes_only_a_verified_new_slot() {
+        use std::cell::RefCell;
+        let (_directory, database) = jira_fixture();
+        let original = account(&database).unwrap();
+        assert_eq!(jira_account(&database).unwrap(), original);
+        let added = RefCell::new(None);
+        save_jira_generation(
+            &database,
+            "fictional-secret",
+            |slot, bytes| {
+                assert_ne!(
+                    slot, original,
+                    "the inaccessible original must not be modified"
+                );
+                assert_eq!(jira_account(&database).unwrap(), original);
+                added.replace(Some((slot.to_owned(), bytes.to_vec())));
+                Ok(())
+            },
+            |slot| {
+                assert_eq!(
+                    jira_account(&database).unwrap(),
+                    original,
+                    "readback precedes publication"
+                );
+                let record = added.borrow();
+                let (key, bytes) = record.as_ref().unwrap();
+                assert_eq!(slot, key);
+                Ok(bytes.clone())
+            },
+        )
+        .unwrap();
+        let selected = jira_account(&database).unwrap();
+        assert_eq!(selected, added.borrow().as_ref().unwrap().0);
+        let pointer = jira_pointer_path(&database).unwrap();
+        let metadata = std::fs::read_to_string(&pointer).unwrap();
+        assert_eq!(metadata.len(), 36);
+        assert!(!metadata.contains("fictional-secret"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&pointer).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        // Losing or deleting the selected Keychain item must not revive legacy.
+        added.replace(None);
+        assert_eq!(jira_account(&database).unwrap(), selected);
+        let (_other_directory, other) = jira_fixture();
+        std::fs::copy(&pointer, jira_pointer_path(&other).unwrap()).unwrap();
+        assert_ne!(jira_account(&other).unwrap(), selected);
+        #[cfg(target_os = "macos")]
+        assert_eq!(selected_account(&RELAY, &database).unwrap(), original);
+    }
+
+    #[test]
+    fn failed_jira_add_or_readback_preserves_the_previous_generation() {
+        let (_directory, database) = jira_fixture();
+        let pointer = jira_pointer_path(&database).unwrap();
+        let previous = uuid::Uuid::new_v4().to_string();
+        std::fs::write(&pointer, &previous).unwrap();
+        let selected = jira_account(&database).unwrap();
+        assert!(save_jira_generation(
+            &database,
+            "new-fictional-secret",
+            |_, _| Err("mvp_sync_credentials_write_failed".into()),
+            |_| panic!("failed add cannot be read or published")
+        )
+        .is_err());
+        assert_eq!(std::fs::read_to_string(&pointer).unwrap(), previous);
+        for value in [Ok(b"wrong-value".to_vec()), Err("unavailable".into())] {
+            assert!(save_jira_generation(
+                &database,
+                "new-fictional-secret",
+                |_, _| Ok(()),
+                |_| value
+            )
+            .is_err());
+            assert_eq!(std::fs::read_to_string(&pointer).unwrap(), previous);
+            assert_eq!(jira_account(&database).unwrap(), selected);
+        }
+    }
+
+    #[test]
+    fn an_invalid_jira_pointer_cannot_fall_back_or_be_overwritten() {
+        let (_directory, database) = jira_fixture();
+        let pointer = jira_pointer_path(&database).unwrap();
+        for contents in [
+            "not-a-slot",
+            "00000000000000000000000000000000000000",
+            "../../a-private-file",
+        ] {
+            std::fs::write(&pointer, contents).unwrap();
+            assert!(jira_account(&database).is_err());
+            assert!(save_jira_generation(
+                &database,
+                "fictional-secret",
+                |_, _| panic!("invalid pointer must fail before Keychain writes"),
+                |_| unreachable!()
+            )
+            .is_err());
+            assert_eq!(std::fs::read_to_string(&pointer).unwrap(), contents);
+        }
+        #[cfg(unix)]
+        {
+            let other = database.with_file_name("other-slot");
+            std::fs::write(&other, uuid::Uuid::new_v4().to_string()).unwrap();
+            std::fs::remove_file(&pointer).unwrap();
+            std::os::unix::fs::symlink(&other, &pointer).unwrap();
+            assert!(jira_account(&database).is_err());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_jira_pointer_publication_keeps_the_previous_selection() {
+        use std::os::unix::fs::PermissionsExt;
+        let (directory, database) = jira_fixture();
+        let pointer = jira_pointer_path(&database).unwrap();
+        let previous = uuid::Uuid::new_v4().to_string();
+        std::fs::write(&pointer, &previous).unwrap();
+        let permissions = std::fs::metadata(directory.path()).unwrap().permissions();
+        std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
+        let bypasses_permissions = tempfile::NamedTempFile::new_in(directory.path()).is_ok();
+        std::fs::set_permissions(directory.path(), permissions.clone()).unwrap();
+        if bypasses_permissions {
+            return;
+        }
+        let result = save_jira_generation(
+            &database,
+            "fictional-secret",
+            |_, _| Ok(()),
+            |_| {
+                std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o500))
+                    .unwrap();
+                Ok(b"fictional-secret".to_vec())
+            },
+        );
+        std::fs::set_permissions(directory.path(), permissions).unwrap();
+        assert_eq!(result.unwrap_err(), "mvp_sync_credentials_write_failed");
+        assert_eq!(std::fs::read_to_string(&pointer).unwrap(), previous);
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 2);
+    }
 
     #[cfg(target_os = "macos")]
     #[test]

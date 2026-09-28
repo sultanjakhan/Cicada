@@ -1,13 +1,13 @@
 // Only titles and status names cross the Jira import boundary; credentials stay native.
 const ERRORS = {
-  jira_token_unavailable: 'Токен недоступен — введите заново.',
+  jira_token_unavailable: 'Сохранённый API-токен недоступен этой версии Cicada. Вставь новый токен и нажми «Сохранить и подключить».',
   jira_token_required: 'Введи API-токен.',
   jira_token_required_for_site: 'При смене сайта или типа токена введи API-токен заново.',
   jira_token_required_for_mode: 'При смене типа токена введи API-токен заново.',
   jira_token_mode_invalid: 'Выбери тип API-токена.',
   jira_cloud_id_invalid: 'Не удалось определить сайт Jira. Проверь адрес и попробуй снова.',
   jira_token_invalid: 'API-токен выглядит неполным. Скопируй его целиком.',
-  jira_token_write_failed: 'Не удалось сохранить токен в хранилище ключей. Повтори попытку.',
+  jira_token_write_failed: 'Не удалось сохранить новый токен в защищённом хранилище компьютера. Подключение не изменено.',
   jira_token_delete_failed: 'Импорт остановлен, но токен не удалось удалить из хранилища ключей.',
   jira_site_invalid: 'Укажи адрес сайта Jira Cloud вида example.atlassian.net.',
   jira_project_invalid: 'Ключ проекта — латинские заглавные буквы и цифры, например DEMO.',
@@ -15,7 +15,7 @@ const ERRORS = {
   jira_title_invalid: 'Введи непустое название до 500 символов, без переносов строк.',
   jira_not_configured: 'Сначала заполни и сохрани подключение к Jira.',
   jira_unauthorized: 'Jira отклонила авторизацию. Проверь email, API-токен и выбранный тип токена.',
-  jira_scope_missing: 'Токену Jira не хватает прав (scopes) для этого действия. Для загрузки задач нужен read:jira-work. Создай токен с нужными правами и сохрани подключение снова.',
+  jira_scope_missing: 'Jira сообщает о несовпадении прав токена и запроса. Проверь scopes: для загрузки, создания и изменения задач нужны read:jira-work и write:jira-work типа Classic. В Cicada выбери «С правами (scopes)».',
   jira_forbidden: 'Jira отказала в доступе. Проверь права на проект или войди в Jira в браузере.',
   jira_not_found: 'По этому адресу Jira не найдена. Проверь адрес сайта.',
   jira_bad_request: 'Jira не приняла запрос. Проверь ключ проекта.',
@@ -49,9 +49,10 @@ export function jiraStatusText(status) {
   if (!status) return 'Состояние импорта из Jira недоступно.';
   if (status.running) return 'Загружаем задачи из Jira…';
   if (!status.enabled) return 'Jira не подключена. Уже загруженные задачи остаются в Cicada.';
+  if (!status.tokenSaved) return 'Для подключения нужен API-токен.';
   const date = status.lastSuccess ? new Date(status.lastSuccess) : null;
-  if (!date || !Number.isFinite(date.getTime())) return 'Подключено. Задачи ещё не загружались.';
-  return `Последняя загрузка: ${date.toLocaleString('ru-RU')} · задач: ${status.lastCount ?? 0}${status.truncated ? ' (первые 500)' : ''}.`;
+  if (!date || !Number.isFinite(date.getTime())) return status.lastError ? 'Токен сохранён, но подключиться к Jira не удалось.' : 'Токен сохранён. Связь с Jira ещё не проверена.';
+  return `${status.lastError ? 'Не удалось обновить задачи. ' : ''}Последняя загрузка: ${date.toLocaleString('ru-RU')} · задач: ${status.lastCount ?? 0}${status.truncated ? ' (первые 500)' : ''}.`;
 }
 
 function announce(window, status) {
@@ -66,6 +67,7 @@ export function mountJiraSettings(element, { invoke, setPending = () => {} }) {
   element.innerHTML = `<h3>Jira</h3>
     <p class="calendar-jira-hint">Загружаются все задачи выбранного проекта, включая завершённые. Сохраняются названия и статусы: без описаний, комментариев, вложений, ключей и ссылок Jira.</p>
     <p class="calendar-jira-hint">Название и статус меняются из карточки по кнопке «Изменить в Jira». «Создать → Задача → Рабочая» создаёт задачу в подключённом проекте. Этап Cicada и статус Jira независимы. Если включена синхронизация Cicada, названия и статусы передаются на твои устройства.</p>
+    <p class="calendar-jira-hint" data-jira-scopes>Для всех этих действий нужны два права токена Jira типа <strong>Classic</strong>: <code>read:jira-work</code> и <code>write:jira-work</code>. В поле «Тип API-токена» выбери «С правами (scopes)».</p>
     <p data-jira-status role="status">Загружаем состояние…</p><p class="calendar-jira-error" data-jira-error role="alert" hidden></p>
     <p class="calendar-jira-hint" data-jira-unsupported hidden>На телефоне импорт недоступен: задачи из Jira приходят сюда через синхронизацию с Mac или ПК.</p>
     <div class="calendar-jira-form" data-jira-form>
@@ -79,10 +81,11 @@ export function mountJiraSettings(element, { invoke, setPending = () => {} }) {
       </div>
       <label>API-токен<input type="password" data-jira-token autocomplete="off" autocapitalize="off" spellcheck="false"></label>
       <details class="calendar-jira-help"><summary>Как получить токен и где он хранится</summary>
-        <p class="calendar-jira-hint">Токен создаётся на id.atlassian.com → Security → API tokens. Для чтения нужен read:jira-work; для изменения названия и статуса — также write:issue:jira и write:issue.property:jira. Для создания Jira дополнительно указывает read:issue:jira, write:comment:jira, write:comment.property:jira и write:attachment:jira. Коннектор не отправляет комментарии или вложения. Email и токен хранятся в защищённом хранилище этого компьютера и отправляются только в Atlassian для подключения к выбранному сайту.</p>
+        <p class="calendar-jira-hint">Открой id.atlassian.com → Security → API tokens → Create API token with scopes. Выбери Jira, затем Scope type → Classic и оба права из подсказки выше. Скопируй выданный токен целиком в поле «API-токен» и нажми «Сохранить и подключить». Права готового токена изменить нельзя: при необходимости создай новый.</p>
+        <p class="calendar-jira-hint">После сохранения поле очищается — это нормально: токен остаётся в защищённом хранилище компьютера. Сразу проверяется связь и загружаются задачи. Если Jira отказала в доступе, причина появится здесь. Email и токен отправляются только в Atlassian; в синхронизацию Cicada они не попадают.</p>
         <p class="calendar-jira-hint">Подключай Jira только на одном компьютере — иначе переименования из Jira попадут в разбор версий.</p>
       </details>
-      <div class="calendar-sync-actions"><button type="button" data-jira-save>Сохранить подключение</button><button type="button" data-jira-now>Загрузить сейчас</button><button type="button" data-jira-disable>Отключить</button></div>
+      <div class="calendar-sync-actions"><button type="button" data-jira-save>Сохранить и подключить</button><button type="button" data-jira-now>Загрузить сейчас</button><button type="button" data-jira-disable>Отключить</button></div>
     </div>`;
   const q = name => element.querySelector(`[data-jira-${name}]`);
   const fields = { site: q('site'), email: q('email'), tokenMode: q('token-mode'), token: q('token'), project: q('project') };

@@ -31,7 +31,7 @@ test('the section explains the allowed fields, explicit writes and token scopes'
   assert.match(x.host.textContent, /Подключай Jira только на одном компьютере — иначе переименования из Jira попадут в разбор версий\./);
   assert.deepEqual([...x.host.querySelectorAll('label')].map(label => label.firstChild.textContent), ['Сайт Jira', 'Ключ проекта', 'Email', 'Тип API-токена', 'API-токен']);
   assert.equal(x.q('token').type, 'password');
-  assert.deepEqual([...x.host.querySelectorAll('button')].map(button => button.textContent), ['Сохранить подключение', 'Загрузить сейчас', 'Отключить']);
+  assert.deepEqual([...x.host.querySelectorAll('button')].map(button => button.textContent), ['Сохранить и подключить', 'Загрузить сейчас', 'Отключить']);
   assert.match(x.q('status').textContent, /не подключена/);
   assert.equal(x.q('now').disabled, true); assert.equal(x.q('disable').disabled, true); assert.equal(x.q('save').disabled, false);
   assert.deepEqual(x.commands(), ['jira_import_status']);
@@ -75,6 +75,41 @@ test('a late initial status or error cannot overwrite a newer connected state', 
     assert.equal(x.q('now').disabled, false);
     assert.equal(x.q('error').hidden, true);
   }
+});
+
+test('a saved token with rejected scopes is not presented as a working connection', async t => {
+  const x = mount(t, command => command === 'jira_import_status' ? idle() : connected({ lastError: command === 'jira_import_now' ? 'jira_scope_missing' : null }));
+  await settle();
+  x.type('site', SITE); x.type('email', 'demo@example.com'); x.type('project', 'DEMO'); x.type('token', TOKEN);
+  x.q('save').click(); await settle();
+  assert.match(x.q('status').textContent, /Токен сохранён, но подключиться к Jira не удалось/);
+  assert.match(x.q('error').textContent, /read:jira-work и write:jira-work типа Classic/);
+  assert.equal(x.q('token').value, '');
+  assert.match(x.q('token').placeholder, /Сохранён/);
+  assert.deepEqual([...x.q('scopes').querySelectorAll('code')].map(code => code.textContent), ['read:jira-work', 'write:jira-work']);
+  assert.equal(x.dispose.isDirty(), false);
+});
+
+test('an inaccessible old token can be replaced in the settings; failed storage keeps the new draft', async t => {
+  let writeFails = true;
+  const x = mount(t, command => {
+    if (command === 'jira_import_status') return connected({ tokenSaved: false, lastError: 'jira_token_unavailable' });
+    if (command === 'jira_import_configure' && writeFails) throw 'jira_token_write_failed';
+    return connected({ lastSuccess: '2026-09-25T09:00:00Z', lastCount: 2 });
+  });
+  await settle();
+  assert.match(x.q('status').textContent, /нужен API-токен/);
+  x.type('token', TOKEN); x.q('save').click(); await settle();
+  assert.equal(x.q('token').value, TOKEN);
+  assert.match(x.q('error').textContent, /Не удалось сохранить новый токен/);
+  assert.equal(x.dispose.isDirty(), true);
+  assert.deepEqual(x.commands(), ['jira_import_status', 'jira_import_configure']);
+  writeFails = false;
+  x.q('save').click(); await settle();
+  assert.equal(x.calls[2].args.token, TOKEN);
+  assert.equal(x.q('token').value, '');
+  assert.equal(x.q('error').hidden, true);
+  assert.match(x.q('status').textContent, /задач: 2/);
 });
 
 test('a scoped token is the default; changing its type sends an explicit native choice', async t => {
@@ -135,10 +170,10 @@ test('errors are shown in Russian, including a token that has to be entered agai
   const x = mount(t, () => connected({ lastError: 'jira_token_unavailable' }));
   await settle();
   assert.equal(x.q('error').hidden, false);
-  assert.equal(x.q('error').textContent, 'Токен недоступен — введите заново.');
+  assert.match(x.q('error').textContent, /Сохранённый API-токен недоступен.*Вставь новый токен/);
   for (const code of ['jira_unauthorized', 'jira_forbidden', 'jira_not_found', 'jira_rate_limited', 'jira_network_unavailable', 'jira_bad_request']) assert.notEqual(jiraErrorText(code), jiraErrorText('unknown'), code);
   assert.match(jiraErrorText('jira_unauthorized'), /email, API-токен/);
-  assert.match(jiraErrorText('jira_scope_missing'), /не хватает прав.*scopes/);
+  assert.match(jiraErrorText('jira_scope_missing'), /несовпадении прав токена и запроса.*scopes/);
   assert.match(jiraErrorText('jira_scope_missing'), /read:jira-work/);
   assert.equal(jiraErrorText('jira_token_required_for_site'), 'При смене сайта или типа токена введи API-токен заново.');
   const failing = mount(t, command => { if (command === 'jira_import_status') return idle(); throw 'jira_site_invalid'; });
