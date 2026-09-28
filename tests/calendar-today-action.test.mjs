@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { mountCalendarTodayAction } from '../src/hanni/js/calendar-today-action.js';
+import { mountCalendarInProgress } from '../src/hanni/js/calendar-in-progress.js';
+import { startCalendarExecution } from '../src/hanni/js/calendar-execution.js';
 
 const settle = async () => { for (let i=0;i<12;i++) await new Promise(resolve=>setImmediate(resolve)); };
 async function setup(t, {nextTask=false,activeTask=false,extraTasks=[]}={}) {
@@ -116,4 +118,79 @@ test('completion shows the next existing candidate; failed save keeps the runner
   assert.equal(x.host.dataset.mode,'recommendation');
   assert.match(x.host.querySelector('[data-today-recommendation]').textContent,/Следующая задача/);
   assert.equal(x.calls.some(call=>call.name==='start_task_block'),false);
+});
+
+
+test('Start another opens actual tasks, selection never starts, and an explicit second start keeps the first timer', async t => {
+  const dom = new JSDOM('<main><div id="today"></div><div id="work"></div></main>'), { window } = dom;
+  const host = window.document.querySelector('#today'), work = window.document.querySelector('#work');
+  const date = '2026-09-28', clock = () => new Date(`${date}T12:00:00`);
+  const tasks = [
+    {source_type:'note',source_id:'first',title:'Первая задача',status_extra:'task',date,is_active:true,has_work:true,actual_seconds:30,jira_status:'В работе'},
+    {source_type:'note',source_id:'second',title:'Вторая задача',status_extra:'task',date,is_active:false,has_work:false,jira_status:'Открыто'},
+  ];
+  const blocks = [{id:1,source_type:'note',source_id:'first',date,start_time:'11:00:00',is_active:true,completion_date:date}];
+  const calls = [];
+  const invoke = async (name,args) => {
+    calls.push({name,args});
+    if (name === 'get_ui_state') return null;
+    if (name === 'get_calendar_tasks') return tasks;
+    if (name === 'get_active_blocks') return blocks.filter(block => block.is_active);
+    if (name === 'get_timeline_blocks') return blocks;
+    if (['get_calendar_task_goals','get_goals','get_calendar_task_blocks'].includes(name)) return [];
+    if (name === 'start_task_block') {
+      const id = blocks.length + 1;
+      blocks.push({id,source_type:args.sourceType,source_id:args.sourceId,date,start_time:'12:00:00',is_active:true,completion_date:date});
+      Object.assign(tasks.find(task => task.source_id === args.sourceId), {is_active:true,has_work:true});
+      return id;
+    }
+    throw Error(name);
+  };
+  const notifyChange = () => window.dispatchEvent(new window.Event('task-state-changed'));
+  const execute = (task, action) => { assert.equal(action,'start'); return startCalendarExecution(invoke, task); };
+  let progress = null, selection = null;
+  const today = mountCalendarTodayAction(host, {invoke,clock,compactRunning:true,
+    taskOptions:{invoke,executeAction:execute,notifyChange},executeTask:execute,notifyChange,
+    onCurrentTaskChange:task => { selection = task; progress?.setSelectedTask(task); },
+  });
+  progress = mountCalendarInProgress(work, {invoke,now:clock,activeOnly:true,hideWhenEmpty:true,singleSelection:true,
+    selectedTask:selection,onRunningTaskCountChange:count => today.setRunningTaskCount(count),
+    onSelectedTaskState:state => { if (selection && state.key === `note:${selection.source_id}`) today.setFocusedTaskVisible(`task:${state.key}`,state.visible); },
+  });
+  t.after(() => { today(); progress(); window.close(); });
+  await settle();
+  const extra = host.querySelector('[data-today-start-another]');
+  assert.equal(extra.textContent,'Начать ещё задачу');
+  assert.equal(host.querySelector('[data-today-parallel]').hidden,false);
+  assert.equal(host.querySelector('[data-today-running-count]').textContent,'В работе: 1');
+  extra.click(); await settle();
+  assert.equal(host.querySelector('[data-today-task-choices]').hidden,false);
+  assert.equal(host.querySelector('[data-today-routines]').hidden,true);
+  host.querySelector('[data-overview-task="note:second"]').click(); await settle();
+  assert.equal(host.dataset.mode,'recommendation');
+  assert.equal(calls.some(call => /start_task_block|pause_task_block|cancel_task_block|finish_task_block/.test(call.name)),false);
+  assert.equal(blocks.filter(block => block.is_active).length,1);
+  extra.click(); await settle();
+  host.querySelector('[data-overview-execute="note:second"]').click(); await settle();
+  assert.deepEqual(calls.filter(call => call.name === 'start_task_block').map(call => call.args.sourceId),['second']);
+  assert.equal(calls.some(call => /pause|cancel|finish/.test(call.name)),false);
+  assert.deepEqual(blocks.filter(block => block.is_active).map(block => block.source_id),['first','second']);
+  assert.equal(host.querySelector('[data-today-running-count]').textContent,'В работе: 2');
+  assert.deepEqual([...work.querySelectorAll('.cip-row')].map(row => row.dataset.contextRecord),['note:second']);
+  assert.equal(work.querySelector('.cip-jira-status').textContent,'Jira: Открыто');
+  assert.equal(work.querySelector('.cip-stage'),null,'Jira status never assigns a Cicada process or stage');
+});
+
+test('the extra-task entry stays available with recommendations off and disappears only when no task runs', async t => {
+  const x = await setup(t);
+  x.dispose.setPreferences({enabled:false});
+  x.dispose.setRunningTaskCount(2);
+  assert.equal(x.host.querySelector('[data-today-parallel]').hidden,false);
+  x.host.querySelector('[data-today-start-another]').click(); await settle();
+  assert.equal(x.host.querySelector('[data-today-task-choices]').hidden,false);
+  assert.equal(x.host.querySelector('[data-today-routines]').hidden,true);
+  x.host.querySelector('[data-today-choose]').click();
+  x.dispose.setRunningTaskCount(0);
+  assert.equal(x.host.querySelector('[data-today-parallel]').hidden,true);
+  assert.equal(x.calls.some(call => /start_task_block|pause_task_block/.test(call.name)),false);
 });

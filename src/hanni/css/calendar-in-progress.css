@@ -41,6 +41,7 @@
 
 /* Secondary line: state, stage text and the next-stage arrow, then goal. */
 .cip-meta { grid-column: 1; grid-row: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 3px 8px; min-width: 0; }
+.cip-jira-status { flex:0 1 auto; min-width:0; font-size:12px; line-height:20px; color:var(--text-secondary); overflow-wrap:anywhere; }
 .cip-meta .cip-state { color: var(--text-muted); }
 .cip-meta .cip-state.is-running { color: var(--text-secondary); }
 .cip-stage-group { flex: 0 1 auto; display: inline-flex; align-items: center; gap: 2px; min-width: 0; max-width: 100%; }

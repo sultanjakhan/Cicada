@@ -47,6 +47,7 @@ function taskContext(task, links = [], goals = [], processes = []) {
     goal: taskGoalPath(task, links, goals),
     stage: stage && (stage.label || stage.waiting) ? stage.label : '',
     waiting: Boolean(stage?.waiting),
+    jiraStatus: safeText(task.jira_status),
   };
 }
 
@@ -203,10 +204,11 @@ export function mountCalendarNextAction(element, dependencies) {
         context.textContent = selected.routine.mode === 'check' ? 'Рутина · отметка без таймера' : count > 1 ? `Рутина · шагов: ${count}` : 'Рутина · с учётом времени';
         card.append(context);
       }
-      if (!compactRunning && selected.type === 'task' && (selected.context?.goal || selected.context?.stage || selected.context?.waiting)) {
+      if (!compactRunning && selected.type === 'task' && (selected.context?.goal || selected.context?.stage || selected.context?.waiting || selected.context?.jiraStatus)) {
         const context = document.createElement('p'); context.className = 'calendar-next-action__context'; context.dataset.nextActionContext = '';
         const parts = [];
         if (selected.context.goal) parts.push(`Цель: ${selected.context.goal}`);
+        if (selected.context.jiraStatus) parts.push(`Jira: ${selected.context.jiraStatus}`);
         if (selected.context.stage) parts.push(`Этап: ${selected.context.stage}`);
         if (selected.context.waiting) parts.push('Жду ответа');
         context.textContent = parts.join(' · ');

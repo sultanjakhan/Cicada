@@ -301,3 +301,20 @@ test('session suppression clears when the local calendar day changes', async t =
   instant = new Date('2026-09-28T08:00:00'); await dispose.refresh(); await settle();
   assert.equal(x.host.querySelector('[data-next-action-key]').dataset.nextActionKey, 'task:note:new-day');
 });
+
+
+test('Jira status is separate plain text beside the local stage and refreshes without workflow edits', async t => {
+  const row = task('jira-status', {process:'work',stage:'requirements',jira_status:'<b>В разработке</b>'});
+  const x = setup(t,{tasks:[row],processes:[{id:'work',title:'Работа',stages:[{id:'requirements',title:'Сбор требований'}]}]});
+  const dispose = mountCalendarNextAction(x.host,{invoke:x.invoke,clock:now}); t.after(dispose); await settle();
+  const context = () => x.host.querySelector('[data-next-action-context]');
+  assert.equal(context().textContent,'Jira: <b>В разработке</b> · Этап: Сбор требований');
+  assert.equal(context().querySelector('b'),null);
+  x.tasks = [{...row,jira_status:'На проверке'}]; await dispose.refresh();
+  assert.equal(context().textContent,'Jira: На проверке · Этап: Сбор требований');
+  x.tasks = [{...row,process:'',stage:'',jira_status:'Открыто'}]; await dispose.refresh();
+  assert.equal(context().textContent,'Jira: Открыто','no implied process or local stage');
+  x.tasks = [{...row,process:'',stage:'',jira_status:undefined}]; await dispose.refresh();
+  assert.equal(context(),null,'no empty status placeholder');
+  assert.equal(x.calls.some(call => ['set_calendar_task_stage','save_calendar_task','start_task_block','pause_task_block'].includes(call.name)),false);
+});

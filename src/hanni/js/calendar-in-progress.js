@@ -163,6 +163,7 @@ export function mountCalendarInProgress(element, dependencies) {
     const content = node('div', 'cip-content'); content.append(head);
     const meta = node('div', 'cip-line cip-meta');
     meta.append(node('span', 'cip-state', row.running ? 'Идёт' : 'На паузе'));
+    if (row.record.jira_status) meta.append(node('span', 'cip-jira-status', `Jira: ${row.record.jira_status}`));
     if (row.stageState) {
       meta.append(stageControl(row));
       const elapsed = stageSeconds({ blocks: row.stageBlocks, log: row.stageLog, stage: row.stageState.stage, now: clock() }).get(row.stageState.stage) || 0;
@@ -353,6 +354,7 @@ export function mountCalendarInProgress(element, dependencies) {
       const unchanged = !!rows && !failed && JSON.stringify(rows) === JSON.stringify(next);
       rows = next; failed = false;
       dependencies.onRowsChange?.(rows.map(row => row.key));
+      dependencies.onRunningTaskCountChange?.(rows.filter(row => row.running && row.source_type === 'note').length);
       if (unchanged) { renderTimes(); return; }
     } catch {
       if (disposed || request !== revision) return;
