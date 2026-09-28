@@ -7,11 +7,10 @@
 .calendar-today .calendar-next-action__actions > button[data-next-action-action="later"] { border-color:transparent; color:var(--text-muted,#777); }
 .calendar-today-action__heading { display:flex; align-items:center; gap:12px; justify-content:space-between; flex-wrap:wrap; }
 .calendar-today-action__heading h2 { margin:0; font-size:15px; line-height:1.4; }
-.calendar-today-action__heading > button { padding:6px 0; background:transparent; border:0; color:var(--text-secondary,#626262); font:inherit; font-size:13px; cursor:pointer; }
-.calendar-today-action__parallel { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px 12px; margin:10px 0 6px; }
-.calendar-today-action__parallel > span { color:var(--text-secondary,#626262); font-size:12px; }
-.calendar-today-action__parallel > button { min-height:36px; padding:7px 12px; border:1px solid var(--border-default,#ddd); border-radius:8px; background:var(--bg-card,#fff); color:var(--text-primary,#252525); font:inherit; font-size:13px; font-weight:600; cursor:pointer; }
-.calendar-today-action__parallel > button:hover { background:var(--bg-hover,#f3f3f3); }
+.calendar-today-action__tools { display:flex; align-items:center; gap:12px; margin-left:auto; }
+.calendar-today-action__tools > button { padding:6px 0; background:transparent; border:0; color:var(--text-secondary,#626262); font:inherit; font-size:13px; cursor:pointer; }
+.calendar-today-action__tools > [data-today-start-another] { display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; padding:0; border:1px solid var(--border-default,#ddd); border-radius:8px; color:var(--text-primary,#252525); }
+.calendar-today-action__tools > [data-today-start-another]:hover { background:var(--bg-hover,#f3f3f3); }
 .calendar-today-action__scopes { display:inline-flex; gap:2px; margin:16px 0 0; padding:3px; background:var(--bg-hover,#f3f3f3); border-radius:8px; }
 .calendar-today-action__scopes button { padding:7px 14px; border:0; border-radius:6px; background:transparent; color:var(--text-secondary,#626262); font:inherit; font-size:13px; cursor:pointer; }
 .calendar-today-action__scopes button[aria-pressed="true"] { background:var(--bg-card,#fff); color:var(--text-primary,#252525); box-shadow:0 1px 3px #0001; }

@@ -557,12 +557,10 @@ test('work and personal tasks get their own sub-headings, work first; one kind s
 test('running Jira status is independent of the local stage, plain text, and absent for ordinary tasks', async t => {
   const data=backend();
   const record=data.tasks.find(task=>task.source_id==='draft'); record.jira_status='<b>В разработке</b>';
-  const counts=[];
-  const x=await mount(t,data,{singleSelection:true,selectedTask:record,onRunningTaskCountChange:count=>counts.push(count)});
+  const x=await mount(t,data,{singleSelection:true,selectedTask:record});
   const status=()=>x.row('note:draft').querySelector('.cip-jira-status');
   assert.equal(status().textContent,'Jira: <b>В разработке</b>'); assert.equal(status().querySelector('b'),null);
   assert.ok(x.row('note:draft').querySelector('.cip-stage'));
-  assert.equal(counts.at(-1),1,'a parallel routine does not count as a task');
   record.jira_status='Готово'; record.process=''; record.stage=''; record.waiting=false;
   await x.refresh();
   assert.equal(status().textContent,'Jira: Готово'); assert.equal(x.row('note:draft').querySelector('.cip-stage'),null);

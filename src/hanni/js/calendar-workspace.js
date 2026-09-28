@@ -710,7 +710,6 @@ export async function loadCalendarWorkspace(el) {
       disposeInProgress = mountCalendarInProgress(pane.querySelector('[data-calendar-in-progress]'), {
         invoke, notifyChange:changed, title:'Идёт сейчас', activeOnly:true, hideWhenEmpty:true, embedded:true,
         singleSelection:true, selectedTask:todayTaskSelection,
-        onRunningTaskCountChange:count => disposeNextAction?.setRunningTaskCount(count),
         onSelectedTaskState:state => {
           if (!todayTaskSelection || state.key !== `${todayTaskSelection.source_type}:${String(todayTaskSelection.source_id)}`) return;
           disposeNextAction?.setFocusedTaskVisible(`task:${todayTaskSelection.source_type}:${String(todayTaskSelection.source_id)}`,state.visible);

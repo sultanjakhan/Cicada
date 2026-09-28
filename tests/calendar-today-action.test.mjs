@@ -154,15 +154,15 @@ test('Start another opens actual tasks, selection never starts, and an explicit 
     onCurrentTaskChange:task => { selection = task; progress?.setSelectedTask(task); },
   });
   progress = mountCalendarInProgress(work, {invoke,now:clock,activeOnly:true,hideWhenEmpty:true,singleSelection:true,
-    selectedTask:selection,onRunningTaskCountChange:count => today.setRunningTaskCount(count),
+    selectedTask:selection,
     onSelectedTaskState:state => { if (selection && state.key === `note:${selection.source_id}`) today.setFocusedTaskVisible(`task:${state.key}`,state.visible); },
   });
   t.after(() => { today(); progress(); window.close(); });
   await settle();
   const extra = host.querySelector('[data-today-start-another]');
-  assert.equal(extra.textContent,'Начать ещё задачу');
-  assert.equal(host.querySelector('[data-today-parallel]').hidden,false);
-  assert.equal(host.querySelector('[data-today-running-count]').textContent,'В работе: 1');
+  assert.equal(extra.getAttribute('aria-label'),'Выбрать задачу для запуска');
+  assert.ok(extra.closest('.calendar-today-action__heading'));
+  assert.equal(extra.closest('[hidden]'),null);
   extra.click(); await settle();
   assert.equal(host.querySelector('[data-today-task-choices]').hidden,false);
   assert.equal(host.querySelector('[data-today-routines]').hidden,true);
@@ -175,22 +175,22 @@ test('Start another opens actual tasks, selection never starts, and an explicit 
   assert.deepEqual(calls.filter(call => call.name === 'start_task_block').map(call => call.args.sourceId),['second']);
   assert.equal(calls.some(call => /pause|cancel|finish/.test(call.name)),false);
   assert.deepEqual(blocks.filter(block => block.is_active).map(block => block.source_id),['first','second']);
-  assert.equal(host.querySelector('[data-today-running-count]').textContent,'В работе: 2');
+  assert.equal(extra.closest('[hidden]'),null);
   assert.deepEqual([...work.querySelectorAll('.cip-row')].map(row => row.dataset.contextRecord),['note:second']);
   assert.equal(work.querySelector('.cip-jira-status').textContent,'Jira: Открыто');
   assert.equal(work.querySelector('.cip-stage'),null,'Jira status never assigns a Cicada process or stage');
 });
 
-test('the extra-task entry stays available with recommendations off and disappears only when no task runs', async t => {
+test('the task launcher remains in the heading with recommendations off and no running tasks', async t => {
   const x = await setup(t);
   x.dispose.setPreferences({enabled:false});
-  x.dispose.setRunningTaskCount(2);
-  assert.equal(x.host.querySelector('[data-today-parallel]').hidden,false);
+  const launcher=x.host.querySelector('[data-today-start-another]');
+  assert.equal(launcher.closest('[hidden]'),null);
   x.host.querySelector('[data-today-start-another]').click(); await settle();
   assert.equal(x.host.querySelector('[data-today-task-choices]').hidden,false);
   assert.equal(x.host.querySelector('[data-today-routines]').hidden,true);
   x.host.querySelector('[data-today-choose]').click();
-  x.dispose.setRunningTaskCount(0);
-  assert.equal(x.host.querySelector('[data-today-parallel]').hidden,true);
+  assert.equal(launcher.closest('[hidden]'),null);
+  assert.equal(x.host.querySelector('[data-today-start-another]'),launcher);
   assert.equal(x.calls.some(call => /start_task_block|pause_task_block/.test(call.name)),false);
 });

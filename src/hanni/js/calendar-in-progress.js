@@ -354,7 +354,6 @@ export function mountCalendarInProgress(element, dependencies) {
       const unchanged = !!rows && !failed && JSON.stringify(rows) === JSON.stringify(next);
       rows = next; failed = false;
       dependencies.onRowsChange?.(rows.map(row => row.key));
-      dependencies.onRunningTaskCountChange?.(rows.filter(row => row.running && row.source_type === 'note').length);
       if (unchanged) { renderTimes(); return; }
     } catch {
       if (disposed || request !== revision) return;
