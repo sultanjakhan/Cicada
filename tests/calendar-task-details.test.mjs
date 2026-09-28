@@ -31,6 +31,20 @@ function fixture({ invoke: invokeOverride, task = record, seconds = 61, activeBl
 }
 const settle = async () => { for (let i = 0; i < 6; i++) await new Promise(resolve => setImmediate(resolve)); };
 
+test('non-runnable Jira cards preserve details and keep an active pause available', async t => {
+  for (const role of ['completed', 'review', 'hidden', 'unassigned']) {
+    const task = { ...record, source_id: `jira:${'a'.repeat(64)}`, jira_status: 'Example status', jira_workflow_role: role };
+    for (const running of [false, true]) {
+      const f = fixture({ task, activeBlocks: running ? [{id:1,source_type:'note',source_id:task.source_id,date:'2026-09-27',start_time:'12:00:00'}] : [] });
+      t.after(() => { f.dispose(); f.dom.window.close(); }); await settle();
+      const execute = f.window.document.querySelector('.task-details-execute');
+      assert.equal(execute.hidden,!running,role);
+      if (running) assert.match(execute.textContent,/Пауза/);
+      assert.equal(f.window.document.querySelector('.task-details-jira').hidden,false);
+    }
+  }
+});
+
 test('opens as a read-only operational card, with goal/stage/time and no mutation', async t => {
   const f = fixture(); t.after(() => { f.dispose(); f.dom.window.close(); });
   await settle();

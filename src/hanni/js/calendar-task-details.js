@@ -105,7 +105,7 @@ export function openCalendarTaskDetails(record, dependencies) {
     current.is_active = active;
     const completed = !active && (!!current.completed || current.status === 'done' || ['done', 'skipped', 'missed'].includes(current.status_extra) || jiraIsCompleted(current));
     const hasWork = active || !!current.has_work || (closedSeconds > 0);
-    const status = loadFailed ? 'Статус недоступен' : !activeStatusKnown ? 'Проверяем статус…' : completed ? 'Сделано' : isInstantTask(current) ? 'К выполнению' : active ? 'В работе' : hasWork ? 'На паузе' : 'Не запускалась';
+    const status = loadFailed ? 'Статус недоступен' : !activeStatusKnown ? 'Проверяем статус…' : completed ? 'Завершена' : isInstantTask(current) ? 'К выполнению' : active ? 'В работе' : hasWork ? 'На паузе' : 'Не запускалась';
     headingHint.textContent = `${scope} · ${status}`;
     const label = isInstantTask(current) ? 'Завершить' : active ? 'Пауза' : hasWork ? 'Продолжить' : 'Начать';
     syncButton.replaceChildren();
