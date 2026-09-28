@@ -71,6 +71,7 @@ export function openJiraTaskEditor(record, { document, invoke, returnFocus, onCh
       if (mutation && jiraErrorText(code) === jiraErrorText(undefined)) code = 'jira_write_outcome_unknown';
       // An ambiguous write must be read back before another explicit write is allowed.
       if (code === 'jira_write_outcome_unknown' || code === 'jira_task_conflict') mustRefresh = true;
+      if (!snapshot) q('current').textContent = 'Состояние Jira не загружено.';
       q('editor-status').textContent = '';
       api.showError(code === 'jira_bad_request'
         ? 'Jira не приняла запрос. Проверь название и правила перехода в самой Jira: могут требоваться дополнительные поля.'
