@@ -9,6 +9,8 @@ import { createCalendarDialog } from './calendar-dialog.js';
 import { CREATE_TYPES, SCHEDULE_TYPES, createType, createTypeButtons } from './calendar-create-types.js';
 import { TASK_SPHERES, PERSONAL_SPHERES } from './task-model.js';
 import { DELETED_STAGE_LABEL, findProcess, loadProcesses, mountStageTime, taskProcessId } from './task-processes.js';
+import { mountJiraCreate } from './jira-create.js';
+import { jiraErrorText } from './jira-import.js';
 // Default time is the exact current local minute. Rounding made a modal opened
 // at 08:09 misleadingly show 08:10 even though "Создать и начать" starts now.
 function currentLocalTime() {
@@ -140,6 +142,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
   let savedVersion = task?.version ?? event?.version ?? null;
   let changed = false;
   let acknowledgedTask = null;
+  let jiraCreate = null, jiraCreatedRequestId = null;
   let persistedGoalId = task?.goal_id ?? null;
   let goalsReady = false;
   let endDateExpanded = initEnd.date !== initDate;
@@ -174,6 +177,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
         <label class="evm-sphere-fine" for="evm-sphere" data-evm-personal><span class="evm-sr-only">Сфера личной задачи</span>
           <select class="form-select" id="evm-sphere">${personalOptions(loadedSphere === 'work' ? 'personal' : isEdit ? loadedSphere : 'personal', isEdit && loadedSphere === '')}</select></label>
       </div>
+      <div class="evm-jira-create" id="evm-jira-create" hidden></div>
       <div class="evm-date-row">
         <label class="evm-field evm-date-field" for="evm-date"><span class="evm-field-label">Дата</span>
           <input class="form-input" id="evm-date" type="date" value="${escapeHtml(initDate)}" required></label>
@@ -307,7 +311,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
     overlay.querySelectorAll('[data-evm-scope]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.evmScope === scope)));
     overlay.querySelector('[data-evm-personal]').hidden = scope !== 'personal';
   };
-  overlay.querySelectorAll('[data-evm-scope]').forEach(button => button.addEventListener('click', () => { scope = button.dataset.evmScope; updateScope(); }));
+  overlay.querySelectorAll('[data-evm-scope]').forEach(button => button.addEventListener('click', () => { scope = button.dataset.evmScope; showError(''); updateScope(); updateEditorType(); }));
   // The stage select follows the chosen process; a deleted stage stays selectable as it is.
   const fillStages = (processId, value) => {
     const stages = findProcess(processes, processId)?.stages || [];
@@ -408,6 +412,8 @@ export async function showEventModal(eventId = null, initialDate = null, options
   };
   const updateEditorType = () => {
     const other = SCHEDULE_TYPES.includes(kind) ? null : createType(kind);
+    const createInJira = !isEdit && kind === 'task' && scope === 'work' && !acknowledgedTask;
+    jiraCreate?.setActive(createInJira);
     overlay.querySelector('.calendar-editor-shell').dataset.editorKind = kind;
     overlay.querySelector('#evm-heading').textContent = other ? other.heading : isEdit ? (kind === 'task' ? 'Изменить задачу' : 'Редактировать событие') : (kind === 'task' ? 'Новая задача' : 'Новое событие');
     overlay.querySelector('#evm-hint').textContent = other ? other.hint : kind === 'task' ? 'Дату, время, цель, оценку и процесс можно оставить пустыми.' : isEdit ? 'Измени детали в расписании.' : options.initialTime ? 'Выбраны дата и время ячейки. Их можно изменить.' : 'Выбраны дата календаря и текущее время. Их можно изменить.';
@@ -419,8 +425,9 @@ export async function showEventModal(eventId = null, initialDate = null, options
     overlay.querySelectorAll('[data-editor-task]').forEach(node => { node.hidden = kind !== 'task'; });
     overlay.querySelectorAll('[data-editor-event]').forEach(node => { node.hidden = kind !== 'event'; });
     overlay.querySelectorAll('[data-editor-type]').forEach(button => { button.setAttribute('aria-pressed', String(button.dataset.editorType === kind)); button.disabled = pending || savedEventId != null; });
-    overlay.querySelector('#evm-save').textContent = pending ? 'Сохранение…' : savedEventId != null ? 'Сохранить' : other ? other.submitLabel : kind === 'task' ? 'Создать задачу' : 'Создать событие';
-    fields.disabled = pending || !recordReady;
+    overlay.querySelector('#evm-save').textContent = pending ? 'Сохранение…' : savedEventId != null ? 'Сохранить' : createInJira ? 'Создать в Jira' : other ? other.submitLabel : kind === 'task' ? 'Создать задачу' : 'Создать событие';
+    overlay.querySelector('#evm-save').disabled = pending || (createInJira && !jiraCreate?.ready());
+    fields.disabled = pending || !recordReady || !!acknowledgedTask;
     updateTiming();
   };
   overlay.querySelectorAll('[data-editor-type]').forEach(button => button.addEventListener('click', () => {
@@ -517,6 +524,9 @@ export async function showEventModal(eventId = null, initialDate = null, options
     overlay.querySelector('#evm-stage-time').hidden = selectedTaskKind() === 'instant';
   };
   new MutationObserver((_, observer) => { if (!overlay.isConnected) { stopStageTime?.(); observer.disconnect(); } }).observe(document.body, { childList: true });
+  jiraCreate = mountJiraCreate(overlay.querySelector('#evm-jira-create'), { invoke, onChange: updateEditorType, onPending: setPending,
+    onRecovered: async (result, local) => { if (local && options.onTaskSaved) await options.onTaskSaved({id:result.itemId,goalId:local.goalId}); },
+    onCompleted: () => { changed = true; overlay.remove(); notifyChange(); } });
   updateScope(); showRecordState(); updateEditorType(); showStageTime();
   if (isTopModal() && !overlay.contains(document.activeElement)) {
     (recordReady ? (options.initialFocus === 'date' ? (dateInput.disabled ? noDate : dateInput) : titleInput) : recordRetry).focus();
@@ -625,15 +635,22 @@ export async function showEventModal(eventId = null, initialDate = null, options
       if (desiredGoalId != null && !availableGoalIds.has(String(desiredGoalId))) { showError('Связанная цель недоступна. Выбери другую цель или «Без цели».', goalSelect); return; }
       const time = dueDate === null ? '' : taskTimeInput.value;
       if (taskTimeInput.validity.badInput || (time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time))) { showError('Укажи время в формате ЧЧ:ММ или оставь поле пустым.', taskTimeInput); return; }
+      const createInJira = !isEdit && sphere === 'work';
+      if (createInJira && !acknowledgedTask && !jiraCreate.ready()) { showError('Дождись подключения Jira и выбери тип задачи. Если показана проверка предыдущего создания — сначала заверши её.'); return; }
       setPending(true);
       try {
         if (!acknowledgedTask) {
           const important = isEdit ? (importantChanged ? Boolean(importantInput?.checked) : null) : Boolean(importantInput?.checked);
           // Editing sends kind and sphere only when they change, so a value this
           // version does not know is kept.
-          savedEventId = await invoke('save_calendar_task', { id: savedEventId, title, dueDate, time, estimateMinutes, goalId: desiredGoalId, expectedVersion: savedVersion, important,
-            taskKind: !isEdit || taskKind !== retryLoaded.kind ? taskKind : null, sphere: !isEdit || sphere !== retryLoaded.sphere ? sphere : null,
-            stage, waiting, process: processChanged ? process : null });
+          if (createInJira) {
+            const result = await jiraCreate.create(title, { dueDate, time, estimateMinutes, goalId: desiredGoalId, important, taskKind, stage, waiting, process });
+            savedEventId = result.itemId; jiraCreatedRequestId = result.requestId;
+          } else {
+            savedEventId = await invoke('save_calendar_task', { id: savedEventId, title, dueDate, time, estimateMinutes, goalId: desiredGoalId, expectedVersion: savedVersion, important,
+              taskKind: !isEdit || taskKind !== retryLoaded.kind ? taskKind : null, sphere: !isEdit || sphere !== retryLoaded.sphere ? sphere : null,
+              stage, waiting, process: processChanged ? process : null });
+          }
           acknowledgedTask = { id:savedEventId, goalId:desiredGoalId };
         }
         if (options.onTaskSaved) {
@@ -645,8 +662,11 @@ export async function showEventModal(eventId = null, initialDate = null, options
             return;
           }
         }
+        if (jiraCreatedRequestId) await jiraCreate.acknowledge(jiraCreatedRequestId);
         changed = true; overlay.remove(); notifyChange();
-      } catch (error) { setPending(false); showError('Не удалось сохранить задачу. Введённые данные сохранены в форме: ' + error); }
+      } catch (error) { setPending(false); showError(createInJira
+        ? jiraCreatedRequestId ? 'Задача уже создана в Jira и сохранена в Cicada. Повтори сохранение, чтобы завершить подтверждение; дубль не создастся.' : jiraErrorText(typeof error === 'string' ? error : error?.message, 'Не удалось подтвердить создание. Обнови подключение в форме и проверь результат перед следующей отправкой.')
+        : 'Не удалось сохранить задачу. Введённые данные сохранены в форме: ' + error); }
       return;
     }
     const now = startNow ? localNowParts() : null;

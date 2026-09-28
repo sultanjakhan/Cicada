@@ -30,10 +30,19 @@ const ERRORS = {
   jira_task_conflict: 'Задача изменилась в Jira. Обнови состояние, проверь изменения и отправь ещё раз.',
   jira_transition_invalid: 'Этот переход больше недоступен. Обнови состояние Jira и выбери доступный статус.',
   jira_write_outcome_unknown: 'Jira могла принять изменение, но подтверждение не получено. Нажми «Обновить из Jira» перед следующей попыткой.',
+  jira_create_not_ready: 'Дождись подключения Jira и выбери тип задачи.',
+  jira_create_request_invalid: 'Форма создания устарела. Обнови подключение в форме и проверь данные.',
+  jira_create_request_conflict: 'Этот запрос уже отправлялся с другими данными. Обнови подключение и проверь результат предыдущего создания.',
+  jira_create_recovery_required: 'Сначала проверь результат предыдущего создания в Jira.',
+  jira_create_outcome_unknown: 'Jira могла создать задачу. Проверь её в Jira; повторная отправка заблокирована, чтобы не создать дубль.',
+  jira_create_required_fields: 'Для этого типа Jira требует дополнительные поля. Создай задачу в Jira: Cicada отправляет только название и тип.',
+  jira_create_local_invalid: 'Проверь дату, время, цель и этап задачи. Запрос создания не отправлен.',
+  jira_issue_type_invalid: 'Этот тип задачи недоступен. Обнови подключение и выбери тип снова.',
+  jira_create_configuration_changed: 'Подключение Jira изменилось. Обнови подключение в форме и проверь проект перед созданием.',
   jira_unsupported: 'На телефоне импорт из Jira недоступен.',
 };
 const errorCode = cause => typeof cause === 'string' ? cause : cause?.message;
-export const jiraErrorText = code => ERRORS[code] || 'Не удалось выполнить запрос к Jira. Повтори попытку позже.';
+export const jiraErrorText = (code, fallback = 'Не удалось выполнить запрос к Jira. Повтори попытку позже.') => ERRORS[code] || fallback;
 
 export function jiraStatusText(status) {
   if (!status) return 'Состояние импорта из Jira недоступно.';
@@ -55,7 +64,7 @@ export function mountJiraSettings(element, { invoke, setPending = () => {} }) {
   element.className = 'calendar-jira calendar-setting';
   element.innerHTML = `<h3>Jira</h3>
     <p class="calendar-jira-hint">Загружаются все задачи выбранного проекта, включая завершённые. Сохраняются названия и статусы: без описаний, комментариев, вложений, ключей и ссылок Jira.</p>
-    <p class="calendar-jira-hint">Название и статус можно изменить из карточки задачи по кнопке «Изменить в Jira». Если включена синхронизация Cicada, названия и статусы передаются на твои устройства.</p>
+    <p class="calendar-jira-hint">Название и статус меняются из карточки по кнопке «Изменить в Jira». «Создать → Задача → Рабочая» создаёт задачу в подключённом проекте. Этап Cicada и статус Jira независимы. Если включена синхронизация Cicada, названия и статусы передаются на твои устройства.</p>
     <p data-jira-status role="status">Загружаем состояние…</p><p class="calendar-jira-error" data-jira-error role="alert" hidden></p>
     <p class="calendar-jira-hint" data-jira-unsupported hidden>На телефоне импорт недоступен: задачи из Jira приходят сюда через синхронизацию с Mac или ПК.</p>
     <div class="calendar-jira-form" data-jira-form>
@@ -69,7 +78,7 @@ export function mountJiraSettings(element, { invoke, setPending = () => {} }) {
       </div>
       <label>API-токен<input type="password" data-jira-token autocomplete="off" autocapitalize="off" spellcheck="false"></label>
       <details class="calendar-jira-help"><summary>Как получить токен и где он хранится</summary>
-        <p class="calendar-jira-hint">Токен создаётся на id.atlassian.com → Security → API tokens. Для чтения нужен read:jira-work; для изменения названия и статуса — также write:issue:jira и write:issue.property:jira. Email и токен хранятся в защищённом хранилище этого компьютера и отправляются только в Atlassian для подключения к выбранному сайту.</p>
+        <p class="calendar-jira-hint">Токен создаётся на id.atlassian.com → Security → API tokens. Для чтения нужен read:jira-work; для изменения названия и статуса — также write:issue:jira и write:issue.property:jira. Для создания Jira дополнительно указывает read:issue:jira, write:comment:jira, write:comment.property:jira и write:attachment:jira. Коннектор не отправляет комментарии или вложения. Email и токен хранятся в защищённом хранилище этого компьютера и отправляются только в Atlassian для подключения к выбранному сайту.</p>
         <p class="calendar-jira-hint">Подключай Jira только на одном компьютере — иначе переименования из Jira попадут в разбор версий.</p>
       </details>
       <div class="calendar-sync-actions"><button type="button" data-jira-save>Сохранить подключение</button><button type="button" data-jira-now>Загрузить сейчас</button><button type="button" data-jira-disable>Отключить</button></div>

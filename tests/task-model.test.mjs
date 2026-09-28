@@ -169,7 +169,7 @@ test('the built-in process keeps the owner order with «Анализ и моде
 
 test('the dialog puts «Рабочая / Личная» first and sends the matching sphere', async t => {
   let stored = { id: 't3', title: 'Fictional plan', date: null, time: null, task_kind: 'normal', sphere: 'health', stage: '', waiting: false, duration_minutes: null, version: 1, priority: 0, status: 'task' };
-  const x = useWindow(t, { get_calendar_task: () => stored, save_calendar_task: 't3' });
+  const x = useWindow(t, { get_calendar_task: () => stored, save_calendar_task: 't3', jira_create_options: {project:'DEMO',requestId:'request-1',issueTypes:[{id:'1',name:'Task'}]}, jira_task_create:{requestId:'request-1',itemId:'jira:demo'}, jira_create_acknowledge:{acknowledged:true} });
   const { showEventModal, showCalendarCreateModal } = await modal();
   await showCalendarCreateModal('2026-09-24', {}); await settle();
   const scope = () => [...x.w.document.querySelectorAll('[data-evm-scope]')].map(el => [el.textContent, el.getAttribute('aria-pressed')]);
@@ -180,30 +180,32 @@ test('the dialog puts «Рабочая / Личная» first and sends the matc
   x.q('[data-evm-scope="work"]').click();
   assert.deepEqual(scope(), [['Рабочая', 'true'], ['Личная', 'false']]);
   assert.equal(x.shown('#evm-sphere'), false, 'a work task has no finer sphere');
+  await settle();
   x.q('#evm-title').value = 'Созвон по API'; x.q('#evm-form').requestSubmit(); await settle();
-  assert.equal(x.saved('save_calendar_task')[0].sphere, 'work');
+  assert.equal(x.saved('jira_task_create')[0].title, 'Созвон по API');
+  assert.equal(x.saved('save_calendar_task').length, 0);
   await showCalendarCreateModal('2026-09-24', {}); await settle();
   x.q('#evm-title').value = 'Поход к врачу'; x.q('#evm-sphere').value = 'health'; x.q('#evm-form').requestSubmit(); await settle();
-  assert.equal(x.saved('save_calendar_task')[1].sphere, 'health');
+  assert.equal(x.saved('save_calendar_task')[0].sphere, 'health');
   // Editing sends the sphere only when it changes.
   await showEventModal(null, null, { kind: 'task', taskId: 't3' }); await settle();
   assert.deepEqual(scope(), [['Рабочая', 'false'], ['Личная', 'true']]); assert.equal(x.q('#evm-sphere').value, 'health');
   x.q('#evm-form').requestSubmit(); await settle();
-  assert.equal(x.saved('save_calendar_task')[2].sphere, null);
+  assert.equal(x.saved('save_calendar_task')[1].sphere, null);
   await showEventModal(null, null, { kind: 'task', taskId: 't3' }); await settle();
   x.q('[data-evm-scope="work"]').click(); x.q('#evm-form').requestSubmit(); await settle();
-  assert.equal(x.saved('save_calendar_task')[3].sphere, 'work');
+  assert.equal(x.saved('save_calendar_task')[2].sphere, 'work');
   // A task without a sphere keeps it: «Без сферы» is offered only then.
   stored = { ...stored, sphere: null };
   await showEventModal(null, null, { kind: 'task', taskId: 't3' }); await settle();
   assert.equal(x.q('#evm-sphere').value, ''); assert.equal(x.q('#evm-sphere').options[0].textContent, 'Без сферы');
   x.q('#evm-form').requestSubmit(); await settle();
-  assert.equal(x.saved('save_calendar_task')[4].sphere, null);
+  assert.equal(x.saved('save_calendar_task')[3].sphere, null);
   stored = { ...stored, sphere: 'work' };
   await showEventModal(null, null, { kind: 'task', taskId: 't3' }); await settle();
   assert.deepEqual(scope(), [['Рабочая', 'true'], ['Личная', 'false']]);
   x.q('[data-evm-scope="personal"]').click(); x.q('#evm-form').requestSubmit(); await settle();
-  assert.equal(x.saved('save_calendar_task')[5].sphere, 'personal', 'work → personal defaults to «Личное»');
+  assert.equal(x.saved('save_calendar_task')[4].sphere, 'personal', 'work → personal defaults to «Личное»');
 });
 
 test('the task dialog picks a process, the stage follows it, and only a change is sent', async t => {
