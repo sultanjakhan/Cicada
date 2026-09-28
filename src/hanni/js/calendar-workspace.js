@@ -32,7 +32,7 @@ import { openCalendarCreateMenu } from './calendar-create-menu.js';
 
 let disposeNow = null, disposeTable = null, disposePanel = null, disposeTasks = null;
 let disposeRecurring = null, goalPopup = null, tasksDialog = null;
-let disposeDayBanner = null, disposeInProgress = null, todayTaskSelection = null;
+let disposeDayBanner = null, disposeInProgress = null;
 let disposeNextAction = null, disposeTaskDetails = null, disposeRoutineChoices = null;
 let routinesRouteHandler = null;
 let preferences = { density:'comfortable', showCompleted:false };
@@ -681,7 +681,7 @@ export async function loadCalendarWorkspace(el) {
     renderDash: (pane) => {
       pane.innerHTML = `<section class="calendar-today" aria-label="Сегодня">
         <div data-calendar-day-banner></div><div data-calendar-next-action></div>
-        <div data-calendar-in-progress></div><div data-calendar-jira-working></div>
+        <div data-calendar-in-progress></div>
       </section><div data-calendar-now-slot></div>`;
       pane.querySelector('[data-calendar-now-slot]').replaceWith(nowHost);
       nowHost.hidden = false;
@@ -690,28 +690,15 @@ export async function loadCalendarWorkspace(el) {
         onOpenSettings:button => showCalendarSettings(button, {section:'next-action',recommendationsOnly:true,returnFocus:() => button.isConnected ? button.focus({preventScroll:true}) : disposeNextAction?.focus()}),
       });
       disposeNextAction = mountCalendarTodayAction(pane.querySelector('[data-calendar-next-action]'), {
-        invoke, preferences:nextActionPreferences(), notifyChange:changed, compactRunning:true,
-        taskOptions, workingElement:pane.querySelector('[data-calendar-jira-working]'), openRoutines:() => void openPane('routines'),
-        onCurrentTaskChange:task => {
-          const key = value => value ? `task:${value.source_type}:${String(value.source_id)}` : '';
-          const previousKey = key(todayTaskSelection), nextKey = key(task);
-          // Update first: clearing old focus can synchronously rerender NextAction
-          // and call back into this handler.
-          todayTaskSelection = task;
-          if (previousKey && previousKey !== nextKey) disposeNextAction?.setFocusedTaskVisible(previousKey,false);
-          disposeInProgress?.setSelectedTask(task);
-        },
+        invoke, preferences:nextActionPreferences(), notifyChange:changed, unifiedCurrentWork:true,
+        taskOptions, openRoutines:() => void openPane('routines'),
         onRoutineFocusChange:options => disposeInProgress?.setExcludedRoutine(options?.id || null),
         openTask:task => showRecord(calendarRecord(task), () => disposeNextAction?.focus()),
         executeTask:(task,action) => executeCalendarTaskAction(calendarRecord(task),action),
       });
       disposeInProgress = mountCalendarInProgress(pane.querySelector('[data-calendar-in-progress]'), {
-        invoke, notifyChange:changed, title:'Идёт сейчас', activeOnly:true, hideWhenEmpty:true, embedded:true,
-        singleSelection:true, selectedTask:todayTaskSelection,
-        onSelectedTaskState:state => {
-          if (!todayTaskSelection || state.key !== `${todayTaskSelection.source_type}:${String(todayTaskSelection.source_id)}`) return;
-          disposeNextAction?.setFocusedTaskVisible(`task:${todayTaskSelection.source_type}:${String(todayTaskSelection.source_id)}`,state.visible);
-        },
+        invoke, notifyChange:changed, title:'В работе', includeJiraWorking:true, hideWhenEmpty:true, embedded:true,
+        onState:state => disposeNextAction?.setCurrentWork(state),
         onEmptyFocus:() => disposeNextAction?.focus(),
         openLauncher:button => showAllTasks(button),
         openTask:(row, restore) => {
@@ -719,7 +706,6 @@ export async function loadCalendarWorkspace(el) {
           else showRecord(calendarRecord({ ...row, date: row.date || null }), restore);
         },
       });
-      disposeInProgress.setSelectedTask(todayTaskSelection);
     },
     renderTable: pane => mountCalendarTable(pane),
     renderTasks: pane => {

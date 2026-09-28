@@ -590,7 +590,9 @@ test('two tasks run at once from Tasks and the launcher; the header count leads 
   await settle();
   assert.equal(w.document.querySelector('.uni-tab.active').dataset.pane, 'dash');
   const rows = () => [...widget().querySelectorAll('.cip-row')];
-  assert.equal(rows().length, 1, 'Today shows only the currently selected running task');
+  assert.equal(rows().length, 2, 'Today keeps every current task in the same block');
+  assert.equal(w.document.querySelector('[data-today-title]').textContent, 'В работе · 2');
+  assert.equal(w.document.querySelector('[data-today-recommendation]').hidden, true);
   const selectedKey = rows()[0].querySelector('[data-cip-control="toggle"]').dataset.cipKey;
   assert.ok(['note:first','note:second'].includes(selectedKey));
   assert.equal(rows()[0].classList.contains('is-running'), true);
@@ -601,7 +603,7 @@ test('two tasks run at once from Tasks and the launcher; the header count leads 
   const selectedBlockId = taskState.blocks.find(block => `note:${block.source_id}` === selectedKey).id;
   assert.deepEqual(calls.filter(call => call.command === 'pause_task_block').map(call => call.args.blockId), [selectedBlockId], 'only the chosen task pauses');
   assert.deepEqual(taskState.blocks.filter(block => block.is_active).map(block => `note:${block.source_id}`), [otherKey], 'the other timer continues unchanged');
-  assert.equal(rows().length, 1, 'the paused selected task stays visible as Today focus');
+  assert.equal(rows().length, 2, 'pausing one task leaves both current rows visible');
   assert.equal(rows()[0].querySelector('[data-cip-control="toggle"]').dataset.cipKey, selectedKey);
   assert.equal(rows()[0].classList.contains('is-running'), false);
   await settle();

@@ -1,7 +1,6 @@
 import { mountCalendarNextAction } from './calendar-next-action.js';
 import { mountCalendarRoutineChoices } from './calendar-routine-choices.js';
 import { mountCalendarDashboardTasks } from './calendar-dashboard-tasks.js';
-import { mountCalendarJiraWorking } from './calendar-jira-working.js';
 import { mountRecurringRun } from './calendar-routine-execution.js';
 import { ICONS } from './icons.js';
 
@@ -9,7 +8,8 @@ import { ICONS } from './icons.js';
 export function mountCalendarTodayAction(element, dependencies) {
   const document = element.ownerDocument;
   let preferences = dependencies.preferences || {};
-  let disposed = false, mode = 'recommendation', disposeRun = null, disposeChoices = null, disposeTasks = null, disposeWorking = null, currentRecommendation = null;
+  let currentWork = { count: 0, totalCount: 0, ready: false, failed: false };
+  let disposed = false, mode = 'recommendation', disposeRun = null, disposeChoices = null, disposeTasks = null, currentRecommendation = null;
   element.classList.add('calendar-today-action');
   element.innerHTML = `<header class="calendar-today-action__heading"><h2 tabindex="-1">Что сделать сейчас</h2><div class="calendar-today-action__tools"><button type="button" data-today-choose aria-expanded="false">Выбрать другое</button><button type="button" data-today-start-another aria-label="Выбрать задачу для запуска" title="Выбрать задачу для запуска" aria-expanded="false">${ICONS.play}</button></div></header>
     <div data-today-recommendation></div>
@@ -25,9 +25,14 @@ export function mountCalendarTodayAction(element, dependencies) {
     const candidate = mode === 'recommendation' && selection?.type === 'task' ? selection.task : null;
     const hasWork = Boolean(candidate?.has_work || Number(candidate?.actual_seconds) > 0 || Number(candidate?.actual_minutes) > 0);
     const task = candidate && (selection.action === 'open' || hasWork) ? candidate : null;
+    if (dependencies.unifiedCurrentWork) {
+      recommendation.hidden = mode !== 'recommendation' || !currentWork.ready || currentWork.failed || currentWork.totalCount > 0;
+      heading.textContent = currentWork.count > 0 ? `В работе · ${currentWork.count}` : currentWork.ready && !currentWork.failed && currentWork.totalCount === 0 ? 'Что сделать сейчас' : 'В работе';
+      if (mode === 'choices') choose.textContent = currentWork.totalCount > 0 ? 'К текущим задачам' : 'К рекомендации';
+      return;
+    }
     heading.textContent = task ? 'Сейчас' : 'Что сделать сейчас';
     dependencies.onCurrentTaskChange?.(task);
-    disposeWorking?.setSelectedTask(candidate);
   }
   function clearRun() { disposeRun?.(); disposeRun = null; run.replaceChildren(); dependencies.onRoutineFocusChange?.(null); }
   function setMode(next) {
@@ -35,7 +40,7 @@ export function mountCalendarTodayAction(element, dependencies) {
     if (next !== 'run') clearRun();
     mode = next;
     recommendation.hidden = next !== 'recommendation'; choices.hidden = next !== 'choices'; run.hidden = next !== 'run';
-    choose.textContent = next === 'choices' ? 'К рекомендации' : 'Выбрать другое';
+    choose.textContent = next === 'choices' ? dependencies.unifiedCurrentWork && currentWork.totalCount > 0 ? 'К текущим задачам' : 'К рекомендации' : 'Выбрать другое';
     choose.setAttribute('aria-expanded', String(next === 'choices'));
     element.dataset.mode = next;
     startAnother.setAttribute('aria-expanded', String(mode === 'choices'));
@@ -59,18 +64,12 @@ export function mountCalendarTodayAction(element, dependencies) {
     ...dependencies, hideHeading:true, onOpenSettings:null, openRoutine,
     onSelectionChange: selection => { currentRecommendation = selection; syncCurrentTask(selection); },
   });
-  const workingHost = dependencies.workingElement || document.createElement('div');
-  if (!dependencies.workingElement) element.append(workingHost);
   const canFocusTasks = () => preferences.enabled !== false && preferences.includeTasks !== false;
   const selectTask = row => {
-    if (!canFocusTasks()) { (dependencies.taskOptions?.openTask || dependencies.openTask)?.(row, focus); return; }
+    if (dependencies.unifiedCurrentWork || !canFocusTasks()) { (dependencies.taskOptions?.openTask || dependencies.openTask)?.(row, focus); return; }
     if (!setMode('recommendation')) return;
     controller.setCurrentTask(row); focus();
   };
-  disposeWorking = mountCalendarJiraWorking(workingHost, {
-    ...dependencies.taskOptions, invoke: dependencies.invoke,
-    onSelect: selectTask, onStarted: row => { if (canFocusTasks()) selectTask(row); },
-  });
   syncCurrentTask();
   function selectScope(scope) {
     q('[data-today-routines]').hidden = scope !== 'routines';
@@ -85,7 +84,7 @@ export function mountCalendarTodayAction(element, dependencies) {
         openTask: selectTask,
         executeAction:async (row, action) => {
           const result = await dependencies.taskOptions.executeAction(row, action);
-          if (result !== false && !disposed && action === 'start') controller.setCurrentTask(row);
+          if (result !== false && !disposed && action === 'start' && !dependencies.unifiedCurrentWork) controller.setCurrentTask(row);
           if (result !== false && !disposed && ['start','finish'].includes(action)) { setMode('recommendation'); focus(); }
           return result;
         },
@@ -102,9 +101,15 @@ export function mountCalendarTodayAction(element, dependencies) {
     else openChoices();
   };
   element.querySelectorAll('[data-today-scope]').forEach(button => { button.onclick = () => selectScope(button.dataset.todayScope); });
-  const dispose = () => { disposed = true; controller(); clearRun(); disposeChoices?.(); disposeTasks?.(); disposeWorking?.(); };
+  const dispose = () => { disposed = true; controller(); clearRun(); disposeChoices?.(); disposeTasks?.(); };
   dispose.focus = focus;
-  dispose.refresh = () => Promise.all([controller.refresh(), disposeWorking.refresh()]);
+  dispose.refresh = controller.refresh;
+  dispose.setCurrentWork = state => {
+    if (disposed || !dependencies.unifiedCurrentWork) return;
+    const wasSuppressed = !currentWork.ready || currentWork.failed || currentWork.totalCount > 0;
+    currentWork = state; syncCurrentTask();
+    if (wasSuppressed && state.ready && !state.failed && state.totalCount === 0) void controller.refresh();
+  };
   dispose.setPreferences = next => { preferences = next || {}; controller.setPreferences(next); };
   dispose.setFocusedTaskVisible = controller.setFocusedTaskVisible;
   dispose.openRoutine = openRoutine;

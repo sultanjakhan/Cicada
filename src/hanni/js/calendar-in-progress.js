@@ -8,6 +8,7 @@
 import { ICONS } from './icons.js';
 import { readActiveBlocks, startCalendarExecution, finishCalendarExecution, sourceKey } from './calendar-execution.js';
 import { isInstantTask } from './task-model.js';
+import { isWorkflowTask, jiraWorkflowRole } from './jira-workflow-model.js';
 import { loadProcesses, loadStageBlocks, stageSeconds, stageTimeTitle, taskStage } from './task-processes.js';
 
 const MORE_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></svg>';
@@ -24,8 +25,8 @@ const validDuration = value => typeof value === 'number' && Number.isFinite(valu
 const blockStart = block => new Date(`${block.date}T${block.start_time}`).getTime();
 const oneOf = count => count % 10 === 1 && count % 100 !== 11;
 // «2 идут · 1 на паузе»: the header counts only running work, the widget names both parts.
-const summaryOf = rows => { const running = rows.filter(row => row.running).length, paused = rows.length - running;
-  return [running && `${running} ${oneOf(running) ? 'идёт' : 'идут'}`, paused && `${paused} на паузе`].filter(Boolean).join(' · '); };
+const summaryOf = rows => { const running = rows.filter(row => row.running).length, paused = rows.filter(row => !row.running && row.hasWork !== false).length, untracked = rows.length - running - paused;
+  return [running && `${running} ${oneOf(running) ? 'идёт' : 'идут'}`, paused && `${paused} на паузе`, untracked && `${untracked} без учёта времени`].filter(Boolean).join(' · '); };
 const closedTask = row => !row || row.archived || row.completed || ['done', 'skipped', 'missed'].includes(row.status_extra || row.status);
 const errorText = error => (typeof error === 'string' ? error : error?.message) || '';
 let sequence = 0;
@@ -88,11 +89,12 @@ export function mountCalendarInProgress(element, dependencies) {
   function secondsOf(row, now = clock()) {
     return row.baseSeconds + row.starts.reduce((sum, start) => sum + Math.max(0, Math.floor((now - start) / 1000)), 0);
   }
+  const executionLabel = row => row.running ? (dependencies.includeJiraWorking ? 'Идёт учёт времени' : 'Идёт') : row.hasWork === false ? 'Учёт времени не запущен' : 'На паузе';
   function timeState(row, now = clock()) {
     const seconds = secondsOf(row, now), minutes = Math.floor(seconds / 60);
     const over = row.estimate > 0 && minutes > row.estimate;
     const text = formatAgainstEstimate(seconds, row.estimate);
-    const label = `${row.running ? 'Идёт' : 'На паузе'}. Учтено ${row.estimate > 0 ? `${minutes} из ${row.estimate} мин${over ? ', больше оценки' : ''}` : `${minutes} мин`}`;
+    const label = `${executionLabel(row)}. Учтено ${row.estimate > 0 ? `${minutes} из ${row.estimate} мин${over ? ', больше оценки' : ''}` : `${minutes} мин`}`;
     return { text, label, over, ratio: row.estimate > 0 ? Math.min(1, seconds / 60 / row.estimate) : 0 };
   }
   function paintTime(row, time, bar, now) {
@@ -154,7 +156,7 @@ export function mountCalendarInProgress(element, dependencies) {
     return panel;
   }
   function renderRow(row) {
-    const item = node('li', `cip-row ${row.running ? 'is-running' : 'is-paused'}`);
+    const item = node('li', `cip-row ${row.running ? 'is-running' : row.hasWork === false ? 'is-untracked' : 'is-paused'}`);
     item.dataset.contextRecord = row.key;
     const open = node('button', 'cip-title', row.title); open.type = 'button'; open.title = row.title;
     open.dataset.cipControl = 'open'; open.dataset.cipKey = row.key;
@@ -162,7 +164,7 @@ export function mountCalendarInProgress(element, dependencies) {
     const head = node('div', 'cip-line cip-title-line'); head.append(open);
     const content = node('div', 'cip-content'); content.append(head);
     const meta = node('div', 'cip-line cip-meta');
-    meta.append(node('span', 'cip-state', row.running ? 'Идёт' : 'На паузе'));
+    meta.append(node('span', 'cip-state', executionLabel(row)));
     if (row.record.jira_status) meta.append(node('span', 'cip-jira-status', `Jira: ${row.record.jira_status}`));
     if (row.stageState) {
       meta.append(stageControl(row));
@@ -179,7 +181,7 @@ export function mountCalendarInProgress(element, dependencies) {
     if (row.estimate > 0) { bar = node('span', 'cip-progress'); bar.dataset.cipProgress = ''; bar.setAttribute('aria-hidden', 'true'); bar.append(node('span')); meter.append(bar); }
     paintTime(row, time, bar);
     const actions = node('div', 'cip-actions');
-    const toggle = iconButton(`cip-toggle${row.running ? ' is-running' : ''}`, ICONS[row.running ? 'pause' : 'play'], row.running ? 'Пауза' : 'Продолжить', 'toggle', row);
+    const toggle = iconButton(`cip-toggle${row.running ? ' is-running' : ''}`, ICONS[row.running ? 'pause' : 'play'], row.running ? 'Пауза' : row.hasWork === false ? 'Начать' : 'Продолжить', 'toggle', row);
     const finish = iconButton('cip-finish', ICONS.check, 'Готово', 'finish', row);
     const more = iconButton('cip-more', MORE_ICON, 'Действия', 'menu', row);
     more.setAttribute('aria-haspopup', 'menu'); more.setAttribute('aria-expanded', String(menu?.key === row.key && menu.control === 'menu'));
@@ -214,8 +216,8 @@ export function mountCalendarInProgress(element, dependencies) {
     card.classList.toggle('is-empty', empty);
     card.setAttribute('aria-busy', String(busy || rows === null));
     q('heading').hidden = empty; list.hidden = empty; q('footer').hidden = empty || !!dependencies.embedded; q('empty').hidden = !empty;
-    q('empty-text').textContent = rows === null ? (failed ? 'Не удалось загрузить задачи в работе.' : 'Загружаем задачи в работе…') : 'Ничего не запущено';
-    q('empty-launch').hidden = rows === null; q('retry').hidden = !(rows === null && failed);
+    q('empty-text').textContent = failed && (rows === null || dependencies.includeJiraWorking) ? 'Не удалось загрузить задачи в работе.' : rows === null ? 'Загружаем задачи в работе…' : 'Ничего не запущено';
+    q('empty-launch').hidden = rows === null || dependencies.includeJiraWorking && failed; q('retry').hidden = !(failed && (rows === null || dependencies.includeJiraWorking));
     q('count').textContent = empty ? '' : summaryOf(visibleRows);
     element.querySelectorAll('[data-cip-launch], [data-cip-retry]').forEach(button => { button.disabled = busy; });
     element.querySelectorAll('[data-cip-control]').forEach(button => { button.disabled = busy; });
@@ -244,6 +246,7 @@ export function mountCalendarInProgress(element, dependencies) {
     // An open menu follows its re-rendered trigger or closes with its row.
     if (menu) { const trigger = findControl(menu.key, menu.control); if (trigger && !busy) { menu.trigger = trigger; trigger.setAttribute('aria-expanded', 'true'); } else closeMenu(menu.menu.contains(doc.activeElement)); }
     if (focusKey && (!focused.isConnected || doc.activeElement !== focused)) restore(focusKey, focusControl);
+    dependencies.onState?.({ count: visibleRows.length, totalCount: rows?.length || 0, ready: rows !== null, failed });
     if (dependencies.singleSelection) dependencies.onSelectedTaskState?.({ key: selectedTaskKey, visible: visibleRows.some(row => row.key === selectedTaskKey), ready: rows !== null, failed });
   }
   async function load(today) {
@@ -272,7 +275,7 @@ export function mountCalendarInProgress(element, dependencies) {
       if (!row.running && (!row.lastBlock || `${block.end_time || block.start_time}` > `${row.lastBlock.end_time || row.lastBlock.start_time}`)) { row.lastBlock = block; row.completion_date = block.completion_date || block.date; }
     }
     const types = new Set([...entries.values()].map(row => row.source_type));
-    if (dependencies.singleSelection && selectedTaskKey) types.add('note');
+    if (dependencies.includeJiraWorking || dependencies.singleSelection && selectedTaskKey) types.add('note');
     const [tasks, events, schedules, links, goals] = await Promise.all([
       types.has('note') ? invoke('get_calendar_tasks', {}) : [],
       types.has('event') ? invoke('get_all_events', {}) : [],
@@ -281,6 +284,12 @@ export function mountCalendarInProgress(element, dependencies) {
       types.size ? invoke('get_calendar_task_goals', {}).catch(() => []) : [],
       types.size ? invoke('get_goals', { tabName: null }).catch(() => []) : [],
     ]);
+    if (dependencies.includeJiraWorking) {
+      if (!Array.isArray(tasks)) throw new Error('Invalid task response');
+      for (const task of tasks.filter(task => jiraWorkflowRole(task) === 'working' && !task.readonly && !closedTask(task) && task.status_extra === 'task')) {
+        if (!entries.has(sourceKey(task))) entry(task);
+      }
+    }
     if (dependencies.singleSelection && selectedTaskKey && !entries.has(selectedTaskKey)) {
       const selected = tasks.find(task => sourceKey(task) === selectedTaskKey);
       const work = Number(selected?.actual_seconds) || Number(selected?.actual_minutes) * 60 || 0;
@@ -299,16 +308,18 @@ export function mountCalendarInProgress(element, dependencies) {
     const result = [];
     for (const row of entries.values()) {
       if (dependencies.activeOnly && !row.running && (!dependencies.singleSelection || row.key !== selectedTaskKey)) continue;
-      if (!row.running && nextHidden[row.key]) continue;
       let record;
       if (row.source_type === 'note') record = tasks.find(task => task.source_type === 'note' && String(task.source_id) === row.source_id);
       else if (row.source_type === 'event') { const event = events.find(value => String(value.id) === row.source_id); record = event && { ...event, source_type: 'event', source_id: String(event.id), planned_time: event.time, status_extra: event.status }; }
       else record = schedules.find(value => String(value.source_id ?? value.id) === row.source_id);
+      if (dependencies.includeJiraWorking && !row.running && isWorkflowTask(record) && jiraWorkflowRole(record) !== 'working') continue;
+      if (!row.running && nextHidden[row.key] && !(dependencies.includeJiraWorking && jiraWorkflowRole(record) === 'working')) continue;
       // Paused work leaves the widget once its task is finished, skipped or removed.
       if (!row.running && (closedTask(record) || (row.source_type === 'note' && record?.status_extra !== 'task'))) continue;
       row.title = record?.title || row.title || 'Без названия';
       if (row.source_type === 'schedule' && !row.running && record?.block_id != null) row.lastBlockId = Number(record.block_id);
-      row.record = { ...(record || {}), source_type: row.source_type, source_id: row.source_id, title: row.title, is_active: row.running, has_work: true, completion_date: row.completion_date, date: record?.date ?? (row.source_type === 'note' ? null : row.completion_date) };
+      row.hasWork = row.running || !!row.lastBlock || !!record?.has_work || Number(record?.actual_seconds) > 0 || Number(record?.actual_minutes) > 0;
+      row.record = { ...(record || {}), source_type: row.source_type, source_id: row.source_id, title: row.title, is_active: row.running, has_work: row.hasWork, completion_date: row.completion_date, date: record?.date ?? (row.source_type === 'note' ? null : row.completion_date) };
       // Closed work of every day comes from the task row; events fall back to today's blocks.
       const exactSeconds = row.source_type !== 'event' && validDuration(record?.actual_seconds) ? record.actual_seconds : null;
       row.baseSeconds = exactSeconds ?? (validDuration(record?.actual_minutes) ? record.actual_minutes * 60 : row.closedSeconds);
@@ -332,8 +343,12 @@ export function mountCalendarInProgress(element, dependencies) {
     const stageBlocks = await loadStageBlocks(stageInvoke, result.filter(row => row.stageState).map(row => row.source_id));
     for (const row of result) { row.stageBlocks = stageBlocks.get(row.source_id) || []; row.stageTimeAvailable = stageTimeAvailable; }
     const raw = JSON.stringify(nextHidden);
-    if (raw !== JSON.stringify(readHidden(hiddenValue))) void saveHidden(nextHidden).catch(() => {});
+    if (!dependencies.includeJiraWorking && raw !== JSON.stringify(readHidden(hiddenValue))) void saveHidden(nextHidden).catch(() => {});
     else { hidden = nextHidden; hiddenRaw = hiddenValue ?? null; }
+    if (dependencies.includeJiraWorking && rows) {
+      const previous = new Map(rows.map((row, index) => [row.key, index]));
+      return result.sort((a, b) => (previous.get(a.key) ?? rows.length) - (previous.get(b.key) ?? rows.length));
+    }
     const order = [...runningKeys];
     return result.sort((a, b) => (a.running === b.running ? 0 : a.running ? -1 : 1) || (a.running ? order.indexOf(a.key) - order.indexOf(b.key)
       : `${b.lastBlock?.end_time || b.lastBlock?.start_time || ''}`.localeCompare(`${a.lastBlock?.end_time || a.lastBlock?.start_time || ''}`)));
@@ -392,12 +407,12 @@ export function mountCalendarInProgress(element, dependencies) {
         await invoke('finish_task_block', { blockId });
       }
       feedback = { announcement: {
-        pause: 'Задача на паузе.', start: 'Задача снова в работе.', finish: 'Задача завершена.',
+        pause: 'Задача на паузе.', start: dependencies.includeJiraWorking ? 'Учёт времени запущен.' : 'Задача снова в работе.', finish: 'Задача завершена.',
         stop: 'Задача остановлена и убрана из «В работе». Время сохранено.', cancel: 'Запуск отменён. Его время не учтено.',
         advance: `Этап: ${action.label}.`,
       }[action.kind] };
     } catch (error) {
-      feedback = { error: true, text: errorText(error) || 'Не удалось выполнить действие. Обнови экран и повтори.' };
+      feedback = { error: true, text: (!dependencies.includeJiraWorking || error?.jiraWorkflow === true) && errorText(error) || 'Не удалось выполнить действие. Обнови экран и повтори.' };
       control = { finish: 'finish', stop: 'menu', cancel: 'menu', advance: 'stage-next' }[action.kind] || 'toggle';
     } finally {
       busy = false;
@@ -467,7 +482,7 @@ export function mountCalendarInProgress(element, dependencies) {
   }
   function openActionsMenu(row, trigger, point = null) {
     const items = [
-      { id: 'stop', label: 'Остановить', hint: row.running ? 'Пауза, время сохранится' : 'Убрать из «В работе»', run: () => void act(row, { kind: 'stop' }) },
+      ...(!(dependencies.includeJiraWorking && jiraWorkflowRole(row.record) === 'working') ? [{ id: 'stop', label: 'Остановить', hint: row.running ? 'Пауза, время сохранится' : 'Убрать из «В работе»', run: () => void act(row, { kind: 'stop' }) }] : []),
       ...(row.running ? [{ id: 'cancel', label: 'Отменить запуск', hint: 'Не учитывать этот запуск', run: () => { closeMenu(false); confirming = row.key; render(); findControl(row.key, 'cancel-confirm')?.focus({ preventScroll: true }); } }] : []),
       { id: 'open', label: 'Открыть', run: () => { closeMenu(false); openTask?.(row.record, () => restore(row.key, 'menu')); } },
     ];
