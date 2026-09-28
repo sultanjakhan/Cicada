@@ -1,5 +1,12 @@
 # Cicada
 
+Owner correction, 2026-09-28 (credential continuity): ordinary updates must
+preserve saved connections and the existing task/time/settings profile. Repeated
+token entry is an update defect, not the normal release workflow. A database
+backup does not prove access to Keychain credentials after replacement. Verify
+two distinct builds and a restart before claiming update continuity; keep the
+working installed app until that transition is established.
+
 Owner correction, 2026-09-28 (after the Jira Today preview): show current work
 in one list with a count matching its visible rows. Do not move one selected
 task above the list or recommend new work while started work is present.
