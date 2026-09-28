@@ -29,9 +29,14 @@ test('the section explains the allowed fields, explicit writes and token scopes'
   assert.match(x.host.textContent, /Загружаются все задачи выбранного проекта, включая завершённые/);
   assert.match(x.host.textContent, /id\.atlassian\.com → Security → API tokens/);
   assert.match(x.host.textContent, /Подключай Jira только на одном компьютере — иначе переименования из Jira попадут в разбор версий\./);
-  assert.deepEqual([...x.host.querySelectorAll('label')].map(label => label.firstChild.textContent), ['Сайт Jira', 'Ключ проекта', 'Email', 'Тип API-токена', 'API-токен']);
+  assert.deepEqual([...x.host.querySelectorAll('label')].map(label => label.firstChild.textContent), ['Сайт Jira', 'Ключ проекта', 'Email', 'API-токен', 'Тип API-токена']);
   assert.equal(x.q('token').type, 'password');
-  assert.deepEqual([...x.host.querySelectorAll('button')].map(button => button.textContent), ['Сохранить и подключить', 'Загрузить сейчас', 'Отключить']);
+  assert.equal(x.q('connection').open, true, 'first setup shows the required fields');
+  assert.equal(x.q('destination-fields').hidden, false);
+  assert.equal(x.q('advanced').open, false);
+  assert.equal(x.q('now').textContent, 'Обновить');
+  assert.equal(x.q('now').hidden, true);
+  assert.equal(x.q('disable').hidden, true);
   assert.match(x.q('status').textContent, /не подключена/);
   assert.equal(x.q('now').disabled, true); assert.equal(x.q('disable').disabled, true); assert.equal(x.q('save').disabled, false);
   assert.deepEqual(x.commands(), ['jira_import_status']);
@@ -61,6 +66,54 @@ test('Save stores the connection, clears the token and checks it with an import'
   assert.deepEqual(x.pending, [true, false]);
   assert.equal(x.q('error').hidden, true);
   assert.equal(x.dispose.isDirty(), false);
+  assert.equal(x.q('connection').open, false, 'a verified save returns to the compact card');
+  assert.equal(x.q('destination-fields').hidden, true);
+  assert.equal(x.q('saved-site').textContent, SITE);
+  assert.equal(x.q('saved-project').textContent, 'Проект DEMO');
+});
+
+test('a healthy connection stays compact; changing the destination is explicit and does not send a request', async t => {
+  const x = mount(t, () => connected({ lastSuccess: '2026-09-25T09:00:00Z', tokenMode: 'classic' }));
+  await settle();
+  assert.equal(x.q('connection').open, false);
+  assert.equal(x.q('now').hidden, false);
+  assert.equal(x.q('now').disabled, false);
+  x.q('connection').open = true;
+  assert.equal(x.q('destination-fields').hidden, true, 'replacement only needs email and token');
+  assert.equal(x.q('token-mode').value, 'classic', 'opening settings does not change a saved token type');
+  x.q('edit-destination').click();
+  assert.equal(x.q('destination-fields').hidden, false);
+  assert.equal(x.dom.window.document.activeElement, x.q('site'));
+  x.type('project', 'OTHER'); x.type('token', TOKEN);
+  x.q('connection').open = false;
+  x.dom.window.dispatchEvent(new x.dom.window.CustomEvent('hanni:jira-status', { detail: connected({ lastSuccess: '2026-09-25T09:05:00Z' }) }));
+  assert.equal(x.q('connection').open, false, 'background success leaves the disclosure choice alone');
+  x.q('connection').open = true;
+  assert.equal(x.q('project').value, 'OTHER');
+  assert.equal(x.q('token').value, TOKEN);
+  assert.equal(x.q('saved-project').textContent, 'Проект DEMO', 'the destination summary describes the saved connection');
+  assert.equal(x.dispose.isDirty(), true, 'the outer close guard still sees a collapsed draft');
+  assert.deepEqual(x.commands(), ['jira_import_status']);
+});
+
+test('refresh preserves a replacement draft and a connection error reveals the relevant settings', async t => {
+  let lastError = null;
+  const x = mount(t, () => connected({ lastSuccess: '2026-09-25T09:00:00Z', lastError }));
+  await settle();
+  x.q('connection').open = true;
+  x.type('token', TOKEN);
+  x.q('now').click(); await settle();
+  assert.equal(x.q('token').value, TOKEN);
+  assert.equal(x.q('connection').open, true);
+  assert.equal(x.dispose.isDirty(), true);
+  x.q('connection').open = false;
+  lastError = 'jira_scope_missing';
+  x.q('now').click(); await settle();
+  assert.equal(x.q('connection').open, true);
+  assert.equal(x.q('advanced').open, true);
+  assert.equal(x.q('help').open, true);
+  assert.equal(x.q('token').value, TOKEN);
+  assert.deepEqual(x.commands(), ['jira_import_status', 'jira_import_now', 'jira_import_now']);
 });
 
 test('a late initial status or error cannot overwrite a newer connected state', async t => {
@@ -88,6 +141,8 @@ test('a saved token with rejected scopes is not presented as a working connectio
   assert.match(x.q('token').placeholder, /Сохранён/);
   assert.deepEqual([...x.q('scopes').querySelectorAll('code')].map(code => code.textContent), ['read:jira-work', 'write:jira-work']);
   assert.equal(x.dispose.isDirty(), false);
+  assert.equal(x.q('connection').open, true, 'a rejected token leaves recovery visible');
+  assert.equal(x.q('help').open, true);
 });
 
 test('an inaccessible old token can be replaced in the settings; failed storage keeps the new draft', async t => {
@@ -103,6 +158,7 @@ test('an inaccessible old token can be replaced in the settings; failed storage 
   assert.equal(x.q('token').value, TOKEN);
   assert.match(x.q('error').textContent, /Не удалось сохранить новый токен/);
   assert.equal(x.dispose.isDirty(), true);
+  assert.equal(x.q('connection').open, true);
   assert.deepEqual(x.commands(), ['jira_import_status', 'jira_import_configure']);
   writeFails = false;
   x.q('save').click(); await settle();
@@ -215,6 +271,9 @@ test('Import now and Disable use their own commands; the phone shows why the imp
   const phone = mount(t, () => ({ supported: false }));
   await settle();
   assert.equal(phone.q('form').hidden, true);
+  assert.equal(phone.q('connection').hidden, true);
+  assert.equal(phone.q('destination').hidden, true);
+  assert.equal(phone.q('now').hidden, true);
   assert.equal(phone.q('unsupported').hidden, false);
   assert.match(phone.q('unsupported').textContent, /На телефоне импорт недоступен/);
 });

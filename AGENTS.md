@@ -10,8 +10,10 @@ only next-action selection settings. General application settings remain in the
 sidebar. Task processes stay optional; automated process assignment or per-task
 stage filtering needs an explicit product rule, not a hidden heuristic.
 
-Owner design rule, 2026-09-27: before designing or substantially changing UI,
-apply `hanni-ux-ui-research`; accept composition with `hanni-visual-review`.
+Owner correction, 2026-09-28: use current skills from the active catalog;
+archived skills are historical material, not active instructions. For UI changes,
+verify the agreed behavior and composition with `qa-acceptance`; use
+`clear-writing` when editing interface copy.
 Show the complete relevant scenario and make the primary action, stage and time
 meaning clear. Passing tests or absence of overflow is not visual acceptance.
 Preserve agreed workspace widths and controls; do not substitute decorations for
