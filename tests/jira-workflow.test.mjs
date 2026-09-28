@@ -60,9 +60,9 @@ test('project settings load the complete catalog safely; assignment and bulk app
   const x=await settings(t,(command,args)=>command==='get_ui_state'?null:command==='jira_workflow_save'?{...options(),revision:'revision-2',statuses:args.mappings,defaultProcessId:args.defaultProcessId}:options());
   assert.equal(x.host.querySelector('img'),null);
   assert.equal(x.q('map').querySelectorAll('select').length,3);
-  assert.equal(x.q('map').querySelector('select').value,'','To Do is not guessed');
+  assert.equal(x.q('map').querySelector('[data-workflow-status="To Do"]').value,'','To Do is not guessed');
   assert.equal(x.calls.some(call=>call.command==='jira_workflow_save'),false);
-  x.q('map').querySelector('select').value='ready'; x.q('map').querySelector('select').dispatchEvent(new x.dom.window.Event('change',{bubbles:true}));
+  x.q('map').querySelector('[data-workflow-status="To Do"]').value='ready'; x.q('map').querySelector('[data-workflow-status="To Do"]').dispatchEvent(new x.dom.window.Event('change',{bubbles:true}));
   x.q('process').value='system-analysis'; x.q('process').dispatchEvent(new x.dom.window.Event('change',{bubbles:true}));
   assert.equal(x.q('apply').checked,false);
   x.q('save').click();await settle();
@@ -74,7 +74,7 @@ test('project settings load the complete catalog safely; assignment and bulk app
 
 test('failed workflow save preserves the edited rules and never applies the process implicitly', async t => {
   const x=await settings(t,command=>{if(command==='get_ui_state')return null;if(command==='jira_workflow_save')throw 'private raw response';return options();});
-  const select=x.q('map').querySelector('select');select.value='working';select.dispatchEvent(new x.dom.window.Event('change',{bubbles:true}));
+  const select=x.q('map').querySelector('[data-workflow-status="To Do"]');select.value='working';select.dispatchEvent(new x.dom.window.Event('change',{bubbles:true}));
   x.q('save').click();await settle();
   assert.equal(select.value,'working');assert.equal(x.dispose.isDirty(),true);
   assert.equal(x.q('message').getAttribute('role'),'alert');assert.doesNotMatch(x.host.textContent,/private raw/);

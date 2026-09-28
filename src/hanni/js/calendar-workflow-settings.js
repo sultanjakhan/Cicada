@@ -9,7 +9,6 @@ export function mountWorkflowSettings(element, { invoke, setPending = () => {}, 
   let busy = false, editorBusy = false, workflowBusy = false, personalProcess = null;
   element.classList.add('calendar-workflow-settings');
   element.innerHTML = `<h3>Процессы задач</h3>
-    <p class="calendar-setting-hint">Настрой, где видны задачи и какие внутренние этапы им нужны.</p>
     <div class="calendar-workflow-areas" role="group" aria-label="Область настройки процессов">
       <button type="button" data-process-area="work" aria-pressed="false">Работа</button>
       <button type="button" data-process-area="personal" aria-pressed="true">Личные</button>

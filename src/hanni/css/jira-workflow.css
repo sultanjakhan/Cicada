@@ -21,6 +21,7 @@
 
 /* Project rules and the shared template editor live in the general settings. */
 .calendar-workflow-settings [hidden] { display:none !important; }
+.calendar-workflow-settings .calendar-jira-hint { margin:8px 0; font-size:13px; line-height:1.45; color:var(--text-secondary); }
 .calendar-workflow-settings > h3 { margin:0; font-size:16px; }
 .calendar-workflow-areas { display:flex; flex-wrap:wrap; gap:6px; margin:16px 0; }
 .calendar-workflow-areas button { padding:9px 14px; border:1px solid var(--border-default); border-radius:8px; background:var(--bg-primary); color:var(--text-secondary); font:inherit; font-size:13px; }

@@ -7,7 +7,7 @@ export function mountJiraWorkflowSettings(element, { invoke, setPending = () => 
   let defaultProcessId = null, applyToExisting = false;
   const mappings = new Map();
   element.className = 'calendar-jira-workflow';
-  element.innerHTML = `<p class="calendar-jira-hint">Все статусы проекта остаются здесь, даже если в них нет задач. Выбери, где показывать задачи каждого статуса.</p>
+  element.innerHTML = `<p class="calendar-jira-hint">Выбери, где видны задачи каждого статуса. Пустые статусы тоже остаются в списке.</p>
     <p data-workflow-message role="status" aria-live="polite"></p>
     <div data-workflow-fields hidden>
       <div class="calendar-jira-workflow-head"><span>Статус Jira</span><span>Где показывать в Cicada</span></div>
@@ -66,7 +66,10 @@ export function mountJiraWorkflowSettings(element, { invoke, setPending = () => 
   }
   function render() {
     q('map').replaceChildren();
-    for (const status of snapshot.statuses) {
+    const roleOrder = role => { const index = JIRA_WORKFLOW_ROLES.findIndex(([id]) => id === role); return index < 0 ? JIRA_WORKFLOW_ROLES.length : index; };
+    // Sort only the accepted snapshot: editing a dropdown must not move its row.
+    const ordered = [...snapshot.statuses].sort((a, b) => roleOrder(a.bucket) - roleOrder(b.bucket));
+    for (const status of ordered) {
       const row = doc.createElement('div'), label = doc.createElement('label'), name = doc.createElement('span'), select = doc.createElement('select');
       row.dataset.workflowRow = status.name;
       name.textContent = status.name; select.dataset.workflowStatus = status.name;

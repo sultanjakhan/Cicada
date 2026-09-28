@@ -7,9 +7,9 @@ import { workflowPreview } from '../src/hanni/js/jira-workflow-model.js';
 const settle = async () => { for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve)); };
 const options = () => ({ scope:'scope-demo', revision:'rev1', project:'DEMO', defaultProcessId:null, statuses:[{name:'To Do',bucket:'ready'},{name:'Working',bucket:'working'},{name:'Review',bucket:'review'},{name:'BACKLOG',bucket:'completed'},{name:'Unused',bucket:'hidden'},{name:'Empty status',bucket:null}] });
 const row = (id, status, extra = {}) => ({ source_type:'note',source_id:`jira:${id.toString(16).padStart(64,'0')}`,jira_status:status,jira_workflow_scope:'scope-demo',status_extra:'task',...extra });
-async function boot(t, { failRules = false, failTemplates = false, readTasks = true, cached = true } = {}) {
+async function boot(t, { failRules = false, failTemplates = false, readTasks = true, cached = true, initialRules = options() } = {}) {
   const dom = new JSDOM('<main></main>', { url:'https://example.invalid', pretendToBeVisual:true });
-  const host = dom.window.document.querySelector('main'), calls = [], state = { raw:null, rules:options(), failRules, failTemplates }, pending = [];
+  const host = dom.window.document.querySelector('main'), calls = [], state = { raw:null, rules:initialRules, failRules, failTemplates }, pending = [];
   const invoke = async (command, args) => {
     calls.push({command,args});
     if (command === 'get_ui_state') return state.raw;
@@ -170,4 +170,19 @@ test('an invalid template hidden by no project process is revealed before valida
   assert.equal(x.q('[data-workflow-process]').value,'');
   assert.equal(x.dom.window.document.activeElement,x.q('[data-control="process-title"]'));
   assert.equal(x.q('[data-control="process-title"]').getAttribute('aria-invalid'),'true');
+});
+
+
+test('status rows follow saved roles, preserve catalog order within each role and stay put while editing', async t => {
+  const statuses=[{name:'Done',bucket:'hidden'},{name:'BACKLOG',bucket:'completed'},{name:'Draft',bucket:null},{name:'Queued B',bucket:'ready'},{name:'Working',bucket:'working'},{name:'Queued A',bucket:'ready'},{name:'Review',bucket:'review'},{name:'To Do',bucket:null}];
+  const x=await boot(t,{initialRules:{...options(),statuses}});
+  const order=()=>[...x.host.querySelectorAll('[data-workflow-row]')].map(row=>row.dataset.workflowRow);
+  const savedOrder=['Queued B','Queued A','Working','Review','BACKLOG','Done','Draft','To Do'];
+  assert.deepEqual(order(),savedOrder,'the spelling of To Do does not assign it a role');
+  x.change('[data-workflow-status="Done"]','ready');
+  assert.deepEqual(order(),savedOrder,'changing a rule does not move its control');
+  x.q('[data-process-area="personal"]').click();x.q('[data-process-area="work"]').click();
+  assert.deepEqual(order(),savedOrder,'switching areas preserves draft row positions');
+  x.q('[data-unified-save]').click();await settle();
+  assert.deepEqual(order(),['Done','Queued B','Queued A','Working','Review','BACKLOG','Draft','To Do'],'accepted rules reorder the view while keeping catalog order inside each role');
 });
