@@ -154,3 +154,26 @@ test('does not render a false zero when both seconds APIs fail and no row fallba
   await settle();
   assert.equal(f.window.document.querySelector('.task-details-total').textContent, 'Время недоступно');
 });
+
+test('Jira card opens the remote editor on an explicit click and disposes it with the workspace', async t => {
+  const task = { ...record, source_id: `jira:${'b'.repeat(64)}`, jira_status: 'To Do' };
+  const f = fixture({ task, invoke: async (command, args, baseInvoke, calls) => {
+    if (command === 'jira_task_details') {
+      calls.push([command, args]);
+      return { title: task.title, status: 'To Do', transitions: [], editable: true, changed: 0 };
+    }
+    return baseInvoke(command, args);
+  } });
+  t.after(() => { f.dispose(); f.dom.window.close(); });
+  await settle();
+  const button = f.window.document.querySelector('.task-details-jira');
+  assert.equal(button.hidden, false);
+  assert.match(button.textContent, /Jira: To Do/);
+  assert.equal(f.calls.some(([command]) => command === 'jira_task_details'), false);
+  button.click(); await settle();
+  assert.equal(f.window.document.querySelector('.calendar-task-details'), null);
+  assert.ok(f.window.document.querySelector('.calendar-jira-editor'));
+  assert.deepEqual(f.calls.filter(([command]) => command.startsWith('jira_')), [['jira_task_details', { itemId: task.source_id }]]);
+  f.dispose();
+  assert.equal(f.window.document.querySelector('.calendar-jira-editor'), null);
+});

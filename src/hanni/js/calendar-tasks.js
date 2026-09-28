@@ -110,6 +110,7 @@ export function mountCalendarTasks(host, dependencies) {
     const complete=control('ct-complete',done?'✓':'',()=>void finish(row));complete.disabled=busy||done;complete.setAttribute('aria-label',`${done?'Завершена':'Завершить'}: ${row.title}`);if(!done)complete.title='Завершить';
     const title=control('ct-title',row.title,()=>openTask(row,()=>restore(id)));title.title=row.title;
     const meta=node('span','ct-meta');
+    if(typeof row.jira_status==='string'&&row.jira_status)meta.append(node('span','ct-jira-status',`Jira: ${row.jira_status}`));
     // The running accent says «В работе»; a paused task keeps a small mark.
     if(!done&&!running&&row.has_work)meta.append(node('span','ct-status','пауза'));
     const instant=isInstantTask(row), time=taskTime(row), sphere=sphereLabel(row.sphere);

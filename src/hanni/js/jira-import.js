@@ -1,4 +1,4 @@
-// Only titles cross the Jira import boundary; credentials stay in the native secret store.
+// Only titles and status names cross the Jira import boundary; credentials stay native.
 const ERRORS = {
   jira_token_unavailable: 'Токен недоступен — введите заново.',
   jira_token_required: 'Введи API-токен.',
@@ -25,6 +25,11 @@ const ERRORS = {
   jira_response_invalid: 'Не удалось разобрать ответ Jira. Задачи не изменены.',
   jira_storage_failed: 'Не удалось сохранить результат импорта. Повтори попытку.',
   jira_import_busy: 'Импорт ещё выполняется. Дождись завершения и попробуй снова.',
+  jira_task_not_found: 'Задача недоступна в подключённом проекте Jira. Проверь подключение и обнови список.',
+  jira_task_conflict: 'Задача изменилась в Jira. Обнови состояние, проверь изменения и отправь ещё раз.',
+  jira_transition_invalid: 'Этот переход больше недоступен. Обнови состояние Jira и выбери доступный статус.',
+  jira_transition_fields_required: 'Для перехода Jira требует дополнительные поля. Выполни его в Jira.',
+  jira_write_outcome_unknown: 'Jira могла принять изменение, но подтверждение не получено. Нажми «Обновить из Jira» перед следующей попыткой.',
   jira_unsupported: 'На телефоне импорт из Jira недоступен.',
 };
 const errorCode = cause => typeof cause === 'string' ? cause : cause?.message;
@@ -49,8 +54,8 @@ export function mountJiraSettings(element, { invoke, setPending = () => {} }) {
   let status = null, busy = false, disposed = false, dirty = false, failure = '', statusRevision = 0;
   element.className = 'calendar-jira calendar-setting';
   element.innerHTML = `<h3>Jira</h3>
-    <p class="calendar-jira-hint">Cicada только читает открытые задачи проекта, назначенные на тебя, и ничего не меняет в Jira. Сохраняются только названия: без описаний, комментариев, вложений, ключей и ссылок Jira.</p>
-    <p class="calendar-jira-hint">Названия появятся в рабочих задачах. Если включена синхронизация Cicada, они передаются на твои устройства как обычные задачи.</p>
+    <p class="calendar-jira-hint">Загружаются все задачи выбранного проекта, включая завершённые. Сохраняются названия и статусы: без описаний, комментариев, вложений, ключей и ссылок Jira.</p>
+    <p class="calendar-jira-hint">Название и статус можно изменить из карточки задачи по кнопке «Изменить в Jira». Если включена синхронизация Cicada, названия и статусы передаются на твои устройства.</p>
     <p data-jira-status role="status">Загружаем состояние…</p><p class="calendar-jira-error" data-jira-error role="alert" hidden></p>
     <p class="calendar-jira-hint" data-jira-unsupported hidden>На телефоне импорт недоступен: задачи из Jira приходят сюда через синхронизацию с Mac или ПК.</p>
     <div class="calendar-jira-form" data-jira-form>
@@ -64,7 +69,7 @@ export function mountJiraSettings(element, { invoke, setPending = () => {} }) {
       </div>
       <label>API-токен<input type="password" data-jira-token autocomplete="off" autocapitalize="off" spellcheck="false"></label>
       <details class="calendar-jira-help"><summary>Как получить токен и где он хранится</summary>
-        <p class="calendar-jira-hint">Токен создаётся на id.atlassian.com → Security → API tokens. Для Jira выбери права чтения read:jira-work. Email и токен хранятся в защищённом хранилище этого компьютера и отправляются только в Atlassian для подключения к выбранному сайту.</p>
+        <p class="calendar-jira-hint">Токен создаётся на id.atlassian.com → Security → API tokens. Для чтения нужен read:jira-work; для изменения названия и статуса — также write:issue:jira и write:issue.property:jira. Email и токен хранятся в защищённом хранилище этого компьютера и отправляются только в Atlassian для подключения к выбранному сайту.</p>
         <p class="calendar-jira-hint">Подключай Jira только на одном компьютере — иначе переименования из Jira попадут в разбор версий.</p>
       </details>
       <div class="calendar-sync-actions"><button type="button" data-jira-save>Сохранить подключение</button><button type="button" data-jira-now>Загрузить сейчас</button><button type="button" data-jira-disable>Отключить</button></div>

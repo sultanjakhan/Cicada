@@ -20,6 +20,14 @@
 .calendar-jira-form select { appearance:none; padding-right:26px; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%23666' stroke-width='1.5'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right 8px center; }
 .calendar-jira-form [data-jira-save] { background:var(--accent-fill); color:var(--accent-contrast); border-color:var(--accent-fill); }
 .calendar-jira [hidden] { display:none; }
+.calendar-editor-shell.calendar-jira-editor .calendar-editor-fields { display:grid; gap:12px; }
+.calendar-jira-editor label { display:grid; gap:6px; font-size:13px; }
+.calendar-jira-editor input, .calendar-jira-editor select { box-sizing:border-box; width:100%; min-width:0; min-height:40px; padding:8px; border:1px solid var(--border-default); border-radius:8px; background:var(--bg-page); color:var(--text-primary); font:inherit; }
+.calendar-jira-editor p { margin:0; font-size:13px; line-height:1.5; overflow-wrap:anywhere; }
+.calendar-jira-editor-hint { color:var(--text-secondary); }
+.calendar-native-dialog.calendar-jira-editor button:not(.calendar-editor-close), .calendar-native-dialog .task-details-jira { min-height:40px; font-size:13px; }
+.calendar-jira-editor [hidden] { display:none; }
+.task-details-jira { white-space:normal; text-align:left; }
 @media (max-width:600px) { .calendar-jira-pair { grid-template-columns:minmax(0,1fr); } }
 .calendar-settings-dialog { width:min(560px,calc(100% - 32px)); }
 .calendar-settings-dialog .calendar-setting { min-width:0; border:0; padding:0; margin:0 0 24px; }

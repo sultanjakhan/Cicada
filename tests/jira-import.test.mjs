@@ -21,12 +21,12 @@ function mount(t, handler = () => idle()) {
   return { dom, host, calls, pending, dispose, q, type, commands: () => calls.map(call => call.command) };
 }
 
-test('the section explains the read-only boundary and where the API token comes from', async t => {
+test('the section explains the allowed fields, explicit writes and token scopes', async t => {
   const x = mount(t); await settle();
   assert.equal(x.host.querySelector('h3').textContent, 'Jira');
-  assert.match(x.host.textContent, /Сохраняются только названия: без описаний, комментариев, вложений, ключей и ссылок Jira/);
+  assert.match(x.host.textContent, /Сохраняются названия и статусы: без описаний, комментариев, вложений, ключей и ссылок Jira/);
   assert.match(x.host.textContent, /Если включена синхронизация Cicada/);
-  assert.match(x.host.textContent, /только читает открытые задачи проекта, назначенные на тебя, и ничего не меняет в Jira/);
+  assert.match(x.host.textContent, /Загружаются все задачи выбранного проекта, включая завершённые/);
   assert.match(x.host.textContent, /id\.atlassian\.com → Security → API tokens/);
   assert.match(x.host.textContent, /Подключай Jira только на одном компьютере — иначе переименования из Jira попадут в разбор версий\./);
   assert.deepEqual([...x.host.querySelectorAll('label')].map(label => label.firstChild.textContent), ['Сайт Jira', 'Ключ проекта', 'Email', 'Тип API-токена', 'API-токен']);

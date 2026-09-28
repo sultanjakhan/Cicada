@@ -3,6 +3,7 @@ import { readActiveBlocks, sourceKey } from './calendar-execution.js';
 import { ICONS } from './icons.js';
 import { isInstantTask, sphereLabel } from './task-model.js';
 import { loadProcesses, mountStageTime, taskStage } from './task-processes.js';
+import { isJiraTask, openJiraTaskEditor } from './jira-task.js';
 
 const errorText = error => (typeof error === 'string' ? error : error?.message) || '';
 const finite = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
@@ -33,7 +34,7 @@ export function openCalendarTaskDetails(record, dependencies) {
   if (!record || record.source_type !== 'note' || record.readonly) return () => {};
 
   const window = document.defaultView;
-  let current = { ...record }, processes = [], goals = [], activeBlocks = [], closedSeconds = 0;
+  let current = { ...record }, processes = [], goals = [], activeBlocks = [], closedSeconds = 0, disposeJira = null;
   let stageState = null, historyStop = null, clockTimer = null, disposed = false, pending = false, loadFailed = false, activeStatusKnown = false, timeAvailable = false, loadRevision = 0;
   const live = () => !disposed && api.modal.isConnected && isCurrent();
   const api = createCalendarDialog({
@@ -63,6 +64,14 @@ export function openCalendarTaskDetails(record, dependencies) {
   history.append(historySummary, historyContent);
   const announcement = document.createElement('span'); announcement.className = 'task-details-sr-only'; announcement.setAttribute('role', 'status'); announcement.setAttribute('aria-live', 'polite');
   card.append(total, metadata, goal, stageRow, waiting, history, announcement);
+  const jira = document.createElement('button'); jira.type = 'button'; jira.className = 'task-details-jira';
+  jira.hidden = !isJiraTask(current);
+  card.append(jira);
+  jira.addEventListener('click', () => {
+    if (pending || !live()) return;
+    api.close({ restoreFocus: false });
+    disposeJira = openJiraTaskEditor(current, { document, invoke, returnFocus, onChanged, isCurrent });
+  });
   fields.append(card);
 
   const actions = modal.querySelector('.calendar-editor-actions');
@@ -105,6 +114,7 @@ export function openCalendarTaskDetails(record, dependencies) {
     execute.hidden = completed;
   }
   function syncMetadata() {
+    jira.textContent = `Jira: ${current.jira_status || 'статус ещё не загружен'} · Изменить в Jira`;
     metadata.replaceChildren();
     if (current.date) metadata.append(iconLabel(ICONS.calendar, `${formatDate(current.date)}${current.time ? ` · ${current.time}` : ''}`));
     const linked = goalTitle(goals, current.goal_id ?? current.goalId);
@@ -130,12 +140,14 @@ export function openCalendarTaskDetails(record, dependencies) {
   function setPending(value) {
     pending = value; api.setPending(value);
     edit.disabled = value || loadFailed; execute.disabled = value || loadFailed;
+    jira.disabled = value || loadFailed;
     stageSelect.disabled = value || loadFailed || !stageState || !!current.completed || ['done', 'skipped', 'missed'].includes(current.status_extra);
   }
   function setLoading(value) {
     api.form.setAttribute('aria-busy', String(value));
     api.retry.disabled = value;
     edit.disabled = value || pending || loadFailed; execute.disabled = value || pending || loadFailed;
+    jira.disabled = value || pending || loadFailed;
     stageSelect.disabled = value || pending || loadFailed || !stageState || !!current.completed || ['done', 'skipped', 'missed'].includes(current.status_extra);
   }
 
@@ -273,7 +285,7 @@ export function openCalendarTaskDetails(record, dependencies) {
 
   api.open(stageRow.hidden ? execute : stageSelect);
   void loadData();
-  const dispose = () => { if (!disposed) api.dispose(); };
+  const dispose = () => { disposeJira?.(); if (!disposed) api.dispose(); };
   dispose.modal = modal;
   return dispose;
 }
