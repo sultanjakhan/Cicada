@@ -36,6 +36,16 @@ class PrivacyGuardTests(unittest.TestCase):
             self.assertIn('example.txt:1: access-token', result.stdout)
             self.assertNotIn(secret, result.stdout + result.stderr)
 
+    def test_atlassian_token_is_rejected_without_echoing_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            subprocess.run(['git', 'init', '--quiet', directory], check=True)
+            secret = 'ATATT' + 'a' * 40
+            (Path(directory) / 'example.txt').write_text(secret, encoding='utf-8')
+            result = subprocess.run([sys.executable, '-B', str(SCRIPT)], cwd=directory, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn('access-token', result.stdout)
+            self.assertNotIn(secret, result.stdout + result.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()

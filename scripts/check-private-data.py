@@ -13,7 +13,7 @@ RULES = {
     'personal-email': re.compile(r'\b[A-Z0-9._%+-]+@(?:gmail|outlook|hotmail|icloud|yahoo|yandex|mail)\.(?:com|ru|kz)\b', re.I),
     'phone-number': re.compile(r'(?<!\w)\+7[ (.-]+\d{3}[ ).-]+\d{3}[ .-]+\d{2}[ .-]+\d{2}(?!\d)'),
     'private-key': re.compile(r'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'),
-    'access-token': re.compile(r'\b(?:ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{40,}|xox[baprs]-[A-Za-z0-9-]{20,})\b'),
+    'access-token': re.compile(r'\b(?:ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{40,}|xox[baprs]-[A-Za-z0-9-]{20,}|ATATT[A-Za-z0-9_=-]{20,})\b'),
 }
 HOME_PREFIX = r'(?:[A-Za-z]:[\\/]+U' + r'sers[\\/]+|/' + 'U' + 'sers/|/' + 'home/)'
 HOME = re.compile(HOME_PREFIX + r'([^\\/\s"\'<>]+)', re.I)

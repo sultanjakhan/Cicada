@@ -3,6 +3,7 @@ import { createCalendarDialog } from './calendar-dialog.js';
 import { escapeHtml } from './utils.js';
 import { loadCalendarPreferences, saveCalendarPreferences, saveRecommendationPreferences } from './calendar-display-preferences.js';
 import { mountSyncSettings } from './sync-settings.js';
+import { mountJiraSettings } from './jira-import.js';
 import { mountSleepSettings } from './health-sleep.js';
 import { mountHealthActivitySettings } from './health-activity.js';
 import { mountAppUpdates } from './app-updates.js';
@@ -37,7 +38,7 @@ function sectionFor(section) {
 export function showCalendarSettings(trigger, { section, returnFocus, recommendationsOnly = false } = {}) {
   if (settingsDialog || document.querySelector('dialog[open]')) return;
 
-  let original = null, draft = null, closed = false, disposeSync = null;
+  let original = null, draft = null, closed = false, disposeSync = null, disposeJira = null;
   let disposeUpdates = null, disposeSleep = null, disposeActivity = null;
   let processSettings = null, processObserver = null, preferencesLoading = true, preferencesLoadBusy = false;
   const requestedSection = recommendationsOnly ? 'today' : sectionFor(section);
@@ -58,7 +59,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
       closed = true;
       processObserver?.disconnect();
       processSettings?.dispose();
-      disposeSync?.(); disposeUpdates?.(); disposeSleep?.(); disposeActivity?.();
+      disposeSync?.(); disposeJira?.(); disposeUpdates?.(); disposeSleep?.(); disposeActivity?.();
       settingsDialog = null;
     },
   });
@@ -165,7 +166,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
   }
 
   function preferenceDirty() { return !!draft && !samePreferences(draft, original); }
-  function hasUnsavedChanges() { return preferenceDirty() || !!processSettings?.isDirty() || !!disposeSync?.isDirty?.(); }
+  function hasUnsavedChanges() { return preferenceDirty() || !!processSettings?.isDirty() || !!disposeSync?.isDirty?.() || !!disposeJira?.isDirty?.(); }
   function setPreferenceControlsEnabled(enabled) {
     preferencesLoading = !enabled;
     for (const root of [hosts.today, hosts.calendar]) {
@@ -185,7 +186,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
     saveButton.textContent = recommendationsOnly ? 'Сохранить' : 'Сохранить календарь';
     cancelButton.textContent = hasUnsavedChanges() ? 'Отмена' : 'Закрыть';
     api.modal.querySelector('.calendar-settings-actions').dataset.dirty = String(hasUnsavedChanges());
-    if (!settingsStatus.hidden && !processSettings?.isDirty() && !disposeSync?.isDirty?.()) settingsStatus.hidden = true;
+    if (!settingsStatus.hidden && !processSettings?.isDirty() && !disposeSync?.isDirty?.() && !disposeJira?.isDirty?.()) settingsStatus.hidden = true;
   }
 
   nav.addEventListener('click', event => {
@@ -294,11 +295,11 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
   hosts.processes.classList.add('calendar-settings-processes-host');
   hosts.connections.classList.add('calendar-settings-connections');
   hosts.about.classList.add('calendar-settings-about');
-  const sync = document.createElement('section'), sleep = document.createElement('section'), activity = document.createElement('section');
+  const jira = document.createElement('section'), sync = document.createElement('section'), sleep = document.createElement('section'), activity = document.createElement('section');
   const health = document.createElement('details'); health.className = 'calendar-settings-health';
   const healthTitle = document.createElement('summary'); healthTitle.textContent = 'Здоровье: сон, прогулки и шаги';
   health.append(healthTitle, sleep, activity);
-  hosts.connections.append(sync, health);
+  hosts.connections.append(jira, sync, health);
   const updates = document.createElement('section');
   hosts.about.append(updates);
 
@@ -358,7 +359,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
         settingsStatus.textContent = 'Настройки календаря сохранены. Черновик этапов ещё не сохранён — сохрани его во вкладке «Этапы задач» или закрой настройки с отменой.';
         settingsStatus.hidden = false;
         setActive('processes', true);
-      } else if (disposeSync?.isDirty?.()) {
+      } else if (disposeSync?.isDirty?.() || disposeJira?.isDirty?.()) {
         hosts.connections.prepend(settingsStatus);
         settingsStatus.textContent = 'Настройки календаря сохранены. Изменения подключения ещё не сохранены.';
         settingsStatus.hidden = false;
@@ -393,6 +394,10 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
     sync.addEventListener('input', scheduleFooterRefresh);
     sync.addEventListener('change', scheduleFooterRefresh);
     sync.addEventListener('click', scheduleFooterRefresh);
+    disposeJira = mountJiraSettings(jira, { invoke, setPending: value => { api.setPending(value); refreshFooter(); } });
+    jira.addEventListener('input', scheduleFooterRefresh);
+    jira.addEventListener('change', scheduleFooterRefresh);
+    jira.addEventListener('click', scheduleFooterRefresh);
     disposeSleep = mountSleepSettings(sleep, { invoke, setPending: value => api.setPending(value) });
     disposeActivity = mountHealthActivitySettings(activity, { invoke, setPending: value => api.setPending(value) });
     disposeUpdates = mountAppUpdates(updates, { invoke });

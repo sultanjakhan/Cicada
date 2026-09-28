@@ -9,6 +9,7 @@ import { toast } from './hanni/js/utils.js';
 import { loadCalendarWorkspace } from './hanni/js/calendar-workspace.js';
 import { startSleepImport } from './hanni/js/health-sleep.js';
 import { startHealthActivityImport } from './hanni/js/health-activity.js';
+import { startJiraImport } from './hanni/js/jira-import.js';
 import { startAppUpdates } from './hanni/js/app-updates.js';
 import { hasUnsavedCalendarNoteDrafts } from './hanni/js/calendar-notes.js';
 
@@ -26,6 +27,7 @@ if (window.__TAURI__?.core?.invoke) {
   startMvpSyncRefresh({ window, invoke, listen, requestSync: requestMvpSync, requestRefresh: requestHealthViewRefresh });
   startSleepImport({ window, invoke, requestSync: requestMvpSync, requestRefresh: requestHealthViewRefresh });
   startHealthActivityImport({ window, invoke, requestSync: requestMvpSync, requestRefresh: requestHealthViewRefresh });
+  startJiraImport({ window, invoke, requestSync: requestMvpSync, requestRefresh: requestHealthViewRefresh });
   startAppUpdates({ window, invoke, listen, getPendingOperations: getPendingMvpOperations,
     hasUnsavedDrafts: hasUnsavedCalendarNoteDrafts, notify: message => toast(message) });
 } else {

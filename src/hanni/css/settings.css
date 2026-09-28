@@ -5,6 +5,16 @@
 .setting-pill.active { background:var(--accent-fill); border-color:var(--accent-fill); color:var(--bg-page); }
 .setting-pill:focus-visible { outline:2px solid var(--accent-fill); outline-offset:2px; }
 
+.calendar-jira { display:grid; gap:10px; }
+.calendar-jira h3 { margin:0; font-size:14px; font-weight:600; color:var(--text-primary); }
+.calendar-jira p { margin:0; font-size:12px; line-height:1.5; }
+.calendar-jira .calendar-jira-hint { color:var(--text-secondary); }
+.calendar-jira .calendar-jira-error { color:var(--danger, #b42318); }
+.calendar-jira-form { display:grid; gap:10px; }
+.calendar-jira-form label { display:grid; gap:6px; font-size:12px; font-weight:550; color:var(--text-secondary); }
+.calendar-jira-form input, .calendar-jira-form select { box-sizing:border-box; width:100%; min-width:0; min-height:38px; padding:7px 10px; border:1px solid var(--border-default); border-radius:8px; background:var(--bg-page); color:var(--text-primary); font:inherit; font-size:13px; font-weight:400; }
+.calendar-jira-form button { min-height:38px; padding:0 12px; font-size:13px; }
+.calendar-jira [hidden] { display:none; }
 .calendar-settings-dialog { width:min(560px,calc(100% - 32px)); }
 .calendar-settings-dialog .calendar-setting { min-width:0; border:0; padding:0; margin:0 0 24px; }
 .calendar-settings-dialog .calendar-setting legend { padding:0; margin:0 0 10px; color:var(--text-primary); font-size:14px; font-weight:600; }

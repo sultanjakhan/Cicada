@@ -48,6 +48,7 @@ async function boot({ failPreferenceSave = false, failPreferenceLoad = false, de
       }
       ui.set(args.key, args.value); return null;
     }
+    if (command === 'jira_import_status') return { supported: true, enabled: false, tokenMode: 'scoped' };
     if (command === 'mvp_sync_status') return { configured: true, enabled: true, pending: 0, conflicts: 0, running: false };
     if (command === 'health_sleep_status') return { status: 'unsupported' };
     if (command === 'health_activity_status') return { status: 'unsupported' };
@@ -84,6 +85,31 @@ test('tab semantics, deep link and keyboard navigation preserve a preference dra
   tabs.at(-1).dispatchEvent(new x.dom.window.KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
   assert.equal(document.activeElement, tabs[0]);
   assert.equal(modal.querySelector('[type="submit"]').hidden, false);
+});
+
+test('Jira drafts survive tab changes and calendar saves; explicit discard clears the token', async () => {
+  const x = await boot({ section: 'connections' });
+  const { modal } = x;
+  const token = modal.querySelector('[data-jira-token]');
+  token.value = 'fictional-secret';
+  token.dispatchEvent(new x.dom.window.Event('input', { bubbles: true }));
+  modal.querySelector('#calendar-settings-tab-today').click();
+  const toggle = modal.querySelector('[data-key="recommendTasks"]');
+  toggle.checked = false;
+  toggle.dispatchEvent(new x.dom.window.Event('change', { bubbles: true }));
+  modal.querySelector('form').dispatchEvent(new x.dom.window.Event('submit', { bubbles: true, cancelable: true }));
+  await tick();
+  assert.equal(modal.open, true);
+  assert.equal(modal.querySelector('#calendar-settings-panel-connections').hidden, false);
+  assert.equal(token.value, 'fictional-secret');
+  assert.deepEqual(x.calls.filter(command => command.startsWith('jira_import')), ['jira_import_status']);
+  modal.querySelector('[data-dialog-close]').click();
+  const confirmation = modal.querySelector('[data-close-confirmation]');
+  assert.equal(confirmation.hidden, false);
+  confirmation.querySelectorAll('button')[1].click();
+  await tick();
+  assert.equal(modal.open, false);
+  assert.equal(token.value, '');
 });
 
 test('the process deep link selects the task-stage tab', async () => {
