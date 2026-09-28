@@ -12,6 +12,7 @@ const ERRORS = {
   jira_site_invalid: 'Укажи адрес сайта Jira Cloud вида example.atlassian.net.',
   jira_project_invalid: 'Ключ проекта — латинские заглавные буквы и цифры, например DEMO.',
   jira_email_invalid: 'Проверь email.',
+  jira_title_invalid: 'Введи непустое название до 500 символов, без переносов строк.',
   jira_not_configured: 'Сначала заполни и сохрани подключение к Jira.',
   jira_unauthorized: 'Jira не приняла email или API-токен. Проверь их и сохрани снова.',
   jira_forbidden: 'Jira отказала в доступе. Проверь права на проект или войди в Jira в браузере.',
@@ -24,16 +25,15 @@ const ERRORS = {
   jira_timeout: 'Jira не ответила вовремя. Повторим загрузку позже.',
   jira_response_invalid: 'Не удалось разобрать ответ Jira. Задачи не изменены.',
   jira_storage_failed: 'Не удалось сохранить результат импорта. Повтори попытку.',
-  jira_import_busy: 'Импорт ещё выполняется. Дождись завершения и попробуй снова.',
+  jira_import_busy: 'Операция с Jira ещё выполняется. Дождись завершения и попробуй снова.',
   jira_task_not_found: 'Задача недоступна в подключённом проекте Jira. Проверь подключение и обнови список.',
   jira_task_conflict: 'Задача изменилась в Jira. Обнови состояние, проверь изменения и отправь ещё раз.',
   jira_transition_invalid: 'Этот переход больше недоступен. Обнови состояние Jira и выбери доступный статус.',
-  jira_transition_fields_required: 'Для перехода Jira требует дополнительные поля. Выполни его в Jira.',
   jira_write_outcome_unknown: 'Jira могла принять изменение, но подтверждение не получено. Нажми «Обновить из Jira» перед следующей попыткой.',
   jira_unsupported: 'На телефоне импорт из Jira недоступен.',
 };
 const errorCode = cause => typeof cause === 'string' ? cause : cause?.message;
-export const jiraErrorText = code => ERRORS[code] || 'Не удалось загрузить задачи из Jira. Повтори попытку позже.';
+export const jiraErrorText = code => ERRORS[code] || 'Не удалось выполнить запрос к Jira. Повтори попытку позже.';
 
 export function jiraStatusText(status) {
   if (!status) return 'Состояние импорта из Jira недоступно.';

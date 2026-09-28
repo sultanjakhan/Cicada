@@ -67,7 +67,9 @@ export function openJiraTaskEditor(record, { document, invoke, returnFocus, onCh
       // An ambiguous write must be read back before another explicit write is allowed.
       if (code === 'jira_write_outcome_unknown' || code === 'jira_task_conflict') mustRefresh = true;
       q('editor-status').textContent = '';
-      api.showError(jiraErrorText(code));
+      api.showError(code === 'jira_bad_request'
+        ? 'Jira не приняла запрос. Проверь название и правила перехода в самой Jira: могут требоваться дополнительные поля.'
+        : jiraErrorText(code));
     } finally {
       busy = false;
       if (!disposed) { api.setPending(false); render(); }
