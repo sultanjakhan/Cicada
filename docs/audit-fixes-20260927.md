@@ -172,3 +172,52 @@ owner. A separate marker experiment is deliberately excluded.
 
 Stable installation, physical Mac/Android upgrades, production sync and
 release/update-service deployment are not established by this checkpoint.
+
+## Continuation checkpoint, 2026-09-28
+
+The accepted code and native evidence are committed at
+`e901b2dd4c173ceeb2cfb51b2d0ac8a158ef57c4` on
+`work/integrate-20260928-5c8e`. The commit containing this handoff changes
+documentation only. [CI run 36350507468](https://github.com/sultanjakhan/Cicada/actions/runs/36350507468)
+passed for that exact accepted SHA: privacy, Windows and macOS jobs succeeded.
+Hosted JavaScript tests report 485 passes and one explicit skip per OS;
+Rust reports 177 passes on Windows and 185 on macOS, with five ignored each.
+These results supplement the native Windows scenarios above; they do not
+establish installation or live acceptance on other devices.
+
+At this checkpoint, the parallel release session's local `main` is
+`1b1c1caf9eb9cc444a7b46ff2fc534aaa88022f0`, preparing version 0.4.0.
+It includes later Today settings and recurring-record v2 work, but the
+accepted audit checkpoint is not its ancestor. This session does not change
+that checkout or publish a competing release. Re-read current local and
+remote state before continuing; these SHAs are observations, not moving refs.
+
+The next integration step is to combine this branch with the release owner's
+latest candidate, preserving both the audited optimizations and later changes.
+Then accept the changed sync behavior and the combined native scenario before
+signed publication or installation. The existing operational queue is
+[private Issue 53](https://github.com/sultanjakhan/hanni-tasks/issues/53), with
+the compatibility finding tracked in
+[private Issue 122](https://github.com/sultanjakhan/hanni-tasks/issues/122).
+Do not open a replacement backlog or close these issues from a source-only check.
+
+The substantial compatibility risk recorded in Issue 122 is a previously
+encrypted v1 graph payload still present in durable outbox/fragments after
+record migration. The reviewed migration alone did not protect that queued
+payload. Preserve the durable queue and sequence/ack state; verify the latest
+fix or explicitly establish the all-peer upgrade boundary before resuming
+affected DEV synchronization. Previously uploaded v1 graph records cannot be
+protected retroactively. This checkpoint does not assert that later parallel
+work has or has not resolved the finding; use the current issue and source.
+
+The earlier marker-gate prototype remains separate, unaccepted and excluded
+from this branch. Do not combine it with the selected record-v2 protocol.
+Machine-local raw QA stores, credentials, binaries and logs remain outside Git.
+Git synchronization of this handoff is separate from application-data sync.
+
+To resume on another machine, fetch `origin` and inspect this remote branch
+in a clean, independently owned checkout. Compare its full SHA with GitHub,
+read this report and the linked Issues, and inspect current release ownership
+before merging. Do not reset an existing checkout or overwrite foreign WIP.
+Successful unchanged tests need no repeat for this documentation checkpoint;
+new integration and sync changes require their own relevant acceptance.
