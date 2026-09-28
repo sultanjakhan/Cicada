@@ -15,7 +15,8 @@ import { mountCalendarContextMenu } from './calendar-context-menu.js';
 import { createCalendarDialog } from './calendar-dialog.js';
 import { mountCalendarRecurring } from './calendar-recurring.js';
 import { openRecurringRun } from './calendar-routine-execution.js';
-import { startCalendarExecution, readActiveBlocks } from './calendar-execution.js';
+import { startCalendarExecution, finishCalendarExecution, reviewCalendarExecution, readActiveBlocks } from './calendar-execution.js';
+import { isJiraTask } from './jira-task.js';
 import { mountCalendarInProgress } from './calendar-in-progress.js';
 import { mountCalendarDayBanner } from './calendar-day-banner.js';
 import { loadCalendarPreferences } from './calendar-display-preferences.js';
@@ -82,24 +83,19 @@ const changed = () => { window.dispatchEvent(new Event('task-state-changed')); w
 
 // Several tasks may run at once: starting one never pauses another (2026-09-24).
 export async function executeCalendarTaskAction(record, action) {
-  if (record.source_type !== 'note' || record.readonly || record.completed || record.archived || ['done', 'skipped', 'missed'].includes(record.status_extra)) throw new Error('Эта задача уже недоступна для выполнения. Обнови календарь.');
+  if (record.source_type !== 'note' || record.readonly || (action !== 'pause' && (record.completed || record.archived || ['done', 'skipped', 'missed'].includes(record.status_extra)))) throw new Error('Эта задача уже недоступна для выполнения. Обнови календарь.');
   const active = (await readActiveBlocks(invoke)).find(block => block.source_type === 'note' && String(block.source_id) === String(record.source_id));
   const sameTask = !!active;
   if (action === 'start') {
     if (sameTask) return;
-    await startCalendarExecution(invoke, { ...record, completion_date: record.date || views.iso(new Date()) });
+    if (await startCalendarExecution(invoke, { ...record, completion_date: record.date || views.iso(new Date()) }) === null) return false;
   } else if (action === 'pause') {
     if (!sameTask) throw new Error('Состояние задачи изменилось. Обнови календарь перед паузой.');
     await invoke('pause_task_block', { blockId: Number(active.id) });
   } else if (action === 'finish') {
-    // Closing an old block must never finish a concurrently restarted session.
-    // Pause is idempotent; note completion atomically rejects any new active block.
-    if (sameTask) await invoke('pause_task_block', { blockId: Number(active.id) });
-    try { await invoke('complete_calendar_task', { id: String(record.source_id) }); }
-    catch (error) {
-      if (sameTask) throw Object.assign(new Error('Не удалось завершить задачу после паузы. Её текущий статус обновлён. ' + (error?.message || 'Попробуй ещё раз.')), { refreshRequired: true });
-      throw error;
-    }
+    return finishCalendarExecution(invoke, record);
+  } else if (action === 'review') {
+    return reviewCalendarExecution(invoke, record);
   } else throw new Error('Неизвестное действие.');
 }
 
@@ -268,7 +264,7 @@ async function showStageDetails(modal, record) {
 }
 
 function mountRecordMenu(element, options) {
-  return mountCalendarContextMenu(element, { ...options, getActions: row => {
+  return mountCalendarContextMenu(element, { ...options, onActionError: error => { if (error?.refreshRequired) changed(); }, getActions: row => {
     const record = calendarRecord(row);
     const actions = [{ id: 'open', label: 'Открыть', dialog: true, run: restore => showRecord(record, restore) }];
     if (record.readonly) return actions;
@@ -279,9 +275,11 @@ function mountRecordMenu(element, options) {
     }
     if (['note', 'event', 'schedule'].includes(record.source_type)) actions.push({ id: 'goal', label: 'Связать с целью', dialog: true, run: restore => showRecord(record, restore, 'goal') });
     if (canChangeOccurrence(record)) actions.push({ id: 'occurrence', label: record.status_extra === 'skipped' ? 'Восстановить повторение' : 'Отменить повторение', dialog: true, run: restore => occurrenceDialog(record, restore) });
+    if (isJiraTask(record) && record.jira_workflow_role === 'working' && !record.completed && !record.archived)
+      actions.push({ id: 'review', label: 'Отправить на проверку', run: async restore => { if (await executeCalendarTaskAction(record, 'review') === false) return; restore(); changed(); } });
     // The command checks live timer state atomically. Never call update_note_status here.
     if (record.source_type === 'note' && row.status_extra === 'task' && !record.completed && !record.is_active && !record.archived)
-      actions.push({ id: 'complete', label: 'Завершить задачу', run: async restore => { await invoke('complete_calendar_task', { id: String(record.source_id) }); restore(); changed(); } });
+      actions.push({ id: 'complete', label: 'Завершить задачу', run: async restore => { if (await executeCalendarTaskAction(record, 'finish') === false) return; restore(); changed(); } });
     return actions;
   } });
 }
@@ -313,7 +311,7 @@ export async function mountCalendarTable(el) {
     actionBusy = true; actionStatus.textContent = ''; actionStatus.classList.remove('is-error');
     host.querySelectorAll('[data-record-action]').forEach(button => { button.disabled = true; });
     try {
-      await executeCalendarTaskAction(record, action);
+      if (await executeCalendarTaskAction(record, action) === false) return;
       changed();
       if (!disposed) {
         await refresh();

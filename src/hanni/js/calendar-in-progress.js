@@ -6,7 +6,7 @@
 // next stage, the label opens the menu, its tooltip gives time per stage.
 // Work and personal tasks get their own sub-headings when both are listed.
 import { ICONS } from './icons.js';
-import { readActiveBlocks, startCalendarExecution, sourceKey } from './calendar-execution.js';
+import { readActiveBlocks, startCalendarExecution, finishCalendarExecution, sourceKey } from './calendar-execution.js';
 import { isInstantTask } from './task-model.js';
 import { loadProcesses, loadStageBlocks, stageSeconds, stageTimeTitle, taskStage } from './task-processes.js';
 
@@ -369,7 +369,9 @@ export function mountCalendarInProgress(element, dependencies) {
     let control = { finish: 'open', stop: 'open', cancel: 'open', advance: 'stage-next' }[action.kind] || 'toggle';
     try {
       if (action.kind === 'pause') await pauseAll(row);
-      else if (action.kind === 'start') await startCalendarExecution(invoke, { source_type: row.source_type, source_id: row.source_id, completion_date: row.completion_date });
+      else if (action.kind === 'start') {
+        if (await startCalendarExecution(invoke, { source_type: row.source_type, source_id: row.source_id, completion_date: row.completion_date }, { document: doc }) === null) return;
+      }
       else if (action.kind === 'stop') {
         // Pause first: a failed pause must not hide running work.
         await pauseAll(row);
@@ -383,9 +385,7 @@ export function mountCalendarInProgress(element, dependencies) {
           row.stageState = taskStage(row.record, row.processes); row.stageLog = row.record.stage_log || [];
         }
       } else if (row.source_type === 'note') {
-        // Pause is idempotent; note completion atomically rejects a new running block.
-        await pauseAll(row);
-        await invoke('complete_calendar_task', { id: row.source_id });
+        if (await finishCalendarExecution(invoke, row, { document: doc }) === false) return;
       } else {
         const blockId = row.blockIds[0] ?? row.lastBlockId ?? Number(row.lastBlock?.id);
         if (!Number.isFinite(blockId)) throw new Error('Не удалось найти запись о работе. Обнови экран.');

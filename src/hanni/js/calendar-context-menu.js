@@ -20,6 +20,8 @@ export function mountCalendarContextMenu(element, options) {
     window.removeEventListener('resize', state.dismiss);
     document.removeEventListener('scroll', state.scroll, true);
     if (returnFocus) restore(state);
+    // Keep the action error visible until dismissal; a refresh may replace its row.
+    if (state.actionError) options.onActionError?.(state.actionError);
   }
   function open(row, trigger, event) {
     const record = options.getRecord(row);
@@ -49,7 +51,13 @@ export function mountCalendarContextMenu(element, options) {
         state.busy = true; menu.setAttribute('aria-busy', 'true'); error.hidden = true;
         buttons.forEach(item => { item.disabled = true; });
         try { await action.run(() => { if (current === state) restore(state); }); if (current === state) close(true); }
-        catch { if (current === state) { error.textContent = 'Не удалось выполнить действие. Возможно, задача уже в работе. Обнови запись или повтори.'; error.hidden = false; } }
+        catch (cause) {
+          if (current === state) {
+            state.actionError = cause;
+            error.textContent = cause?.jiraWorkflow ? cause.message : 'Не удалось выполнить действие. Возможно, задача уже в работе. Обнови запись или повтори.';
+            error.hidden = false;
+          } else options.onActionError?.(cause);
+        }
         finally {
           state.busy = false;
           if (current === state) { menu.removeAttribute('aria-busy'); buttons.forEach(item => { item.disabled = false; }); button.focus(); }
@@ -65,9 +73,11 @@ export function mountCalendarContextMenu(element, options) {
     menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - rect.width - 8))}px`;
     menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - rect.height - 8))}px`;
     state.dismiss = () => close(true);
-    state.outside = e => { if (!menu.contains(e.target)) close(!e.target.closest('button, a, input, textarea, select, [tabindex]')); };
-    state.scroll = e => { if (!menu.contains(e.target)) close(true); };
+    const inPendingDialog = event => state.busy && event.target?.closest?.('dialog[open]');
+    state.outside = e => { if (!inPendingDialog(e) && !menu.contains(e.target)) close(!e.target.closest('button, a, input, textarea, select, [tabindex]')); };
+    state.scroll = e => { if (!inPendingDialog(e) && !menu.contains(e.target)) close(true); };
     state.keys = e => {
+      if (inPendingDialog(e)) return;
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(true); return; }
       if (e.key === 'Tab') { close(true); return; }
       if (!menu.contains(e.target) || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;

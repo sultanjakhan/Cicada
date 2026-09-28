@@ -3,7 +3,7 @@ import { rankTasks as defaultRankTasks } from './task-picker-sort.js';
 import { loadCategoryWeights } from './task-picker-view.js';
 import { ICONS } from './icons.js';
 import { createCalendarDialog } from './calendar-dialog.js';
-import { startCalendarExecution, readActiveBlocks } from './calendar-execution.js';
+import { startCalendarExecution, finishCalendarExecution, readActiveBlocks } from './calendar-execution.js';
 import { renderTaskImportance } from './task-importance.js';
 
 const buttonContent = (icon, label) => `<span class="calendar-now__button-icon" aria-hidden="true">${ICONS[icon]}</span><span data-action-label>${label}</span>`;
@@ -673,7 +673,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     if (remotePending && !canApplyRemote()) return;
     reading = true; quietReading = quiet; render();
     readFlight = (async () => {
-      try { await fetchSnapshot(); if (failure?.operation.kind === 'refresh') failure = null; }
+      try { await fetchSnapshot(); if (failure?.operation.kind === 'refresh' && !failure.awaitingAcknowledgement) failure = null; }
       catch (error) {
         const stale = errorMessage(error) === 'mvp_sync_stale_ui_state';
         if (stale) { remotePending = true; needsSave = false; }
@@ -705,10 +705,8 @@ export function mountCalendarNow(element, dependencies = {}) {
       if (operation.kind === 'start' || operation.kind === 'return') {
         // Other running tasks keep running; the same running task is adopted, not duplicated.
         const same = running.find(block => keyOf(block) === keyOf(operation.task));
-        const blockId = operation.kind==='return' ? await startCalendarExecution(api,operation.task) : same?.id ?? await api('start_task_block', {
-          sourceType: operation.task.source_type, sourceId: String(operation.task.source_id),
-          completionDate: operation.task.completion_date || operation.task.date || localDate(),
-        });
+        const blockId = same?.id ?? await startCalendarExecution(api, { ...operation.task,
+          completion_date: operation.task.completion_date || operation.task.date || localDate() }, { document });
         if(blockId===null){operation.cancelled=true;return;}
         if(saved.execution && keyOf(saved.execution.task)!==keyOf(operation.task) && !running.some(block => keyOf(block) === keyOf(saved.execution.task)))saved.returnTo=taskOf(saved.execution.task);
         else if(keyOf(saved.returnTo)===keyOf(operation.task))saved.returnTo=null;
@@ -728,7 +726,7 @@ export function mountCalendarNow(element, dependencies = {}) {
             saved.execution = null; saved.completed = null; saved.selection = null; saved.selectionMode = 'auto';
           } else saved.execution = operation.execution;
         } else {
-          await api('finish_task_block', { blockId: operation.execution.blockId });
+          if (await finishCalendarExecution(api, operation.execution.task, { blockId: operation.execution.blockId, document }) === false) { operation.cancelled = true; return; }
           saved.completed = operation.execution.task; saved.execution = null;
         }
       }
@@ -737,6 +735,7 @@ export function mountCalendarNow(element, dependencies = {}) {
   function errorMessage(error) { return typeof error === 'string' ? error : error?.message; }
   function failureMessage(operation, error) {
     const message = errorMessage(error);
+    if (error?.jiraWorkflow) return message;
     if (message === 'mvp_sync_stale_ui_state') return 'Выбор изменён на другом устройстве. Нажми «Повторить», чтобы загрузить актуальное состояние.';
     if (message === 'active') return 'Для смены цели поставь текущую задачу на паузу.';
     if (message === 'different-active') return 'Сейчас запущена другая задача. Обнови экран перед продолжением.';
@@ -762,6 +761,12 @@ export function mountCalendarNow(element, dependencies = {}) {
       if (message === 'mvp_sync_stale_ui_state') { remotePending = true; needsSave = false; }
       if (message === 'mvp_sync_stale_ui_state' || message === 'different-active' || (['start','return'].includes(operation.kind) && message === 'source record not found')) {
         failure.operation = { kind: 'refresh', phase: 'refresh' };
+      }
+      if (error?.refreshRequired) {
+        failure.operation = { kind: 'refresh', phase: 'refresh' };
+        failure.awaitingAcknowledgement = true;
+        window.dispatchEvent(new window.Event('task-state-changed'));
+        window.dispatchEvent(new window.CustomEvent('hanni:calendar-refresh'));
       }
     } finally {
       busy = false; render();

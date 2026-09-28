@@ -26,6 +26,39 @@ const blank = () => ({
    version: 1, goalId: 'goal-a', selectionMode: 'auto', selection: null, execution: null, completed: null
   });
 
+test('Now Jira start, resume and finish use workflow confirmation; a rejected finish keeps time running', async t => {
+  const itemId = `jira:${'b'.repeat(64)}`, data = backend();
+  data.tasks = [{ source_type: 'note', source_id: itemId, title: 'Fictional Jira task', status_extra: 'task', completed: false,
+    jira_status: 'Ready', jira_workflow_revision: 'rules-1' }];
+  data.links = [{ source_type: 'note', source_id: itemId, goal_id: 'goal-a' }];
+  const base = data.invoke; let rejectFinish = false;
+  data.invoke = async (command, args) => {
+    if (command === 'get_calendar_task') return { ...data.tasks[0] };
+    if (command === 'jira_task_workflow_action') {
+      data.calls.push({ command, args });
+      if (rejectFinish && args.action === 'finish') throw 'jira_write_outcome_unknown';
+      data.tasks[0].jira_status = args.action === 'finish' ? 'Completed' : 'Working';
+      return { workflowOutcome: 'confirmed', status: data.tasks[0].jira_status, transitions: [] };
+    }
+    if (command === 'complete_calendar_task') { data.calls.push({ command, args }); data.tasks[0].completed = true; data.tasks[0].status_extra = 'done'; return; }
+    return base(command, args);
+  };
+  const x = await mount(t, data);
+  await x.click('start');
+  assert.equal(data.count('jira_task_workflow_action'), 1); assert.equal(data.count('start_task_block'), 1);
+  assert.ok(data.calls.findIndex(row => row.command === 'jira_task_workflow_action') < data.calls.findIndex(row => row.command === 'start_task_block'));
+  await x.click('pause'); assert.equal(data.count('jira_task_workflow_action'), 1, 'pause never contacts Jira');
+  await x.click('start'); assert.equal(data.count('jira_task_workflow_action'), 2);
+  rejectFinish = true; await x.click('finish');
+  assert.match(x.ui('error-text').textContent, /могла принять/);
+  assert.equal(data.count('complete_calendar_task'), 0);
+  assert.equal(data.blocks.filter(row => row.is_active).length, 1);
+  await x.click('retry'); assert.equal(data.count('jira_task_workflow_action'), 3, 'retry refreshes instead of replaying the unconfirmed write');
+  rejectFinish = false; await x.click('finish');
+  assert.equal(data.count('complete_calendar_task'), 1); assert.equal(data.count('finish_task_block'), 0);
+  assert.equal(data.blocks.filter(row => row.is_active).length, 0);
+});
+
 test('remote refresh rereads saved goal without writing the old cached selection back', async t => {
   const x=await mount(t);const before=x.data.count('set_ui_state');
   x.data.stored=JSON.stringify({...blank(),goalId:'goal-b'});

@@ -7,6 +7,28 @@ const settle = async () => { for (let i = 0; i < 12; i++) await new Promise(reso
 const TODAY = '2026-09-24', YESTERDAY = '2026-09-23';
 const routine = JSON.stringify(['plan-a', TODAY, 0]);
 
+test('the running widget confirms Jira before resuming or finishing and keeps unrelated work running', async t => {
+  const data = backend(), itemId = `jira:${'c'.repeat(64)}`, task = data.tasks[0];
+  task.source_id = itemId; task.jira_status = 'Working'; task.jira_workflow_revision = 'rules-1';
+  for (const block of data.blocks) if (block.source_id === 'draft') block.source_id = itemId;
+  const base = data.invoke;
+  data.invoke = async (command, args) => {
+    if (command === 'get_calendar_task') return { ...task };
+    if (command === 'jira_task_workflow_action') { data.calls.push({ name: command, args }); return { workflowOutcome: 'confirmed', status: 'Working' }; }
+    return base(command, args);
+  };
+  const x = await mount(t, data), key = `note:${itemId}`;
+  x.control(key, 'toggle').click(); await settle();
+  assert.equal(data.count('jira_task_workflow_action'), 0);
+  x.control(key, 'toggle').click(); await settle();
+  assert.equal(data.count('jira_task_workflow_action'), 1); assert.equal(data.count('start_task_block'), 1);
+  x.control(key, 'finish').click(); await settle();
+  assert.equal(data.count('jira_task_workflow_action'), 2); assert.equal(data.count('complete_calendar_task'), 1);
+  assert.deepEqual(data.blocks.filter(row => row.is_active).map(row => row.source_type), ['schedule']);
+  const commands = data.calls.map(row => row.name);
+  assert.ok(commands.lastIndexOf('jira_task_workflow_action') < commands.lastIndexOf('pause_task_block'));
+});
+
 test('inline routine is excluded only from presentation while parallel task controls stay intact', async t => {
   const data=backend(), x=await mount(t,data,{activeOnly:true,hideWhenEmpty:true});
   const running=x.row('note:draft');
