@@ -515,6 +515,29 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
+    #[ignore = "Creates and removes one fictional Keychain item for a temporary database"]
+    fn mac_jira_generation_native_roundtrip() {
+        let (_directory, database) = jira_fixture();
+        assert_eq!(read_from(&JIRA, &database).unwrap(), None);
+        write_to(&JIRA, &database, "fictional-native-credential").unwrap();
+        let stored = read_from(&JIRA, &database);
+        let selected = selected_account(&JIRA, &database).unwrap();
+        let removed = delete_from(&JIRA, &database);
+        assert_eq!(
+            stored.unwrap().as_deref(),
+            Some("fictional-native-credential")
+        );
+        removed.unwrap();
+        assert_eq!(selected_account(&JIRA, &database).unwrap(), selected);
+        assert_eq!(read_from(&JIRA, &database).unwrap(), None);
+        assert_eq!(
+            selected_account(&RELAY, &database).unwrap(),
+            account(&database).unwrap()
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
     fn repeated_keychain_operations_keep_interaction_disabled() {
         use security_framework::os::macos::keychain::SecKeychain;
         // Only inspect process policy; never access the user's Keychain items.
