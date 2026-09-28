@@ -7,7 +7,7 @@ import { mountJiraSettings } from './jira-import.js';
 import { mountSleepSettings } from './health-sleep.js';
 import { mountHealthActivitySettings } from './health-activity.js';
 import { mountAppUpdates } from './app-updates.js';
-import { mountProcessSettings } from './calendar-process-settings.js';
+import { mountWorkflowSettings } from './calendar-workflow-settings.js';
 
 let settingsDialog = null;
 
@@ -20,7 +20,7 @@ const OPTIONS = {
 const SECTIONS = [
   { id: 'today', label: 'Сегодня' },
   { id: 'calendar', label: 'Календарь' },
-  { id: 'processes', label: 'Этапы задач' },
+  { id: 'processes', label: 'Процессы задач' },
   { id: 'connections', label: 'Подключения' },
   { id: 'about', label: 'О приложении' },
 ];
@@ -356,7 +356,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
       api.setPending(false);
       if (processSettings?.isDirty()) {
         hosts.processes.append(settingsStatus);
-        settingsStatus.textContent = 'Настройки календаря сохранены. Черновик этапов ещё не сохранён — сохрани его во вкладке «Этапы задач» или закрой настройки с отменой.';
+        settingsStatus.textContent = 'Настройки календаря сохранены. Черновик процессов ещё не сохранён — сохрани его во вкладке «Процессы задач» или закрой настройки с отменой.';
         settingsStatus.hidden = false;
         setActive('processes', true);
       } else if (disposeSync?.isDirty?.() || disposeJira?.isDirty?.()) {
@@ -380,8 +380,9 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
   saveButton.hidden = true;
   api.open(recommendationsOnly ? null : tabs[requestedSection]);
   if (!recommendationsOnly) {
-    processSettings = mountProcessSettings(hosts.processes, {
+    processSettings = mountWorkflowSettings(hosts.processes, {
       invoke,
+      openConnections: () => setActive('connections', true),
       setPending: value => { api.setPending(value); refreshFooter(); },
     });
     hosts.processes.classList.add('calendar-settings-panel');
@@ -394,7 +395,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
     sync.addEventListener('input', scheduleFooterRefresh);
     sync.addEventListener('change', scheduleFooterRefresh);
     sync.addEventListener('click', scheduleFooterRefresh);
-    disposeJira = mountJiraSettings(jira, { invoke, setPending: value => { api.setPending(value); refreshFooter(); } });
+    disposeJira = mountJiraSettings(jira, { invoke, onStatus: status => processSettings.setConnection(status), openProcesses: () => { setActive('processes', true); processSettings.openWork(); }, setPending: value => { api.setPending(value); refreshFooter(); } });
     jira.addEventListener('input', scheduleFooterRefresh);
     jira.addEventListener('change', scheduleFooterRefresh);
     jira.addEventListener('click', scheduleFooterRefresh);

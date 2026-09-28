@@ -2,7 +2,7 @@
 .calendar-jira-workflow summary { cursor:pointer; font-weight:600; }
 .calendar-jira-workflow [hidden] { display:none !important; }
 .calendar-jira-workflow-map { display:grid; gap:8px; margin:14px 0; }
-.calendar-jira-workflow-map label { display:grid; grid-template-columns:minmax(100px,1fr) minmax(170px,1.4fr); align-items:center; gap:12px; font-size:13px; }
+.calendar-jira-workflow-map > div > label { display:grid; grid-template-columns:minmax(100px,1fr) minmax(170px,1.4fr); align-items:center; gap:12px; font-size:13px; }
 .calendar-jira-workflow-map span { overflow-wrap:anywhere; }
 .calendar-jira-workflow select, .ct-jira-filter select { min-width:0; width:100%; min-height:36px; border:1px solid var(--border-default); border-radius:7px; background:var(--bg-primary); color:var(--text-primary); padding:7px 9px; font:inherit; }
 .calendar-jira-workflow-process { display:grid; gap:6px; margin-top:18px; font-size:13px; }
@@ -16,5 +16,39 @@
 .ct-jira-filter[hidden], .ct-jira-hint[hidden] { display:none; }
 .calendar-tasks .ct-filters { flex-wrap:wrap; max-width:100%; }
 @media(max-width:480px) {
-  .calendar-jira-workflow-map label { grid-template-columns:1fr; gap:4px; }
+  .calendar-jira-workflow-map > div > label { grid-template-columns:1fr; gap:4px; }
+}
+
+/* Project rules and the shared template editor live in the general settings. */
+.calendar-workflow-settings [hidden] { display:none !important; }
+.calendar-workflow-settings > h3 { margin:0; font-size:16px; }
+.calendar-workflow-areas { display:flex; flex-wrap:wrap; gap:6px; margin:16px 0; }
+.calendar-workflow-areas button { padding:9px 14px; border:1px solid var(--border-default); border-radius:8px; background:var(--bg-primary); color:var(--text-secondary); font:inherit; font-size:13px; }
+.calendar-workflow-areas button[aria-pressed=true] { color:var(--text-primary); background:var(--bg-hover); border-color:var(--border-hover); font-weight:600; }
+.calendar-workflow-settings .calendar-jira-workflow { margin:0; padding:0; border:0; }
+.calendar-jira-workflow-head { display:grid; grid-template-columns:minmax(100px,1fr) minmax(170px,1.4fr); gap:12px; color:var(--text-secondary); font-size:12px; margin-top:18px; }
+.calendar-workflow-settings .calendar-jira-workflow-map { gap:0; margin-top:4px; }
+.calendar-jira-workflow-map > div { padding:10px 0; border-bottom:1px solid var(--border-default); }
+.calendar-workflow-stages { padding:12px; margin:12px 0 2px; background:var(--bg-hover); border-radius:8px; min-width:0; }
+.calendar-workflow-stages > summary { font-size:13px; line-height:1.5; overflow-wrap:anywhere; }
+.calendar-workflow-stages .calendar-jira-workflow-process { margin-top:14px; }
+.calendar-workflow-stages [data-workflow-create] { margin-top:10px; }
+.calendar-workflow-settings .calendar-processes { margin-top:12px; }
+.calendar-workflow-settings [data-processes-picker] { display:grid; gap:6px; font-size:13px; }
+.calendar-workflow-settings [data-processes-select] { width:100%; min-width:0; min-height:38px; padding:7px 9px; color:var(--text-primary); background:var(--bg-primary); border:1px solid var(--border-default); border-radius:8px; font:inherit; }
+.calendar-workflow-settings .calendar-processes .cp-process { background:var(--bg-primary); }
+.calendar-workflow-preview { border-top:1px solid var(--border-default); padding-top:14px; margin:18px 0; }
+.calendar-workflow-preview h4 { font-size:14px; margin:0 0 8px; }
+.calendar-workflow-preview [data-workflow-preview] { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+.calendar-workflow-preview [data-workflow-count] { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:10px; border:1px solid var(--border-default); border-radius:8px; font-size:12px; }
+.calendar-workflow-preview strong { font-size:16px; font-variant-numeric:tabular-nums; }
+.calendar-workflow-draft, .calendar-workflow-result { font-size:13px; line-height:1.5; margin:16px 0 8px; }
+.calendar-workflow-draft:empty { display:none; }
+.calendar-workflow-result[role=alert] { color:var(--error-color,#b42318); }
+.calendar-workflow-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+.calendar-workflow-actions button { min-height:38px; padding:8px 12px; font:inherit; font-size:13px; }
+.calendar-workflow-actions [data-unified-save] { background:var(--text-primary); color:var(--bg-primary); }
+@media(max-width:480px) {
+  .calendar-jira-workflow-head { display:none; }
+  .calendar-workflow-stages { padding:10px; }
 }

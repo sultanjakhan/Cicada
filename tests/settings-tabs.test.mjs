@@ -12,7 +12,7 @@ afterEach(() => {
   windows.clear();
 });
 
-async function boot({ failPreferenceSave = false, failPreferenceLoad = false, delayPreferenceLoad = false, deferProcessSave = false, initialPreferences = null, section = 'next-action', recommendationsOnly = false } = {}) {
+async function boot({ failPreferenceSave = false, failPreferenceLoad = false, delayPreferenceLoad = false, deferProcessSave = false, initialPreferences = null, section = 'next-action', recommendationsOnly = false, workflowSnapshot = null } = {}) {
   const dom = new JSDOM('<button id="settings">Настройки</button>', { url: 'http://cicada.local', pretendToBeVisual: true });
   windows.add(dom.window);
   Object.assign(globalThis, {
@@ -48,7 +48,9 @@ async function boot({ failPreferenceSave = false, failPreferenceLoad = false, de
       }
       ui.set(args.key, args.value); return null;
     }
-    if (command === 'jira_import_status') return { supported: true, enabled: false, tokenMode: 'scoped' };
+    if (command === 'jira_import_status') return { supported: true, enabled: !!workflowSnapshot, site: 'example.atlassian.net', project: workflowSnapshot?.project, tokenMode: 'scoped' };
+    if (command === 'jira_workflow_cached') return workflowSnapshot;
+    if (command === 'get_calendar_tasks') return [];
     if (command === 'mvp_sync_status') return { configured: true, enabled: true, pending: 0, conflicts: 0, running: false };
     if (command === 'health_sleep_status') return { status: 'unsupported' };
     if (command === 'health_activity_status') return { status: 'unsupported' };
@@ -114,7 +116,7 @@ test('Jira drafts survive tab changes and calendar saves; explicit discard clear
 
 test('the process deep link selects the task-stage tab', async () => {
   const x = await boot({ section: 'processes' });
-  assert.equal(x.modal.querySelector('[role="tab"][aria-selected="true"]').textContent, 'Этапы задач');
+  assert.equal(x.modal.querySelector('[role="tab"][aria-selected="true"]').textContent, 'Процессы задач');
   const panel = x.modal.querySelector('#calendar-settings-panel-processes');
   assert.equal(panel.hidden, false);
   assert.equal(panel.getAttribute('role'), 'tabpanel');
@@ -296,4 +298,29 @@ test('Today entry exposes only selection settings and saves no unrelated prefere
     assert.equal(saved.density,'comfortable');assert.equal(saved.first_day,'sun');assert.equal(saved.showCompleted,true);
     assert.equal(x.modal.open,false);
   } finally{x.modal.close();}
+});
+
+
+test('connection link opens the one workflow editor and its draft survives shell navigation and closing', async () => {
+  const x = await boot({ section:'connections', workflowSnapshot:{ scope:'scope-demo',revision:'v1',project:'DEMO',defaultProcessId:null,statuses:[{name:'Ready',bucket:'ready'}] } });
+  const connection = x.modal.querySelector('#calendar-settings-panel-connections');
+  assert.equal(connection.querySelector('[data-workflow-status]'),null,'connections has no second rules editor');
+  connection.querySelector('[data-jira-processes]').click();
+  assert.equal(x.modal.querySelector('#calendar-settings-panel-processes').hidden,false);
+  assert.equal(x.modal.querySelector('[data-process-work]').hidden,false);
+  const select=x.modal.querySelector('[data-workflow-status="Ready"]');
+  select.value='review';select.dispatchEvent(new x.dom.window.Event('change',{bubbles:true}));
+  x.modal.querySelector('#calendar-settings-tab-connections').click();
+  connection.querySelector('[data-jira-processes]').click();
+  assert.equal(x.modal.querySelector('[data-workflow-status="Ready"]'),select);
+  assert.equal(select.value,'review');
+  assert.equal(x.modal.querySelectorAll('.calendar-processes').length,1);
+  x.modal.querySelector('footer [data-dialog-close]').click();
+  assert.equal(x.modal.querySelector('[data-close-confirmation]').hidden,false);
+  x.modal.querySelector('[data-close-confirmation] button:first-of-type').click();
+  assert.equal(select.value,'review');
+  x.modal.querySelector('footer [data-dialog-close]').click();
+  x.modal.querySelector('[data-close-confirmation] button:last-child').click();
+  assert.equal(x.modal.open,false);
+  assert.equal(x.calls.includes('jira_workflow_save'),false,'discard sends no rules');
 });

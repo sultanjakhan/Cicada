@@ -75,11 +75,11 @@ test('saving calendar preferences never discards a process draft', async () => {
   day.click();
   await x.submit();
   assert.equal(x.modal.open, true);
-  assert.equal(x.modal.querySelector('[role="tab"][aria-selected="true"]').textContent, 'Этапы задач');
+  assert.equal(x.modal.querySelector('[role="tab"][aria-selected="true"]').textContent, 'Процессы задач');
   assert.equal(section.querySelector('[data-stage-id="analysis"] [data-control="stage-title"]').value, 'Модели');
   assert.ok(x.writes.includes('calendar_preferences_v1'));
   assert.equal(x.writes.includes('calendar_processes_v1'), false);
-  assert.match(x.modal.querySelector('[data-settings-status]').textContent, /Черновик этапов ещё не сохранён/);
+  assert.match(x.modal.querySelector('[data-settings-status]').textContent, /Черновик процессов ещё не сохранён/);
   section.querySelector('[data-processes-save]').click();
   await tick();
   assert.equal(x.modal.open, true);

@@ -217,7 +217,7 @@ export function mountCalendarTasks(host, dependencies) {
     q('jira-filter').hidden=!jiraRows.length||state.sphere==='personal';
     const unassigned=jiraRows.filter(row=>jiraWorkflowRole(row)==='unassigned').length;
     q('jira-hint').hidden=!jiraRows.length||state.sphere==='personal';
-    q('jira-hint').textContent=unassigned?`У ${unassigned} задач не настроен статус. Они доступны в «Все». Настрой соответствие в «Подключения → Jira → Статусы и этапы проекта».`:'В активных — задачи к выполнению и начатые. Остальные доступны в «На проверке», «Сделано» и «Все».';
+    q('jira-hint').textContent=unassigned?`У ${unassigned} задач не настроен статус. Они доступны в «Все». Настрой соответствие в «Настройки → Процессы задач → Работа».`:'В активных — задачи к выполнению и начатые. Остальные доступны в «На проверке», «Сделано» и «Все».';
     const matching=eligible.filter(row=>matchesGoal(row)&&`${row.title} ${goalPath(goalFor(row))}`.toLocaleLowerCase('ru').includes(query));
     const counts=new Map(SPHERE_TABS.map(([id])=>[id,0]));
     for(const row of matching){counts.set('',counts.get('')+1);counts.set(bucketOf(row),counts.get(bucketOf(row))+1);}

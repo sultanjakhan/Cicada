@@ -7,19 +7,22 @@ import { DEFAULT_PROCESS_ID, PROCESS_LIMITS, ProcessValidationError, newProcessI
 
 const clone = processes => processes.map(process => ({ ...process, stages: process.stages.map(stage => ({ ...stage })) }));
 
-export function mountProcessSettings(element, { invoke, setPending = () => {} }) {
+export function mountProcessSettings(element, { invoke, setPending = () => {}, compact = false, externalActions = false, onChange = () => {}, onSaved = () => {}, onSelect = () => {} }) {
   const doc = element.ownerDocument;
-  let saved = null, draft = [], busy = false, disposed = false, failed = false;
+  let saved = null, draft = [], busy = false, disposed = false, failed = false, selected = null, pickerVisible = true, notified = null;
   element.className = 'calendar-setting calendar-processes';
   element.innerHTML = `<h3 id="calendar-processes-title">Процессы задач</h3>
     <p class="calendar-processes-hint">Шаблоны этапов для задач. Проект может задавать процесс для новых задач; в отдельной задаче можно выбрать другой процесс, нужные этапы или обойтись без них. Переименование не меняет историю. Если удалить стадию, её задачи покажут «Стадия удалена», пока ты не выберешь другую.</p>
     <p class="calendar-processes-status" data-processes-status role="status" aria-live="polite">Загружаем процессы…</p>
+    <label data-processes-picker hidden>Шаблон этапов<select data-processes-select aria-label="Шаблон этапов"></select></label>
     <div class="calendar-processes-list" data-processes-list></div>
     <button type="button" class="calendar-processes-add" data-processes-add hidden>＋ Новый процесс</button>
     <p class="calendar-processes-error" data-processes-error role="alert" hidden></p>
     <div class="calendar-processes-actions"><button type="button" data-processes-save disabled>Сохранить процессы</button><button type="button" data-processes-cancel disabled>Отменить изменения</button><button type="button" data-processes-retry hidden>Повторить загрузку</button></div>`;
   const q = name => element.querySelector(`[data-processes-${name}]`);
   const list = q('list'), status = q('status'), error = q('error');
+  if (externalActions) { q('save').hidden = true; q('cancel').hidden = true; }
+  if (compact) { element.querySelector('h3').hidden = true; element.querySelector('.calendar-processes-hint').textContent = 'Изменения шаблона будут видны во всех задачах, где он выбран. История и время сохранятся; удалённый этап останется в истории.'; }
   const node = (tag, className, text) => { const value = doc.createElement(tag); if (className) value.className = className; if (text != null) value.textContent = text; return value; };
   const dirty = () => !!saved && JSON.stringify(draft) !== JSON.stringify(saved.state.processes);
   const isSaved = id => !!saved?.state.processes.some(process => process.id === id);
@@ -32,6 +35,11 @@ export function mountProcessSettings(element, { invoke, setPending = () => {} })
     q('save').disabled = busy || !dirty(); q('cancel').disabled = busy || !dirty();
     q('add').hidden = !loaded; q('add').disabled = busy || draft.length >= PROCESS_LIMITS.processes;
     q('retry').hidden = !failed || loaded;
+    q('picker').hidden = !compact || !pickerVisible || !loaded;
+    q('select').disabled = busy;
+    q('add').hidden = !loaded || compact && !pickerVisible;
+    const signature = JSON.stringify(draft);
+    if (signature !== notified) { notified = signature; onChange(clone(draft)); }
   }
   function button(className, label, text, name, disabled = false) {
     const value = node('button', className, text); value.type = 'button'; value.dataset.control = name;
@@ -40,7 +48,12 @@ export function mountProcessSettings(element, { invoke, setPending = () => {} })
   }
   function render() {
     if (disposed) return;
-    list.replaceChildren(...draft.map(process => {
+    if (compact) {
+      if (selected === null || !draft.some(process => process.id === selected)) selected = draft[0]?.id || null;
+      q('select').replaceChildren(...draft.map(process => new doc.defaultView.Option(process.title || 'Новый процесс', process.id)));
+      q('select').value = selected || '';
+    }
+    list.replaceChildren(...draft.filter(process => !compact || process.id === selected).map(process => {
       const box = node('fieldset', 'cp-process'); box.dataset.processId = process.id; box.disabled = busy;
       const legend = node('legend', 'cp-legend', process.id === DEFAULT_PROCESS_ID ? 'Встроенный процесс' : isSaved(process.id) ? 'Процесс' : 'Новый процесс');
       const title = node('label', 'cp-title');
@@ -100,7 +113,8 @@ export function mountProcessSettings(element, { invoke, setPending = () => {} })
     if (draft.length >= PROCESS_LIMITS.processes) return;
     const id = newProcessId('p', draft.map(item => item.id));
     draft.push({ id, title: '', stages: [{ id: newProcessId('s', []), title: '' }] });
-    render(); focus([id, null, 'process-title']);
+    selected = id; render(); onSelect(id); focus([id, null, 'process-title']);
+    return id;
   }
   function showError(message, target = null) {
     error.textContent = message; error.hidden = !message;
@@ -127,6 +141,10 @@ export function mountProcessSettings(element, { invoke, setPending = () => {} })
     try { return validateProcesses(draft); }
     catch (cause) {
       if (!(cause instanceof ProcessValidationError)) throw cause;
+      if (compact && cause.processId) {
+        if (selected !== cause.processId) { selected = cause.processId; render(); }
+        onSelect(selected, { reveal: true });
+      }
       const target = cause.stageId ? control(cause.processId, cause.stageId, 'stage-title') : cause.field === 'stages' ? control(cause.processId, null, 'stage-add') : control(cause.processId, null, 'process-title');
       showError(cause.message, target);
       return null;
@@ -145,6 +163,7 @@ export function mountProcessSettings(element, { invoke, setPending = () => {} })
       if (disposed) return true;
       draft = clone(saved.state.processes);
       status.textContent = 'Процессы сохранены.';
+      onSaved(clone(saved.state.processes));
       return true;
     } catch (cause) {
       if (!disposed) { status.textContent = ''; showError(cause?.message || 'Не удалось сохранить процессы. Изменения остались в форме.'); }
@@ -162,14 +181,21 @@ export function mountProcessSettings(element, { invoke, setPending = () => {} })
     if (name === 'stage-up' || name === 'stage-down') move(processId, stageId, name === 'stage-up' ? -1 : 1, name);
     else if (name === 'stage-delete') removeStage(processId, stageId);
     else if (name === 'stage-add') addStage(processId);
-    else if (name === 'process-remove') { draft = draft.filter(process => process.id !== processId); render(); q('add').focus(); }
+    else if (name === 'process-remove') { draft = draft.filter(process => process.id !== processId); render(); if (compact) onSelect(null); q('add').focus(); }
   });
   q('add').addEventListener('click', addProcess);
+  q('select').addEventListener('change', () => { selected = q('select').value; render(); onSelect(selected); });
   // The buttons are disabled once saved: focus moves to the confirmation.
   status.tabIndex = -1;
   q('save').addEventListener('click', () => { void save().then(ok => { if (ok && !disposed) status.focus({ preventScroll: true }); }); });
   q('cancel').addEventListener('click', () => { void load().then(() => { if (!disposed) { status.textContent = 'Изменения отменены.'; element.querySelector('[data-control="process-title"]')?.focus(); } }); });
   q('retry').addEventListener('click', () => void load());
   void load();
-  return { dispose() { disposed = true; }, isDirty: dirty, check: () => !!check(), save, get ready() { return !!saved; } };
+  return { dispose() { disposed = true; }, isDirty: dirty, check: () => !!check(), save, reset: load, addProcess,
+    select(id, { picker = true } = {}) {
+      if (selected === id && pickerVisible === picker) return;
+      selected = id; pickerVisible = picker; render();
+    },
+    get ready() { return !!saved; },
+  };
 }

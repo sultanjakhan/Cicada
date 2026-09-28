@@ -62,7 +62,7 @@ test('project settings load the complete catalog safely; assignment and bulk app
   assert.equal(x.q('map').querySelectorAll('select').length,3);
   assert.equal(x.q('map').querySelector('select').value,'','To Do is not guessed');
   assert.equal(x.calls.some(call=>call.command==='jira_workflow_save'),false);
-  x.q('map').querySelector('select').value='ready';
+  x.q('map').querySelector('select').value='ready'; x.q('map').querySelector('select').dispatchEvent(new x.dom.window.Event('change',{bubbles:true}));
   x.q('process').value='system-analysis'; x.q('process').dispatchEvent(new x.dom.window.Event('change',{bubbles:true}));
   assert.equal(x.q('apply').checked,false);
   x.q('save').click();await settle();
