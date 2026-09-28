@@ -4,6 +4,7 @@ import { ICONS } from './icons.js';
 import { isInstantTask, sphereLabel } from './task-model.js';
 import { loadProcesses, mountStageTime, taskStage } from './task-processes.js';
 import { isJiraTask, openJiraTaskEditor } from './jira-task.js';
+import { jiraCanStart, jiraIsCompleted } from './jira-workflow-model.js';
 
 const errorText = error => (typeof error === 'string' ? error : error?.message) || '';
 const finite = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
@@ -100,18 +101,18 @@ export function openCalendarTaskDetails(record, dependencies) {
   }
   function syncSummary() {
     const scope = current.sphere === 'work' ? 'Работа' : sphereLabel(current.sphere) || 'Личное';
-    const completed = !!current.completed || current.status === 'done' || ['done', 'skipped', 'missed'].includes(current.status_extra);
     const active = activeStatusKnown && activeForTask(activeBlocks).length > 0;
     current.is_active = active;
+    const completed = !active && (!!current.completed || current.status === 'done' || ['done', 'skipped', 'missed'].includes(current.status_extra) || jiraIsCompleted(current));
     const hasWork = active || !!current.has_work || (closedSeconds > 0);
-    const status = loadFailed ? 'Статус недоступен' : !activeStatusKnown ? 'Проверяем статус…' : isInstantTask(current) ? (completed ? 'Завершена' : 'К выполнению') : active ? 'В работе' : hasWork ? 'На паузе' : 'Не запускалась';
+    const status = loadFailed ? 'Статус недоступен' : !activeStatusKnown ? 'Проверяем статус…' : completed ? 'Сделано' : isInstantTask(current) ? 'К выполнению' : active ? 'В работе' : hasWork ? 'На паузе' : 'Не запускалась';
     headingHint.textContent = `${scope} · ${status}`;
     const label = isInstantTask(current) ? 'Завершить' : active ? 'Пауза' : hasWork ? 'Продолжить' : 'Начать';
     syncButton.replaceChildren();
     const glyph = document.createElement('span'); glyph.className = 'task-details-button-icon'; glyph.innerHTML = isInstantTask(current) ? ICONS.check : active ? ICONS.pause : ICONS.play;
     syncButton.append(glyph, document.createTextNode(label));
     execute.setAttribute('aria-label', `${label}: ${current.title}`);
-    execute.hidden = completed;
+    execute.hidden = completed || !active && !jiraCanStart(current);
   }
   function syncMetadata() {
     jira.textContent = `Jira: ${current.jira_status || 'статус ещё не загружен'} · Изменить в Jira`;
