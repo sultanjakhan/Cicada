@@ -77,9 +77,14 @@ bundle to `~/Applications/Cicada.app`, executes the new binary, keeps a legacy
 symlink for the existing LaunchAgent, and updates the plist to the new path.
 
 The macOS archive uses the existing pinned Minisign update key. Its application
-bundle retains the local ad-hoc code signature; Developer ID/notarization are
-not configured. This channel is for the owner's already trusted local install,
-not a claim of Apple-notarized public distribution.
+bundle must also use a persistent Apple signing certificate and team, configured
+with `APPLE_SIGNING_IDENTITY` and `MVP_MACOS_TEAM_ID`. Ad-hoc and self-signed
+packages are rejected because their file-Keychain partition can be tied to a
+single build. The macOS client validates the extracted candidate against the
+installed application's signature, team and designated requirement before
+replacing files. CI without the signing identity fails closed. Certificate/CI
+provisioning and the first migration from an ad-hoc install remain explicit
+deployment prerequisites; notarization is not configured by this change.
 
 The client checks HTTPS origin, bounded size, SHA-256 and a pinned Minisign key.
 Before handing off to the installer it creates a consistent SQLite backup.

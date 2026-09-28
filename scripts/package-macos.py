@@ -7,10 +7,12 @@ import os
 from pathlib import Path
 import platform
 import plistlib
+import re
 from pathlib import PurePosixPath
 import subprocess
 import sys
 import tarfile
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -24,16 +26,71 @@ def require(condition, message):
         raise SystemExit(message)
 
 
-def verify_updater_archive(archive):
+def signing_configuration(environment):
+    identity = environment.get('APPLE_SIGNING_IDENTITY', '')
+    team = environment.get('MVP_MACOS_TEAM_ID', '')
+    require(re.fullmatch(r'[A-Fa-f0-9]{40}', identity),
+            'APPLE_SIGNING_IDENTITY must be the SHA-1 fingerprint of a persistent Apple signing certificate; ad-hoc packages lose Keychain access.')
+    require(re.fullmatch(r'[A-Z0-9]{10}', team),
+            'MVP_MACOS_TEAM_ID must identify the same Apple team across updates.')
+    return identity.upper(), team
+
+
+def verify_signature(bundle, team, identity):
+    requirement = (f'anchor apple generic and identifier "app.hanni.mvp" '
+                   f'and certificate leaf[subject.OU] = "{team}"')
+    result = subprocess.run(['/usr/bin/codesign', '--verify', '--deep', '--strict',
+                             '-R=' + requirement, str(bundle)], capture_output=True)
+    require(result.returncode == 0,
+            'The bundle must have a valid Apple signature from the configured team; self-signed and ad-hoc signatures are not update-compatible.')
+    result = subprocess.run(['/usr/bin/codesign', '-d', '-r-', '--verbose=4', str(bundle)],
+                            capture_output=True, text=True)
+    require(result.returncode == 0, 'Cannot read the application signing identity.')
+    lines = (result.stdout + '\n' + result.stderr).splitlines()
+    fields = dict(line.split('=', 1) for line in lines if '=' in line)
+    dr = next((line.removeprefix('designated => ') for line in lines
+               if line.startswith('designated => ')), '')
+    require(fields.get('TeamIdentifier') == team and dr and 'cdhash ' not in dr,
+            'The signed bundle has no stable designated requirement and Apple team.')
+    with tempfile.TemporaryDirectory(prefix='cicada-signature-') as temporary:
+        prefix = Path(temporary) / 'certificate'
+        result = subprocess.run(['/usr/bin/codesign', '-d', '--extract-certificates',
+                                 str(prefix), str(bundle)], capture_output=True)
+        leaf = Path(str(prefix) + '0')
+        require(result.returncode == 0 and leaf.is_file(), 'Cannot verify the signing certificate.')
+        fingerprint = hashlib.sha1(leaf.read_bytes()).hexdigest().upper()
+    require(fingerprint == identity, 'The bundle was signed with an unexpected certificate.')
+    return {'type': 'apple', 'team_id': team, 'certificate_sha1': fingerprint,
+            'designated_requirement': dr}
+
+
+def bundle_hashes(bundle):
+    return {path.relative_to(bundle).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in sorted(bundle.rglob('*')) if path.is_file() and not path.is_symlink()}
+
+
+def verify_updater_archive(archive, signature=None, expected_files=None):
     # Tauri 2.11 strips the top-level member and writes Contents to the
     # currently installed bundle, including 0.3.22's Hanni MVP.app path.
     with tarfile.open(archive, 'r:gz') as members:
-        names = [member.name for member in members.getmembers()]
+        entries = members.getmembers()
+        names = [member.name for member in entries]
     require(names and all((name == 'Cicada.app' or name.startswith('Cicada.app/'))
                           and '..' not in PurePosixPath(name).parts for name in names),
             'The macOS updater archive must contain exactly one Cicada.app root.')
     require('Cicada.app/Contents/MacOS/hanni-mvp' in names,
             'The macOS updater archive is missing the compatible executable.')
+    require(len(names) == len(set(names)) and all(entry.isfile() or entry.isdir() for entry in entries),
+            'The macOS updater archive must not contain links, special files or duplicate entries.')
+    if signature is not None:
+        with tempfile.TemporaryDirectory(prefix='cicada-archive-') as temporary:
+            with tarfile.open(archive, 'r:gz') as members:
+                members.extractall(temporary, filter='data')
+            actual = verify_signature(Path(temporary) / 'Cicada.app',
+                                      signature['team_id'], signature['certificate_sha1'])
+            require(actual == signature, 'The updater archive has a different application signature.')
+            require(expected_files is None or bundle_hashes(Path(temporary) / 'Cicada.app') == expected_files,
+                    'The updater archive differs from the verified application bundle.')
 
 
 def main():
@@ -41,6 +98,9 @@ def main():
     parser.add_argument('--updater', action='store_true')
     args = parser.parse_args()
     require(sys.platform == 'darwin', 'Build this package on macOS.')
+    identity, team = signing_configuration(os.environ)
+    identities = output('/usr/bin/security', 'find-identity', '-v', '-p', 'codesigning')
+    require(identity in identities, 'The configured Apple signing identity is unavailable; no package was built.')
     commit = output('git', 'rev-parse', 'HEAD')
     require(not output('git', 'status', '--porcelain'), 'Commit source changes before packaging.')
     origin = output('git', 'remote', 'get-url', 'origin')
@@ -51,7 +111,7 @@ def main():
             'Unexpected application identity.')
     metadata = json.loads(output('cargo', 'metadata', '--manifest-path', 'src-tauri/Cargo.toml',
                                  '--no-deps', '--format-version', '1', '--locked'))
-    environment = dict(os.environ, APPLE_SIGNING_IDENTITY='-')
+    environment = dict(os.environ, APPLE_SIGNING_IDENTITY=identity)
     for name in ('APPLE_ID', 'APPLE_PASSWORD', 'APPLE_TEAM_ID', 'APPLE_API_ISSUER',
                  'APPLE_API_KEY', 'APPLE_API_KEY_PATH', 'APPLE_CERTIFICATE', 'APPLE_CERTIFICATE_PASSWORD'):
         environment.pop(name, None)
@@ -70,16 +130,13 @@ def main():
             info['CFBundleShortVersionString'] == config['version'] and
             info['CFBundleExecutable'] == config['mainBinaryName'] and
             info.get('CFBundleName') == 'Cicada', 'Bundle identity, name or version differs.')
-    subprocess.run(['codesign', '--verify', '--deep', '--strict', str(bundle)], check=True)
+    signature = verify_signature(bundle, team, identity)
     directory = ROOT / '.local/mac-package' / commit[:12]
     directory.mkdir(parents=True, exist_ok=True)
     destination = directory / 'Cicada.app'
     require(not destination.exists(), 'This commit already has a package; inspect the existing artifact.')
     subprocess.run(['ditto', str(bundle), str(destination)], check=True)
-    hashes = {}
-    for path in sorted(destination.rglob('*')):
-        if path.is_file() and not path.is_symlink():
-            hashes[path.relative_to(destination).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+    hashes = bundle_hashes(destination)
     archive = directory / 'Cicada-macos.zip'
     subprocess.run(['ditto', '-c', '-k', '--sequesterRsrc', '--keepParent',
                     str(destination), str(archive)], check=True)
@@ -87,7 +144,7 @@ def main():
         import shutil
         updater = bundle.with_name(bundle.name + '.tar.gz')
         require(updater.is_file(), 'Tauri did not create the macOS updater archive.')
-        verify_updater_archive(updater)
+        verify_updater_archive(updater, signature, hashes)
         shutil.copyfile(updater, directory / updater.name)
     manifest = {
         'schema_version': 1, 'application': config['productName'], 'identifier': config['identifier'],
@@ -95,7 +152,7 @@ def main():
         'profile': 'release-with-embedded-web-assets', 'source_repository': origin, 'source_commit': commit,
         'application_bundle': destination.name, 'files_sha256': hashes,
         'archive': archive.name, 'archive_sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
-        'signing': 'ad-hoc', 'notarized': False,
+        'signing': signature, 'notarized': False,
     }
     (directory / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     sys.stdout.write(f'macOS MVP package: {directory}\n')
