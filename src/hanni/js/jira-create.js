@@ -39,6 +39,7 @@ export function mountJiraCreate(element, { invoke, onChange, onPending, onRecove
     const selected = type.value;
     try {
       data = await invoke('jira_create_options');
+      if (!data.recovery && !data.issueTypes?.length) failure = 'В проекте нет доступных типов задач. Проверь право Create Issues в Jira и обнови подключение.';
       type.replaceChildren(new document.defaultView.Option('Выбери тип задачи', ''), ...(data.issueTypes || []).map(item => new document.defaultView.Option(item.name, item.id)));
       if ((data.issueTypes || []).some(item => item.id === selected)) type.value = selected;
       else if (data.issueTypes?.length === 1) type.value = data.issueTypes[0].id;

@@ -46,6 +46,12 @@ test('Jira unavailable keeps the work draft and never falls back to a local work
   x.q('[data-evm-scope="personal"]').click(); await x.submit(); assert.equal(x.saved('save_calendar_task').length,1);
 });
 
+test('an empty type list explains the missing creation permission and offers refresh', async t => {
+  const x = await form(t,{jira_create_options:{...options,issueTypes:[]}}); await x.work();
+  assert.match(x.q('[data-jira-create-error]').textContent,/Create Issues/);
+  assert.equal(x.q('[data-jira-create-retry]').hidden,false); assert.equal(x.q('#evm-save').disabled,true);
+});
+
 test('lost create response reconciles durable unknown state and requires explicit acknowledgement', async t => {
   const x = await form(t); await x.work(); x.q('[data-jira-create-type]').value='1';
   x.replies.jira_task_create = () => {
