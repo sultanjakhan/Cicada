@@ -12,7 +12,7 @@ export function mountProcessSettings(element, { invoke, setPending = () => {} })
   let saved = null, draft = [], busy = false, disposed = false, failed = false;
   element.className = 'calendar-setting calendar-processes';
   element.innerHTML = `<h3 id="calendar-processes-title">Процессы задач</h3>
-    <p class="calendar-processes-hint">Стадии для задач с процессом. Переименование не меняет задачи. Если удалить стадию, её задачи покажут «Стадия удалена», пока ты не выберешь другую.</p>
+    <p class="calendar-processes-hint">Шаблоны этапов для задач. Проект может задавать процесс для новых задач; в отдельной задаче можно выбрать другой процесс, нужные этапы или обойтись без них. Переименование не меняет историю. Если удалить стадию, её задачи покажут «Стадия удалена», пока ты не выберешь другую.</p>
     <p class="calendar-processes-status" data-processes-status role="status" aria-live="polite">Загружаем процессы…</p>
     <div class="calendar-processes-list" data-processes-list></div>
     <button type="button" class="calendar-processes-add" data-processes-add hidden>＋ Новый процесс</button>

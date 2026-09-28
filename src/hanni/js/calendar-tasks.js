@@ -2,19 +2,20 @@ import { renderTaskImportance } from './task-importance.js';
 import { ICONS } from './icons.js';
 import { sphereLabel, isInstantTask, taskTime, compareTaskTime, isWorkTask } from './task-model.js';
 import { loadProcesses, loadStageBlocks, stageSeconds, stageTimeTitle, taskStage } from './task-processes.js';
+import { inWorkingQueue, isWorkflowTask, jiraCanStart, jiraIsCompleted, jiraWorkflowRole } from './jira-workflow-model.js';
 
 const taskKey = row => `${row.source_type}:${row.source_id}`;
 const stableJson = value => JSON.stringify(value, (_key, item) => {
   if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
   return Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]]));
 });
-const closed = row => row.completed || ['done', 'skipped', 'missed'].includes(row.status_extra);
+const closed = row => !row.is_active && (row.completed || ['done', 'skipped', 'missed'].includes(row.status_extra) || jiraIsCompleted(row));
 const dayOf = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const shiftDay = (day, delta) => { const date = new Date(`${day}T12:00:00`); date.setDate(date.getDate() + delta); return dayOf(date); };
 // Running work leads the list (2026-09-24); other active tasks are grouped by how
 // urgent their planned day is; closed tasks keep one group.
-const GROUPS = [['running','В работе'],['overdue','Просрочено'],['today','Сегодня'],['soon','Скоро'],['undated','Без даты'],['completed','Завершённые']];
-const groupOf = (row, today) => closed(row) ? 'completed' : row.is_active ? 'running' : !row.date ? 'undated' : row.date < today ? 'overdue' : row.date === today ? 'today' : 'soon';
+const GROUPS = [['running','В работе'],['ready','К выполнению'],['working','Начатые в Jira'],['review','На проверке'],['overdue','Просрочено'],['today','Сегодня'],['soon','Скоро'],['undated','Без даты'],['completed','Сделано'],['hidden','Вне рабочей очереди'],['unassigned','Статус не настроен']];
+const groupOf = (row, today) => row.is_active ? 'running' : closed(row) ? 'completed' : jiraWorkflowRole(row) || (!row.date ? 'undated' : row.date < today ? 'overdue' : row.date === today ? 'today' : 'soon');
 const groupIndex = (row, today) => GROUPS.findIndex(([id]) => id === groupOf(row, today));
 // Work and personal are the main split (2026-09-25): «Личное» is every task whose
 // sphere is not work, tasks without a sphere included. Inside it a light second
@@ -63,10 +64,12 @@ export function mountCalendarTasks(host, dependencies) {
   host.classList.add('calendar-tasks');
   host.innerHTML = `<section aria-labelledby="${prefix}-title"><div class="ct-heading"><h2 id="${prefix}-title" tabindex="-1">Задачи <span data-tasks-count></span></h2>
     <div class="ct-grouping" role="group" aria-label="Группировать задачи" data-tasks-grouping>${[['date','По дате'],['goal','По цели']].map(([id,label])=>`<button type="button" data-tasks-group-by="${id}" aria-pressed="false">${label}</button>`).join('')}</div></div>
-    <div class="ct-toolbar"><div class="ct-filters" role="group" aria-label="Какие задачи показать">${[['active','Активные'],['today','Сегодня'],['undated','Без даты'],['completed','Завершённые']].map(([id,label])=>`<button type="button" data-tasks-filter="${id}" aria-pressed="false">${label}</button>`).join('')}</div>
+    <div class="ct-toolbar"><div class="ct-filters" role="group" aria-label="Какие задачи показать">${[['active','Активные'],['today','Сегодня'],['undated','Без даты'],['review','На проверке'],['completed','Сделано'],['all','Все']].map(([id,label])=>`<button type="button" data-tasks-filter="${id}" aria-pressed="false">${label}</button>`).join('')}</div>
     <div class="ct-search-row"><label class="ct-search"><span class="ct-search-icon">${SEARCH_ICON}</span><input type="search" data-tasks-search placeholder="Найти задачу" aria-label="Найти задачу"></label><span class="ct-select"><select data-tasks-goal aria-label="Фильтр по цели"><option value="">Любая цель</option></select></span></div></div>
     <div class="ct-spheres" role="group" aria-label="Рабочие или личные задачи">${SPHERE_TABS.map(([id,label])=>`<button type="button" data-tasks-sphere="${id}" aria-pressed="false"><span>${label}</span><span class="ct-sphere-count" data-tasks-sphere-count></span></button>`).join('')}</div>
     <div class="ct-subspheres" role="group" aria-label="Сфера личных задач" data-tasks-personal hidden></div>
+    <label class="ct-jira-filter" data-tasks-jira-filter hidden>Статус Jira<select data-tasks-jira-status aria-label="Фильтр по статусу Jira"><option value="">Любой статус</option></select></label>
+    <p class="ct-jira-hint" data-tasks-jira-hint hidden></p>
     <p data-tasks-message role="status" aria-live="polite"></p><p class="ct-visually-hidden" data-tasks-stage-announcement role="status" aria-live="polite"></p><button type="button" data-tasks-retry hidden>Повторить загрузку</button>
     <div data-tasks-list></div><div class="ct-pages" data-tasks-pages hidden><button type="button" data-tasks-prev>Назад</button><span data-tasks-page></span><button type="button" data-tasks-next>Далее</button></div></section>`;
   const q = name => host.querySelector(`[data-tasks-${name}]`);
@@ -107,7 +110,7 @@ export function mountCalendarTasks(host, dependencies) {
   function renderRow(row, section, byGoal) {
     const id=taskKey(row), done=closed(row), overdue=!done&&!!row.date&&row.date<today, running=!done&&!!row.is_active;
     const item=node('li','ct-row');item.dataset.contextRecord=id;item.classList.toggle('is-running',running);item.classList.toggle('is-overdue',overdue);item.classList.toggle('is-done',done);
-    const complete=control('ct-complete',done?'✓':'',()=>void finish(row));complete.disabled=busy||done;complete.setAttribute('aria-label',`${done?'Завершена':'Завершить'}: ${row.title}`);if(!done)complete.title='Завершить';
+    const complete=control('ct-complete',done?'✓':'',()=>void finish(row));complete.disabled=busy||done||(isWorkflowTask(row)&&!['ready','working','review'].includes(jiraWorkflowRole(row)));complete.setAttribute('aria-label',`${done?'Завершена':'Завершить'}: ${row.title}`);if(!done)complete.title='Завершить';
     const title=control('ct-title',row.title,()=>openTask(row,()=>restore(id)));title.title=row.title;
     const meta=node('span','ct-meta');
     if(typeof row.jira_status==='string'&&row.jira_status)meta.append(node('span','ct-jira-status',`Jira: ${row.jira_status}`));
@@ -152,7 +155,7 @@ export function mountCalendarTasks(host, dependencies) {
     const content=node('div','ct-content');content.append(title,meta);
     if(running)content.append(node('span','ct-visually-hidden','В работе'));
     const actions=node('div','ct-actions');
-    if(!done&&(!instant||row.is_active)){
+    if(!done&&(!instant||row.is_active)&&(row.is_active||jiraCanStart(row))){
       const label=row.is_active?'Пауза':row.has_work||row.actual_minutes>0?'Продолжить':'Начать';
       const run=control('ct-run ct-icon-button',null,()=>void finish(row,row.is_active?'pause':'start'));
       const glyph=node('span','ct-glyph');glyph.setAttribute('aria-hidden','true');glyph.innerHTML=ICONS[row.is_active?'pause':'play'];
@@ -205,13 +208,21 @@ export function mountCalendarTasks(host, dependencies) {
     if(disposed||!ready)return;
     const focused=doc.activeElement, focusId=focused?.dataset.taskId, focusAction=focused?.dataset.taskControl, focusedBulk=focused?.dataset.tasksBulk;
     const query=state.search.trim().toLocaleLowerCase('ru');
-    const eligible=rows.filter(row=>(state.filter==='completed'?closed(row):!closed(row))&&(state.filter!=='today'||row.date===today)&&(state.filter!=='undated'||!row.date));
+    const eligible=rows.filter(row=>(state.filter==='all'||(state.filter==='completed'?closed(row):state.filter==='review'?jiraWorkflowRole(row)==='review':!closed(row)&&inWorkingQueue(row)))&&(state.filter!=='today'||row.date===today)&&(state.filter!=='undated'||!row.date));
+    const jiraRows=rows.filter(isWorkflowTask), statuses=[...new Set(jiraRows.map(row=>row.jira_status).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+    const statusSelect=q('jira-status');
+    statusSelect.replaceChildren(new win.Option('Любой статус',''),...statuses.map(name=>new win.Option(name,name)));
+    statusSelect.value=state.jiraStatus||'';
+    q('jira-filter').hidden=!jiraRows.length||state.sphere==='personal';
+    const unassigned=jiraRows.filter(row=>jiraWorkflowRole(row)==='unassigned').length;
+    q('jira-hint').hidden=!jiraRows.length||state.sphere==='personal';
+    q('jira-hint').textContent=unassigned?`У ${unassigned} задач не настроен статус. Они доступны в «Все». Настрой соответствие в «Подключения → Jira → Статусы и этапы проекта».`:'В активных — задачи к выполнению и начатые. Остальные доступны в «На проверке», «Сделано» и «Все».';
     const matching=eligible.filter(row=>matchesGoal(row)&&`${row.title} ${goalPath(goalFor(row))}`.toLocaleLowerCase('ru').includes(query));
     const counts=new Map(SPHERE_TABS.map(([id])=>[id,0]));
     for(const row of matching){counts.set('',counts.get('')+1);counts.set(bucketOf(row),counts.get(bucketOf(row))+1);}
     const byGoal=state.groupBy==='goal'&&state.filter!=='completed';
     renderPersonal(matching);
-    const visible=matching.filter(matchesSphere).map(row=>({row,section:sectionOf(row,byGoal)})).sort((a,b)=>a.section.rank-b.section.rank||a.section.name.localeCompare(b.section.name,'ru')||a.section.id.localeCompare(b.section.id)
+    const visible=matching.filter(row=>matchesSphere(row)&&(!state.jiraStatus||row.jira_status===state.jiraStatus)).map(row=>({row,section:sectionOf(row,byGoal)})).sort((a,b)=>a.section.rank-b.section.rank||a.section.name.localeCompare(b.section.name,'ru')||a.section.id.localeCompare(b.section.id)
       ||(byGoal?groupIndex(a.row,today)-groupIndex(b.row,today):0)||(Number(b.row.priority)||0)-(Number(a.row.priority)||0)||(a.row.date||'9999').localeCompare(b.row.date||'9999')||compareTaskTime(a.row,b.row)||a.row.title.localeCompare(b.row.title,'ru')||taskKey(a.row).localeCompare(taskKey(b.row)));
     shown=new Set(visible.map(({row})=>taskKey(row)));
     q('count').textContent=String(visible.length);
@@ -223,7 +234,7 @@ export function mountCalendarTasks(host, dependencies) {
     const totals=new Map();for(const {section} of visible)totals.set(section.id,(totals.get(section.id)||0)+1);
     overdue=visible.filter(({section})=>section.id==='overdue').map(({row})=>row);if(!overdue.length&&!bulk)confirming=null;
     // Active mixes several groups; the other filters name their single group unless grouped by goal.
-    const grouped=state.filter==='active'||byGoal;
+    const grouped=state.filter==='active'||state.filter==='all'||byGoal;
     list.replaceChildren();let lastGroup=null, ul;
     for(const {row,section} of visible.slice(state.page*50,(state.page+1)*50)) {
       if(section.id!==lastGroup){
@@ -232,7 +243,7 @@ export function mountCalendarTasks(host, dependencies) {
       }
       ul.append(renderRow(row,section.id,byGoal));
     }
-    if(!visible.length)list.append(node('p','ct-empty',query||state.goal?EMPTY.search:state.sphere&&counts.get('')?EMPTY.sphere:EMPTY[state.filter]||EMPTY.active));
+    if(!visible.length)list.append(node('p','ct-empty',query||state.goal||state.jiraStatus?EMPTY.search:state.filter==='review'?'На проверке задач нет.':state.filter==='active'&&jiraRows.length?'В рабочей очереди задач нет. Другие задачи доступны в «Все».':state.sphere&&counts.get('')?EMPTY.sphere:EMPTY[state.filter]||EMPTY.active));
     q('pages').hidden=visible.length<=50;q('prev').disabled=state.page===0;q('next').disabled=(state.page+1)*50>=visible.length;
     q('page').textContent=`${state.page*50+1}–${Math.min((state.page+1)*50,visible.length)} из ${visible.length}`;
     if(focusId&&!focused.isConnected)restore(focusId,focusAction);
@@ -305,11 +316,12 @@ export function mountCalendarTasks(host, dependencies) {
   }
   const disposeMenu=mountMenu?.(host,{getRecord:item=>rows.find(row=>taskKey(row)===item.dataset.contextRecord),restoreFocus:(item,trigger)=>restore(item.dataset.contextRecord,'recordMenu' in trigger.dataset?'menu':'open')});
   const choose=(key,value)=>{state[key]=value;state.page=0;confirming=null;render();};
-  host.querySelectorAll('[data-tasks-filter]').forEach(el=>el.addEventListener('click',()=>choose('filter',el.dataset.tasksFilter)));
-  host.querySelectorAll('[data-tasks-sphere]').forEach(el=>el.addEventListener('click',()=>{state.personal='';choose('sphere',el.dataset.tasksSphere);}));
+  host.querySelectorAll('[data-tasks-filter]').forEach(el=>el.addEventListener('click',()=>{state.jiraStatus='';choose('filter',el.dataset.tasksFilter);}));
+  host.querySelectorAll('[data-tasks-sphere]').forEach(el=>el.addEventListener('click',()=>{state.personal='';state.jiraStatus='';choose('sphere',el.dataset.tasksSphere);}));
   q('personal').addEventListener('click',event=>{const button=event.target.closest('[data-tasks-personal-option]');if(button){choose('personal',button.dataset.tasksPersonalOption);q('personal').querySelector(`[data-tasks-personal-option="${button.dataset.tasksPersonalOption}"]`)?.focus({preventScroll:true});}});
   host.querySelectorAll('[data-tasks-group-by]').forEach(el=>el.addEventListener('click',()=>choose('groupBy',el.dataset.tasksGroupBy)));
   search.addEventListener('input',()=>choose('search',search.value));goalFilter.addEventListener('change',()=>choose('goal',goalFilter.value));
+  q('jira-status').addEventListener('change',()=>{state.filter='all';choose('jiraStatus',q('jira-status').value);});
   q('retry').addEventListener('click',()=>void refresh());for(const [name,delta]of[['prev',-1],['next',1]])q(name).addEventListener('click',()=>{state.page+=delta;render();heading.focus();});
   const onChange=event=>{if(queued||disposed)return;queued=true;queueMicrotask(()=>{queued=false;void refresh(event.detail?.remoteSync?event.detail.canCommit:null);});};
   win.addEventListener('task-state-changed',onChange);win.addEventListener('hanni:calendar-refresh',onChange);win.addEventListener('hanni:processes-changed',onChange);win.addEventListener('focus',onChange);

@@ -1,5 +1,16 @@
 # Cicada
 
+Owner continuation, 2026-09-28: Jira project status meanings are explicitly
+configured by the owner, never inferred from Jira categories or status spelling.
+The working queue includes ready and working tasks; review, completed and other
+statuses remain accessible through filters. Already running timers stay available
+even after an external status change. Explicit Start/Finish/Send to review first
+confirms Jira, then changes only that task's local execution; a stage arrow does
+not change Jira. Processes remain optional: a project may assign a default to new
+tasks, and each task may choose another process, no process or a subset of stages.
+Existing tasks receive a project process only through an explicit bulk choice.
+Stage history and time survive changes to templates and selected stages.
+
 Текущее display name независимого продукта — `Cicada`, канонический репозиторий —
 `https://github.com/sultanjakhan/Cicada`. Остальной интерфейс остаётся на русском;
 технические идентификаторы, ключи, package/bundle IDs и лицензии не переименовывать.

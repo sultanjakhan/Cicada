@@ -1,5 +1,12 @@
 // Only titles and status names cross the Jira import boundary; credentials stay native.
+import { mountJiraWorkflowSettings } from './jira-workflow-settings.js';
 const ERRORS = {
+  jira_workflow_catalog_required: 'Сначала загрузи статусы проекта в «Подключения → Jira → Статусы и этапы проекта».',
+  jira_workflow_conflict: 'Правила проекта изменились. Обнови статусы и повтори действие.',
+  jira_workflow_mapping_invalid: 'Проверь соответствие статусов. Если состав статусов изменился, обнови их из Jira.',
+  jira_workflow_process_invalid: 'Этот процесс больше недоступен. Выбери другой процесс или «Без этапов».',
+  jira_workflow_unmapped: 'Настрой статусы проекта в «Подключения → Jira → Статусы и этапы проекта».',
+  jira_workflow_action_unavailable: 'Для этого статуса действие недоступно. Проверь статус в карточке Jira.',
   jira_token_unavailable: 'Сохранённый API-токен недоступен этой версии Cicada. Вставь новый токен и нажми «Сохранить и подключить».',
   jira_token_required: 'Введи API-токен.',
   jira_token_required_for_site: 'При смене сайта или типа токена введи API-токен заново.',
@@ -63,6 +70,7 @@ function announce(window, status) {
 export function mountJiraSettings(element, { invoke, setPending = () => {} }) {
   const window = element.ownerDocument.defaultView;
   let status = null, busy = false, disposed = false, dirty = false, failure = '', statusRevision = 0;
+  let workflowBusy = false;
   element.className = 'calendar-jira calendar-setting';
   element.innerHTML = `<div class="calendar-jira-heading"><h3>Jira</h3><button type="button" data-jira-now hidden>Обновить</button></div>
     <div class="calendar-jira-destination" data-jira-destination hidden><p><span data-jira-saved-site></span> · <span data-jira-saved-project></span></p><button type="button" data-jira-edit-destination aria-label="Изменить сайт и проект">Изменить</button></div>
@@ -89,9 +97,10 @@ export function mountJiraSettings(element, { invoke, setPending = () => {} }) {
         <p class="calendar-jira-hint">Подключай Jira только на одном компьютере — иначе переименования из Jira попадут в разбор версий.</p>
       </details>
       <div class="calendar-sync-actions"><button type="button" data-jira-save>Сохранить и подключить</button><button type="button" data-jira-disable hidden>Отключить</button></div>
-    </div></details>`;
+    </div></details><div data-jira-workflow hidden></div>`;
   const q = name => element.querySelector(`[data-jira-${name}]`);
   const fields = { site: q('site'), email: q('email'), tokenMode: q('token-mode'), token: q('token'), project: q('project') };
+  const workflow = mountJiraWorkflowSettings(q('workflow'), { invoke, errorText: jiraErrorText, setPending: value => { workflowBusy = value; setPending(busy || workflowBusy); } });
   function render() {
     if (disposed) return;
     const unsupported = status?.supported === false;
@@ -113,6 +122,7 @@ export function mountJiraSettings(element, { invoke, setPending = () => {} }) {
     q('now').disabled = busy || !status?.enabled || status.running === true;
     q('disable').hidden = !(status?.enabled || status?.tokenSaved);
     q('disable').disabled = busy || !(status?.enabled || status?.tokenSaved);
+    workflow.setConnection(status);
   }
   function revealError(code) {
     if (typeof code !== 'string') return;
@@ -141,7 +151,7 @@ export function mountJiraSettings(element, { invoke, setPending = () => {} }) {
         q('connection').querySelector('summary').focus();
       }
     } catch (cause) { if (!disposed) { failure = jiraErrorText(errorCode(cause)); revealError(errorCode(cause)); } }
-    finally { busy = false; if (!disposed) { setPending(false); render(); } }
+    finally { busy = false; if (!disposed) { setPending(workflowBusy); render(); } }
   }
   function save() {
     if (busy || disposed || status?.running) return;
@@ -171,8 +181,8 @@ export function mountJiraSettings(element, { invoke, setPending = () => {} }) {
   void Promise.resolve().then(() => invoke('jira_import_status')).then(next => { if (!disposed && !busy && statusRevision === initialRevision) { accept(next); render(); } })
     .catch(() => { if (!disposed && !busy && statusRevision === initialRevision) { failure = 'Не удалось прочитать состояние импорта из Jira.'; render(); } });
   render();
-  const dispose = () => { disposed = true; fields.token.value = ''; window.removeEventListener('hanni:jira-status', onStatus); };
-  dispose.isDirty = () => dirty;
+  const dispose = () => { disposed = true; workflow(); fields.token.value = ''; window.removeEventListener('hanni:jira-status', onStatus); };
+  dispose.isDirty = () => dirty || workflow.isDirty();
   return dispose;
 }
 

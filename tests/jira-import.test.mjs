@@ -29,7 +29,7 @@ test('the section explains the allowed fields, explicit writes and token scopes'
   assert.match(x.host.textContent, /Загружаются все задачи выбранного проекта, включая завершённые/);
   assert.match(x.host.textContent, /id\.atlassian\.com → Security → API tokens/);
   assert.match(x.host.textContent, /Подключай Jira только на одном компьютере — иначе переименования из Jira попадут в разбор версий\./);
-  assert.deepEqual([...x.host.querySelectorAll('label')].map(label => label.firstChild.textContent), ['Сайт Jira', 'Ключ проекта', 'Email', 'API-токен', 'Тип API-токена']);
+  assert.deepEqual([...x.q('connection').querySelectorAll('label')].map(label => label.firstChild.textContent), ['Сайт Jira', 'Ключ проекта', 'Email', 'API-токен', 'Тип API-токена']);
   assert.equal(x.q('token').type, 'password');
   assert.equal(x.q('connection').open, true, 'first setup shows the required fields');
   assert.equal(x.q('destination-fields').hidden, false);

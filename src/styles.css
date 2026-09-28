@@ -29,6 +29,7 @@
 @import url('./hanni/css/calendar-next-action.css');
 @import url('./hanni/css/calendar-task-details.css');
 @import url('./hanni/css/calendar-today.css');
+@import url('./hanni/css/jira-workflow.css');
 
 /* Approved Hanni mark. Today and task details share the native Calendar shell. */
 .hanni-brand { display:flex; align-items:center; justify-content:center; flex-shrink:0; padding:19px 0 10px; }

@@ -2,6 +2,7 @@ import { isInstantTask, taskTime } from './task-model.js';
 import { createRecurringStore, recurringItems, unfinishedRun, dateKey, recurringSourceId } from './calendar-recurring-store.js';
 import { readActiveBlocks } from './calendar-execution.js';
 import { readProcessState, taskStage } from './task-processes.js';
+import { jiraCanRecommend } from './jira-workflow-model.js';
 
 const deferred = new Map();
 const keyOfTask = task => `task:${task.source_type}:${String(task.source_id)}`;
@@ -96,6 +97,7 @@ export function rankNextAction({ now = new Date(), tasks = [], routines = [], ac
     const key = keyOfTask(task), active = Boolean(task.is_active || activeTaskKeys.has(key));
     const context = taskContext(task, links, goals, processes);
     if (active) { activeTasks.push({ key, type: 'task', title: safeText(task.title) || 'Задача', reason: 'Задача уже выполняется.', action: 'open', task, context }); continue; }
+    if (!jiraCanRecommend(task)) continue;
     const progress = Boolean(task.has_work || Number(task.actual_seconds) > 0 || Number(task.actual_minutes) > 0);
     const urgency = explainTask(task, instant, today);
     candidates.push({ key, type: 'task', title: safeText(task.title) || 'Задача', reason: progress ? `На паузе. ${urgency.reason}` : urgency.reason, action: context.waiting ? 'review' : isInstantTask(task) ? 'finish' : 'start', task, context, score: urgency.score + (progress ? 80 : 0) });
@@ -143,7 +145,7 @@ export function mountCalendarNextAction(element, dependencies) {
     const now = getNow();
     if (currentTaskKey && preferences.includeTasks) {
       const currentTask = data.tasks.find(task => task.source_type === 'note' && !task.completed && !task.archived && !task.readonly && (!task.status_extra || task.status_extra === 'task') && keyOfTask(task) === currentTaskKey);
-      if (currentTask) {
+      if (currentTask && (jiraCanRecommend(currentTask) || data.activeBlocks.some(block => keyOfTask(block) === currentTaskKey))) {
         const active = Boolean(currentTask.is_active || data.activeBlocks.some(block => keyOfTask(block) === currentTaskKey));
         const context = taskContext(currentTask, data.links, data.goals, data.processes);
         const urgency = explainTask(currentTask, now, data.today);

@@ -1,6 +1,7 @@
 // Existing task records; all execution actions use the shared Calendar commands.
 import { renderTaskImportance } from './task-importance.js';
 import { sphereLabel, isInstantTask, taskTime, compareTaskTime } from './task-model.js';
+import { inWorkingQueue } from './jira-workflow-model.js';
 
 const taskKey = row => `${row.source_type}:${String(row.source_id)}`;
 const localDate = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -67,6 +68,7 @@ export function mountCalendarDashboardTasks(element, dependencies) {
       const instant = isInstantTask(row), time = taskTime(row);
       const minutes = instant ? 0 : Number(row.duration_minutes || row.target_minutes);
       const parts = [];
+      if (row.jira_status) parts.push(`Jira: ${row.jira_status}`);
       if (row.date && row.date !== date) parts.push(time ? `${dateLabel(row.date)}, ${time}` : dateLabel(row.date));
       else if (time) parts.push(time);
       if (sphereLabel(row.sphere)) parts.push(sphereLabel(row.sphere));
@@ -169,7 +171,7 @@ export function mountCalendarDashboardTasks(element, dependencies) {
       const result = await invoke('get_calendar_tasks', {});
       if (disposed || request !== revision || (canCommit && !canCommit())) return;
       if (!Array.isArray(result)) throw new Error('Invalid task response');
-      const eligible = result.filter(row => row.source_type === 'note' && !row.archived && !row.completed && !row.readonly && row.status_extra === 'task');
+      const eligible = result.filter(row => row.source_type === 'note' && !row.archived && !row.completed && !row.readonly && row.status_extra === 'task' && inWorkingQueue(row));
       rows = [...new Map(eligible.map(row => [taskKey(row), row])).values()];
     } catch {
       if (disposed || request !== revision) return;
