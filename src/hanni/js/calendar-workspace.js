@@ -681,7 +681,7 @@ export async function loadCalendarWorkspace(el) {
     renderDash: (pane) => {
       pane.innerHTML = `<section class="calendar-today" aria-label="Сегодня">
         <div data-calendar-day-banner></div><div data-calendar-next-action></div>
-        <div data-calendar-in-progress></div>
+        <div data-calendar-in-progress></div><div data-calendar-jira-working></div>
       </section><div data-calendar-now-slot></div>`;
       pane.querySelector('[data-calendar-now-slot]').replaceWith(nowHost);
       nowHost.hidden = false;
@@ -691,7 +691,7 @@ export async function loadCalendarWorkspace(el) {
       });
       disposeNextAction = mountCalendarTodayAction(pane.querySelector('[data-calendar-next-action]'), {
         invoke, preferences:nextActionPreferences(), notifyChange:changed, compactRunning:true,
-        taskOptions, openRoutines:() => void openPane('routines'),
+        taskOptions, workingElement:pane.querySelector('[data-calendar-jira-working]'), openRoutines:() => void openPane('routines'),
         onCurrentTaskChange:task => {
           const key = value => value ? `task:${value.source_type}:${String(value.source_id)}` : '';
           const previousKey = key(todayTaskSelection), nextKey = key(task);

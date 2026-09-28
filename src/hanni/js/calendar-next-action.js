@@ -2,7 +2,7 @@ import { isInstantTask, taskTime } from './task-model.js';
 import { createRecurringStore, recurringItems, unfinishedRun, dateKey, recurringSourceId } from './calendar-recurring-store.js';
 import { readActiveBlocks } from './calendar-execution.js';
 import { readProcessState, taskStage } from './task-processes.js';
-import { jiraCanRecommend } from './jira-workflow-model.js';
+import { jiraCanRecommend, jiraCanStart, jiraWorkflowRole } from './jira-workflow-model.js';
 
 const deferred = new Map();
 const keyOfTask = task => `task:${task.source_type}:${String(task.source_id)}`;
@@ -146,13 +146,13 @@ export function mountCalendarNextAction(element, dependencies) {
     const now = getNow();
     if (currentTaskKey && preferences.includeTasks) {
       const currentTask = data.tasks.find(task => task.source_type === 'note' && !task.completed && !task.archived && !task.readonly && (!task.status_extra || task.status_extra === 'task') && keyOfTask(task) === currentTaskKey);
-      if (currentTask && (jiraCanRecommend(currentTask) || data.activeBlocks.some(block => keyOfTask(block) === currentTaskKey))) {
+      if (currentTask && (jiraCanStart(currentTask) || data.activeBlocks.some(block => keyOfTask(block) === currentTaskKey))) {
         const active = Boolean(currentTask.is_active || data.activeBlocks.some(block => keyOfTask(block) === currentTaskKey));
         const context = taskContext(currentTask, data.links, data.goals, data.processes);
         const urgency = explainTask(currentTask, now, data.today);
         const hasWork = Boolean(currentTask.has_work || Number(currentTask.actual_seconds) > 0 || Number(currentTask.actual_minutes) > 0);
         return { key: currentTaskKey, type: 'task', title: safeText(currentTask.title) || 'Задача',
-          reason: active ? 'Задача уже выполняется.' : hasWork ? `На паузе. ${urgency.reason}` : urgency.reason,
+          reason: active ? 'Задача уже выполняется.' : hasWork ? `На паузе. ${urgency.reason}` : jiraWorkflowRole(currentTask) === 'working' ? 'Учёт времени не запущен.' : urgency.reason,
           action: active ? 'open' : context.waiting ? 'review' : isInstantTask(currentTask) ? 'finish' : 'start', task: currentTask, context };
       }
       // A confirmed successful snapshot no longer contains the selected open task.
@@ -183,7 +183,7 @@ export function mountCalendarNextAction(element, dependencies) {
     if (signature === renderedKey) {
       const retry = element.querySelector('[data-next-action-retry]'); if (retry) retry.disabled = busy;
       element.querySelectorAll('[data-next-action-action]').forEach(button => { button.disabled = busy; });
-      dependencies.onSelectionChange?.(selected?.type === 'task' ? { key: selected.key, type: 'task', action: selected.action, task: selected.task } : null);
+      dependencies.onSelectionChange?.(preferences.enabled && selected?.type === 'task' ? { key: selected.key, type: 'task', action: selected.action, task: selected.task } : null);
       return;
     }
     const active = element.contains(document.activeElement) ? document.activeElement.dataset.nextActionAction || document.activeElement.dataset.nextActionSetting || document.activeElement.hasAttribute('data-next-action-retry') && 'retry' : focusTarget;
@@ -246,7 +246,7 @@ export function mountCalendarNextAction(element, dependencies) {
       const target = active === 'retry' ? section.querySelector('[data-next-action-retry]') : section.querySelector(`[data-next-action-action="${active}"]`) || section.querySelector(`[data-next-action-setting="${active}"]`);
       (target || section.querySelector('h2'))?.focus({ preventScroll: true });
     }
-    dependencies.onSelectionChange?.(selected?.type === 'task' ? { key: selected.key, type: 'task', action: selected.action, task: selected.task } : null);
+    dependencies.onSelectionChange?.(preferences.enabled && selected?.type === 'task' ? { key: selected.key, type: 'task', action: selected.action, task: selected.task } : null);
   }
   function button(label, action, handler) {
     const node = document.createElement('button'); node.type = 'button'; node.dataset.nextActionAction = action; node.textContent = label; node.disabled = busy; node.addEventListener('click', handler); return node;

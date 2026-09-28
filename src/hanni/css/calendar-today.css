@@ -62,3 +62,21 @@
   .calendar-main-goal.calendar-now .calendar-now__goal-top { flex-wrap:wrap; }
   .calendar-today .calendar-day-banner { flex-wrap:wrap; gap:8px; }
 }
+
+/* Jira progress stays visible even before this device starts tracking time. */
+.calendar-jira-working { margin-top:16px; padding-top:14px; border-top:1px solid var(--border-default,#ddd); }
+.calendar-jira-working[hidden], .calendar-jira-working [hidden] { display:none !important; }
+.calendar-jira-working h3 { margin:0; color:var(--text-secondary,#626262); font-size:13px; line-height:1.4; }
+.calendar-jira-working h3 span { margin-left:5px; font-weight:400; font-variant-numeric:tabular-nums; }
+.calendar-jira-working ul { margin:8px 0 0; padding:0; list-style:none; }
+.calendar-jira-working__row { display:flex; align-items:center; gap:12px; padding:10px 0; }
+.calendar-jira-working__row + .calendar-jira-working__row { border-top:1px solid var(--border-default,#ddd); }
+.calendar-jira-working__content { display:grid; gap:4px; flex:1; min-width:0; }
+.calendar-jira-working__title { padding:0; border:0; background:transparent; color:var(--text-primary,#252525); font:inherit; font-size:13px; font-weight:600; line-height:1.4; text-align:left; overflow-wrap:anywhere; cursor:pointer; }
+.calendar-jira-working__meta, .calendar-jira-working__state, .calendar-jira-working__selection { color:var(--text-secondary,#626262); font-size:12px; line-height:1.45; overflow-wrap:anywhere; }
+.calendar-jira-working__selection { margin:6px 0 0; }
+.calendar-jira-working__control { display:inline-flex; align-items:center; justify-content:center; flex:0 0 36px; width:36px; height:36px; padding:0; border:1px solid var(--border-default,#ddd); border-radius:8px; background:var(--bg-card,#fff); color:var(--text-primary,#252525); cursor:pointer; }
+.calendar-jira-working button:disabled { opacity:.5; cursor:default; }
+.calendar-jira-working button:focus-visible { outline:2px solid var(--text-primary,#252525); outline-offset:3px; }
+.calendar-jira-working__error { margin:8px 0; color:var(--text-danger,#a22); font-size:13px; line-height:1.45; }
+@media(max-width:480px) { .calendar-jira-working__control { flex-basis:40px; width:40px; height:40px; } }
