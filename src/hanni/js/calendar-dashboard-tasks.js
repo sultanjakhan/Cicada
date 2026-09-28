@@ -114,10 +114,10 @@ export function mountCalendarDashboardTasks(element, dependencies) {
     query('today-count').textContent = String(todayItems.length);
     query('all-count').textContent = String(items.length);
     todayFilter.setAttribute('aria-label', `Сегодня: ${todayItems.length} задач${current.key ? ', текущая показана выше' : ''}`);
-    toggle.setAttribute('aria-label', `Все незавершённые задачи: ${items.length}`);
+    toggle.setAttribute('aria-label', `Все задачи рабочей очереди: ${items.length}`);
     toggle.setAttribute('aria-pressed', String(expanded)); todayFilter.setAttribute('aria-pressed', String(!expanded));
     all.hidden = !expanded; today.hidden = expanded;
-    query('description').textContent = expanded ? 'Все незавершённые, включая текущую задачу.' : current.key ? 'Текущая задача показана выше; счётчик учитывает другие задачи.' : '';
+    query('description').textContent = expanded ? 'Рабочая очередь: личные задачи и доступные для запуска задачи Jira. Полный список — во вкладке «Задачи → Все».' : current.key ? 'Текущая задача показана выше; счётчик учитывает другие задачи.' : '';
     query('description').hidden = !query('description').textContent;
     const visibleItems = expanded ? items : todayItems;
     page = Math.max(0, Math.min(page, Math.ceil(visibleItems.length / PAGE_SIZE) - 1));

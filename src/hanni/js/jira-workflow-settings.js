@@ -53,7 +53,17 @@ export function mountJiraWorkflowSettings(element, { invoke, setPending = () => 
       if (disposed || own !== generation) return;
       snapshot = next; processes = templates; dirty = false; render();
       say(`Проект ${snapshot.project} · статусов: ${snapshot.statuses.length}.`);
-    } catch (cause) { if (!disposed && own === generation) say(errorText(typeof cause === 'string' ? cause : cause?.message), true); }
+    } catch (cause) {
+      if (disposed || own !== generation) return;
+      if (!snapshot) {
+        try {
+          const [saved, templates] = await Promise.all([invoke('jira_workflow_cached'), loadProcesses(invoke)]);
+          if (disposed || own !== generation) return;
+          if (saved) { snapshot = saved; processes = templates; render(); }
+        } catch { /* The original connection error remains actionable. */ }
+      }
+      if (!disposed && own === generation) say(`${snapshot ? 'Показаны сохранённые правила проекта. ' : ''}${errorText(typeof cause === 'string' ? cause : cause?.message)}`, true);
+    }
     finally { if (!disposed && own === generation) { busy = false; setPending(false); controls(); } }
   }
   q('details').addEventListener('toggle', () => { if (q('details').open && !snapshot) void load(); });

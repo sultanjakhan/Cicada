@@ -41,6 +41,9 @@ test('Tasks starts with the working queue; All and exact status filters preserve
   host.querySelector('[data-tasks-filter="all"]').click(); assert.equal(titles().length,7);
   const select=host.querySelector('[data-tasks-jira-status]'); select.value='Draft'; select.dispatchEvent(new dom.window.Event('change'));
   assert.deepEqual(titles(),['Example 6']);
+  rows[5].jira_status='Renamed status';
+  dom.window.dispatchEvent(new dom.window.Event('task-state-changed'));await settle();
+  assert.equal(select.value,'');assert.equal(titles().length,7,'an unavailable exact status must not remain as an invisible filter');
   host.querySelector('[data-tasks-filter="active"]').click(); assert.equal(titles().length,3);
 });
 

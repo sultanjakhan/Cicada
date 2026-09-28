@@ -206,6 +206,7 @@ fn expected_list_record(
         value["stage"] = json!("");
         value["waiting"] = json!(false);
         value["stage_log"] = json!([]);
+        value["stage_ids"] = Value::Null;
     }
     value
 }

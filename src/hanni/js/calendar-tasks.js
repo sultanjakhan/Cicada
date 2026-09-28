@@ -210,6 +210,7 @@ export function mountCalendarTasks(host, dependencies) {
     const query=state.search.trim().toLocaleLowerCase('ru');
     const eligible=rows.filter(row=>(state.filter==='all'||(state.filter==='completed'?closed(row):state.filter==='review'?jiraWorkflowRole(row)==='review':!closed(row)&&inWorkingQueue(row)))&&(state.filter!=='today'||row.date===today)&&(state.filter!=='undated'||!row.date));
     const jiraRows=rows.filter(isWorkflowTask), statuses=[...new Set(jiraRows.map(row=>row.jira_status).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+    if(state.jiraStatus&&!statuses.includes(state.jiraStatus)){state.jiraStatus='';state.page=0;}
     const statusSelect=q('jira-status');
     statusSelect.replaceChildren(new win.Option('Любой статус',''),...statuses.map(name=>new win.Option(name,name)));
     statusSelect.value=state.jiraStatus||'';

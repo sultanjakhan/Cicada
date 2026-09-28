@@ -10,6 +10,22 @@ const plan = (id, fields = {}) => ({ id, kind: 'action', mode: 'check', title: i
 const state = (plans = [], days = {}) => JSON.stringify({ version: 1, plans, days });
 const settle = async () => { for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve)); };
 
+test('partial execution refreshes controls and retains its warning through background refresh', async t => {
+  const x=setup(t,{tasks:[task('example')]});
+  const dispose=mountCalendarNextAction(x.host,{invoke:x.invoke,clock:now,executeTask:async()=>{
+    x.tasks=[task('example',{is_active:true,has_work:true})];
+    x.active=[{source_type:'note',source_id:'example'}];
+    throw Object.assign(new Error('Jira подтверждена, проверь таймер.'),{refreshRequired:true,jiraWorkflow:true});
+  }});
+  t.after(dispose);await settle();x.host.querySelector('[data-next-action-action="start"]').click();await settle();
+  assert.ok(x.host.querySelector('[data-next-action-action="open"]'));
+  assert.match(x.host.querySelector('[role="alert"]').textContent,/Jira подтверждена/);
+  x.dom.window.dispatchEvent(new x.dom.window.Event('task-state-changed'));await settle();
+  assert.match(x.host.querySelector('[role="alert"]').textContent,/Jira подтверждена/);
+  x.host.querySelector('[data-next-action-action="retry-action"]').click();await settle();
+  assert.equal(x.host.querySelector('[role="alert"]'),null);
+});
+
 function setup(t, { tasks = [], plans = [], days = {}, active = [], failTasks = false, failGoals = false, links = [], goals = [], processes = null } = {}) {
   const dom = new JSDOM('<main></main>'); t.after(() => dom.window.close());
   let timerCallback = null; dom.window.setInterval = callback => { timerCallback = callback; return 1; };

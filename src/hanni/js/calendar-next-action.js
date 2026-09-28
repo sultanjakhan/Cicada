@@ -129,6 +129,7 @@ export function mountCalendarNextAction(element, dependencies) {
   const clock = dependencies.clock || (() => new Date());
   const store = createRecurringStore(invoke, { now: clock });
   let preferences = normalizedPreferences(dependencies.preferences), disposed = false, revision = 0, busy = false, preferencesChangedWhileBusy = false, snapshot = null, recommendation = null, currentTaskKey = '', focusedTaskKey = '', renderedKey = '', error = '', feedback = '', lastDay = '', focusTarget = null, refreshQueued = false;
+  let actionFailure = '';
 
   element.classList.add('calendar-next-action');
   if (!dependencies.hideHeading) element.setAttribute('aria-labelledby', 'calendar-next-action-title');
@@ -178,7 +179,7 @@ export function mountCalendarNextAction(element, dependencies) {
     const hasWork = Boolean(selected?.type === 'task' && (selected.task?.has_work || Number(selected.task?.actual_seconds) > 0 || Number(selected.task?.actual_minutes) > 0));
     const compactRunning = Boolean(dependencies.compactRunning && selected?.type === 'task' && (selected.action === 'open' || hasWork) && focusedTaskKey === selected.key);
     element.dataset.running = String(!!compactRunning);
-    const signature = JSON.stringify([preferences, selected && [selected.key, selected.type, selected.title, selected.reason, selected.action, selected.context], compactRunning, Boolean(error), feedback, Boolean(snapshot), busy]);
+    const signature = JSON.stringify([preferences, selected && [selected.key, selected.type, selected.title, selected.reason, selected.action, selected.context], compactRunning, error, actionFailure, feedback, Boolean(snapshot), busy]);
     if (signature === renderedKey) {
       const retry = element.querySelector('[data-next-action-retry]'); if (retry) retry.disabled = busy;
       element.querySelectorAll('[data-next-action-action]').forEach(button => { button.disabled = busy; });
@@ -234,6 +235,10 @@ export function mountCalendarNextAction(element, dependencies) {
       const copy = document.createElement('p'); copy.textContent = 'Подходящей задачи или дела сейчас нет.'; section.append(copy);
     }
     if (feedback) { const status = document.createElement('p'); status.className = 'calendar-next-action__feedback'; status.setAttribute('role', 'status'); status.textContent = feedback; section.append(status); }
+    if (actionFailure) {
+      const alert = document.createElement('p'); alert.className = 'calendar-next-action__error'; alert.setAttribute('role', 'alert'); alert.textContent = actionFailure; section.append(alert);
+      const retry = button('Обновить состояние', 'retry-action', () => { actionFailure = ''; void refresh(); }); section.append(retry);
+    }
     if (error) { const alert = document.createElement('p'); alert.className = 'calendar-next-action__error'; alert.setAttribute('role', 'alert'); alert.textContent = snapshot ? `Не удалось обновить рекомендации. Показан последний результат. ${error}` : `Не удалось загрузить рекомендации. ${error}`; section.append(alert); const retry = button('Повторить загрузку', 'retry', () => refresh()); retry.dataset.nextActionRetry = ''; section.append(retry); }
     section.setAttribute('aria-busy', String(busy || !snapshot && !error));
     element.replaceChildren(section);
@@ -285,7 +290,7 @@ export function mountCalendarNextAction(element, dependencies) {
   async function activate(kind) {
     if (!recommendation || busy || disposed) return;
     const expected = recommendation, own = ++revision;
-    busy = true; feedback = ''; error = ''; render();
+    busy = true; feedback = ''; error = ''; actionFailure = ''; render();
     try {
       const fresh = await readSnapshot();
       if (disposed || own !== revision) return;
@@ -316,7 +321,16 @@ export function mountCalendarNextAction(element, dependencies) {
       if (disposed || own !== revision) return;
       recommendation = selection(snapshot);
     } catch (cause) {
-      if (!disposed && own === revision) error = cause?.message || String(cause);
+      if (!disposed && own === revision) {
+        if (cause?.refreshRequired) {
+          actionFailure = cause?.message || 'Не удалось подтвердить действие.';
+          notifyChange?.();
+          try {
+            const next = await readSnapshot();
+            if (!disposed && own === revision) { snapshot = next; recommendation = selection(snapshot); }
+          } catch { if (!disposed && own === revision) error = 'Не удалось проверить текущее состояние задачи.'; }
+        } else error = cause?.message || String(cause);
+      }
     } finally {
       if (!disposed && own === revision) { busy = false; render(); if (preferencesChangedWhileBusy) { preferencesChangedWhileBusy = false; void refresh(); } }
     }

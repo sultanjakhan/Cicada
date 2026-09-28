@@ -2128,8 +2128,9 @@ pub async fn jira_create_options(app: tauri::AppHandle) -> Result<Value, String>
             }
             (types, Some(prepare_create(&conn, &config)?))
         };
+        let default_process_id = workflow::default_process(&*lock(db)?, &config)?;
         serde_json::to_value(CreateOptions {
-            default_process_id: workflow::default_process(&*lock(db)?, &config)?,
+            default_process_id,
             project: config.project,
             issue_types,
             request_id,
