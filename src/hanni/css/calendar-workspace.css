@@ -1,6 +1,7 @@
 @import './calendar-context-menu.css';
 @import './calendar-planning-panels.css';
 @import './calendar-in-progress.css';
+@import './calendar-focus.css';
 /* Fixed heading/navigation; the workspace scrollbar stays at the window edge. */
 #calendar-content.calendar-workspace { --workspace-inset:24px; display:flex; flex-direction:column; min-height:0; overflow:hidden; padding:0; }
 #calendar-content.calendar-workspace > .uni-header,

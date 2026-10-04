@@ -1,0 +1,27 @@
+.calendar-focus { flex:none; margin:0 var(--workspace-inset) 12px; }
+.calendar-focus__tools { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:4px; color:var(--text-secondary); font-size:12px; }
+.calendar-focus__tools button { min-height:40px; padding:6px 12px; border:1px solid var(--border-default); border-radius:8px; color:var(--text-primary); background:var(--bg-card); font:inherit; font-size:13px; cursor:pointer; }
+.calendar-focus .calendar-in-progress { margin:0; }
+.calendar-focus .cip-heading,.calendar-focus .cip-footer,.calendar-focus .cip-group { display:none; }
+.calendar-focus .cip-card { padding:0; border:0; }
+.calendar-focus .cip-row { padding:4px 0; min-height:48px; grid-template-columns:40px minmax(0,1fr); }
+.calendar-focus .cip-goal,.calendar-focus .cip-actions,.calendar-focus .cip-stage-time { display:none; }
+.calendar-focus .cip-row .cip-time-meter { display:flex; gap:6px; grid-column:2; grid-row:auto; }
+.calendar-focus .cip-progress { display:none; }
+.calendar-focus .cip-time-label { color:var(--text-secondary); font-size:12px; }
+.calendar-focus .cip-content { grid-column:2; }
+.calendar-focus .cip-meta { display:flex; }
+.calendar-focus .cip-time { font-variant-numeric:tabular-nums; font-size:13px; }
+.calendar-focus__error { margin:6px 0; color:var(--color-red); font-size:13px; line-height:1.5; }
+.calendar-focus [hidden] { display:none; }
+.calendar-compact-mode #tab-bar,.calendar-compact-mode #mobile-header { display:none!important; }
+.calendar-compact-mode #content-area { margin:0; padding:0; }
+.calendar-compact-mode #calendar-content.calendar-workspace { --workspace-inset:16px; padding:12px 0; overflow:auto; height:100dvh; box-sizing:border-box; }
+.calendar-compact-mode #calendar-content > .uni-header,
+.calendar-compact-mode #calendar-content > .uni-header-actions,
+.calendar-compact-mode #calendar-content > .uni-navigation,
+.calendar-compact-mode #calendar-content > .uni-content { display:none!important; }
+.calendar-compact-mode .calendar-focus { display:block!important; margin-bottom:0; }
+.calendar-compact-mode .calendar-focus .cip-title { font-size:15px; white-space:normal; -webkit-line-clamp:2; }
+.calendar-compact-mode .calendar-focus .cip-icon { width:40px; height:40px; }
+.calendar-compact-mode .calendar-focus .cip-time { font-size:15px; }

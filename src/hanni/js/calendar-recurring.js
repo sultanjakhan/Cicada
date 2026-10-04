@@ -19,7 +19,7 @@ export function mountCalendarRecurring(element,{invoke=defaultInvoke,showComplet
   element.innerHTML=library?`<section class="calendar-recurring__card calendar-recurring__library" aria-labelledby="calendar-routines-heading">
     <header class="calendar-recurring__heading"><div><h2 id="calendar-routines-heading" data-recurring-heading>Рутины</h2><small data-recurring-count></small></div></header>
     <p data-recurring-error role="alert" hidden></p><button type="button" data-recurring-retry hidden>Повторить</button>
-    <div class="calendar-routine-controls"><input type="search" data-routine-search aria-label="Найти рутину" placeholder="Найти рутину"></div>
+    <div class="calendar-routine-controls" data-library-controls><input type="search" data-routine-search aria-label="Найти рутину" placeholder="Найти рутину"></div>
     <div class="calendar-recurring__plans" data-library-plans></div>
     <p class="calendar-recurring__empty" data-library-no-results role="status" hidden>Ничего не найдено. Попробуй другое название.</p>
   </section>`:`<section class="calendar-recurring__card" aria-labelledby="calendar-today-heading">
@@ -69,6 +69,7 @@ export function mountCalendarRecurring(element,{invoke=defaultInvoke,showComplet
       if(!state)return;
       const target=element.querySelector('[data-library-plans]');
       const search=element.querySelector('[data-routine-search]');
+      const controls=element.querySelector('[data-library-controls]');
       if(!target)return;
       const focused=document.activeElement===search;
       if(search)libraryQuery=search.value;
@@ -83,8 +84,10 @@ export function mountCalendarRecurring(element,{invoke=defaultInvoke,showComplet
         const html=`<div class="calendar-routine-library-row" data-library-id="${escaped(plan.id)}" data-library-title="${escaped(title.toLocaleLowerCase('ru'))}"><button type="button" data-recurring-edit="${escaped(plan.id)}"><strong>${escaped(plan.title)}</strong><small>${kind} · ${escaped(frequency(plan))}${plan.active?'':' · выключено'}${escaped(status)}</small></button>${runnable&&(plan.active||previous)?`<button type="button" data-library-run="${escaped(plan.id)}" data-library-date="${escaped(previous?.date||date)}" data-library-view="${finished?'true':'false'}">${previous?'Продолжить':finished?'Просмотреть':'Начать'}</button>`:''}${markButton}</div>`;
         return {id:plan.id,html};
       });
+      const hasPlans=rows.length>0;
       const count=element.querySelector('[data-recurring-count]');
-      if(count)count.textContent=`${state.plans.filter(plan=>plan.active).length} включено · ${state.plans.filter(plan=>!plan.active).length} выключено`;
+      if(count){count.textContent=hasPlans?`${state.plans.filter(plan=>plan.active).length} включено · ${state.plans.filter(plan=>!plan.active).length} выключено`:'';count.hidden=!hasPlans;}
+      if(controls)controls.hidden=!hasPlans;
       const focusBefore=document.activeElement;
       const focusedRow=focusBefore?.closest?.('[data-library-id]');
       const focusId=focusedRow?.dataset.libraryId;
@@ -102,7 +105,8 @@ export function mountCalendarRecurring(element,{invoke=defaultInvoke,showComplet
       for(const [id,prior] of libraryRows)if(!nextRows.has(id)&&prior.node.parentElement===target)prior.node.remove();
       rows.forEach((row,index)=>{const node=nextRows.get(row.id).node,current=target.children[index]||null;if(current!==node)target.insertBefore(node,current);});
       libraryRows=nextRows;
-      if(!rows.length&&!target.querySelector('.calendar-recurring__empty'))target.innerHTML='<p class="calendar-recurring__empty">Создать → Рутина</p>';
+      if(!rows.length&&!target.querySelector('.calendar-recurring__empty'))target.innerHTML='<div class="calendar-recurring__empty calendar-recurring__empty--library" data-library-empty><strong>Рутин пока нет</strong><span>Здесь будут повторяющиеся дела и ветки шагов.</span><span>Создай их через общий «Создать» → «Рутина».</span></div>';
+      if(rows.length)target.querySelector('[data-library-empty]')?.remove();
       target.querySelectorAll('[data-library-title]').forEach(row=>{row.hidden=!row.dataset.libraryTitle.includes(libraryQuery.trim().toLocaleLowerCase('ru'));});
       element.querySelector('[data-library-no-results]').hidden=!rows.length||Boolean(target.querySelector('[data-library-title]:not([hidden])'));
       if(focusId&&focusSelector&&focusBefore&&!focusBefore.isConnected){const row=libraryRows.get(focusId)?.node; (row?.querySelector(focusSelector)||row?.querySelector('[data-recurring-edit]'))?.focus({preventScroll:true});}

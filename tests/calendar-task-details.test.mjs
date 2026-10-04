@@ -56,6 +56,21 @@ test('saved manual progress notifies the parent; reads and failed saves do not',
   assert.ok(f.calls.every(([command]) => !['start_task_block', 'pause_task_block', 'set_calendar_task_stage'].includes(command)));
 });
 
+test('task total compares exact accounted time with its current estimate', async t => {
+  const f = fixture({ task: { ...record, duration_minutes: 30 }, seconds: 100 });
+  t.after(() => { f.dispose(); f.dom.window.close(); });
+  await settle();
+  assert.equal(f.window.document.querySelector('.task-details-total').textContent, 'Учтено 01:40 · Оценка 30 мин');
+  assert.equal(f.window.document.querySelector('.task-details-history').open, false);
+});
+
+test('instant task card does not present an estimate from stale duration metadata', async t => {
+  const f = fixture({ task: { ...record, task_kind: 'instant', duration_minutes: 30 }, seconds: 100 });
+  t.after(() => { f.dispose(); f.dom.window.close(); });
+  await settle();
+  assert.doesNotMatch(f.window.document.querySelector('.task-details-total').textContent, /Оценка/);
+});
+
 test('task primary action explicitly starts a timer, not an agent', async t => {
   const actions = [];
   const f = fixture({ task: { ...record, has_work: false }, seconds: 0, executeAction: async (_task, action) => { actions.push(action); } });

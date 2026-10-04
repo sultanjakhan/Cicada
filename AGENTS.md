@@ -4,6 +4,19 @@
 `https://github.com/sultanjakhan/Cicada`. Остальной интерфейс остаётся на русском;
 технические идентификаторы, ключи, package/bundle IDs и лицензии не переименовывать.
 
+## Задачи и внешние ИИ
+
+При выполнении согласованной многоэтапной работы через настроенный Cicada MCP
+используй `cicada-task-workflow`. Сначала найди соответствующую личную задачу и
+переиспользуй её точный UUID; если такой задачи нет, создай одну в пределах
+поручения. Обычный вопрос не требует новой задачи. Работай через native API с
+актуальной версией и устойчивым operation/run ID. Этап выбранного процесса,
+статус исполнения и приёмка — разные поля. Отчёт описывает только наблюдаемую
+работу; отдельный результат ждёт приёмки пользователя. Не принимай свой
+результат автоматически. При недоступном API укажи неподтверждённую запись и
+продолжай независимую работу; не пиши напрямую в рабочую БД и не создавай
+второй backlog. Переносимый MCP-пакет и подключение: [plugins/cicada-tasks](plugins/cicada-tasks/README.md).
+
 Owner release request, 2026-09-28: prepare and publish Cicada 0.4.0 from the
 accepted DEV work. The Today heading has its settings icon on the left and opens
 only next-action selection settings. General application settings remain in the

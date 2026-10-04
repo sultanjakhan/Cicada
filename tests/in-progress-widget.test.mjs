@@ -2,10 +2,84 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { mountCalendarInProgress, formatWorkTime, formatAgainstEstimate, HIDDEN_KEY } from '../src/hanni/js/calendar-in-progress.js';
+import { mountCalendarFocus, FOCUS_KEY, readWorkSelection } from '../src/hanni/js/calendar-focus.js';
 
 const settle = async () => { for (let i = 0; i < 12; i++) await new Promise(resolve => setImmediate(resolve)); };
 const TODAY = '2026-09-24', YESTERDAY = '2026-09-23';
 const routine = JSON.stringify(['plan-a', TODAY, 0]);
+
+async function focusFixture(t, data=backend()) {
+  const dom=new JSDOM('<button id="compact">Компактно</button><main></main>',{url:'https://cicada.test',pretendToBeVisual:true});
+  const native={supported:true,compact:false,failEntry:false}, doc=dom.window.document;
+  const invoke=async(name,args)=>{
+    if(name==='get_compact_window_state')return {...native};
+    if(name==='set_compact_window'){
+      if(args.compact&&native.failEntry)throw Error('Окно недоступно');
+      native.compact=args.compact;return {...native};
+    }
+    return data.invoke(name,args);
+  };
+  let dispose;
+  const remount=async()=>{dispose?.();dispose=mountCalendarFocus(doc.querySelector('main'),{invoke,now:()=>new Date(data.now),compactButton:doc.querySelector('#compact')});await settle();};
+  t.after(()=>{dispose?.();dom.window.close();});
+  await remount();
+  return {dom,doc,native,data,remount,get dispose(){return dispose;},refresh:async()=>{dom.window.dispatchEvent(new dom.window.Event('task-state-changed'));await settle();}};
+}
+
+test('focus keeps the paused task across remounts and compact failure, leaving parallel execution alone',async t=>{
+  const x=await focusFixture(t);
+  x.dispose.setSelectedTask({source_type:'note',source_id:'draft'});await settle();
+  x.doc.querySelector('main [data-cip-control="toggle"]').click();await settle();
+  assert.deepEqual(x.data.blocks.filter(b=>b.is_active).map(b=>b.id),[14]);
+  assert.deepEqual(readWorkSelection(x.dom.window.localStorage),{source_type:'note',source_id:'draft'});
+  await x.remount();
+  assert.equal(x.doc.querySelector('main .cip-row').dataset.contextRecord,'note:draft');
+  assert.equal(x.doc.querySelector('#compact').hidden,false,'Windows entry becomes visible after acknowledged capability read');
+  x.native.failEntry=true;x.doc.querySelector('#compact').click();await settle();
+  assert.equal(x.doc.documentElement.classList.contains('calendar-compact-mode'),false);
+  assert.match(x.doc.querySelector('main [role="alert"]').textContent,/Окно недоступно/);
+  x.native.failEntry=false;x.doc.querySelector('#compact').click();await settle();
+  assert.equal(x.doc.documentElement.classList.contains('calendar-compact-mode'),true);
+  await x.remount();
+  assert.equal(x.doc.querySelector('[data-focus-expand]').hidden,false);
+  x.doc.querySelector('[data-focus-expand]').click();await settle();
+  assert.equal(x.native.compact,false);
+  assert.equal(x.data.count('pause_task_block'),1);
+  assert.equal(x.data.count('start_task_block'),0);
+});
+
+test('focus follows an explicitly selected routine step, survives a previous-day pause, and clears completed work',async t=>{
+  const x=await focusFixture(t);
+  x.dispose.setSelectedTask({source_type:'note',source_id:'draft'});
+  x.dispose.setSelectedRoutine({id:'plan-a',date:TODAY});await settle();
+  assert.equal(x.doc.querySelector('main .cip-row').dataset.contextRecord,`schedule:${routine}`);
+  x.doc.querySelector('main [data-cip-control="toggle"]').click();await settle();
+  assert.equal(x.data.blocks.find(b=>b.id===11).is_active,true,'routine pause keeps the other task running');
+  x.data.blocks.find(b=>b.id===14).date=YESTERDAY;
+  await x.remount();
+  assert.equal(x.doc.querySelector('main .cip-row').dataset.contextRecord,`schedule:${routine}`);
+  const next=JSON.stringify(['plan-a',TODAY,1]);
+  x.data.schedules[0].completed=true;x.data.schedules[0].status_extra='done';
+  x.data.schedules.push({id:next,source_type:'schedule',source_id:next,title:'Зарядка · Основной шаг',date:TODAY,status_extra:'pending'});
+  x.data.blocks.push({id:99,source_type:'schedule',source_id:next,date:TODAY,start_time:'11:00:00',completion_date:TODAY,is_active:true,created_at:'0'});
+  await x.refresh();
+  assert.equal(x.doc.querySelector('main .cip-row').dataset.contextRecord,`schedule:${next}`,'the same run wins over another active task');
+  x.data.blocks=[];x.data.tasks=[];x.data.schedules=[];await x.refresh();
+  assert.equal(x.doc.querySelector('main .cip-row'),null);
+  assert.equal(x.dom.window.localStorage.getItem(FOCUS_KEY),null);
+});
+
+test('an explicit routine choice waits for its first native block instead of returning to a parallel task',async t=>{
+  const data=backend(), step=data.schedules[0], block=data.blocks.find(b=>b.id===14);
+  data.schedules=[];data.blocks=data.blocks.filter(b=>b.id!==14);
+  const x=await focusFixture(t,data);
+  x.dispose.setSelectedTask({source_type:'note',source_id:'draft'});
+  x.dispose.setSelectedRoutine({id:'plan-a',date:TODAY});await settle();
+  assert.equal(x.doc.querySelector('main .cip-row'),null);
+  data.schedules.push(step);data.blocks.push(block);await x.refresh();
+  assert.equal(x.doc.querySelector('main .cip-row').dataset.contextRecord,`schedule:${routine}`);
+  assert.equal(data.calls.some(c=>['pause_task_block','start_task_block'].includes(c.name)),false);
+});
 
 test('inline routine is excluded only from presentation while parallel task controls stay intact', async t => {
   const data=backend(), x=await mount(t,data,{activeOnly:true,hideWhenEmpty:true});

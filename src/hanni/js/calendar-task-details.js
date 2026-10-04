@@ -108,7 +108,13 @@ export function openCalendarTaskDetails(record, dependencies) {
     const start = new Date(`${block.date}T${block.start_time}`).getTime();
     return sum + (Number.isFinite(start) ? Math.max(0, Math.floor((now - start) / 1000)) : 0);
   }, 0);
-  function paintTotal() { total.textContent = timeAvailable ? `Учтено ${formatWorkSeconds(closedSeconds + activeSeconds(Date.now()))}` : 'Время недоступно'; }
+  function paintTotal() {
+    if (!timeAvailable) { total.textContent = 'Время недоступно'; return; }
+    const estimate = Number(current.duration_minutes ?? current.durationMinutes);
+    const planned = !isInstantTask(current) && Number.isFinite(estimate) && estimate > 0 ? ` · Оценка ${estimate} мин` : '';
+    total.textContent = `Учтено ${formatWorkSeconds(closedSeconds + activeSeconds(Date.now()))}${planned}`;
+    total.title = 'Общее время задачи';
+  }
   function syncClock() {
     if (clockTimer) window.clearInterval(clockTimer);
     clockTimer = timeAvailable && activeStatusKnown && activeForTask(activeBlocks).length ? window.setInterval(paintTotal, 1000) : null;
