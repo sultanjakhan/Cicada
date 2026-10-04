@@ -25,7 +25,7 @@ export async function readNativeTaskObservations(rows,invoke,{readReview=null,pr
   if(readReview&&!row.readonly){try{const review=await readReview(String(row.source_id));if(review?.taskId!==String(row.source_id)||!['awaiting_review','accepted','awaiting_dispatch'].includes(review.reviewState)||!Number.isSafeInteger(review.taskRevision)||review.taskRevision<1||!Number.isSafeInteger(review.resultVersion)||review.resultVersion<1)throw Error('Invalid review');ctx.review=review;}catch(error){
    ctx.reviewAvailable=false;
    const previous=previousContexts.get(nativeTaskKey(row))?.review;
-   const absent=(error?.status===403&&error?.code==='review_prototype_disabled')||(error?.status===404&&error?.code==='no_review_result');
+   const absent=(error?.status===403&&error?.code==='review_prototype_disabled')||(error?.status===404&&['no_review_result','shared_task_not_found'].includes(error?.code));
    ctx.review=previous||null;ctx.reviewReadError=!!previous||!absent;
   }}
   contexts.set(nativeTaskKey(row),ctx);
