@@ -111,6 +111,13 @@
   .chat-settings-tab,
   .tab-settings-tab,
   .calendar-settings-dialog button,
+  .calendar-task-details button,
+  .calendar-goal-picker button,
+  .calendar-routine-dialog button,
+  .calendar-routine-inline button,
+  [data-task-launcher] .calendar-task-overview button,
+  .calendar-native-dialog .calendar-editor-close,
+  .calendar-native-dialog .calendar-editor-feedback button,
   .calendar-settings-dialog .calendar-settings-tab,
   .calendar-settings-dialog .setting-pill,
   .calendar-record-menu button,
@@ -264,6 +271,14 @@
   text-decoration-line: underline;
 }
 
+.calendar-goal-picker [data-goal-choice][aria-current="true"] {
+  background: transparent;
+  border-color: transparent;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: var(--ui-action-underline-offset);
+}
+
 /* The workspace tabs keep their existing geometry; only the fill is removed. */
 #calendar-content .uni-tabs .uni-tab[aria-pressed="true"] {
   border: 0;
@@ -304,6 +319,7 @@
   .calendar-mvp-dialog button.cm-primary,
   .goal-popup__actions [data-goal-popup-action="task"],
   .calendar-native-dialog .calendar-editor-primary,
+  .calendar-run-primary,
   .evm-modal .evm-save-btn
 ) {
   border-color: transparent;
@@ -327,6 +343,11 @@
   .chat-settings-tab,
   .tab-settings-tab,
   .calendar-settings-dialog button,
+  .calendar-task-details button:not(.calendar-editor-close),
+  .calendar-goal-picker button:not(.calendar-editor-close),
+  .calendar-routine-dialog button:not(.calendar-editor-close),
+  .calendar-routine-inline button,
+  [data-task-launcher] .calendar-task-overview button,
   .goal-popup__actions button:not(.calendar-editor-close),
   .goal-popup__nav button,
   .goal-popup__breadcrumbs button,
