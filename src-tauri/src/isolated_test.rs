@@ -246,6 +246,7 @@ pub(crate) fn allowed(command: &str) -> bool {
             | "set_ui_state"
             | "get_goals"
             | "save_calendar_goal"
+            | "set_calendar_goal_status"
             | "delete_goal"
             | "get_calendar_task_goals"
             | "set_calendar_task_goal"

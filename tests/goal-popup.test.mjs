@@ -45,6 +45,14 @@ function backend() {
     if (command === 'get_active_block') return state.active;
     if (command === 'get_ui_state') return state.ui.get(args.key) ?? null;
     if (command === 'set_ui_state') { state.ui.set(args.key, args.value); return null; }
+    if (command === 'set_calendar_goal_status') {
+      if (state.failStatus) throw new Error(state.failStatus);
+      const goal = state.goals.find(item => item.id === args.id);
+      if ((goal.status || 'active') !== args.expectedStatus) throw new Error('goal status changed');
+      Object.assign(goal, { status: args.status });
+      if (args.achievement != null) goal.achievement = args.achievement;
+      return null;
+    }
     if (command === 'save_calendar_goal') {
       const goal = state.goals.find(item => item.id === args.id);
       if (goal) Object.assign(goal, { title: args.title, description: args.description, criteria: args.criteria, deadline: args.deadline });
@@ -86,7 +94,7 @@ test('the popup keeps every goal detail: result, criteria, progress, deadline, p
   assert.match(x.field('deadline').textContent, /1 декабря 2026/);
   assert.deepEqual([...x.field('subgoals').querySelectorAll('button')].map(button => button.textContent), ['Набрать базудо 15 октября 2026 г.']);
   assert.match(x.field('tasks').textContent, /Связано, включая подцели: 3 задачи · 1 событие/);
-  assert.deepEqual([...x.field('tasks').querySelectorAll('button span')].map(node => node.textContent), ['Лёгкая пробежка 5 км', 'Купить пульсометр'], 'open tasks of the goal and its subgoals only');
+  assert.deepEqual([...x.field('tasks').querySelectorAll('button span')].map(node => node.textContent), ['Лёгкая пробежка 5 км', 'Купить пульсометр', 'Старая тренировка'], 'linked tasks of the goal and its subgoals only');
   const development = x.modal.querySelector('[data-goal-development]');
   assert.equal(development.hidden, false);
   assert.equal(development.querySelectorAll('.dev-stage').length, 2);
@@ -95,7 +103,7 @@ test('the popup keeps every goal detail: result, criteria, progress, deadline, p
   development.querySelector('[data-dev-stage-clear]').click(); await settle();
   assert.equal(development.querySelectorAll('[data-dev-skill]').length, 2);
   assert.equal(development.querySelector('h2'), null, 'the popup header already names the goal');
-  assert.equal(data.count('set_ui_state'), 1, 'only the explicit stage filter change wrote');
+  assert.equal(data.count('set_ui_state'), 0, 'showing all stages is local');
   assert.equal(x.action('select').hidden, false); assert.equal(x.action('task').hidden, false); assert.equal(x.action('subgoal').hidden, false);
 });
 
@@ -109,7 +117,7 @@ test('leaving actions close the popup first and hand back the original focus tar
   x.action('task').click(); await settle();
   assert.equal(x.modal.isConnected, false);
   assert.deepEqual({ ...x.events.tasks[0].goal }, { goalId: 'g1', title: 'Пробежать полумарафон', path: 'Карьера аналитика → Пробежать полумарафон' });
-  x.events.tasks[0].restore(); assert.equal(x.events.restored, 1);
+  x.events.tasks[0].restore(); assert.equal(x.events.restored, 0); assert.equal(x.events.goals.at(-1).id, 'g1', 'task closure returns to the goal');
   x = await open(t, data, 'g1', { primaryGoalId: 'g0' });
   x.field('tasks').querySelector('button').click(); await settle();
   assert.equal(x.events.opened[0].row.source_id, 't1'); assert.equal(x.modal.isConnected, false);
@@ -164,7 +172,7 @@ test('the main goal needs no «Сделать главной», a daily norm has
   x.popup.close();
   data.active = { id: 1, source_type: 'note', source_id: 't1' };
   x = await open(t, data, 'g2', { primaryGoalId: 'g0' });
-  assert.equal(x.action('select').disabled, true, 'a running task blocks changing the main goal');
+  assert.equal(x.action('select').disabled, false, 'goal context is independent of running work');
   assert.match(x.field('tasks').textContent, /Купить пульсометр/);
 });
 
@@ -194,4 +202,38 @@ test('long Unicode goal context remains complete and keyboard-focusable without 
   const x=await open(t,data,'g1'),context=x.modal.querySelector('.calendar-editor-header > div');
   assert.equal(x.modal.querySelector('h2').textContent,title);assert.equal(context.tabIndex,0);assert.equal(context.getAttribute('aria-labelledby'),x.modal.getAttribute('aria-labelledby'));
   const before=data.count('set_ui_state');context.focus();assert.equal(document.activeElement,context);assert.equal(data.count('set_ui_state'),before);
+});
+
+test('goal completion keeps a failed result draft, retries explicitly, shows evidence and can reopen', async t => {
+  const data = backend(), x = await open(t, data, 'g1');
+  x.action('complete').click(); await settle();
+  const editor = document.querySelector('dialog:last-of-type');
+  assert.match(editor.textContent, /Остались открытые задачи: 2; подцели в работе: 1/);
+  const result = editor.querySelector('[name=achievement]'); result.value = 'Финиш проверен';
+  data.failStatus = 'offline';
+  editor.querySelector('form').dispatchEvent(new window.Event('submit', { bubbles:true, cancelable:true })); await settle();
+  assert.equal(editor.open, true); assert.equal(result.value, 'Финиш проверен');
+  assert.equal(data.goals[1].status, undefined); assert.match(editor.textContent, /offline/);
+  data.failStatus = null;
+  editor.querySelector('form').dispatchEvent(new window.Event('submit', { bubbles:true, cancelable:true })); await settle();
+  assert.equal(editor.isConnected, false); assert.equal(data.goals[1].status, 'achieved');
+  assert.equal(x.action('complete').textContent, 'Вернуть в работу'); assert.equal(x.action('select').hidden, true);
+  assert.match(x.field('achievement').textContent, /Финиш проверен/);
+  assert.equal(data.tasks[0].completed, false); assert.equal(data.goals[2].parent_goal_id, 'g1');
+  assert.equal(data.count('start_task_block') + data.count('finish_task_block') + data.count('pause_task_block'), 0);
+  x.action('complete').click(); await settle();
+  document.querySelector('dialog:last-of-type form').dispatchEvent(new window.Event('submit', { bubbles:true, cancelable:true })); await settle();
+  assert.equal(data.goals[1].status, 'active');
+  assert.match(x.field('achievement').textContent, /Последний сохранённый результат/);
+});
+
+test('linked skill task opens the existing task and restores its goal after closing', async t => {
+  const data = backend(); const ext = JSON.parse(data.ui.get('calendar_development_v1'));
+  ext.goals.g1.skills[0].taskIds = ['t1', 'missing']; data.ui.set('calendar_development_v1', JSON.stringify(ext));
+  const x = await open(t, data, 'g1');
+  const link = x.modal.querySelector('[data-dev-task-link=t1]'); assert.ok(link);
+  assert.equal(x.modal.querySelector('[data-dev-task-link=missing]'), null);
+  link.click(); await settle();
+  assert.equal(x.events.opened[0].row.source_id, 't1');
+  x.events.opened[0].restore(); assert.equal(x.events.goals.at(-1).id, 'g1');
 });

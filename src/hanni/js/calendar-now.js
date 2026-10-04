@@ -456,7 +456,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     ui['goal-hint'].textContent = !snapshot || !saved.goalId ? '' : goal?.status === 'achieved' ? 'Выбери другую цель, чтобы продолжить.' : goal ? '' : 'Выбери другую цель или сохрани новую.';
     ui['goal-hint'].hidden = !ui['goal-hint'].textContent;
     const next = goal && snapshot ? nextGoalTask() : null, canOpenNext = !!next && !!dependencies.openTaskDetails;
-    ui['goal-next'].hidden = !goal || !snapshot;
+    ui['goal-next'].hidden = !goal || !snapshot || goal.status === 'achieved';
     ui['goal-next'].classList.toggle('is-empty', !next);
     actions['goal-next-task'].hidden = !canOpenNext;
     actions['goal-next-task'].disabled = busy || blockingRead || !!failure;
@@ -591,7 +591,7 @@ export function mountCalendarNow(element, dependencies = {}) {
       const task = await resolveTask(active, planned, state);
       // A task that keeps running beside the newest one is not something to return to.
       if(state.execution && keyOf(state.execution.task)!==keyOf(task) && !runningKeys.has(keyOf(state.execution.task)))state.returnTo=taskOf(state.execution.task);
-      state.execution = { blockId: Number(active.id), date: active.date, task };
+      state.execution = { blockId: Number(active.id), date: active.date, task }; state.completed = null;
       state.observedBlockId=Number(active.id);
     } else if (state.execution) {
       const block = blocks.find(item => Number(item.id) === state.execution.blockId);

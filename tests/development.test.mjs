@@ -137,6 +137,15 @@ test('editing one skill merges an independent remote skill change in the same go
 
 const glanceText = host => ({ stage: host.querySelector('[data-glance-stage]')?.textContent.trim(), progress: host.querySelector('[data-glance-progress]')?.getAttribute('aria-label') || null, count: host.querySelector('.calendar-goal-glance__count')?.textContent || null });
 
+test('development changes preserve lifecycle metadata; numeric result has its own scope', () => {
+  const state = normalizeDevelopmentState({version:1,goals:{g:{goalStatus:'achieved',achievedAt:'2026-10-04T12:00:00Z',achievement:'Kept',numericProgress:false,skills:[{id:'s',title:'Skill',topic:'Topic',evidence:'Confirmed'}],stages:[{id:'stage',title:'Stage',skillIds:['s']}],activeStageId:'stage'}}});
+  assert.equal(state.goals.g.goalStatus,'achieved'); assert.equal(state.goals.g.achievement,'Kept'); assert.equal(state.goals.g.numericProgress,false);
+  const goal={id:'g',goal_kind:'goal',target_value:1,current_value:0,unit:'',numeric_progress:true};
+  assert.equal(goalNumericProgress(goal).percent,0,'an explicit binary measurable result starts at zero');
+  assert.equal(goalGlance(state,goal).progress.scope,'numeric','a skill confirmation does not replace result progress');
+  assert.equal(goalNumericProgress({...goal,current_value:1,numeric_progress:false}),null,'turning measurement off preserves stored values without showing a bar');
+});
+
 test('glance shows the active stage with its own skill progress and falls back to the whole goal', async t => {
   const host=document.createElement('div');document.body.append(host);
   let stored=JSON.stringify({version:1,goals:{g:{skills:[{id:'sql',title:'JOIN',topic:'SQL',evidence:'checked'},{id:'api',title:'Contract',topic:'API'}],stages:[{id:'s',title:'SQL <b>',skillIds:['sql'],focusId:'sql'}],activeStageId:'s',focusId:'api'}}}),writes=0;
@@ -209,7 +218,7 @@ test('embedded development keeps stages, skills and filters but leaves the title
   assert.equal(host.querySelector('h2'),null);
   assert.equal(host.querySelector('.calendar-development-intro'),null);
   assert.doesNotMatch(host.textContent,/Скрытое|Скрытый/);
-  assert.equal(host.querySelector('.dev-title').textContent,'Развитие цели');
+  assert.equal(host.querySelector('.dev-title').textContent,'План цели');
   assert.equal(host.querySelectorAll('[data-dev-skill]').length,1,'the active stage still filters the skills');
   assert.ok(host.querySelector('[data-dev-stage-clear]'));
   assert.ok(host.querySelector('[data-dev-stage-add]'));

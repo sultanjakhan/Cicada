@@ -1163,8 +1163,11 @@ pub fn get_goals(
     state: State<'_, AppState>,
 ) -> Result<Vec<Value>, String> {
     let conn = lock(&state)?;
-    let mut s=conn.prepare("SELECT id,title,target_value,current_value,unit,deadline,goal_kind,description,criteria,parent_goal_id FROM calendar_goals ORDER BY created_at").map_err(|e|fail(e.to_string()))?;
-    let rows=s.query_map([],|r|Ok(json!({"id":r.get::<_,String>(0)?,"title":r.get::<_,String>(1)?,"target_value":r.get::<_,f64>(2)?,"current_value":r.get::<_,Option<f64>>(3)?,"unit":r.get::<_,String>(4)?,"deadline":r.get::<_,Option<String>>(5)?,"goal_kind":r.get::<_,String>(6)?,"description":r.get::<_,String>(7)?,"criteria":r.get::<_,String>(8)?,"parent_goal_id":r.get::<_,Option<String>>(9)?,"status":"active"}))).map_err(|e|fail(e.to_string()))?.collect::<Result<Vec<_>,_>>().map_err(|e|fail(e.to_string()))?;
+    let loaded_metadata = crate::calendar_goal_lifecycle::read(&conn);
+    let metadata_error = loaded_metadata.is_err();
+    let metadata = loaded_metadata.map(|(_, value)| value).unwrap_or_else(|_| json!({"goals":{}}));
+    let mut s=conn.prepare("SELECT id,title,target_value,current_value,unit,deadline,goal_kind,description,criteria,parent_goal_id,updated_at FROM calendar_goals ORDER BY created_at").map_err(|e|fail(e.to_string()))?;
+    let rows=s.query_map([],|r|{let id=r.get::<_,String>(0)?;let meta=&metadata["goals"][&id];Ok(json!({"id":id,"title":r.get::<_,String>(1)?,"target_value":r.get::<_,f64>(2)?,"current_value":r.get::<_,Option<f64>>(3)?,"unit":r.get::<_,String>(4)?,"deadline":r.get::<_,Option<String>>(5)?,"goal_kind":r.get::<_,String>(6)?,"description":r.get::<_,String>(7)?,"criteria":r.get::<_,String>(8)?,"parent_goal_id":r.get::<_,Option<String>>(9)?,"status":if metadata_error { "unknown" } else { meta["goalStatus"].as_str().unwrap_or("active") },"goal_metadata_error":metadata_error,"achieved_at":meta["achievedAt"],"achievement":meta["achievement"].as_str().unwrap_or(""),"numeric_progress":meta["numericProgress"],"updated_at":r.get::<_,String>(10)?}))}).map_err(|e|fail(e.to_string()))?.collect::<Result<Vec<_>,_>>().map_err(|e|fail(e.to_string()))?;
     drop(s);
     Ok(rows)
 }
@@ -1181,6 +1184,7 @@ pub fn save_calendar_goal(
     parent_goal_id: Option<String>,
     clear_parent: bool,
     current_value: Option<f64>,
+    numeric_progress: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     date(&deadline)?;
@@ -1250,6 +1254,7 @@ pub fn save_calendar_goal(
     } else {
         transaction.execute("INSERT INTO calendar_goals(id,title,target_value,current_value,unit,deadline,goal_kind,description,criteria,parent_goal_id,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?11)",params![&id,title.trim(),target_value,current_value,unit,deadline,goal_kind,description,criteria,effective_parent,n]).map_err(|e|fail(e.to_string()))?;
     }
+    crate::calendar_goal_lifecycle::save_numeric(&transaction, &id, numeric_progress)?;
     transaction.commit().map_err(|e| fail(e.to_string()))?;
     Ok(id)
 }

@@ -20,6 +20,7 @@ mod update_background;
 mod update_macos;
 mod update_journal;
 mod calendar_compat;
+mod calendar_goal_lifecycle;
 mod data_sources;
 mod isolated_test;
 mod task_attributes;
@@ -765,6 +766,7 @@ pub fn run() {
             external_url::open_url,
             calendar_compat::get_goals,
             calendar_compat::save_calendar_goal,
+            calendar_goal_lifecycle::set_calendar_goal_status,
             calendar_compat::delete_goal,
             calendar_compat::get_calendar_task_goals,
             calendar_compat::set_calendar_task_goal,

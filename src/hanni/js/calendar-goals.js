@@ -231,6 +231,7 @@ export async function mountCalendarGoals(element, dependencies = {}) {
         const goal = row.goal || row, depth = row.depth || 0, id = String(goal.id);
         if (row.ancestorIds?.some(ancestor => collapsedGoalIds.has(ancestor))) return;
         const selected = goal.goal_kind === 'goal' && id === selectedId, achieved = goal.status === 'achieved', meta = rowMeta(goal, id);
+        if (row.children?.length) meta.push(`Подцели: ${row.children.length}`);
         const description = String(goal.description || '').split('\n').find(line => line.trim())?.trim() || '';
         const card = document.createElement('article');
         card.className = `cp-goal-row${selected ? ' is-primary' : ''}${depth ? ' is-subgoal' : ''}${achieved ? ' is-achieved' : ''}`; card.style.setProperty('--goal-depth', String(depth));
@@ -272,7 +273,7 @@ export async function mountCalendarGoals(element, dependencies = {}) {
       const saved = raw ? JSON.parse(raw) : null;
       if (saved && saved.version !== 1) throw new Error('Unsupported calendar state');
       goals = loadedGoals; goalsLoaded = true; selectedId = saved?.goalId == null ? null : String(saved.goalId); active = block; development = readDevelopmentState(developmentRaw);
-      renderCards(); focusSelector && list.querySelector(focusSelector)?.focus(); message.textContent = active ? 'Задача сейчас выполняется. Главную цель можно сменить.' : success;
+      renderCards(); focusSelector && list.querySelector(focusSelector)?.focus(); message.textContent = goals.some(goal => goal.goal_metadata_error) ? 'Состояние целей и этапы не удалось прочитать. Сами цели доступны.' : active ? 'Задача сейчас выполняется. Главную цель можно сменить.' : success;
       wishes?.render();
     } catch {
       if (disposed || rev !== revision || (canCommit && !canCommit())) return;

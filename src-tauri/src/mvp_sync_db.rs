@@ -239,7 +239,7 @@ fn record_local(
         None
     };
     let record = Record {
-        v: if recurring_record_needs_v2(kind, &keys, &value, deleted, prior_record.as_ref()) {
+        v: if recurring_record_needs_v2(kind, &keys, &value, deleted, prior_record.as_ref()) || goal_metadata_needs_v2(kind, &keys, &value, prior_record.as_ref()) {
             2
         } else {
             1
@@ -272,6 +272,15 @@ fn recurring_identity(keys: &[Value]) -> bool {
         }
         _ => false,
     }
+}
+
+fn goal_metadata_identity(keys: &[Value]) -> bool {
+    matches!(keys, [name, goal, field] if name == "calendar_development_v1" && goal.as_str().is_some_and(|id| !id.is_empty()) && field == "meta")
+}
+
+fn goal_metadata_needs_v2(kind: &str, keys: &[Value], value: &Value, prior: Option<&Record>) -> bool {
+    kind == "ui" && goal_metadata_identity(keys) && (prior.is_some_and(|row| row.v == 2)
+        || value.get("goalStatus").is_some() || value.get("numericProgress").is_some())
 }
 
 fn graph_payload(keys: &[Value], value: &Value, deleted: bool) -> bool {
@@ -351,7 +360,7 @@ fn decoded(fields: &Map<String, Value>) -> Result<(String, Record, String, Strin
         serde_json::from_str(get("data")?).map_err(|_| "content_sync_unknown_schema")?;
     let id = get("id")?.to_owned();
     let supported_version = record.v == 1
-        || (record.v == 2 && record.kind == "ui" && recurring_identity(&record.key));
+        || (record.v == 2 && record.kind == "ui" && (recurring_identity(&record.key) || goal_metadata_identity(&record.key)));
     if !supported_version
         || id != key(&record.kind, &record.key)
         || record.key.len() > 8
@@ -547,7 +556,7 @@ pub(crate) fn apply_record(conn: &Connection, fields: &Map<String, Value>) -> Re
         let version_downgrade = record.kind == "ui"
             && record.v == 1
             && local.v == 2
-            && recurring_identity(&record.key);
+            && (recurring_identity(&record.key) || goal_metadata_identity(&record.key));
         if (stamp.as_str(), writer.as_str()) == (local_stamp.as_str(), local_writer.as_str()) {
             if different {
                 return Err("content_sync_version_conflict".into());
@@ -975,7 +984,10 @@ fn validate_ui_record(record: &Record) -> Result<(), String> {
     let valid = match keys.as_slice() {
         ["calendar_now_v1"] => !record.deleted && record.value.is_object(),
         ["calendar_development_v1", goal, "meta"] => {
-            !goal.is_empty() && (record.deleted || record.value.is_object())
+            !goal.is_empty() && (record.deleted || (record.value.is_object()
+                && record.value.get("goalStatus").is_none_or(|status| matches!(status.as_str(), Some("active" | "achieved")))
+                && record.value.get("numericProgress").is_none_or(Value::is_boolean)
+                && record.value.get("achievement").is_none_or(|result| result.as_str().is_some_and(|text| text.chars().count() <= 2000))))
         }
         ["calendar_development_v1", goal, field, id] => {
             !goal.is_empty()

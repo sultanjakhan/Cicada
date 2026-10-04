@@ -38,7 +38,7 @@ export function normalizeDevelopmentState(raw) {
       const focusId = skillIds.includes(String(stage.focusId || '')) ? String(stage.focusId) : null;
       return [{ id, title: title.slice(0, 160), outcome: text(stage.outcome).slice(0, 900), deadline: text(stage.deadline), skillIds, focusId, status: stage.status === 'completed' ? 'completed' : 'active' }];
     }) : [];
-    goals[goalId] = { skills, stages, activeStageId: stages.some(stage => stage.id === String(value.activeStageId || '')) ? String(value.activeStageId) : null, focusId: ids.has(String(value.focusId || '')) ? String(value.focusId) : null };
+    goals[goalId] = { ...value, skills, stages, activeStageId: stages.some(stage => stage.id === String(value.activeStageId || '')) ? String(value.activeStageId) : null, focusId: ids.has(String(value.focusId || '')) ? String(value.focusId) : null };
   }
   return { version: VERSION, goals };
 }
@@ -67,7 +67,7 @@ export const formatNumber = value => Number.isFinite(Number(value)) ? new Intl.N
 export function goalNumericProgress(goal) {
   if (!goal || goal.goal_kind !== 'goal') return null;
   const target = Number(goal.target_value), current = Number(goal.current_value);
-  const measurable = !!String(goal.unit || '').trim() || (Number.isFinite(target) && target !== 1) || (goal.current_value != null && Number.isFinite(current) && current > 0);
+  const measurable = goal.numeric_progress ?? (!!String(goal.unit || '').trim() || (Number.isFinite(target) && target !== 1) || (goal.current_value != null && Number.isFinite(current) && current > 0));
   if (!measurable || !Number.isFinite(target) || target <= 0) return null;
   const value = goal.current_value == null || !Number.isFinite(current) ? 0 : current;
   const unit = String(goal.unit || '').trim();
@@ -76,15 +76,15 @@ export function goalNumericProgress(goal) {
 }
 
 /**
- * Current stage and the most specific honest progress for a goal glance:
- * skills of the active stage, else skills of the whole goal, else a real
- * current/target value. No data means no progress (never an invented 0%).
+ * A measurable result comes first. Otherwise show explicitly labelled skill
+ * confirmations of the current stage or the whole goal, never task completion.
+ * No data means no progress (never an invented 0%).
  */
 export function goalGlance(state, goal) {
   const ext = developmentOf(state, goal?.id);
   const stage = activeStageOf(state, goal?.id);
-  let progress = null;
-  if (stage) {
+  let progress = goalNumericProgress(goal);
+  if (!progress && stage) {
     const value = stageProgress(stage, ext.skills);
     if (value.total) progress = { ...value, scope: 'stage', label: `${value.done} из ${value.total} навыков этапа подтверждено` };
   }
@@ -92,6 +92,5 @@ export function goalGlance(state, goal) {
     const done = ext.skills.filter(skillConfirmed).length;
     progress = { done, total: ext.skills.length, percent: percentOf(done, ext.skills.length), scope: 'goal', label: `${done} из ${ext.skills.length} навыков цели подтверждено` };
   }
-  if (!progress) progress = goalNumericProgress(goal);
   return { stage, hasStages: ext.stages.length > 0, progress, skills: ext.skills.length };
 }

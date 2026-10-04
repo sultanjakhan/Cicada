@@ -279,7 +279,7 @@ test('goal rows show title, one-line description, current stage and deadline; th
   assert.equal(row('g1').querySelector('.cp-goal-row__badge').textContent, 'Главная');
   assert.equal(row('g3').querySelector('.cp-goal-row__badge'), null);
   assert.equal(row('g1').querySelector('.cp-goal-row__desc').textContent, 'Уверенно описывать требования', 'only the first line of the description');
-  assert.equal(row('g1').querySelector('.cp-goal-row__meta').textContent, 'Этап: Основы требований · до 1 декабря 2026 г.');
+  assert.equal(row('g1').querySelector('.cp-goal-row__meta').textContent, 'Этап: Основы требований · до 1 декабря 2026 г. · Подцели: 1');
   assert.match(row('g3').querySelector('.cp-goal-row__meta').textContent, /^Этап не выбран · 12 из 21 км$/);
   assert.equal(row('g2').querySelector('.cp-goal-row__meta'), null, 'a goal without stages, value or deadline has no meta line');
   assert.equal(row('g2').style.getPropertyValue('--goal-depth'), '1');
