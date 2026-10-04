@@ -26,6 +26,10 @@
 .calendar-routine-controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
 .calendar-routine-controls input { flex:1; min-width:140px; }
 .calendar-recurring--library .calendar-routine-controls input[type=search] { box-sizing:border-box; width:100%; min-height:40px; padding:8px 10px; border:1px solid var(--border-default,#ddd); border-radius:8px; background:var(--bg-card,#fff); color:inherit; }
+.calendar-recurring--library [data-library-controls][hidden], .calendar-recurring--library [data-recurring-count][hidden] { display:none; }
+.calendar-recurring__empty--library { display:grid; gap:8px; padding:28px 4px 12px; color:var(--text-secondary,#666); }
+.calendar-recurring__empty--library strong { color:var(--text-primary,#242424); font-size:15px; }
+.calendar-recurring__empty--library span { max-width:48ch; line-height:1.5; }
 .calendar-routine-controls button, .calendar-routine-library-row > button { min-height:44px; }
 .calendar-routine-steps { margin:0 0 16px; padding-left:24px; }
 .calendar-routine-steps li { padding:8px 0 8px 4px; }
