@@ -21,6 +21,7 @@ mod update_macos;
 mod update_journal;
 mod calendar_compat;
 mod agent_access;
+mod agent_history;
 mod shared_tasks;
 #[cfg(windows)]
 mod agent_pipe;
