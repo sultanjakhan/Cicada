@@ -36,7 +36,7 @@ export function openCalendarTaskDetails(record, dependencies) {
 
   const window = document.defaultView;
   let current = { ...record }, processes = [], goals = [], activeBlocks = [], closedSeconds = 0;
-  let stageState = null, historyStop = null, workflowStop = null, clockTimer = null, disposed = false, pending = false, loadFailed = false, activeStatusKnown = false, timeAvailable = false, loadRevision = 0;
+  let stageState = null, historyStop = null, workflowStop = null, clockTimer = null, disposed = false, pending = false, loadFailed = false, activeStatusKnown = false, timeAvailable = false, loadRevision = 0, editHandoff = null;
   const live = () => !disposed && api.modal.isConnected && isCurrent();
   const api = createCalendarDialog({
     document, title: current.title, hint: 'Задача', returnFocus, isCurrent,
@@ -231,9 +231,29 @@ export function openCalendarTaskDetails(record, dependencies) {
   });
 
   edit.addEventListener('click', () => {
-    if (pending || !live()) return;
+    if (pending || editHandoff || !live()) return;
     const latest = { ...current };
-    void Promise.resolve(api.close({ restoreFocus: false })).then(() => { if (!api.modal.isConnected) onEdit?.(latest, returnFocus); });
+    const intent = {
+      cancel() {
+        if (editHandoff !== intent) return;
+        editHandoff = null;
+        api.modal.removeEventListener('close', openEditor);
+        if (live()) edit.disabled = pending || loadFailed || api.pending;
+      },
+    };
+    // Native close is deferred. Keep one intent until its event or cancellation.
+    const openEditor = () => {
+      if (editHandoff !== intent) return;
+      intent.cancel();
+      if (!api.modal.isConnected && isCurrent()) onEdit?.(latest, returnFocus);
+    };
+    editHandoff = intent;
+    edit.disabled = true;
+    api.modal.addEventListener('close', openEditor, { once: true });
+    void Promise.resolve(api.close({ restoreFocus: false })).then(() => {
+      // A rejected draft close must permit a fresh explicit Edit, not a later close.
+      if (api.modal.open) intent.cancel();
+    }, () => intent.cancel());
   });
 
   execute.addEventListener('click', async () => {
@@ -284,7 +304,7 @@ export function openCalendarTaskDetails(record, dependencies) {
 
   api.open(stageRow.hidden ? execute : stageSelect);
   void loadData();
-  const dispose = () => { if (!disposed) api.dispose(); };
+  const dispose = () => { editHandoff?.cancel(); if (!disposed) api.dispose(); };
   dispose.modal = modal;
   return dispose;
 }

@@ -128,6 +128,72 @@ test('start action is single-flight and does not implicitly pause another task',
   assert.equal(f.calls.some(([command]) => command === 'pause_task_block'), false);
 });
 
+test('edit handoff is single-flight while the details card closes', async t => {
+  const edited = [];
+  const f = fixture({ onEdit: (task) => edited.push(task) });
+  t.after(() => { f.dispose(); f.dom.window.close(); });
+  await settle();
+  const edit = f.window.document.querySelector('.task-details-edit');
+  edit.click(); edit.click();
+  await settle();
+  assert.equal(edited.length, 1);
+});
+
+test('repeated edit before deferred native close hands off exactly once', async t => {
+  const edited = [];
+  const f = fixture({ onEdit: (task) => edited.push(task) });
+  t.after(() => { f.dispose(); f.dom.window.close(); });
+  await settle();
+  const modal = f.window.document.querySelector('dialog');
+  let deliverClose;
+  modal.close = function () { this.open = false; deliverClose = () => this.dispatchEvent(new f.window.Event('close')); };
+  const edit = modal.querySelector('.task-details-edit');
+  edit.click(); edit.click();
+  await settle();
+  assert.equal(edited.length, 0);
+  deliverClose();
+  await settle();
+  assert.equal(edited.length, 1);
+});
+
+test('edit handoff can be retried after a dirty workflow refuses close', async t => {
+  const edited = [];
+  const f = fixture({ onEdit: (task) => edited.push(task) });
+  t.after(() => { f.dispose(); f.dom.window.close(); });
+  await settle();
+  const modal = f.window.document.querySelector('dialog');
+  const panel = modal.querySelector('.task-workflow');
+  panel.open = true;
+  const step = panel.querySelector('input');
+  step.value = 'Unsubmitted step';
+  step.dispatchEvent(new f.window.Event('input', { bubbles: true }));
+  modal.querySelector('.task-details-edit').click();
+  await settle();
+  assert.equal(edited.length, 0);
+  assert.equal(modal.isConnected, true);
+  assert.match(modal.querySelector('[data-dialog-error]').textContent, /Сохрани шаг или результат/);
+  [...panel.querySelectorAll('button')].find(button => button.textContent === 'Отменить ввод').click();
+  modal.querySelector('.task-details-edit').click();
+  await settle();
+  assert.equal(edited.length, 1);
+});
+
+test('disposing while edit awaits native close cancels the handoff', async t => {
+  const edited = [];
+  const f = fixture({ onEdit: (task) => edited.push(task) });
+  t.after(() => { f.dom.window.close(); });
+  await settle();
+  const modal = f.window.document.querySelector('dialog');
+  let deliverClose;
+  modal.close = function () { this.open = false; deliverClose = () => this.dispatchEvent(new f.window.Event('close')); };
+  modal.querySelector('.task-details-edit').click();
+  await settle();
+  f.dispose();
+  deliverClose();
+  await settle();
+  assert.equal(edited.length, 0);
+});
+
 test('disposing while the initial read is pending makes its late result inert', async t => {
   let release;
   const pendingRead = new Promise(resolve => { release = resolve; });
