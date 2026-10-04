@@ -97,6 +97,29 @@ test('task card flow adds a step, shows progress, saves result and restores afte
   dispose(); dom.window.close();
 });
 
+test('result review stays visible while manual steps remain collapsed', async () => {
+  const db = backend(), dom = new JSDOM('<main></main>');
+  const host = dom.window.document.querySelector('main');
+  const content = 'Длинный результат Жұмыс 🚀 ' + '界'.repeat(1200);
+  const review = {
+    taskId: 'synthetic-task', drafts: new Map(), operationId: () => 'review-op',
+    adapter: {
+      async read(taskId) { return { taskId, taskRevision: 3, resultVersion: 1, reviewState: 'awaiting_review', content, history: [] }; },
+      async submit() { throw Error('No decision in visibility test'); },
+    },
+  };
+  const dispose = mountTaskWorkflow(host, { record: task, invoke: db.invoke, review });
+  await settle();
+  const manual = host.querySelector('details.task-workflow');
+  const result = host.querySelector('section.task-result-review');
+  assert.ok(result, 'bound review must have its own visible section');
+  assert.equal(manual.open, false, 'manual steps must remain collapsed');
+  assert.ok(result.compareDocumentPosition(manual) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING, 'review must precede manual disclosure');
+  assert.match(result.textContent, /Ожидает решения/);
+  assert.equal(result.querySelector('pre').textContent, content);
+  dispose(); dom.window.close();
+});
+
 test('failed UI write retains draft and reports unconfirmed state', async () => {
   const db = backend(), dom = new JSDOM('<main></main>');
   const host = dom.window.document.querySelector('main');

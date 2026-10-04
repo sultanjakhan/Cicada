@@ -57,6 +57,13 @@
 .calendar-task-details .task-workflow input, .calendar-task-details .task-workflow textarea, .calendar-task-details .task-workflow select { box-sizing: border-box; width: 100%; min-width: 0; min-height: 44px; padding: 8px 10px; border: 1px solid var(--border-default); border-radius: 8px; color: var(--text-primary); background: var(--bg-page); font: inherit; font-family: system-ui, sans-serif; }
 .task-workflow textarea { resize: vertical; }
 .task-workflow button { justify-self: start; }
+.task-result-review { display: grid; gap: 10px; min-width: 0; margin-top: 16px; padding: 14px; border: 1px solid var(--border-default); border-radius: 10px; background: var(--bg-card); overflow-wrap: anywhere; }
+.task-result-review p { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+.task-result-review pre { max-width: 100%; max-height: 18rem; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.5; color: var(--text-primary); }
+.task-result-review label { display: grid; gap: 5px; }
+.task-result-review textarea { box-sizing: border-box; width: 100%; min-width: 0; min-height: 88px; padding: 8px 10px; border: 1px solid var(--border-default); border-radius: 8px; color: var(--text-primary); background: var(--bg-page); font: inherit; resize: vertical; }
+.task-result-review button { justify-self: start; min-height: 36px; }
+.task-result-review button:focus-visible, .task-result-review textarea:focus-visible { outline: 2px solid var(--ui-focus, var(--text-primary)); outline-offset: 2px; }
 .work-registry-section { margin: 16px 0; padding: 14px; border: 1px solid var(--border-default); border-radius: 10px; overflow-wrap: anywhere; }
 .work-registry-section[hidden] { display: none; }
 .work-registry-section h3, .work-registry-section h4 { margin: 0 0 10px; }

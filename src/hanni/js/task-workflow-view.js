@@ -37,8 +37,11 @@ export function mountTaskWorkflow(host, { record, invoke, onClean = () => {}, on
   const retry = document.createElement('button'); retry.type = 'button'; retry.textContent = 'Повторить чтение'; retry.hidden = true;
   const refresh = document.createElement('button'); refresh.type = 'button'; refresh.textContent = 'Обновить состояние';
   content.append(description, list, addLabel, add, resultLabel, save, discard, execution, registry, refresh, status, retry);
-  details.append(heading, content); host.append(focus, details);
-  const reviewStop = review ? mountTaskResultReview(details, review) : null;
+  details.append(heading, content); host.append(focus);
+  // Review is a task-level decision, so it must remain visible while the
+  // optional manual steps disclosure stays closed.
+  const reviewStop = review ? mountTaskResultReview(host, review) : null;
+  host.append(details);
   openSteps.addEventListener('click', () => {
     details.open = true;
     (list.querySelector('select') || input).focus();
