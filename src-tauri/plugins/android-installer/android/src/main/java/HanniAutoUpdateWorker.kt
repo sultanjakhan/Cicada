@@ -22,7 +22,7 @@ import java.util.concurrent.TimeUnit
 class HanniAutoUpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         UpdateActivityGuard.install(applicationContext as android.app.Application)
-        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S || UpdateActivityGuard.hasLiveActivity()) return@withContext Result.success()
+        if (UpdateActivityGuard.hasLiveActivity()) return@withContext Result.success()
         if (!UpdateConfiguration.isConfigured()) return@withContext Result.success()
         val store = InstallStatusStore(applicationContext)
         if (WorkerSession.reconcile(applicationContext) in setOf(STATUS_INSTALLING, STATUS_PENDING_USER_ACTION)) return@withContext Result.success()
@@ -95,7 +95,7 @@ internal object ClosedUpdatePolicy {
 // the candidate, hash and pinned signature before reusing the package.
 internal fun preparedUpdateMetadata(version: String, packageInfo: JSONObject): JSONObject =
     JSONObject().put("candidate", JSONObject().put("version", version).put("package", packageInfo))
-        .put("prepared_at", java.time.Instant.now().toString())
+        .put("prepared_at", java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.ROOT).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.format(java.util.Date()))
 private fun manifestVersionCode(version: String): Long {
     val parts = Regex("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$").matchEntire(version)?.groupValues ?: throw IllegalArgumentException("Invalid release version")
     val major = parts[1].toLong(); val minor = parts[2].toLong(); val patch = parts[3].toLong()
@@ -142,7 +142,7 @@ internal object WorkerSession {
     @Synchronized fun reconcile(context: Context): String {
         val store = InstallStatusStore(context)
         val current = store.status().getString("status")
-        if (current == STATUS_PERMISSION_REQUIRED && context.packageManager.canRequestPackageInstalls()) {
+        if (current == STATUS_PERMISSION_REQUIRED && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O && context.packageManager.canRequestPackageInstalls()) {
             store.save(STATUS_IDLE, -1, versionCode = store.versionCode().takeIf { it > 0 })
             return STATUS_IDLE
         }

@@ -24,6 +24,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Use a physical temporary directory outside the checkout
+        run: |
+          task_tmp="$(cd "$GITHUB_WORKSPACE/.." && pwd -P)/cicada-ci-temp"
+          mkdir -p "$task_tmp"
+          echo "TMPDIR=$task_tmp" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -59,6 +64,9 @@ jobs:
           retention-days: 14
   test:
     runs-on: windows-latest
+    env:
+      HANNI_MVP_UPDATES_URL: ${{ secrets.MVP_UPDATES_URL }}
+      HANNI_MVP_UPDATES_TOKEN: ${{ secrets.MVP_UPDATES_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -71,6 +79,7 @@ jobs:
         with:
           python-version: '3.12'
       - uses: dtolnay/rust-toolchain@stable
+      - run: python -m pip install pywin32==311 psutil==7.1.3
       - run: npm.cmd ci
       - run: npm.cmd run check:vendor
       - run: npm.cmd audit --audit-level=low
@@ -80,7 +89,8 @@ jobs:
       - run: npm.cmd run build
       - run: cargo test --locked
         working-directory: src-tauri
-      - run: .\scripts\package-windows.ps1
+      - if: github.event_name == 'push'
+        run: .\scripts\package-windows.ps1
       - uses: actions/upload-artifact@v4
         # Optional CI bundle; signed release delivery is enforced separately.
         continue-on-error: true

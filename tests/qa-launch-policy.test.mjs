@@ -16,7 +16,7 @@ rejected(lambda:p.verify_binary(b'HANNI_MVP_DATA_DIR',hashlib.sha256(b'HANNI_MVP
 rejected(lambda:p.verify_binary(binary,'0'*64,True))
 p.verify_binary(binary,digest,True)
 with tempfile.TemporaryDirectory() as directory:
- root=pathlib.Path(directory)
+ root=pathlib.Path(directory).resolve()
  rejected(lambda:p.launch_args('fixture.exe',root,'foreground'))
  marker=root/'cicada-isolated-test.json';marker.write_text('{}',encoding='utf-8')
  rejected(lambda:p.launch_args('fixture.exe',root,'foreground'))

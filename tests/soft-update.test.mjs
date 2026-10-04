@@ -65,6 +65,26 @@ test('background discovery waits for entry; Later is respected throughout this s
   stop(); dom.window.close();
 });
 
+test('failed entry check cannot let a later background discovery pop during work', async () => {
+  const dom = new JSDOM('', { pretendToBeVisual: true }), handlers = {}, calls = [];
+  let offline = true;
+  const stop = startAppUpdates({ window: dom.window, invoke: async command => {
+    calls.push(command);
+    if (offline && ['mvp_update_check', 'mvp_update_status'].includes(command)) throw Error('offline fixture');
+    return available;
+  }, listen: async (event, callback) => { handlers[event] = callback; return () => {}; } });
+  await tick(); await tick();
+  offline = false;
+  handlers['hanni:update-status']({ payload: available });
+  assert.equal(dom.window.document.querySelector('.calendar-soft-update'), null);
+  dom.window.dispatchEvent(new dom.window.Event('online')); await tick();
+  assert.equal(dom.window.document.querySelector('.calendar-soft-update'), null);
+  dom.window.dispatchEvent(new dom.window.Event('focus')); await tick();
+  assert.ok(dom.window.document.querySelector('.calendar-soft-update'));
+  assert.ok(!calls.includes('mvp_update_install') && !calls.includes('mvp_update_auto_install'));
+  stop(); dom.window.close();
+});
+
 test('permission and confirmation system UI require distinct explicit clicks', async () => {
   for (const [phase, command] of [['permission_required', 'mvp_update_open_permission'], ['confirmation_required', 'mvp_update_confirm']]) {
     const dom = new JSDOM('', { pretendToBeVisual: true }), calls = [];
