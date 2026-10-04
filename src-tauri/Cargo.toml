@@ -1,6 +1,6 @@
 [package]
 name = "hanni-mvp"
-version = "0.4.6"
+version = "0.4.7"
 edition = "2021"
 license = "MIT"
 rust-version = "1.98"
@@ -24,7 +24,7 @@ rusqlite = { version = "=0.39.0", features = ["bundled", "backup", "fallible_uin
 uuid = { version = "1", features = ["v4"] }
 
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls-webpki-roots", "json"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "io-util"] }
 futures-util = "0.3"
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 chacha20poly1305 = "0.10"

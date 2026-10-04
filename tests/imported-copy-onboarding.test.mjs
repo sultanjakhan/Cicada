@@ -7,6 +7,11 @@ import {createRegistryStore} from '../src/hanni/js/work-registry.js';
 import {createTaskRunExchange,stableTaskBinding} from '../src/hanni/js/task-run-exchange.js';
 import {mountSourceOnboarding,DATA_SOURCES_KEY} from '../src/hanni/js/data-sources.js';
 const tick=()=>new Promise(resolve=>setTimeout(resolve,20));
+async function awaitText(host,text){
+ const deadline=Date.now()+5000;
+ while(!host.textContent.includes(text)&&Date.now()<deadline)await tick();
+ assert.ok(host.textContent.includes(text),`Expected rendered text: ${text}`);
+}
 const expected={planned:'Запланировано',running:'В работе',waiting:'Ожидание',checking:'Проверка','decision-needed':'Нужно решение',done:'Готово',error:'Ошибка',cancelled:'Отменено',unknown:'Неизвестно'};
 async function registry(status,{future=false}={}){
  const values=new Map(),calls=[],record={source_type:'note',source_id:'synthetic-label-task'};
@@ -19,12 +24,12 @@ async function registry(status,{future=false}={}){
 }
 test('imported task copy translates every recorded status without implying live execution or writing',async()=>{
  for(const [status,label] of Object.entries(expected)){
-  const e=await registry(status),dom=new JSDOM('<main></main>'),host=dom.window.document.querySelector('main');const stop=mountTaskWorkflow(host,{record:e.record,invoke:e.invoke});await tick();
+  const e=await registry(status),dom=new JSDOM('<main></main>'),host=dom.window.document.querySelector('main');const stop=mountTaskWorkflow(host,{record:e.record,invoke:e.invoke});await awaitText(host,'Импортированный отчёт — '+label);
   try{assert.match(host.textContent,new RegExp('Импортированный отчёт — '+label));assert.match(host.textContent,/Устаревшее наблюдение/);assert.match(host.textContent,/Источник отчёта: synthetic-parent/);assert.match(host.textContent,/Основание: synthetic-evidence/);assert.match(host.textContent,/Автоматическое выполнение не запускалось/);assert.ok(e.calls.every(c=>c==='get_ui_state'));}finally{stop();dom.window.close();}
  }
 });
 test('future observation stays unknown and registry preview uses the same readable status',async()=>{
- const e=await registry('checking',{future:true}),dom=new JSDOM('<main></main>'),host=dom.window.document.querySelector('main');const stop=mountTaskWorkflow(host,{record:e.record,invoke:e.invoke});await tick();
+ const e=await registry('checking',{future:true}),dom=new JSDOM('<main></main>'),host=dom.window.document.querySelector('main');const stop=mountTaskWorkflow(host,{record:e.record,invoke:e.invoke});await awaitText(host,'Свежесть неизвестна');
  try{assert.match(host.textContent,/Свежесть неизвестна/);assert.doesNotMatch(host.textContent,/Свежее наблюдение/);}finally{stop();host.replaceChildren();}
  const dispose=mountWorkRegistry(host,{invoke:e.invoke});await tick();try{assert.match(host.textContent,/Synthetic task — Проверка/);assert.match(host.textContent,/Свежесть неизвестна/);assert.doesNotMatch(host.textContent,/checking • unknown/);assert.ok(e.calls.every(c=>c==='get_ui_state'));}finally{dispose();dom.window.close();}
 });
