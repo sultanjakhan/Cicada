@@ -116,6 +116,7 @@
   .calendar-routine-dialog button,
   .calendar-routine-inline button,
   [data-task-launcher] .calendar-task-overview button,
+  [data-task-launcher] [data-launch-scopes] button,
   .calendar-native-dialog .calendar-editor-close,
   .calendar-native-dialog .calendar-editor-feedback button,
   .calendar-settings-dialog .calendar-settings-tab,
@@ -278,6 +279,14 @@
   text-decoration: underline;
   text-underline-offset: var(--ui-action-underline-offset);
 }
+[data-task-launcher] button[aria-pressed="true"] {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-primary);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: var(--ui-action-underline-offset);
+}
 
 /* The workspace tabs keep their existing geometry; only the fill is removed. */
 #calendar-content .uni-tabs .uni-tab[aria-pressed="true"] {
@@ -320,6 +329,7 @@
   .goal-popup__actions [data-goal-popup-action="task"],
   .calendar-native-dialog .calendar-editor-primary,
   .calendar-run-primary,
+  [data-task-launcher] .cto-execute,
   .evm-modal .evm-save-btn
 ) {
   border-color: transparent;
