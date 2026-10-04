@@ -38,38 +38,38 @@ compatibility guarantee and must not be mixed into a production sync profile.
 
 ## Installation behavior
 
-Starting with 0.3.14, the native updater checks after startup and every six hours,
-downloads verified packages, and installs when the app is idle and hidden.
-Open editors, unsaved drafts, native mutations and active timers defer it. A
-renderer lease must remain safe for 30 seconds and expire after 90 seconds.
-Failed checks/installations retry with bounded backoff; installation attempts
-are recorded on disk so process restarts cannot create an immediate retry loop.
-Settings retain an explicit check/install action and report system restrictions.
+Owner update policy, 2026-10-04: native/background checks may download verified
+packages, but never install, restart, request focus or open system UI. On app
+entry an available release appears as a nonmodal offer with Install and Later.
+Discovery during an active session waits for the next entry. Later suppresses
+the same release during that app session; a later release can still be offered.
+Unsaved drafts and unfinished mutations disable installation in this offer.
+Settings retain an explicit check/install action. Permission and confirmation
+screens open only after the owner's action. Failed checks retry with bounded
+backoff. The old automatic-install IPC always refuses, including old renderers.
 
 Windows uses the official Tauri updater and NSIS. `windows/update-hooks.nsh`
-replaces only NSIS's basename-wide process termination: the old executable is
-retained beside the installed file before replacement. Only the installed Windows
-binary with the standard data profile registers per-user logon and six-hour tasks.
-Separate Windows copies and QA data profiles cannot install automatically.
-Their windowless `--update-background` process skips when the profile is already
-open. Automatic installation leaves the app closed and does not take focus.
-Android 12+ uses PackageInstaller sessions requesting no user action. A six-hour
-WorkManager task also checks while no Activity exists, subject to network, battery
-and storage constraints. Both paths recheck package, version and existing signer.
-Android may require a one-time install permission or system confirmation; Cicada
-reports that state and opens the system UI only through an explicit user action.
-Android 7–11 retain manual installation. OS scheduling is not an exact deadline.
+retains the old executable beside the installed file instead of basename-wide
+process termination. Only the installed binary with the standard profile
+registers per-user logon and six-hour tasks. Their windowless
+`--update-background` process skips while the profile is already open, otherwise
+checks and prepares a verified package without launching an installer.
 
-macOS Apple Silicon support starts with 0.3.18. Install this bootstrap once in
-`~/Applications/Cicada.app`; later signed releases use the same channel.
-The per-user `app.hanni.mvp.updates` LaunchAgent checks at login and every six
-hours without a window. The profile lock prevents it from interrupting an open
-instance; that instance uses the existing hidden/idle checks instead. Automatic
-installation leaves the app closed. The manual Settings action restarts it.
-DEV, relocated bundles, nonstandard profiles and non-writable bundles cannot
-replace the installed app. LaunchAgent errors appear in update settings; a
-private `updates/background.json` receipt records closed-app checks/installations.
-macOS may delay scheduled jobs during sleep or restrict background items.
+Android's six-hour WorkManager job checks and prepares a verified package while
+no Activity exists, subject to network, battery and storage constraints. It never
+creates an installation session. Explicit installation rechecks package, version
+and existing signer. Android may require a one-time install permission or system
+confirmation, opened only through an explicit action. OS scheduling is not an
+exact deadline; foreground checks remain available when background work is delayed.
+
+macOS Apple Silicon support starts with 0.3.18. The existing per-user
+`app.hanni.mvp.updates` LaunchAgent checks at login and every six hours without
+a window. The profile lock protects an open instance. Background checks leave
+the app closed; only explicit installation restarts it. DEV, relocated bundles,
+nonstandard profiles and non-writable bundles cannot replace the installed app.
+LaunchAgent errors appear in update settings; the private
+`updates/background.json` receipt records background checks. macOS may delay
+scheduled jobs during sleep or restrict background items.
 
 The 0.3.22 updater extracts the archive contents into the old
 `~/Applications/Hanni MVP.app` bundle. On its first startup, 0.3.23 renames that
@@ -89,6 +89,13 @@ channel contains application packages only, never personal databases or relay
 credentials. The independent data-sync service is unchanged.
 
 ## Preparing the next version
+
+Windows distribution packaging now requires `HANNI_MVP_UPDATES_URL` and
+`HANNI_MVP_UPDATES_TOKEN`, and verifies that the resulting executable contains
+that exact configuration before emitting the package manifest. Unconfigured
+DEV/no-bundle builds remain available. A local candidate must not replace the
+installed app unless its update configuration is verified; a scheduled task
+alone does not prove that the installed binary can check the channel.
 
 1. Increment `package.json`, its root lock entries, Cargo package/lock and Tauri
    config together. Commit the intended source on `main`, with the bundled license notices.

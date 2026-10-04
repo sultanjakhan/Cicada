@@ -1,6 +1,8 @@
-﻿import { S, invoke, TAB_ICONS } from './state.js';
+﻿import { S, invoke, TAB_ICONS, setTheme } from './state.js';
 import { escapeHtml } from './utils.js';
 
+import { mountThemeControl } from './theme-control.js';
+const themeControls = new WeakMap();
 const renderRevisions = new WeakMap();
 const DEFAULT_PANES = [
   { id: 'dash', label: 'Дашборд' },
@@ -78,6 +80,9 @@ export async function renderUnifiedLayout(el, tabId, config = {}) {
     return `<button type="button" class="uni-tab${pane.id === activePane ? ' active' : ''}" data-pane="${pane.id}" aria-pressed="${pane.id === activePane}">${pane.label}${countHtml}</button>`;
   }).join('');
   const actionsHtml = (config.toolbarActions || []).map((action, index) => `<button type="button" class="uni-header-action" data-action-idx="${index}" title="${escapeHtml(action.title || '')}">${action.icon || ''}${action.label ? `<span>${escapeHtml(action.label)}</span>` : ''}</button>`).join('');
+  const focusedTab = el.ownerDocument.activeElement?.closest('.uni-tab');
+  const restoreTabFocus = focusedTab && el.contains(focusedTab) && focusedTab.dataset.pane === activePane;
+  themeControls.get(el)?.();
   el.innerHTML = `
     <div class="uni-header">
       <span class="uni-header-icon${config.headerIcon ? ' uni-header-icon--static' : ''}" ${config.headerIcon ? 'aria-hidden="true"' : 'title="Изменить иконку"'}>${icon}</span>
@@ -88,7 +93,9 @@ export async function renderUnifiedLayout(el, tabId, config = {}) {
     ${config.headerExtra || ''}
     <div class="uni-navigation"><div class="uni-tabs" aria-label="Разделы календаря">${tabsHtml}</div></div>
     <div class="uni-content"><div class="uni-pane" id="uni-pane-${tabId}"></div></div>`;
+  if (tabId === 'calendar') themeControls.set(el, mountThemeControl(el.querySelector('.uni-header'), { getTheme: () => S.theme, setTheme }));
   if (config.editableHeader !== false) wireHeaderEdit(el, tabId, config, meta, defaults, revision);
+  if (restoreTabFocus) el.querySelector(`.uni-tab[data-pane="${activePane}"]`)?.focus({preventScroll:true});
   (config.toolbarActions || []).forEach((action, index) => el.querySelector(`[data-action-idx="${index}"]`)?.addEventListener('click', event => { event.stopPropagation(); action.onClick?.(event.currentTarget); }));
   el.querySelectorAll('.uni-tab').forEach(tab => tab.addEventListener('click', () => {
     if (tab.dataset.pane === S._unifiedPane[tabId]) return;
@@ -99,4 +106,5 @@ export async function renderUnifiedLayout(el, tabId, config = {}) {
   const pane = el.querySelector(`#uni-pane-${tabId}`);
   await renderActivePane(pane, activePane, config);
   if (renderRevisions.get(el) !== revision || config.isCurrent?.() === false) return;
+  if (restoreTabFocus && el.ownerDocument.activeElement === el.ownerDocument.body) el.querySelector(`.uni-tab[data-pane="${activePane}"]`)?.focus({preventScroll:true});
 }

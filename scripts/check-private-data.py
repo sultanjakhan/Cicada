@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 PRIVATE_NAMES = {'.env', '.mcp.json', 'credentials.json', 'token.pickle'}
-PRIVATE_SUFFIXES = {'.db', '.sqlite', '.sqlite3', '.bak', '.backup', '.pem', '.key', '.p12', '.pfx'}
+PRIVATE_SUFFIXES = {'.db', '.sqlite', '.sqlite3', '.bak', '.backup', '.pem', '.key', '.p12', '.pfx', '.dpapi'}
 RULES = {
     'personal-email': re.compile(r'\b[A-Z0-9._%+-]+@(?:gmail|outlook|hotmail|icloud|yahoo|yandex|mail)\.(?:com|ru|kz)\b', re.I),
     'phone-number': re.compile(r'(?<!\w)\+7[ (.-]+\d{3}[ ).-]+\d{3}[ .-]+\d{2}[ .-]+\d{2}(?!\d)'),
@@ -22,9 +22,11 @@ SYNTHETIC_USERS = {'alice', 'bob', 'runner', 'user', 'test', 'example', 'develop
 def path_rules(path):
     p = PurePosixPath(path)
     name = p.name.lower()
-    if (name in PRIVATE_NAMES or name.startswith('.env.') or p.suffix.lower() in PRIVATE_SUFFIXES
+    if (name in PRIVATE_NAMES or (name.startswith('.env.') and name != '.env.example')
+            or name in {'storage.local.json', 'connection.local.json'} or name.startswith(('credentials.', 'secrets.'))
+            or p.suffix.lower() in PRIVATE_SUFFIXES
             or name.endswith(('.db-wal', '.db-shm')) or p.suffix.lower() == '.jsonl'
-            or any(part.lower() in {'backups', 'exports'} for part in p.parts)):
+            or any(part.lower() in {'backups', 'exports', 'keys', 'profiles', 'sessions', '.local', 'private'} for part in p.parts)):
         return ['private-file']
     return []
 
@@ -41,6 +43,22 @@ def text_rules(content, denylist):
             findings.append((line_number, 'local-private-marker'))
     return findings
 
+def unreviewed_reparse(root, relative):
+    current = root
+    chain = [*reversed(root.parents), root]
+    for part in PurePosixPath(relative).parts:
+        current = current / part
+        chain.append(current)
+    for path in chain:
+        try:
+            if path.is_symlink() or getattr(path.lstat(), 'st_file_attributes', 0) & 0x400:
+                return True
+        except FileNotFoundError:
+            return False  # Deleted tracked files have no contents to scan.
+        except OSError:
+            return True  # Uninspectable paths cannot be approved for reading.
+    return False
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--denylist', type=Path, help='Local JSON array of markers; never commit it')
@@ -56,8 +74,13 @@ def main():
     for value in sorted(set(raw.split(b'\0'))):
         if not value: continue
         relative = value.decode('utf-8'); path = root / relative
+        if unreviewed_reparse(root, relative):
+            findings.append((relative, 0, 'unreviewed-reparse')); skipped += 1; continue
         if not path.is_file(): continue
-        findings.extend((relative, 0, code) for code in path_rules(relative))
+        private = path_rules(relative)
+        findings.extend((relative, 0, code) for code in private)
+        if private:
+            skipped += 1; continue
         if '/vendor/' in relative or '/icons/' in relative or relative.endswith(('.min.js', '.min.css')):
             skipped += 1; continue
         data = path.read_bytes()

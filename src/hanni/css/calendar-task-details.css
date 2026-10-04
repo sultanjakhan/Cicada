@@ -37,3 +37,35 @@
   .calendar-task-details .calendar-editor-actions { gap: 8px; padding: 10px 14px; }
   .calendar-task-details .calendar-editor-actions button { padding: 8px; }
 }
+.task-workflow { margin-top: 16px; }
+.task-workflow summary { cursor: pointer; font-weight: 600; }
+.task-workflow > div { display: grid; gap: 10px; padding-top: 10px; }
+.task-workflow p { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+.task-workflow ol { margin: 0; padding-left: 24px; }
+.task-workflow li { padding: 6px 0; overflow-wrap: anywhere; }
+.task-workflow li span { display: block; margin-bottom: 4px; }
+.task-workflow label { display: grid; gap: 5px; }
+.calendar-task-details .task-workflow input, .calendar-task-details .task-workflow textarea, .calendar-task-details .task-workflow select { box-sizing: border-box; width: 100%; min-width: 0; min-height: 44px; padding: 8px 10px; border: 1px solid var(--border-default); border-radius: 8px; color: var(--text-primary); background: var(--bg-page); font: inherit; font-family: system-ui, sans-serif; }
+.task-workflow textarea { resize: vertical; }
+.task-workflow button { justify-self: start; }
+.work-registry-section { margin: 16px 0; padding: 14px; border: 1px solid var(--border-default); border-radius: 10px; overflow-wrap: anywhere; }
+.work-registry-section[hidden] { display: none; }
+.work-registry-section h3, .work-registry-section h4 { margin: 0 0 10px; }
+.work-registry-section p { margin: 8px 0; font-size: 13px; color: var(--text-secondary); }
+.work-registry-section summary { cursor: pointer; padding: 5px 0; }
+.work-registry-section ul { margin: 6px 0; padding-left: 18px; list-style: none; }
+.work-registry-section button { min-height: 36px; padding: 6px 10px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-page); color: var(--text-primary); font: inherit; cursor: pointer; }
+.data-source-settings fieldset { display: grid; gap: 10px; margin: 12px 0; min-width: 0; }
+.data-source-settings label { display: grid; gap: 5px; }
+.data-source-settings input[type=text], .data-source-settings select { min-width: 0; width: 100%; box-sizing: border-box; }
+.data-source-settings pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.task-next-step { overflow-wrap: anywhere; }
+.task-next-step p { margin: 8px 0; }
+.task-next-step button { min-height: 44px; }
+
+.source-onboarding { margin: 0 0 16px; padding: 14px; border: 1px solid var(--border-default); border-radius: 10px; background: var(--bg-card); color: var(--text-primary); overflow-wrap: anywhere; }
+.source-onboarding h3 { margin: 0 0 8px; font-size: 15px; }
+.source-onboarding p { margin: 0 0 12px; color: var(--text-secondary); font-size: 13px; }
+.source-onboarding-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.source-onboarding button { min-height: 44px; }
+.source-onboarding button:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 3px; }

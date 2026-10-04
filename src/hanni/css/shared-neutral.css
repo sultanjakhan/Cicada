@@ -1,0 +1,35 @@
+/* Proposal: identical file in both apps. Values from Cicada mvp-palette.css.
+   Does not recolor event/category records or imply a shared navigation model. */
+:root {
+  --ui-page:#fff; --ui-sidebar:#f5f5f5; --ui-surface:#fff;
+  --ui-elevated:#fff; --ui-hover:#f0f0f0; --ui-soft:#f7f7f7;
+  --ui-text:#252525; --ui-secondary:#606060; --ui-muted:#707070;
+  --ui-line:#dedede; --ui-line-subtle:#ebebeb; --ui-focus:#707070;
+  --ui-primary:#252525; --ui-on-primary:#fff;
+  --ui-radius-control:6px; --ui-radius-surface:8px;
+  --ui-space-1:4px; --ui-space-2:8px; --ui-space-3:12px;
+  --ui-space-4:16px; --ui-space-6:24px;
+  --ui-control-height:44px; --ui-body-size:14px; --ui-body-leading:1.45;
+}
+:root[data-theme="dark"] {
+  --ui-page:#181818; --ui-sidebar:#202020; --ui-surface:#242424;
+  --ui-elevated:#282828; --ui-hover:#303030; --ui-soft:#292929;
+  --ui-text:#f0f0f0; --ui-secondary:#bdbdbd; --ui-muted:#a8a8a8;
+  --ui-line:#414141; --ui-line-subtle:#343434; --ui-focus:#b4b4b4;
+  --ui-primary:#ededed; --ui-on-primary:#202020;
+}
+/* Existing variable aliases; importing this file is opt-in. */
+:root {
+  --bg:var(--ui-page); --sidebar:var(--ui-sidebar); --soft:var(--ui-soft);
+  --hover:var(--ui-hover); --ink:var(--ui-text); --secondary:var(--ui-secondary);
+  --muted:var(--ui-muted); --line:var(--ui-line); --subtle:var(--ui-line-subtle);
+  --bg-page:var(--ui-page); --bg-primary:var(--ui-page); --bg-sidebar:var(--ui-sidebar);
+  --bg-card:var(--ui-surface); --bg-elevated:var(--ui-elevated); --bg-hover:var(--ui-hover);
+  --bg-soft:var(--ui-soft); --border-default:var(--ui-line); --border-subtle:var(--ui-line-subtle);
+  --border-focus:var(--ui-focus); --text-primary:var(--ui-text);
+  --text-secondary:var(--ui-secondary); --text-muted:var(--ui-muted); --text-faint:var(--ui-muted);
+  --accent-fill:var(--ui-primary); --accent-contrast:var(--ui-on-primary);
+}
+.uni-tab .uni-tab-count { color:var(--ui-secondary); opacity:1; }
+.calendar-tasks .ct-sphere-count, .calendar-tasks .ct-group-count { color:var(--ui-secondary); }
+.calendar-tasks .ct-spheres button[aria-pressed="true"] .ct-sphere-count { color:var(--ui-secondary); }

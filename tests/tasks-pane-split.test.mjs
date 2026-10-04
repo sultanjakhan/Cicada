@@ -18,6 +18,7 @@ async function mount(t, rows, { goals = [], links = [], state = {}, handlers = {
   const invoke = async (command, args) => {
     calls.push([command, args]);
     if (handlers[command]) return handlers[command](args);
+    if (command === 'get_ui_state') return null;
     if (command === 'get_calendar_tasks') return rows;
     if (command === 'get_goals') return goals;
     if (command === 'get_calendar_task_goals') return links;
@@ -122,9 +123,9 @@ test('running tasks form «В работе» on top; paused tasks stay in their 
   }
   assert.equal(x.item('Run today').querySelector('[data-task-control="date"]'), null, 'today is implied for running work');
   assert.equal(x.item('Run late').querySelector('[data-task-control="date"]').classList.contains('is-overdue'), true, 'an overdue running task keeps its red date');
-  assert.equal(x.item('Paused').querySelector('.ct-status').textContent, 'пауза');
-  assert.equal(x.item('Plain').querySelector('.ct-status'), null);
-  assert.equal(x.item('Run today').querySelector('.ct-status'), null);
+  assert.equal(x.item('Paused').querySelector('.ct-status').textContent, 'На паузе');
+  assert.equal(x.item('Plain').querySelector('.ct-status').textContent, 'Не начата');
+  assert.equal(x.item('Run today').querySelector('.ct-status').textContent, 'Таймер идёт');
   x.$('[data-tasks-group-by="goal"]').click();
   assert.equal(x.groups()[0][0], 'running', '«В работе» stays on top when grouped by goal');
   x.filter('today');

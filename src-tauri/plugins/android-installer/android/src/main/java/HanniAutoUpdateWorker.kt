@@ -1,9 +1,6 @@
 package app.hanni.mvp.android.installer
 
 import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageInstaller
-import android.database.sqlite.SQLiteDatabase
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -29,10 +26,6 @@ class HanniAutoUpdateWorker(context: Context, params: WorkerParameters) : Corout
         if (!UpdateConfiguration.isConfigured()) return@withContext Result.success()
         val store = InstallStatusStore(applicationContext)
         if (WorkerSession.reconcile(applicationContext) in setOf(STATUS_INSTALLING, STATUS_PENDING_USER_ACTION)) return@withContext Result.success()
-        if (!applicationContext.packageManager.canRequestPackageInstalls()) {
-            store.save(STATUS_PERMISSION_REQUIRED, -1, message = "Android install permission is required", versionCode = store.versionCode().takeIf { it > 0 })
-            return@withContext Result.success()
-        }
         try {
             val manifest = JSONObject(fetch(UpdateConfiguration.url(), 64 * 1024))
             val manifestVersion = manifest.getString("version")
@@ -47,15 +40,25 @@ class HanniAutoUpdateWorker(context: Context, params: WorkerParameters) : Corout
             require(size in 1..InstallPolicy.maxApkBytes && InstallPolicy.isLowercaseSha256(sha256))
             require(UpdateConfiguration.isAllowedPackageUrl(url))
             val updates = File(applicationContext.cacheDir, "updates").apply { mkdirs() }
-            val apk = File(updates, "pending.apk")
-            download(url, apk, size)
+            val apk = File(updates, "hanni-mvp-$manifestVersion.package")
+            if (!apk.isFile || apk.length() != size || sha256(apk) != sha256) {
+                val temporary = File(updates, "${apk.name}.part")
+                download(url, temporary, size)
+                require(sha256(temporary) == sha256) { "Downloaded APK hash differs" }
+                MinisignVerifier.verifyFile(temporary, UpdateConfiguration.publicKey(), signature)
+                require(VerifiedApk.validate(applicationContext, temporary, versionCode, sha256)) { "Downloaded APK identity changed" }
+                require(temporary.renameTo(apk)) { "Could not save verified update" }
+            }
             require(sha256(apk) == sha256) { "Downloaded APK hash differs" }
             MinisignVerifier.verifyFile(apk, UpdateConfiguration.publicKey(), signature)
             require(VerifiedApk.validate(applicationContext, apk, versionCode, sha256)) { "Downloaded APK identity changed" }
             if (UpdateActivityGuard.hasLiveActivity()) return@withContext Result.success()
-            backupDatabase(applicationContext)
-            if (UpdateActivityGuard.hasLiveActivity()) return@withContext Result.success()
-            WorkerSession.commit(applicationContext, apk, versionCode)
+            // A background job never creates a PackageInstaller session.
+            // Foreground checks offer the release after app entry.
+            val receipt = preparedUpdateMetadata(manifestVersion, packageInfo)
+            val temporary = File(updates, "prepared.android.part")
+            temporary.writeText(receipt.toString())
+            require(temporary.renameTo(File(updates, "prepared.json"))) { "Could not save update metadata" }
             Result.success()
         } catch (_: TransientUpdateException) { Result.retry() }
         catch (_: java.io.IOException) { store.save(STATUS_FAILURE, store.sessionId(), message = "Network update check failed"); Result.retry() }
@@ -88,6 +91,11 @@ internal object UpdateConfiguration {
 internal object ClosedUpdatePolicy {
     fun shouldDownload(installedVersionCode: Long, manifestVersionCode: Long): Boolean = manifestVersionCode > installedVersionCode
 }
+// Same private cache contract as Rust PreparedUpdate. Native code revalidates
+// the candidate, hash and pinned signature before reusing the package.
+internal fun preparedUpdateMetadata(version: String, packageInfo: JSONObject): JSONObject =
+    JSONObject().put("candidate", JSONObject().put("version", version).put("package", packageInfo))
+        .put("prepared_at", java.time.Instant.now().toString())
 private fun manifestVersionCode(version: String): Long {
     val parts = Regex("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$").matchEntire(version)?.groupValues ?: throw IllegalArgumentException("Invalid release version")
     val major = parts[1].toLong(); val minor = parts[2].toLong(); val patch = parts[3].toLong()
@@ -107,21 +115,6 @@ private fun download(url: String, destination: File, expected: Long) {
 private fun readBounded(input: java.io.InputStream, limit: Int): ByteArray = java.io.ByteArrayOutputStream().use { output -> copyBounded(input, output, limit.toLong()); output.toByteArray() }
 private fun copyBounded(input: java.io.InputStream, output: java.io.OutputStream, limit: Long) { val buffer = ByteArray(DEFAULT_BUFFER_SIZE); var total = 0L; while (true) { val count = input.read(buffer); if (count < 0) return; total += count; require(total <= limit) { "Update response exceeds bound" }; output.write(buffer, 0, count) } }
 private fun sha256(file: File): String = MessageDigest.getInstance("SHA-256").digest(file.readBytes()).joinToString("") { "%02x".format(it.toInt() and 0xff) }
-private fun backupDatabase(context: Context) {
-    val dataDir = context.dataDir.canonicalFile
-    val source = File(dataDir, "calendar.db").canonicalFile
-    require(source.parentFile == dataDir && source.isFile) { "Cicada calendar database is unavailable" }
-    val directory = File(dataDir, "backups").canonicalFile.apply { mkdirs() }
-    require(directory.parentFile == dataDir) { "Cicada backup path is invalid" }
-    val destination = File(directory, "calendar-before-auto-update-${System.currentTimeMillis()}.db")
-    SQLiteDatabase.openDatabase(source.path, null, SQLiteDatabase.OPEN_READWRITE).use { database ->
-        database.execSQL("VACUUM INTO '${destination.path.replace("'", "''")}'")
-    }
-    SQLiteDatabase.openDatabase(destination.path, null, SQLiteDatabase.OPEN_READONLY).use { database ->
-        require(database.isOpen && database.rawQuery("PRAGMA integrity_check", null).use { it.moveToFirst() && it.getString(0) == "ok" }) { "Update backup integrity check failed" }
-    }
-}
-
 private object InstalledVersion {
     @Suppress("DEPRECATION") fun code(context: Context): Long {
         val info = context.packageManager.getPackageInfo(InstallPolicy.expectedPackageId, 0)
@@ -168,16 +161,4 @@ internal object WorkerSession {
         return resolved
     }
 
-    @Synchronized fun commit(context: Context, apk: File, versionCode: Long) {
-        val existing = reconcile(context)
-        if (existing == STATUS_INSTALLING || existing == STATUS_PENDING_USER_ACTION) return
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
-            InstallStatusStore(context).save(STATUS_PERMISSION_REQUIRED, -1, message = "Android install permission is required", versionCode = versionCode)
-            return
-        }
-        val installer = context.packageManager.packageInstaller
-        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply { setAppPackageName(InstallPolicy.expectedPackageId); setSize(apk.length()); setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED) }
-        val id = installer.createSession(params); val token = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it.toInt() and 0xff) }; val store = InstallStatusStore(context); store.beginSession(id, token, versionCode)
-        try { installer.openSession(id).use { session -> apk.inputStream().use { input -> session.openWrite("base.apk", 0, apk.length()).use { output -> input.copyTo(output); session.fsync(output) } }; val intent = Intent(context, HanniUpdateResultReceiver::class.java).apply { action = INSTALL_RESULT_ACTION; setPackage(context.packageName); putExtra(EXTRA_CALLBACK_TOKEN, token) }; val pending = android.app.PendingIntent.getBroadcast(context, id, intent, android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_MUTABLE); session.commit(pending.intentSender) } } catch (error: Exception) { installer.abandonSession(id); store.save(STATUS_FAILURE, id, message = error.message); throw error }
-    }
 }

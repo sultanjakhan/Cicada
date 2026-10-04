@@ -1,4 +1,4 @@
-"""Run the installed debug MVP on an inactive Windows desktop, then Playwright MCP.
+"""Run an explicitly isolated MVP on an inactive Windows desktop, then Playwright MCP.
 
 This is a process launcher, not an automation driver. All page interactions use
 Microsoft's unmodified @playwright/mcp package over WebView2's documented CDP API.
@@ -20,6 +20,9 @@ import threading
 import time
 import urllib.request
 import uuid
+import importlib.util
+import atexit
+import qa_files
 
 import psutil
 import win32api
@@ -28,6 +31,10 @@ import win32gui
 import win32job
 import win32process
 import win32service
+
+_policy_spec = importlib.util.spec_from_file_location('qa_launch_policy', Path(__file__).with_name('qa-launch-policy.py'))
+policy = importlib.util.module_from_spec(_policy_spec)
+_policy_spec.loader.exec_module(policy)
 
 
 def input_desktop():
@@ -47,6 +54,8 @@ def main():
     parser.add_argument('--node', default=shutil.which('node'))
     parser.add_argument('--session', help='Reuse only a named QA profile, for restart checks')
     parser.add_argument('--probe', action='store_true', help='Check startup and exit without MCP')
+    parser.add_argument('--launch-mode', choices=['foreground', 'background'], default='foreground')
+    parser.add_argument('--release-isolation', action='store_true', help='Use explicit fail-closed release test profile, never production')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     exe = args.exe.resolve(strict=True)
@@ -54,10 +63,7 @@ def main():
         raise ValueError('Only hanni-mvp.exe is supported')
     binary = exe.read_bytes()
     digest = hashlib.sha256(binary).hexdigest()
-    if digest != args.expected_sha256.lower():
-        raise ValueError('Installed EXE changed; verify the new debug package before enabling QA')
-    if b'HANNI_MVP_DATA_DIR' not in binary:
-        raise ValueError('This executable does not include the debug data-isolation support')
+    policy.verify_binary(binary, args.expected_sha256, args.release_isolation)
     cli = args.mcp_cli.resolve(strict=True)
     if not args.node:
         raise ValueError('Node.js is required')
@@ -65,36 +71,52 @@ def main():
     if not session or any(c not in 'abcdefghijklmnopqrstuvwxyz0123456789-' for c in session):
         raise ValueError('Session name must contain only lowercase letters, numbers and hyphens')
     run = root / '.local' / 'background-qa' / session
-    run.mkdir(parents=True, exist_ok=True)
+    boundary = contextlib.ExitStack()
+    atexit.register(boundary.close)
+    boundary.enter_context(qa_files.pinned_tree(root / '.local', scan=False))
+    boundary.enter_context(qa_files.pinned_tree(run.parent, create=not run.parent.exists(), scan=False))
+    boundary.enter_context(qa_files.pinned_tree(run, create=not run.exists()))
     marker = run / 'profile.json'
     identity = {'application': 'app.hanni.mvp', 'purpose': 'isolated-background-qa', 'exe_sha256': digest}
     if marker.exists():
-        if json.loads(marker.read_text(encoding='utf-8')) != identity:
+        if json.loads(qa_files.read_text(marker)) != identity:
             raise ValueError('Existing QA profile has another identity')
     else:
         if any(run.iterdir()):
             raise ValueError('Refusing an existing directory without a QA identity')
-        marker.write_text(json.dumps(identity, indent=2), encoding='utf-8')
+        qa_files.write_text(marker, json.dumps(identity, indent=2), new=True)
     lock = run / 'active.lock'
-    lock_fd = os.open(lock, os.O_CREAT | os.O_RDWR)
+    lock_fd = qa_files.writable_fd(lock)
     try:
         msvcrt.locking(lock_fd, msvcrt.LK_NBLCK, 1)
     except OSError:
         os.close(lock_fd)
         raise RuntimeError('This QA profile is already in use') from None
     data = run / 'data'
-    profile = run / 'webview2'
-    output = run / 'artifacts'
+    profile = data / 'webview2'
+    artifact_root = run / 'artifacts'
+    artifact_root.mkdir(exist_ok=True)
+    boundary.enter_context(qa_files.pinned_tree(artifact_root, scan=False))
+    output = artifact_root / uuid.uuid4().hex
+    boundary.enter_context(qa_files.pinned_tree(output, create=True))
     job = desktop = process = thread = mcp = None
     monitor_stop = threading.Event()
     monitor = None
-    manifest = {'session': session, 'exe_sha256': digest, 'state': 'starting'}
+    manifest = {'session': session, 'exe_sha256': digest, 'state': 'starting', 'launch_mode': args.launch_mode}
     manifest_path = run / 'runtime.json'
     try:
         os.write(lock_fd, str(os.getpid()).encode())
         os.ftruncate(lock_fd, os.lseek(lock_fd, 0, os.SEEK_CUR))
         for directory in (data, profile, output):
             directory.mkdir(exist_ok=True)
+            boundary.enter_context(qa_files.pinned_tree(directory, scan=False))
+        if args.release_isolation:
+            test_marker = data / 'cicada-isolated-test.json'
+            expected_marker = {'schemaVersion': 1, 'application': 'app.hanni.mvp', 'purpose': 'isolated-release-test'}
+            if test_marker.exists() and json.loads(qa_files.read_text(test_marker, 512)) != expected_marker:
+                raise RuntimeError('Unexpected release test marker')
+            if not test_marker.exists():
+                qa_files.write_text(test_marker, json.dumps(expected_marker), new=True)
         before = input_desktop()
         station = win32service.GetUserObjectInformation(win32service.GetProcessWindowStation(), win32con.UOI_NAME)
         if station.casefold() != 'winsta0':
@@ -112,16 +134,18 @@ def main():
             port = reservation.getsockname()[1]
         endpoint = f'http://127.0.0.1:{port}'
         env = dict(os.environ)
-        env['HANNI_MVP_DATA_DIR'] = str(data)
+        env.pop('HANNI_MVP_DATA_DIR', None)
         env['WEBVIEW2_USER_DATA_FOLDER'] = str(profile)
         env['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = (
             f'--remote-debugging-port={port} --remote-debugging-address=127.0.0.1')
         startup = win32process.STARTUPINFO()
         startup.lpDesktop = station + '\\' + desktop_name
         startup.dwFlags = win32con.STARTF_USESHOWWINDOW | win32con.STARTF_FORCEOFFFEEDBACK
-        startup.wShowWindow = win32con.SW_HIDE
+        startup.wShowWindow = win32con.SW_SHOWNOACTIVATE if args.launch_mode == 'foreground' else win32con.SW_HIDE
+        launch_args = policy.launch_args(exe, data, args.launch_mode)
+        command_line = subprocess.list2cmdline(launch_args)
         process, thread, pid, tid = win32process.CreateProcess(
-            str(exe), None, None, None, False,
+            str(exe), command_line, None, None, False,
             win32con.CREATE_SUSPENDED | win32con.CREATE_UNICODE_ENVIRONMENT | win32con.CREATE_NO_WINDOW,
             env, str(exe.parent), startup)
         try:
@@ -151,6 +175,21 @@ def main():
             raise RuntimeError('No unique Hanni WebView2 page on the isolated CDP endpoint')
         # Attribute the loopback listener to this app's child WebView2, not an unrelated browser.
         descendants = {p.pid: p for p in app.children(recursive=True)}
+        owned_profile_paths = []
+        if args.release_isolation:
+            for child in descendants.values():
+                if child.name().lower() != 'msedgewebview2.exe':
+                    continue
+                arguments = child.cmdline()
+                for position, argument in enumerate(arguments):
+                    folder = argument.split('=', 1)[1] if argument.startswith('--user-data-dir=') else arguments[position + 1] if argument == '--user-data-dir' and position + 1 < len(arguments) else None
+                    if folder:
+                        resolved = Path(folder).resolve()
+                        if not resolved.is_relative_to(profile.resolve()):
+                            raise RuntimeError('Owned WebView2 uses a folder outside the isolated root')
+                        owned_profile_paths.append(str(resolved))
+            if not owned_profile_paths:
+                raise RuntimeError('Could not verify the actual owned WebView2 profile path')
         listeners = [c for c in psutil.net_connections(kind='tcp')
                      if c.status == psutil.CONN_LISTEN and c.laddr.port == port]
         if not listeners or any(c.laddr.ip != '127.0.0.1' or c.pid not in descendants or
@@ -158,19 +197,23 @@ def main():
             raise RuntimeError('CDP ownership or loopback-only binding could not be verified')
         app_windows = [int(hwnd) for hwnd in desktop.EnumDesktopWindows()
                        if win32process.GetWindowThreadProcessId(int(hwnd))[1] == pid
-                       and win32gui.GetWindowText(int(hwnd)) == 'Cicada']
+                       and win32gui.GetWindowText(int(hwnd)) == ('Cicada [isolated test]' if args.release_isolation else 'Cicada')]
         if len(app_windows) != 1 or input_desktop() == desktop_name:
             raise RuntimeError('Background desktop isolation failed')
+        window_visible = bool(win32gui.IsWindowVisible(app_windows[0]))
+        if window_visible != (args.launch_mode == 'foreground'):
+            raise RuntimeError('Desktop startup visibility differs from the requested mode')
         database = data / 'calendar.db'
         if not database.is_file():
             raise RuntimeError('No isolated SQLite database; release builds are not supported')
         with sqlite3.connect(database.as_uri() + '?mode=ro', uri=True) as connection:
             if connection.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
                 raise RuntimeError('Isolated database integrity check failed')
-        manifest.update(state='ready', input_desktop_after=input_desktop(), app_windows=app_windows,
+        manifest.update(state='ready', input_desktop_after=input_desktop(), app_windows=app_windows, window_visible=window_visible,
+                        owned_webview_profile_paths=sorted(set(owned_profile_paths)),
                         webview_pids=sorted(descendants), database=str(database),
                         url=pages[0]['url'], title=pages[0].get('title'))
-        manifest_path.write_text(json.dumps(manifest, indent=2), encoding='utf-8')
+        qa_files.write_text(manifest_path, json.dumps(manifest, indent=2))
         print(f'Cicada background QA ready: {manifest_path}', file=sys.stderr, flush=True)
         if args.probe:
             print(json.dumps(manifest))
@@ -221,11 +264,12 @@ def main():
                 desktop.CloseDesktop()
         manifest.update(state='stopped')
         try:
-            manifest_path.write_text(json.dumps(manifest, indent=2), encoding='utf-8')
+            qa_files.write_text(manifest_path, json.dumps(manifest, indent=2))
         finally:
             os.lseek(lock_fd, 0, os.SEEK_SET)
             msvcrt.locking(lock_fd, msvcrt.LK_UNLCK, 1)
             os.close(lock_fd)
+            boundary.close()
 
 
 if __name__ == '__main__':

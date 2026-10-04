@@ -1,5 +1,6 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
 if ($env:OS -ne 'Windows_NT') { throw 'This package targets Windows x64.' }
 $repository = Split-Path -Parent $PSScriptRoot
@@ -12,15 +13,19 @@ try {
     if ($origin -cnotmatch '/Cicada(?:\.git)?$') { throw 'Build this package from the independent Cicada repository.' }
     $config = Get-Content -LiteralPath 'src-tauri/tauri.conf.json' -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($config.identifier -ne 'app.hanni.mvp' -or $config.productName -ne 'Cicada' -or $config.mainBinaryName -ne 'hanni-mvp') { throw 'Unexpected application identity.' }
+    & python -B scripts/check-update-configuration.py
+    if ($LASTEXITCODE -ne 0) { throw 'Windows distribution has no valid update channel.' }
     $metadata = & cargo metadata --manifest-path src-tauri/Cargo.toml --no-deps --format-version 1 --locked | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0) { throw 'Cannot identify the Cargo output directory.' }
-    & .\node_modules\.bin\tauri.cmd build --debug --bundles nsis --ci
+    & .\node_modules\.bin\tauri.cmd build --bundles nsis --ci --no-sign -- --offline --locked
     if ($LASTEXITCODE -ne 0) { throw 'Windows package build failed.' }
     if (& git status --porcelain) { throw 'Build changed tracked source; inspect and commit before packaging again.' }
 
-    $debugDirectory = Join-Path $metadata.target_directory 'debug'
-    $binary = Join-Path $debugDirectory 'hanni-mvp.exe'
-    $installers = @(Get-ChildItem -LiteralPath (Join-Path $debugDirectory 'bundle/nsis') -Filter "*_$($config.version)_x64-setup.exe" -File)
+    $releaseDirectory = Join-Path $metadata.target_directory 'release'
+    $binary = Join-Path $releaseDirectory 'hanni-mvp.exe'
+    & python -B scripts/check-update-configuration.py --executable $binary
+    if ($LASTEXITCODE -ne 0) { throw 'Built executable has no matching update configuration.' }
+    $installers = @(Get-ChildItem -LiteralPath (Join-Path $releaseDirectory 'bundle/nsis') -Filter "*_$($config.version)_x64-setup.exe" -File)
     if ($installers.Count -ne 1) { throw 'Expected exactly one Windows x64 installer for this version.' }
     $packageDirectory = Join-Path $repository ('.local/windows-package/' + $sourceCommit.Substring(0, 12))
     New-Item -ItemType Directory -Path $packageDirectory -Force | Out-Null
@@ -34,7 +39,9 @@ try {
         version = $config.version
         channel = 'local-mvp'
         platform = 'windows-x64'
-        profile = 'debug-with-embedded-web-assets'
+        profile = 'release-with-embedded-web-assets'
+        build_id = (Get-Content -LiteralPath 'package.json' -Raw -Encoding UTF8 | ConvertFrom-Json).cicadaBuildId
+        updates_configured = $true
         source_repository = $origin
         source_commit = $sourceCommit
         installer = $installerName

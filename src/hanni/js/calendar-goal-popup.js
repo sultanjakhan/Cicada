@@ -28,6 +28,10 @@ export function openCalendarGoalPopup({ document, invoke, goal, selection = {}, 
   const dialog = createCalendarDialog({ document, title: goal.title || 'Цель', isCurrent, returnFocus: () => { if (!leaving) returnFocus?.(); },
     onClose: () => { closed = true; revision++; child?.dispose(); development?.dispose(); window.removeEventListener('task-state-changed', onExternal); window.removeEventListener('hanni:calendar-refresh', onExternal); onClose?.(); } });
   dialog.modal.classList.add('calendar-development-dialog', 'calendar-goal-popup');
+  const headingContext = dialog.modal.querySelector('.calendar-editor-header > div');
+  headingContext.tabIndex = 0;
+  headingContext.setAttribute('role', 'group');
+  headingContext.setAttribute('aria-labelledby', dialog.modal.getAttribute('aria-labelledby'));
   dialog.modal.dataset.goalPopup = goalId;
   dialog.modal.querySelector('footer [data-dialog-close]').textContent = 'Закрыть';
   const heading = dialog.modal.querySelector('h2'), hint = dialog.modal.querySelector(`#${dialog.modal.getAttribute('aria-describedby')}`);

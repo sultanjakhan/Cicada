@@ -87,3 +87,15 @@
 .mobile .modal-overlay.evm-overlay {
   padding: calc(12px + env(safe-area-inset-top, 0px)) calc(12px + env(safe-area-inset-right, 0px)) calc(12px + env(safe-area-inset-bottom, 0px)) calc(12px + env(safe-area-inset-left, 0px));
 }
+
+/* Short Task/Goal views keep full titles in a keyboard-scrollable context area. */
+@media (max-height: 480px) {
+  :is(.calendar-task-details, .calendar-goal-popup) .calendar-editor-header > div {
+    min-width: 0;
+    flex: 1;
+    max-height: max(44px, 22dvh);
+    overflow-y: auto;
+    overflow-wrap: anywhere;
+    padding: 2px;
+  }
+}

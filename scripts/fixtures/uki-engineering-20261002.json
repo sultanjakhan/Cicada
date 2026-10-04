@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "kind": "work-registry-snapshot",
+  "snapshotId": "uki-engineering-20261002-091346",
+  "sequence": 1,
+  "source": {"publisherId": "uki-engineering", "sourceNamespace": "01a0f1a5-4bd0-705a-ae10-24cf6adf30fc", "mode": "published-snapshot"},
+  "publishedAt": "2026-10-02T09:13:46Z",
+  "staleAfterSeconds": 3600,
+  "projects": [{"id": "engineering", "title": "Agent City / Цикада"}],
+  "tasks": [
+    {"id":"improve-apps","projectId":"engineering","parentTaskId":null,"title":"Улучшение Agent City и Цикады","relationship":"root","status":"running","lastUpdated":"2026-10-02T09:13:46Z","provenance":{"kind":"parent-published","reference":"Сводка Üki от 2026-10-02 09:13 UTC"},"operation":null,"waitingFor":null,"result":null,"localBinding":null},
+    {"id":"connections","projectId":"engineering","parentTaskId":"improve-apps","title":"Подключения Agent City","relationship":"parallel","status":"done","lastUpdated":"2026-10-02T09:13:46Z","provenance":{"kind":"parent-published","reference":"Сводка Üki от 2026-10-02 09:13 UTC"},"operation":null,"waitingFor":null,"result":"Agent City 0.5.16: статусы каталогов и исправление повторного Save проверены","localBinding":null},
+    {"id":"cicada-workflow","projectId":"engineering","parentTaskId":"improve-apps","title":"Полный сценарий Цикады","relationship":"parallel","status":"done","lastUpdated":"2026-10-02T09:13:46Z","provenance":{"kind":"parent-published","reference":"Сводка Üki от 2026-10-02 09:13 UTC"},"operation":null,"waitingFor":null,"result":"Кандидат 0d04c83 прошёл независимую QA, ещё не установлен","localBinding":null},
+    {"id":"data-sources","projectId":"engineering","parentTaskId":"improve-apps","title":"Источники данных","relationship":"parallel","status":"running","lastUpdated":"2026-10-02T09:13:46Z","provenance":{"kind":"parent-published","reference":"Сводка Üki от 2026-10-02 09:13 UTC"},"operation":"Подключение папок и первый запуск в обоих приложениях","waitingFor":null,"result":null,"localBinding":null},
+    {"id":"architecture","projectId":"engineering","parentTaskId":"improve-apps","title":"Архитектура исполнения","relationship":"parallel","status":"checking","lastUpdated":"2026-10-02T09:13:46Z","provenance":{"kind":"parent-published","reference":"Сводка Üki от 2026-10-02 09:13 UTC"},"operation":null,"waitingFor":null,"result":"Pipeline и project policy patches готовы, ждут интеграции","localBinding":null},
+    {"id":"data-separation","projectId":"engineering","parentTaskId":"improve-apps","title":"Разделение данных","relationship":"parallel","status":"waiting","lastUpdated":"2026-10-02T09:13:46Z","provenance":{"kind":"parent-published","reference":"Сводка Üki от 2026-10-02 09:13 UTC"},"operation":null,"waitingFor":null,"result":"Skills Agent City вынесены; готовится стабильное расположение, DEV Цикады требует отдельной миграции","localBinding":null},
+    {"id":"ui-audit","projectId":"engineering","parentTaskId":"improve-apps","title":"Обзор интерфейсов","relationship":"parallel","status":"running","lastUpdated":"2026-10-02T09:13:46Z","provenance":{"kind":"parent-published","reference":"Сводка Üki от 2026-10-02 09:13 UTC"},"operation":"Проверка структуры обоих приложений","waitingFor":null,"result":null,"localBinding":null},
+    {"id":"security","projectId":"engineering","parentTaskId":"improve-apps","title":"Проверка безопасности","relationship":"parallel","status":"running","lastUpdated":"2026-10-02T09:13:46Z","provenance":{"kind":"parent-published","reference":"Сводка Üki от 2026-10-02 09:13 UTC"},"operation":"Проверка границ доступа и безопасных путей","waitingFor":null,"result":null,"localBinding":null},
+    {"id":"registry","projectId":"engineering","parentTaskId":"improve-apps","title":"Рабочий реестр","relationship":"parallel","status":"running","lastUpdated":"2026-10-02T09:13:46Z","provenance":{"kind":"parent-published","reference":"Сводка Üki от 2026-10-02 09:13 UTC"},"operation":"Общий реестр работ и импорт","waitingFor":null,"result":null,"localBinding":null}
+  ],
+  "runs": []
+}

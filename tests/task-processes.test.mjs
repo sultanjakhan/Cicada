@@ -1,6 +1,7 @@
 // Task processes (2026-09-25): process state, stage visibility and the arrow,
 // time per stage, and the «Процессы задач» settings editor. Fictional data only.
 import test from 'node:test';
+import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import {
@@ -239,4 +240,28 @@ test('the editor refuses an empty name at its field and reports a save from anot
   assert.equal(x.stageControl(DEFAULT_PROCESS_ID, 'requirements', 'stage-title').value, 'ТЗ', 'the edit stays in the form');
   x.$('[data-processes-cancel]').click(); await settle();
   assert.ok(x.process('p-report'), 'Cancel loads the newer version');
+});
+
+
+test('persisted active timer uses UTC through simulated restart, midnight and clock jumps', () => {
+  const saved = JSON.stringify([{source_type:'note',source_id:'synthetic-timer',created_at:'2026-10-02T23:59:00Z',date:'2026-10-02',start_time:'23:59:00',is_active:true,duration_seconds:0}]);
+  const at = timestamp => Object.fromEntries(stageSeconds({blocks:JSON.parse(saved), stage:'analysis', now:Date.parse(timestamp)}));
+  assert.deepEqual(at('2026-10-03T00:01:00Z'),{analysis:120});
+  assert.deepEqual(at('2026-10-02T22:59:00Z'),{});
+  assert.deepEqual(at('2026-10-04T00:59:00Z'),{analysis:90000});
+  assert.deepEqual(at('2026-10-03T00:01:00Z'),{analysis:120},'clock jump did not mutate the persisted timer');
+  assert.equal(JSON.parse(saved)[0].source_id,'synthetic-timer');
+});
+
+
+test('UTC timer survives process-only timezone changes without altering task association', () => {
+  const moduleUrl = new URL('../src/hanni/js/task-processes.js', import.meta.url).href;
+  const script = `import { stageSeconds } from ${JSON.stringify(moduleUrl)};
+    const blocks = JSON.parse('[{"source_type":"note","source_id":"synthetic-timezone-task","created_at":"2026-10-02T23:59:00Z","date":"2026-10-02","start_time":"23:59:00","is_active":true}]');
+    console.log(JSON.stringify({seconds:Object.fromEntries(stageSeconds({blocks,stage:'analysis',now:Date.parse('2026-10-03T00:01:00Z')})),source:blocks[0].source_id,date:blocks[0].date}));`;
+  for (const TZ of ['UTC','America/New_York','Asia/Almaty','Pacific/Auckland']) {
+    const result = spawnSync(process.execPath,['--input-type=module','--eval',script],{encoding:'utf8',env:{...process.env,TZ}});
+    assert.equal(result.status,0,result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout),{seconds:{analysis:120},source:'synthetic-timezone-task',date:'2026-10-02'},TZ);
+  }
 });

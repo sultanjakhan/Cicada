@@ -20,7 +20,10 @@ mod update_background;
 mod update_macos;
 mod update_journal;
 mod calendar_compat;
+mod data_sources;
+mod isolated_test;
 mod task_attributes;
+mod native_result_review;
 mod external_url;
 mod desktop_launch;
 #[cfg(target_os = "macos")]
@@ -465,6 +468,7 @@ fn dirs_like_legacy_documents_path() -> PathBuf {
 }
 
 fn app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    if let Some(root) = isolated_test::root(app) { return Ok(root); }
     let standard = app
         .path()
         .app_data_dir()
@@ -511,6 +515,120 @@ fn delete_item(
     remove(&mut conn, &id, expected_version)
 }
 
+// Recovery exports use the same application-owned backups directory as
+// create_backup. No caller path, file-picker permission or generic file API.
+#[cfg(windows)]
+fn personal_recovery_handle_path(file: &std::fs::File) -> Result<std::path::PathBuf, String> {
+    use std::os::windows::{ffi::OsStringExt, io::AsRawHandle};
+    use windows::Win32::{Foundation::HANDLE, Storage::FileSystem::{GetFinalPathNameByHandleW, FILE_NAME_NORMALIZED}};
+    let mut buffer = vec![0u16; 32768];
+    let length = unsafe { GetFinalPathNameByHandleW(HANDLE(file.as_raw_handle()), &mut buffer, FILE_NAME_NORMALIZED) } as usize;
+    if length == 0 || length >= buffer.len() { return Err(fail("personal recovery handle path unavailable")); }
+    Ok(std::path::PathBuf::from(std::ffi::OsString::from_wide(&buffer[..length])))
+}
+
+#[cfg(windows)]
+fn pin_personal_recovery_directory(path: &Path) -> Result<std::fs::File, String> {
+    use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+    // LIST_DIRECTORY | READ_ATTRIBUTES; no WRITE or DELETE sharing. Zero
+    // desired access does not pin rename on Windows. Open the link itself, then check
+    // the opened object's attributes, avoiding metadata-before-open races.
+    let file = std::fs::OpenOptions::new().read(true).access_mode(0x81).share_mode(1)
+        .custom_flags(0x02000000 | 0x00200000).open(path)
+        .map_err(|_| fail("personal recovery directory pin failed"))?;
+    let metadata = file.metadata().map_err(|_| fail("personal recovery directory identity unavailable"))?;
+    if !metadata.is_dir() || metadata.file_attributes() & 0x400 != 0 {
+        return Err(fail("personal recovery directory is not ordinary"));
+    }
+    let requested = path.canonicalize().map_err(|_| fail("personal recovery requested path identity unavailable"))?;
+    if personal_recovery_handle_path(&file)? != requested {
+        return Err(fail("personal recovery directory path identity changed"));
+    }
+    Ok(file)
+}
+
+#[cfg(windows)]
+fn pin_personal_recovery_chain(path: &Path) -> Result<Vec<std::fs::File>, String> {
+    use std::path::{Component, PathBuf, Prefix};
+    if !path.is_absolute() || !matches!(path.components().next(),Some(Component::Prefix(p)) if matches!(p.kind(),Prefix::Disk(_) | Prefix::VerbatimDisk(_))) {
+        return Err(fail("personal recovery local absolute root required"));
+    }
+    let mut prefix = PathBuf::new();
+    let mut pins = Vec::new();
+    for component in path.components() {
+        if matches!(component,Component::CurDir | Component::ParentDir) {
+            return Err(fail("personal recovery ordinary root required"));
+        }
+        prefix.push(component.as_os_str());
+        if matches!(component,Component::RootDir | Component::Normal(_)) {
+            pins.push(pin_personal_recovery_directory(&prefix)?);
+        }
+    }
+    Ok(pins)
+}
+
+#[cfg(not(windows))]
+fn pin_personal_recovery_chain(_path: &Path) -> Result<Vec<std::fs::File>, String> {
+    // A directory descriptor alone does not prevent rename on other platforms.
+    // A reviewed platform-specific handle-relative implementation is required.
+    Err(fail("personal recovery pinned storage unavailable on this platform"))
+}
+
+fn persist_personal_import_recovery(data_dir: &Path, report_json: &str) -> Result<serde_json::Value, String> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    use sha2::{Digest, Sha256};
+    if report_json.len() > 8 * 1024 * 1024 { return Err(fail("personal recovery export exceeds limit")); }
+    let report: serde_json::Value = serde_json::from_str(report_json).map_err(|_| fail("invalid personal recovery report"))?;
+    if report["schemaVersion"] != 1 || !matches!(report["kind"].as_str(), Some("personal-import-preview-export" | "personal-import-recovery")) { return Err(fail("invalid personal recovery report kind")); }
+    // Pin every existing ancestor before even creating backups. Pins stay alive
+    // through create/write/readback/receipt. Never accept a redirected ancestor.
+    let mut directory_pins = pin_personal_recovery_chain(data_dir)?;
+    let directory = data_dir.join("backups");
+    match std::fs::create_dir(&directory) {
+        Ok(()) => (),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => (),
+        Err(_) => return Err(fail("personal recovery directory unavailable")),
+    }
+    #[cfg(windows)] directory_pins.push(pin_personal_recovery_directory(&directory)?);
+    let path = directory.join(format!("personal-import-{}-{}.json",Utc::now().format("%Y%m%dT%H%M%SZ"),Uuid::new_v4()));
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(true).create_new(true);
+    #[cfg(windows)] {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.share_mode(0).custom_flags(0x00200000);
+    }
+    let mut file = options.open(&path).map_err(|_| fail("personal recovery export write failed"))?;
+    #[cfg(windows)] {
+        use std::os::windows::{fs::MetadataExt,io::AsRawHandle};
+        use windows::Win32::{Foundation::HANDLE,Storage::FileSystem::{GetFileInformationByHandle,BY_HANDLE_FILE_INFORMATION}};
+        let metadata = file.metadata().map_err(|_| fail("personal recovery file identity unavailable"))?;
+        let mut info = BY_HANDLE_FILE_INFORMATION::default();
+        unsafe { GetFileInformationByHandle(HANDLE(file.as_raw_handle()),&mut info) }.map_err(|_| fail("personal recovery file identity unavailable"))?;
+        if !metadata.is_file() || metadata.file_attributes() & 0x400 != 0 || info.nNumberOfLinks != 1 {
+            return Err(fail("personal recovery file is not ordinary"));
+        }
+        let expected = personal_recovery_handle_path(directory_pins.last().ok_or_else(|| fail("personal recovery directory pin unavailable"))?)?
+            .join(path.file_name().ok_or_else(|| fail("personal recovery file name unavailable"))?);
+        if personal_recovery_handle_path(&file)? != expected { return Err(fail("personal recovery file path identity changed")); }
+    }
+    // Read the exact newly-created, exclusively-held file object. Do not close
+    // and reopen by pathname, or delete a pathname after a failed operation.
+    file.write_all(report_json.as_bytes()).map_err(|_| fail("personal recovery export write failed"))?;
+    file.sync_all().map_err(|_| fail("personal recovery export flush failed"))?;
+    file.seek(SeekFrom::Start(0)).map_err(|_| fail("personal recovery export readback failed"))?;
+    let mut readback = Vec::new();
+    file.read_to_end(&mut readback).map_err(|_| fail("personal recovery export readback failed"))?;
+    if readback != report_json.as_bytes() { return Err(fail("personal recovery export verification failed")); }
+    let receipt = serde_json::json!({"schemaVersion":1,"path":path.to_string_lossy(),"sha256":hex::encode(Sha256::digest(&readback)),"bytes":readback.len(),"verified":true});
+    drop(file);
+    drop(directory_pins);
+    Ok(receipt)
+}
+#[tauri::command(rename_all = "camelCase")]
+fn save_personal_import_recovery(app: tauri::AppHandle, report_json: String) -> Result<serde_json::Value,String> {
+    persist_personal_import_recovery(&app_data_dir(&app)?, &report_json)
+}
+
 #[tauri::command]
 fn create_backup(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<String, String> {
     let conn = state.0.lock().map_err(|_| fail("database lock poisoned"))?;
@@ -521,26 +639,34 @@ fn create_backup(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<St
 pub fn run() {
     let options =
         desktop_launch::Options::from_env().unwrap_or_else(|_| desktop_launch::fail_and_exit());
+    // Validate before generating a window, opening SQLite or loading any integration.
+    let test_profile = isolated_test::initialize(options.test_root()).unwrap_or_else(|_| desktop_launch::fail_and_exit());
+    let isolated = test_profile.root.is_some();
     #[cfg(target_os = "macos")]
     update_macos::relaunch_from_legacy_bundle();
     let mut context = tauri::generate_context!();
+    let test_window = if isolated { context.config().app.windows.first().cloned() } else { None };
     options.apply_context(&mut context);
     let startup_options = options.clone();
     let builder = tauri::Builder::default();
     #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
-    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    let builder = if isolated { builder } else { builder.plugin(tauri_plugin_updater::Builder::new().build()) };
+    let builder = if isolated { builder } else { builder.plugin(hanni_mvp_android_installer::init()) };
     let built = builder
-        .plugin(hanni_mvp_android_installer::init())
+        .manage(native_result_review::Scope::from_isolated(isolated))
+        .manage(test_profile)
         .manage(app_updates::UpdateState::default())
         .setup(move |app| {
             let initialized = (|| -> Result<(), Box<dyn std::error::Error>> {
                 let data_dir = app_data_dir(app.handle())?;
                 let instance_lock = acquire_instance_lock(&data_dir)?;
+                let database_was_present = data_dir.join("calendar.db").try_exists()?;
                 let connection = Connection::open(data_dir.join("calendar.db"))
                     .map_err(|e| fail(format!("open calendar database: {e}")))?;
                 connection.pragma_update(None, "journal_mode", "WAL")?;
                 connection.busy_timeout(Duration::from_secs(5))?;
                 init_schema(&connection)?;
+                data_sources::mark_new_profile(&connection, database_was_present)?;
                 app.manage(AppState(Mutex::new(connection)));
                 app.manage(instance_lock);
                 #[cfg(target_os = "macos")]
@@ -551,10 +677,18 @@ pub fn run() {
                         startup_options == desktop_launch::Options::Interactive,
                     );
                 }
-                if !startup_options.is_update_background() {
+                if !isolated && !startup_options.is_update_background() {
                     mvp_sync::start(app.handle(), data_dir.join("calendar.db"));
                     app_updates::start(app.handle().clone());
                     app_updates::enroll_desktop_task(app.handle().clone());
+                }
+                if isolated {
+                    let root = isolated_test::root(app.handle()).ok_or("isolated_root_unavailable")?;
+                    let mut window = test_window.clone().ok_or("isolated_window_unavailable")?;
+                    window.title = "Cicada [isolated test]".into();
+                    let background = matches!(startup_options, desktop_launch::Options::IsolatedTest { background: true, .. });
+                    window.visible = !background; window.focus = !background;
+                    tauri::WebviewWindowBuilder::from_config(app, &window)?.data_directory(root.join("webview2")).build()?;
                 }
                 Ok(())
             })();
@@ -572,7 +706,9 @@ pub fn run() {
             startup_options.after_setup(app.handle());
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(move |invoke| {
+            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+            isolated_test::isolated_test_status,
             health_sleep::health_sleep_status,
             health_sleep::health_sleep_connect,
             health_sleep::health_sleep_import,
@@ -584,6 +720,7 @@ pub fn run() {
             set_completed,
             delete_item,
             create_backup,
+            save_personal_import_recovery,
             app_updates::mvp_update_status,
             app_updates::mvp_update_check,
             app_updates::mvp_update_prepare,
@@ -611,6 +748,11 @@ pub fn run() {
             calendar_compat::update_note_status,
             calendar_compat::toggle_note_archive,
             calendar_compat::get_calendar_tasks,
+            native_result_review::prototype_publish_task_result,
+            native_result_review::read_task_result_review,
+            native_result_review::enqueue_task_result_review,
+            native_result_review::commit_task_result_review,
+            native_result_review::recover_task_result_review,
             calendar_compat::get_calendar_task,
             calendar_compat::save_calendar_task,
             calendar_compat::complete_calendar_task,
@@ -618,6 +760,8 @@ pub fn run() {
             calendar_compat::get_calendar_records,
             calendar_compat::get_ui_state,
             calendar_compat::set_ui_state,
+            data_sources::inspect_data_source,
+            data_sources::choose_data_source,
             external_url::open_url,
             calendar_compat::get_goals,
             calendar_compat::save_calendar_goal,
@@ -645,7 +789,9 @@ pub fn run() {
             calendar_compat::get_task_pins,
             calendar_compat::get_app_setting,
             calendar_compat::set_app_setting
-        ])
+        ];
+        isolated_test::dispatch(isolated, invoke, handler)
+        })
         .build(context);
     let mut app = built.unwrap_or_else(|error| {
         if options != desktop_launch::Options::Interactive {
@@ -867,4 +1013,76 @@ mod tests {
             1
         );
     }
+}
+
+#[cfg(windows)]
+#[test]
+fn personal_recovery_export_is_native_verified_and_path_scoped() {
+    use sha2::{Digest,Sha256};
+    let directory = tempfile::tempdir().unwrap();
+    let raw = serde_json::json!({"schemaVersion":1,"kind":"personal-import-preview-export","before":[],"templateExport":[],"actions":[{"title":"Synthetic Unicode Ж 文"}]}).to_string();
+    let result = persist_personal_import_recovery(directory.path(),&raw).unwrap();
+    let path = std::path::PathBuf::from(result["path"].as_str().unwrap());
+    assert_eq!(path.parent().unwrap(),directory.path().join("backups"));
+    assert_eq!(std::fs::read(&path).unwrap(),raw.as_bytes());
+    assert_eq!(result["bytes"],raw.len()); assert_eq!(result["verified"],true);
+    assert_eq!(result["sha256"],hex::encode(Sha256::digest(raw.as_bytes())));
+    assert!(persist_personal_import_recovery(directory.path(),"{}").is_err());
+    assert!(persist_personal_import_recovery(directory.path(),&"x".repeat(8*1024*1024+1)).is_err());
+    let blocked = tempfile::tempdir().unwrap();std::fs::write(blocked.path().join("backups"),b"synthetic blocker").unwrap();
+    assert!(persist_personal_import_recovery(blocked.path(),&raw).is_err());
+    assert_eq!(std::fs::read(blocked.path().join("backups")).unwrap(),b"synthetic blocker");
+}
+
+#[cfg(windows)]
+#[test]
+fn personal_recovery_pins_ancestors_and_rejects_reparse_escape() {
+    let fixture = tempfile::tempdir().unwrap();
+    let outside = fixture.path().join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    let app = fixture.path().join("app-link");
+    let result = std::process::Command::new("cmd").args(["/c","mklink","/J"]).arg(&app).arg(&outside).output().unwrap();
+    assert!(result.status.success(),"synthetic junction creation failed");
+    let raw = r#"{"schemaVersion":1,"kind":"personal-import-preview-export"}"#;
+    assert!(persist_personal_import_recovery(&app,raw).is_err());
+    assert!(!outside.join("backups").exists(),"redirected root was mutated");
+    assert!(persist_personal_import_recovery(&app.join("nested"),raw).is_err());
+    assert!(!outside.join("nested").exists());
+    // Real handles must deny rename while held; metadata-only access is enough
+    // to pin identity without requiring directory-content read permission.
+    let ordinary = fixture.path().join("ordinary");std::fs::create_dir(&ordinary).unwrap();
+    let pins = pin_personal_recovery_chain(&ordinary).unwrap();
+    assert!(std::fs::rename(&ordinary,fixture.path().join("moved")).is_err());
+    drop(pins);
+    std::fs::rename(&ordinary,fixture.path().join("moved")).unwrap();
+    std::fs::remove_dir(&app).unwrap(); // Remove link itself; never recurse into target.
+}
+
+#[cfg(windows)]
+#[test]
+fn personal_recovery_unpinnable_chain_fails_before_directory_creation() {
+    let fixture = tempfile::tempdir().unwrap();
+    let raw = r#"{"schemaVersion":1,"kind":"personal-import-preview-export"}"#;
+    // Deny metadata access to this directory using an exclusive owned handle;
+    // no permission or ACL modifications are needed for this regression.
+    use std::os::windows::fs::OpenOptionsExt;
+    let exclusive = std::fs::OpenOptions::new().read(true).share_mode(0)
+        .custom_flags(0x02000000 | 0x00200000).open(fixture.path()).unwrap();
+    assert!(persist_personal_import_recovery(fixture.path(),raw).is_err());
+    assert!(!fixture.path().join("backups").exists());
+    drop(exclusive);
+}
+
+#[cfg(windows)]
+#[test]
+fn personal_recovery_leaf_pin_denies_rename_and_binds_actual_path() {
+    let fixture = tempfile::tempdir().unwrap();
+    let leaf = fixture.path().join("leaf");std::fs::create_dir(&leaf).unwrap();
+    let pin = pin_personal_recovery_directory(&leaf).unwrap();
+    assert_eq!(personal_recovery_handle_path(&pin).unwrap(),leaf.canonicalize().unwrap());
+    let moved = fixture.path().join("moved");
+    assert!(std::fs::rename(&leaf,&moved).is_err(),"held pin permitted rename");
+    assert!(leaf.exists());assert!(!moved.exists());
+    drop(pin);
+    std::fs::rename(&leaf,&moved).unwrap();
 }

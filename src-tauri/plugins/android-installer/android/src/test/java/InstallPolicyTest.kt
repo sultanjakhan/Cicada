@@ -32,10 +32,9 @@ class InstallPolicyTest {
     }
 
     @Test
-    fun unattendedSessionIsRestrictedToAndroid12AndAnExplicitRequest() {
-        assertFalse(InstallPolicy.usesUnattendedSession(30, true))
-        assertFalse(InstallPolicy.usesUnattendedSession(31, false))
-        assertTrue(InstallPolicy.usesUnattendedSession(31, true))
+    fun installationRequiresAnExplicitManualRequest() {
+        assertFalse(InstallPolicy.acceptsInstallRequest(true))
+        assertTrue(InstallPolicy.acceptsInstallRequest(false))
     }
 
     @Test

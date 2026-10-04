@@ -6,6 +6,35 @@ const settle=()=>new Promise(resolve=>setImmediate(resolve));
 const today=()=>{const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
 const row=(id,date,extra={})=>({source_type:'note',source_id:id,title:id,date,status_extra:'task',...extra});
 
+test('compact filters retain visible constraints, reset and expanded row details across refresh',async t=>{
+  const x=await setup(t);
+  const filters=x.host.querySelector('.ct-filter-details');
+  assert.equal(filters.open,false);
+  assert.equal(filters.querySelector('[data-tasks-goal]'),x.host.querySelector('[data-tasks-goal]'));
+  x.change('[data-tasks-goal]','parent');
+  assert.match(x.host.querySelector('[data-tasks-applied]').textContent,/Цель: Career/);
+  filters.open=false;
+  assert.equal(x.host.querySelector('[data-tasks-reset]').hidden,false);
+  const details=x.host.querySelector('.ct-row-details');details.open=true;
+  x.dom.window.dispatchEvent(new x.dom.window.Event('task-state-changed'));await settle();await settle();
+  assert.equal(x.host.querySelector('.ct-row-details').open,true);
+  x.host.querySelector('[data-tasks-reset]').click();
+  assert.deepEqual(x.titles(),['API','SQL']);
+  assert.equal(x.dom.window.document.activeElement,x.host.querySelector('[data-tasks-search]'));
+  assert.deepEqual(x.actions,[]);
+});
+
+test('waiting task primary action opens review without starting a timer',async t=>{
+  const dom=new JSDOM('<main></main>'),host=dom.window.document.querySelector('main');
+  const actions=[],opened=[],task=row('Waiting',null,{process:'system-analysis',stage:'acceptance',waiting:true});
+  const dispose=mountCalendarTasks(host,{invoke:async cmd=>cmd==='get_calendar_tasks'?[task]:cmd==='get_goals'||cmd==='get_calendar_task_goals'?[]:null,openTask:r=>opened.push(r.source_id),editDate:()=>{},notifyChange:()=>{},executeAction:(_,a)=>actions.push(a)});
+  t.after(()=>{dispose();dom.window.close();});await settle();await settle();
+  const button=host.querySelector('[data-task-control="execute"]');
+  assert.equal(host.querySelector('.ct-primary-meta .ct-status').textContent,'Жду ответа');
+  assert.equal(button.textContent,'Открыть ожидание');button.click();
+  assert.deepEqual(opened,['Waiting']);assert.deepEqual(actions,[]);
+});
+
 async function setup(t) {
   const dom=new JSDOM('<main></main>',{url:'https://fixture.invalid',pretendToBeVisual:true});
   const host=dom.window.document.querySelector('main'), state={filter:'active',search:'',goal:'',page:0};
@@ -88,4 +117,53 @@ test('active tasks are grouped as running, overdue, today, soon and undated, and
   host.querySelector('[data-tasks-filter="completed"]').click();
   assert.deepEqual(titles(),['Done']);assert.equal(item('Done').classList.contains('is-overdue'),false,'completed tasks are never overdue');
   assert.equal(run('Done'),null);
+});
+
+
+test('day rollover refilters unchanged tasks while preserving focused search and filter state', async t => {
+  const OriginalDate = globalThis.Date;
+  let now = new OriginalDate(2026, 9, 2, 23, 59);
+  globalThis.Date = class extends OriginalDate {
+    constructor(...args) { super(...(args.length ? args : [now.getTime()])); }
+    static now() { return now.getTime(); }
+  };
+  const dom = new JSDOM('<main></main>', { url:'https://fixture.invalid', pretendToBeVisual:true });
+  const host = dom.window.document.querySelector('main'), callbacks = [];
+  dom.window.setInterval = callback => (callbacks.push(callback), callbacks.length);
+  dom.window.clearInterval = () => {};
+  const state = {filter:'today', search:'Synthetic', goal:'', sphere:'', page:0};
+  const rows = [row('Synthetic old','2026-10-02'), row('Synthetic next','2026-10-03')];
+  const dispose = mountCalendarTasks(host, {state, invoke:async command => command==='get_calendar_tasks'?rows:[], openTask(){}, editDate(){}, executeAction(){}, notifyChange(){}});
+  t.after(() => { dispose(); dom.window.close(); globalThis.Date = OriginalDate; });
+  await settle();
+  const titles = () => [...host.querySelectorAll('[data-task-control="open"]')].map(el=>el.textContent);
+  assert.deepEqual(titles(), ['Synthetic old']);
+  const search = host.querySelector('[data-tasks-search]'); search.focus();
+  now = new OriginalDate(2026,9,3,0,1);
+  callbacks.forEach(callback=>callback()); await settle(); await settle();
+  assert.deepEqual(titles(), ['Synthetic next']);
+  assert.equal(state.filter, 'today'); assert.equal(state.search, 'Synthetic');
+  assert.equal(search.value, 'Synthetic'); assert.equal(dom.window.document.activeElement, search);
+});
+
+test('large synthetic catalogue retains filters and search through failed reads and retry', async t => {
+  const dom = new JSDOM('<main></main>', {url:'https://fixture.invalid', pretendToBeVisual:true});
+  const host = dom.window.document.querySelector('main');
+  const state = {filter:'undated', search:'Synthetic 4999', goal:'', sphere:'work', page:0};
+  const rows = Array.from({length:5000}, (_,index)=>row('Synthetic '+index,null,{sphere:'work'}));
+  let fail = false;
+  const dispose = mountCalendarTasks(host, {state, invoke:async command => {if(fail)throw new Error('synthetic read fault');return command==='get_calendar_tasks'?rows:[];},openTask(){},editDate(){},executeAction(){},notifyChange(){}});
+  t.after(()=>{dispose();dom.window.close();}); await settle();
+  const search = host.querySelector('[data-tasks-search]'); search.focus();
+  const titles = () => [...host.querySelectorAll('[data-task-control="open"]')].map(el=>el.textContent);
+  assert.deepEqual(titles(),['Synthetic 4999']);
+  fail=true; dom.window.dispatchEvent(new dom.window.Event('task-state-changed')); await settle();await settle();
+  assert.equal(host.querySelector('[data-tasks-retry]').hidden,false);
+  assert.deepEqual(titles(),['Synthetic 4999']);
+  fail=false; rows.push(row('Synthetic 4999 extra',null,{sphere:'work'}));
+  host.querySelector('[data-tasks-retry]').click();await settle();await settle();
+  assert.equal(host.querySelector('[data-tasks-retry]').hidden,true);
+  assert.deepEqual(titles(),['Synthetic 4999','Synthetic 4999 extra']);
+  assert.equal(state.filter,'undated');assert.equal(state.sphere,'work');assert.equal(search.value,'Synthetic 4999');
+  assert.equal(dom.window.document.activeElement,search);
 });

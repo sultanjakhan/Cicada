@@ -18,6 +18,7 @@ pub(crate) enum Options {
     UpdateBackground,
     Background,
     Minimized,
+    IsolatedTest { root: PathBuf, background: bool },
 }
 
 impl Options {
@@ -33,6 +34,13 @@ impl Options {
         let Some(flag) = args.next() else {
             return Ok(Self::Interactive);
         };
+        if flag == "--isolated-test-root" {
+            if !cfg!(windows) { return Err("mvp_launch_invalid_options"); }
+            let root = PathBuf::from(args.next().ok_or("mvp_launch_invalid_options")?);
+            let background = match args.next() { None => false, Some(value) if value == "--background" => true, _ => return Err("mvp_launch_invalid_options") };
+            if args.next().is_some() || !root.is_absolute() { return Err("mvp_launch_invalid_options"); }
+            return Ok(Self::IsolatedTest { root, background });
+        }
         let mode = if flag == "--configure-sync" {
             let path = args.next().ok_or("mvp_launch_invalid_options")?;
             if path.is_empty() || path.to_string_lossy().starts_with("--") {
@@ -63,11 +71,18 @@ impl Options {
         )
     }
 
+    pub(crate) fn test_root(&self) -> Option<&Path> { if let Self::IsolatedTest { root, .. } = self { Some(root) } else { None } }
+
     pub(crate) fn is_update_background(&self) -> bool {
         *self == Self::UpdateBackground
     }
 
     pub(crate) fn apply_context<R: tauri::Runtime>(&self, context: &mut tauri::Context<R>) {
+        if self.test_root().is_some() {
+            // Construct exactly one owned webview manually with an absolute test data directory.
+            context.config_mut().app.windows.clear();
+            return;
+        }
         if self.is_one_shot() {
             // Clearing before build avoids creating a WebView and running frontend startup code.
             context.config_mut().app.windows.clear();

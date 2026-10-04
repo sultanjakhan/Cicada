@@ -1,5 +1,29 @@
 //! Exercise the actual Tauri command deserializer and SQLite implementation.
 //! MockRuntime creates no native window and is not live UI evidence.
+#[test]
+fn task_workflow_native_ipc_survives_database_reopen_without_starting_work() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("calendar.db");
+    let (app, view) = fixture_with_connection(Connection::open(&path).unwrap());
+    let task = call(&view, "save_calendar_task", json!({"id":null,"title":"Synthetic workflow","dueDate":null,"estimateMinutes":null,"goalId":null})).unwrap();
+    let id = task.as_str().unwrap();
+    let key = format!("calendar_task_workflow_v1:cicada:note:{id}");
+    let planned = json!({"version":1,"taskId":format!("cicada:note:{id}"),"steps":[{"id":"s1","title":"Synthetic step","status":"planned"}],"result":"","run":null}).to_string();
+    call(&view, "set_ui_state", json!({"key":key,"value":planned,"expectedValue":""})).unwrap();
+    let mut finished: Value = serde_json::from_str(&planned).unwrap();
+    finished["steps"][0]["status"] = json!("done");
+    finished["result"] = json!("Synthetic verified result");
+    let finished = finished.to_string();
+    call(&view, "set_ui_state", json!({"key":key,"value":finished,"expectedValue":planned})).unwrap();
+    assert!(call(&view, "set_ui_state", json!({"key":key,"value":planned,"expectedValue":planned})).is_err());
+    drop(view);
+    drop(app);
+    let (_reopened, view) = fixture_with_connection(Connection::open(&path).unwrap());
+    assert_eq!(call(&view, "get_ui_state", json!({"key":key})).unwrap(), json!(finished));
+    assert_eq!(call(&view, "get_calendar_task", json!({"id":id})).unwrap()["title"], "Synthetic workflow");
+    assert!(call(&view, "get_active_blocks", json!({})).unwrap().as_array().unwrap().is_empty());
+}
+
 use crate::{calendar_compat as api, init_schema, AppState};
 use rusqlite::Connection;
 use serde_json::{json, Value};
@@ -8,6 +32,47 @@ use tauri::test::{
     get_ipc_response, mock_builder, mock_context, noop_assets, MockRuntime, INVOKE_KEY,
 };
 use tauri::Manager;
+
+#[test]
+fn task_run_namespace_and_report_survive_synthetic_database_relocation() {
+    use sha2::{Digest, Sha256};
+    let dir = tempfile::tempdir().unwrap();
+    let original = dir.path().join("fixture-before.db");
+    let relocated = dir.path().join("fixture-after.db");
+    let (app, view) = fixture_with_connection(Connection::open(&original).unwrap());
+    let task = call(&view, "save_calendar_task", json!({"id":null,"title":"Synthetic exchange","dueDate":null,"estimateMinutes":null,"goalId":null})).unwrap();
+    let id = task.as_str().unwrap();
+    let namespace = "00000000-0000-4000-8000-000000000001";
+    let prefix = hex::encode(Sha256::digest(namespace.as_bytes()));
+    let key = format!("cicada-{}-{id}", &prefix[..16]);
+    let run_id = "00000000-0000-4000-8000-000000000002";
+    let binding = json!({"sourceNamespace":namespace,"sourceType":"note","sourceId":id,"taskKey":key});
+    let report = json!({"runId":run_id,"sequence":1,"taskKey":key,"agent":"codex","model":null,"provider":null,"stage":"synthetic-fixture","status":"waiting","skillIds":[],"mcpCalls":null,"inputTokens":null,"outputTokens":null});
+    let raw = json!({"version":1,"sourceNamespace":namespace,"order":2,"bindings":{(key.clone()):binding},"runs":{(run_id):{"runId":run_id,"taskKey":key,"agent":"codex","provider":null,"model":null,"report":report,"receivedOrder":2}}}).to_string();
+    call(&view,"set_ui_state",json!({"key":"calendar_task_run_exchange_v1","value":raw,"expectedValue":""})).unwrap();
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        let count: i64 = conn.query_row("SELECT count(*) FROM mvp_records WHERE json_extract(data,'$.key[0]')='calendar_task_run_exchange_v1'", [], |row| row.get(0)).unwrap();
+        assert_eq!(count, 0, "exchange state must not enter content sync");
+    }
+    // MockRuntime may retain managed state after App drops. Close this fixture's
+    // file connection explicitly before asking Windows to rename it.
+    {
+        let state = app.state::<AppState>();
+        let mut conn = state.0.lock().unwrap();
+        let file = std::mem::replace(&mut *conn, Connection::open_in_memory().unwrap());
+        file.close().unwrap();
+    }
+    drop(view);
+    drop(app);
+    // Synthetic temp database only; no profile, credentials or DPAPI data exist here.
+    std::fs::rename(&original, &relocated).unwrap();
+    let (_app, view) = fixture_with_connection(Connection::open(&relocated).unwrap());
+    assert_eq!(call(&view,"get_ui_state",json!({"key":"calendar_task_run_exchange_v1"})).unwrap(),json!(raw));
+    assert_eq!(call(&view,"get_calendar_task",json!({"id":id})).unwrap()["id"],task);
+    assert!(call(&view,"get_active_blocks",json!({})).unwrap().as_array().unwrap().is_empty());
+}
 
 fn fixture() -> (tauri::App<MockRuntime>, tauri::WebviewWindow<MockRuntime>) {
     fixture_with_connection(Connection::open_in_memory().unwrap())
@@ -2471,4 +2536,102 @@ fn process_payloads_and_task_blocks_cross_the_real_ipc() {
     assert_eq!(blocks.iter().map(|b| b["is_active"].clone()).collect::<Vec<_>>(), [json!(false), json!(true)]);
     assert!(blocks.iter().all(|b| b["source_id"] == task && chrono::DateTime::parse_from_rfc3339(b["created_at"].as_str().unwrap()).is_ok()));
     assert_eq!(call(&view, "get_calendar_task_blocks", json!({"sourceIds":[]})).unwrap(), json!([]));
+}
+#[test]
+fn personal_import_query_and_revision_archive_use_existing_domain_only() {
+    let (_app, view) = fixture();
+    let marker = "personal-import:personal-backlog:synthetic-one";
+    let id = call(&view, "create_note", json!({"title":"Synthetic personal import", "content":"Synthetic fixture", "tags":format!("calendar,task-sphere:personal,{marker},project:cicada,project:agent-city"), "status":"task", "dueDate":null,"priority":null})).unwrap();
+    // Another record cannot leak into the exact-marker scope, even with matching text.
+    let other = call(&view, "create_note", json!({"title":"Unrelated synthetic fixture", "content":marker, "tags":"task-sphere:work", "status":"task", "dueDate":null,"priority":null})).unwrap();
+    assert!(call(&view,"get_note",json!({"id":other,"personalOnly":true})).is_err(), "work content must be rejected before loading");
+    let template = call(&view,"create_note",json!({"title":"Synthetic personal template","content":"Synthetic export","tags":"calendar,task-sphere:personal","status":"note","dueDate":null,"priority":null})).unwrap();
+    assert_eq!(call(&view,"get_note",json!({"id":template,"personalOnly":true})).unwrap()["content"],"Synthetic export");
+    let rows = call(&view,"get_notes",json!({"filter":"personal-import","search":marker})).unwrap();
+    assert_eq!(rows.as_array().unwrap().len(),1);
+    assert_eq!(rows[0]["id"],id);
+    let tasks = call(&view,"get_calendar_tasks",json!({"includeCompleted":true})).unwrap();
+    let native = tasks.as_array().unwrap().iter().find(|row| row["source_id"] == id).unwrap();
+    assert_eq!(native["sphere"],"personal");
+    let personal = call(&view,"get_note",json!({"id":id})).unwrap();
+    let user_tags = format!("{},task-process:system-analysis,task-stage:requirements,task-waiting,task-stage-log:requirements@2026-10-03T00:00:00Z",personal["tags"].as_str().unwrap().replace("task-sphere:personal","task-sphere:home"));
+    call(&view,"update_note",json!({"id":id,"title":personal["title"],"content":personal["content"],"tags":user_tags,"archived":null,"dueDate":null,"contentBlocks":null,"priority":null,"expectedVersion":personal["version"]})).unwrap();
+    let moved = call(&view,"get_notes",json!({"filter":"personal-import","search":marker})).unwrap();
+    assert_eq!(moved.as_array().unwrap().len(),1,"editable sphere must not hide identity");
+    assert_eq!(moved[0]["id"],id);
+    assert_eq!(moved[0]["tags"],user_tags);
+    let original = call(&view,"get_note",json!({"id":id})).unwrap();
+    let update = json!({"id":id,"title":original["title"],"content":original["content"],"tags":original["tags"],"archived":true,"dueDate":null,"contentBlocks":null,"priority":null,"expectedVersion":original["version"]});
+    call(&view,"update_note",update.clone()).unwrap();
+    assert!(call(&view,"update_note",update).is_err(),"stale archive must fail");
+    let archived = call(&view,"get_notes",json!({"filter":"personal-import","search":marker})).unwrap();
+    assert_eq!(archived.as_array().unwrap().len(),1,"archived marker remains visible for dedup");
+    assert_eq!(archived[0]["archived"],true);
+    let archived_note = call(&view,"get_note",json!({"id":id})).unwrap();
+    call(&view,"update_note",json!({"id":id,"title":archived_note["title"],"content":archived_note["content"],"tags":user_tags.replace("task-sphere:home","task-sphere:work"),"archived":null,"dueDate":null,"contentBlocks":null,"priority":null,"expectedVersion":archived_note["version"]})).unwrap();
+    assert!(call(&view,"get_notes",json!({"filter":"personal-import","search":marker})).is_err(),"foreign scope must conflict before loading rather than hiding identity");
+    for search in ["", "personal-import:personal-backlog:%", "personal-import:another:synthetic-one"] {
+        assert!(call(&view,"get_notes",json!({"filter":"personal-import","search":search})).is_err());
+    }
+    assert!(call(&view,"get_notes",json!({"filter":"personal-import","search":null})).is_err());
+    assert!(call(&view,"get_active_blocks",json!({})).unwrap().as_array().unwrap().is_empty());
+}
+#[test]
+fn personal_import_atomic_create_serializes_two_database_connections() {
+    use std::sync::{Arc, Barrier};
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("synthetic-atomic.db");
+    let connection = Connection::open(&path).unwrap(); init_schema(&connection).unwrap(); drop(connection);
+    for attempt in 0..12 {
+        let marker = format!("personal-import:personal-backlog:atomic-{attempt}");
+        let barrier = Arc::new(Barrier::new(2));
+        let handles: Vec<_> = (0..2).map(|actor| {
+            let path = path.clone(); let marker = marker.clone(); let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                let mut connection = Connection::open(path).unwrap(); connection.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
+                barrier.wait();
+                let tags = if actor == 0 { format!("calendar,task-sphere:personal,{marker},project:cicada") } else { format!("calendar,task-sphere:personal, {marker} ,project:cicada") };
+                api::create_note_record(&mut connection,"Synthetic atomic task","Synthetic atomic description",&tags,"task",&None,None).unwrap()
+            })
+        }).collect();
+        let mut results = handles.into_iter().map(|thread| thread.join().unwrap());
+        let first = results.next().unwrap(); let second = results.next().unwrap();
+        assert_eq!(first.id,second.id,"one stable identity across separate native writers");
+        assert_ne!(first.created,second.created,"exactly one insertion, one idempotent replay");
+        let connection = Connection::open(&path).unwrap();
+        let count: i64 = connection.query_row("SELECT count(*) FROM items WHERE instr(tags,?1)>0",[marker],|row|row.get(0)).unwrap();
+        assert_eq!(count,1);
+    }
+    let reopened = Connection::open(path).unwrap();
+    assert_eq!(reopened.query_row("SELECT count(*) FROM items",[],|row|row.get::<_,i64>(0)).unwrap(),12);
+}
+
+#[test]
+fn personal_import_atomic_receipt_replay_preserves_workflow_and_conflicts_safely() {
+    let (_app, view) = fixture();
+    let marker = "personal-import:personal-backlog:atomic-receipt";
+    let args = json!({"title":"Synthetic atomic replay","content":"Synthetic original","tags":format!("calendar,task-sphere:personal,{marker},project:cicada"),"status":"task","dueDate":null,"priority":null,"personalImportReceipt":true});
+    let first = call(&view,"create_note",args.clone()).unwrap();
+    assert_eq!(first["created"],true); assert_eq!(first["marker"],marker); assert_eq!(first["schemaVersion"],1);
+    let id = first["id"].clone();
+    let mut prefix_neighbor = args.clone(); prefix_neighbor["tags"] = json!(args["tags"].as_str().unwrap().replace("atomic-receipt","atomic-receipt-more"));
+    assert_eq!(call(&view,"create_note",prefix_neighbor).unwrap()["created"],true);
+    let exact = call(&view,"get_notes",json!({"filter":"personal-import","search":marker})).unwrap();
+    assert_eq!(exact.as_array().unwrap().len(),1,"prefix neighbors must not match identity");
+    let original = call(&view,"get_note",json!({"id":id})).unwrap();
+    let tags = format!("{},task-process:system-analysis,task-stage:requirements,task-waiting,task-stage-log:requirements@2026-10-03T00:00:00Z",original["tags"].as_str().unwrap().replace("task-sphere:personal","task-sphere:home"));
+    call(&view,"update_note",json!({"id":id,"title":original["title"],"content":original["content"],"tags":tags,"archived":null,"dueDate":"2026-10-03","contentBlocks":null,"priority":5,"expectedVersion":original["version"]})).unwrap();
+    let before = call(&view,"get_note",json!({"id":id})).unwrap();
+    let replay = call(&view,"create_note",args.clone()).unwrap();
+    assert_eq!(replay["id"],id); assert_eq!(replay["created"],false);
+    assert_eq!(call(&view,"get_note",json!({"id":id})).unwrap(),before,"replay must be read-only");
+    let mut changed = args.clone(); changed["content"] = json!("Different source after stale check");
+    assert!(call(&view,"create_note",changed).is_err());
+    assert_eq!(call(&view,"get_note",json!({"id":id})).unwrap(),before);
+    call(&view,"update_note",json!({"id":id,"title":"Synthetic canary foreign title","content":"Synthetic canary foreign content","tags":tags.replace("task-sphere:home","task-sphere:work"),"archived":null,"dueDate":null,"contentBlocks":null,"priority":null,"expectedVersion":before["version"]})).unwrap();
+    let conflict = call(&view,"create_note",args).unwrap_err().to_string();
+    assert!(conflict.contains("scope conflict")); assert!(!conflict.contains("canary"));
+    assert!(call(&view,"get_active_blocks",json!({})).unwrap().as_array().unwrap().is_empty());
+    assert!(call(&view,"create_note",json!({"title":"Synthetic invalid receipt","content":"","tags":"calendar","status":"note","personalImportReceipt":true})).is_err());
+    let normal = call(&view,"create_note",json!({"title":"Synthetic legacy note","content":"","tags":"calendar","status":"note"})).unwrap(); assert!(normal.is_string(),"legacy response stays a string");
 }

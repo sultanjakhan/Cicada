@@ -79,14 +79,8 @@ pub(crate) async fn run(app: AppHandle) -> Result<i32, String> {
         if status.phase == "available" {
             let state = app.state::<crate::app_updates::UpdateState>();
             crate::app_updates::mvp_update_prepare(app.clone(), state).await?;
-            let state = app.state::<crate::app_updates::UpdateState>();
-            crate::app_updates::install_update(
-                app.clone(),
-                state,
-                status.version.unwrap_or_default(),
-                true,
-            )
-            .await?;
+            // Closed-app checks may prepare a verified package. Installation
+            // always waits for the owner's action after opening Cicada.
         }
         Ok(0)
     }

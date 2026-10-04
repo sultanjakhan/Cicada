@@ -1,3 +1,6 @@
+import { createNativeResultReviewAdapter, prepareNativeResultReview } from './native-result-review-adapter.js';
+import { mountDashboardAiWork } from './dashboard-ai-work.js';
+import { readNativeTaskObservations, dashboardFromNativeTasks } from './native-task-observations.js';
 import { canRefreshHealthView, mayCommitHealthView, retryHealthViewRefresh, startHealthViewRefresh } from './health-view-refresh.js';
 import { S, invoke, tabLoaders, TAB_ICONS, loadTabSetting, IS_MOBILE } from './state.js';
 import { ICONS } from './icons.js';
@@ -11,6 +14,7 @@ import { mountCalendarGoals } from './calendar-goals.js';
 import { mountCalendarNotes } from './calendar-notes.js';
 import { mountCalendarDashboardTasks } from './calendar-dashboard-tasks.js';
 import { mountCalendarTasks } from './calendar-tasks.js';
+import { mountSourceOnboarding } from './data-sources.js';
 import { mountCalendarContextMenu } from './calendar-context-menu.js';
 import { createCalendarDialog } from './calendar-dialog.js';
 import { mountCalendarRecurring } from './calendar-recurring.js';
@@ -30,6 +34,7 @@ import { showCalendarSettings } from './calendar-settings.js';
 import { openCalendarCreateMenu } from './calendar-create-menu.js';
 
 let disposeNow = null, disposeTable = null, disposePanel = null, disposeTasks = null;
+let disposeSourceOnboarding = null, disposeAiWork = null;
 let disposeRecurring = null, goalPopup = null, tasksDialog = null;
 let disposeDayBanner = null, disposeInProgress = null, todayTaskSelection = null;
 let disposeNextAction = null, disposeTaskDetails = null, disposeRoutineChoices = null;
@@ -41,7 +46,7 @@ const tasksPaneState = { filter:'active', search:'', goal:'', sphere:'', page:0 
 // The Goals/Wishes choice survives pane switches within a session; it is not a stored preference.
 const goalsPaneState = { view:'goals' };
 let closeCreateMenu = null;
-function cleanupWorkspace() { workspaceRevision++; disposeNextAction?.(); disposeTaskDetails?.(); disposeRoutineChoices?.(); disposeNextAction = disposeTaskDetails = disposeRoutineChoices = null; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeRecurring?.(); disposeDayBanner?.(); disposeInProgress?.(); goalPopup?.dispose(); tasksDialog?.dispose(); disposeInProgress = null; disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; disposeRecurring = null; disposeDayBanner = null; goalPopup = null; tasksDialog = null; }
+function cleanupWorkspace() { disposeAiWork?.(); disposeAiWork=null; disposeSourceOnboarding?.(); disposeSourceOnboarding=null; workspaceRevision++; disposeNextAction?.(); disposeTaskDetails?.(); disposeRoutineChoices?.(); disposeNextAction = disposeTaskDetails = disposeRoutineChoices = null; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeRecurring?.(); disposeDayBanner?.(); disposeInProgress?.(); goalPopup?.dispose(); tasksDialog?.dispose(); disposeInProgress = null; disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; disposeRecurring = null; disposeDayBanner = null; goalPopup = null; tasksDialog = null; }
 const nextActionPreferences = () => ({ enabled:preferences.recommendationsEnabled, includeTasks:preferences.recommendTasks, includeRoutines:preferences.recommendRoutines });
 const view = { period: 'day', mode: 'grid', date: views.iso(new Date()), firstDay:'mon' };
 let initialViewLoaded = false;
@@ -497,7 +502,7 @@ export function openCalendarCreate(button) {
   });
 }
 
-export async function loadCalendarWorkspace(el) {
+export async function loadCalendarWorkspace(el, { nativeReview = false } = {}) {
   if(routinesRouteHandler){window.removeEventListener('hanni:open-recurring-settings',routinesRouteHandler);window.removeEventListener('hanni:open-routines-pane',routinesRouteHandler);routinesRouteHandler=null;}
   startHealthViewRefresh();
   cleanupWorkspace(); tabLoaders.cleanupCalendar = cleanupWorkspace;
@@ -529,12 +534,28 @@ export async function loadCalendarWorkspace(el) {
     if (tab) tab.focus();
     else if (heading) { heading.tabIndex = -1; heading.focus(); }
   };
+  // Explicit opt-in only. Native command authority still enforces feature + isolated profile.
+  const readTaskReview=nativeReview ? id=>createNativeResultReviewAdapter(id,invoke).read(id) : null;
+  let nativeTaskOpenRevision=0;
+  const openNativeTask=async(row,restore)=>{
+    const request=++nativeTaskOpenRevision,revision=workspaceRevision,selectedPane=S._unifiedPane.calendar;
+    const current=()=>request===nativeTaskOpenRevision&&revision===workspaceRevision&&el.isConnected&&S.activeTab==='calendar'&&S._unifiedPane.calendar===selectedPane;
+    if(!nativeReview||row.readonly){showRecord(calendarRecord(row),restore);return;}
+    let review;
+    try{review=await prepareNativeResultReview(row,invoke,()=>crypto.randomUUID());}
+    catch{if(current())showRecord(calendarRecord(row),restore);return;}
+    if(!current())return;
+    const submit=review.adapter.submit;
+    review.adapter.submit=async request=>{const value=await submit(request);if(value.kind==='acknowledged')changed();return value;};
+    disposeTaskDetails?.();
+    disposeTaskDetails=openCalendarTaskDetails(calendarRecord(row),{document,invoke,review,returnFocus:restore,isCurrent:current,onEdit:(task,returnFocus)=>taskEditor(task,returnFocus,'title',()=>revision===workspaceRevision),onChanged:changed,executeAction:executeCalendarTaskAction});
+  };
   const taskOptions = { invoke, mountMenu:mountRecordMenu, openTask:(row,returnFocus)=>showRecord(calendarRecord(row),returnFocus), executeAction:(row,action)=>executeCalendarTaskAction(calendarRecord(row),action), notifyChange:changed };
   let renderLauncherState = null;
   const showAllTasks = (button = null, initialScope = null) => {
     if(tasksDialog)return;
     const revision = workspaceRevision;
-    const dialog=createCalendarDialog({document,title:'Что начнём?',
+    const dialog=createCalendarDialog({document,title:'Что начнём?',hint:'Учёт времени задачи или рутины. Исполнитель агента автоматически не запускается.',
       isCurrent:()=>revision===workspaceRevision&&S.activeTab==='calendar',
       returnFocus:button?()=>{if(button.isConnected)button.focus({preventScroll:true});}:undefined,
       onClose:()=>{disposeTasks?.();disposeRoutineChoices?.();disposeTasks=null;disposeRoutineChoices=null;tasksDialog=null;renderLauncherState=null;},
@@ -629,7 +650,7 @@ export async function loadCalendarWorkspace(el) {
   const config = { title:'Календарь', headerIcon:TAB_ICONS.calendar, editableHeader:false, subtitle:'События и расписание', hideDescription:true, hideMemory:true, accessibleTabs:true, beforeRender:cleanupWorkspace, isCurrent:() => S.activeTab === 'calendar',
     toolbarActions: [
       { label:'Создать', title:'Создать задачу, событие, цель, заметку, желание или рутину', icon:TAB_ICONS.add, onClick:openCalendarCreate },
-      { label:'Начать', title:'Выбрать задачу или рутину', icon:ICONS.play, onClick:showAllTasks },
+      { label:'Начать', title:'Начать учёт времени задачи или рутины', icon:ICONS.play, onClick:showAllTasks },
     ],
     renderHeaderExtra: host => {
       const create = host.querySelector('.uni-header-action');
@@ -684,9 +705,14 @@ export async function loadCalendarWorkspace(el) {
       pane.innerHTML = `<section class="calendar-today" aria-label="Сегодня">
         <div data-calendar-day-banner></div><div data-calendar-next-action></div>
         <div data-calendar-in-progress></div>
-      </section><div data-calendar-now-slot></div>`;
+      </section><div data-calendar-now-slot></div><div data-calendar-ai-work></div>`;
       pane.querySelector('[data-calendar-now-slot]').replaceWith(nowHost);
       nowHost.hidden = false;
+      const aiRevision=workspaceRevision;let aiNativeRows=[];
+      disposeAiWork=mountDashboardAiWork(pane.querySelector('[data-calendar-ai-work]'),{
+        read:async()=>{const all=await invoke('get_calendar_tasks',{includeCompleted:true});const native=all.filter(row=>row.source_type==='note'&&!row.readonly&&!row.archived);const observed=await readNativeTaskObservations(native,invoke,{readReview:readTaskReview});if(!observed.available)throw Error('AI observations unavailable');aiNativeRows=native;return dashboardFromNativeTasks(native,observed.contexts);},
+        onOpenTask:id=>{if(aiRevision!==workspaceRevision||!pane.isConnected)return;const row=aiNativeRows.find(row=>String(row.source_id)===id);if(row)void openNativeTask(row);},
+      });
       disposeDayBanner = mountCalendarDayBanner(pane.querySelector('[data-calendar-day-banner]'), {
         invoke,
         onOpenSettings:button => showCalendarSettings(button, {section:'next-action',recommendationsOnly:true,returnFocus:() => button.isConnected ? button.focus({preventScroll:true}) : disposeNextAction?.focus()}),
@@ -728,8 +754,8 @@ export async function loadCalendarWorkspace(el) {
       const revision = workspaceRevision;
       pane.innerHTML = `<div data-workspace-task-list></div><details class="calendar-task-history"><summary>Запущено и на паузе сегодня</summary><div data-calendar-in-progress></div></details>`;
       disposePanel = mountCalendarTasks(pane.querySelector('[data-workspace-task-list]'), {
-        invoke, state:tasksPaneState, mountMenu:mountRecordMenu, notifyChange:changed,
-        openTask:(row,restore) => showRecord(calendarRecord(row),restore),
+        invoke, state:tasksPaneState, readTaskReview, mountMenu:mountRecordMenu, notifyChange:changed,
+        openTask:(row,restore) => void openNativeTask(row,restore),
         editDate:(row,restore) => taskEditor(calendarRecord(row),restore,'date',()=>revision===workspaceRevision && pane.isConnected),
         executeAction:(row,action) => executeCalendarTaskAction(calendarRecord(row),action),
       });
@@ -740,6 +766,7 @@ export async function loadCalendarWorkspace(el) {
           else showRecord(calendarRecord(row),restore);
         },
       });
+
     },
     renderRoutines: pane => {
       pane.innerHTML='<div data-calendar-routines></div>';
@@ -770,6 +797,8 @@ export async function loadCalendarWorkspace(el) {
   window.addEventListener('hanni:open-recurring-settings',routinesRouteHandler);
   window.addEventListener('hanni:open-routines-pane',routinesRouteHandler);
   await renderUnifiedLayout(el, 'calendar', config);
+  disposeSourceOnboarding?.();
+  disposeSourceOnboarding=mountSourceOnboarding(el,{invoke,onSettings:()=>showCalendarSettings(null,{section:'connections'})});
   const create = document.querySelector('[data-calendar-create]');
   if (create && el.isConnected && el.querySelector('.uni-pane')) create.disabled = false;
 }

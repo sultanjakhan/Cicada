@@ -1,4 +1,4 @@
-import { IS_MOBILE, invoke } from './state.js';
+import { IS_MOBILE, S, invoke, setTheme } from './state.js';
 import { createCalendarDialog } from './calendar-dialog.js';
 import { escapeHtml } from './utils.js';
 import { loadCalendarPreferences, saveCalendarPreferences, saveRecommendationPreferences } from './calendar-display-preferences.js';
@@ -7,6 +7,9 @@ import { mountSleepSettings } from './health-sleep.js';
 import { mountHealthActivitySettings } from './health-activity.js';
 import { mountAppUpdates } from './app-updates.js';
 import { mountProcessSettings } from './calendar-process-settings.js';
+import { mountWorkRegistry } from './work-registry-view.js';
+import { mountDataSources } from './data-sources.js';
+import { mountPersonalTaskImport } from './personal-task-import-view.js';
 
 let settingsDialog = null;
 
@@ -38,7 +41,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
   if (settingsDialog || document.querySelector('dialog[open]')) return;
 
   let original = null, draft = null, closed = false, disposeSync = null;
-  let disposeUpdates = null, disposeSleep = null, disposeActivity = null;
+  let disposeUpdates = null, disposeSleep = null, disposeActivity = null, disposeRegistry = null, disposeSources = null, disposePersonalImport = null;
   let processSettings = null, processObserver = null, preferencesLoading = true, preferencesLoadBusy = false;
   const requestedSection = recommendationsOnly ? 'today' : sectionFor(section);
   const title = recommendationsOnly ? 'Выбор следующего действия' : 'Настройки Cicada';
@@ -58,7 +61,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
       closed = true;
       processObserver?.disconnect();
       processSettings?.dispose();
-      disposeSync?.(); disposeUpdates?.(); disposeSleep?.(); disposeActivity?.();
+      disposeSync?.(); disposeUpdates?.(); disposeSleep?.(); disposeActivity?.(); disposeRegistry?.(); disposeSources?.(); disposePersonalImport?.();
       settingsDialog = null;
     },
   });
@@ -299,7 +302,36 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
   const healthTitle = document.createElement('summary'); healthTitle.textContent = 'Здоровье: сон, прогулки и шаги';
   health.append(healthTitle, sleep, activity);
   hosts.connections.append(sync, health);
+  // This checkout has no Jira backend. Do not imply that device sync is Jira activity.
+  const jira = document.createElement('section');
+  const jiraTitle = document.createElement('h3'); jiraTitle.textContent = 'Jira';
+  const jiraStatus = document.createElement('p');
+  jiraStatus.textContent = 'В этой сборке интеграция Jira недоступна. Здесь нет данных о подключении или импорте. Подключение на другом устройстве нужно проверить на том устройстве.';
+  jira.append(jiraTitle, jiraStatus); hosts.connections.append(jira);
+  disposeRegistry = mountWorkRegistry(hosts.connections, { invoke });
+  disposeSources = mountDataSources(hosts.connections, { invoke });
   const updates = document.createElement('section');
+  const buildInfo = document.createElement('p'); buildInfo.textContent = `Cicada ${S.APP_VERSION} • сборка ${S.APP_BUILD_ID}`;
+  hosts.about.append(buildInfo);
+  const themeCopy = document.documentElement.lang.toLowerCase().startsWith('en')
+    ? { label: 'Theme', light: 'Light', dark: 'Dark', hint: 'Applied and saved immediately on this device.' }
+    : { label: 'Тема', light: 'Светлая', dark: 'Тёмная', hint: 'Применяется и сохраняется сразу на этом устройстве.' };
+  const themeLabel = document.createElement('label');
+  themeLabel.className = 'calendar-settings-theme';
+  themeLabel.textContent = themeCopy.label;
+  const themeSelect = document.createElement('select');
+  themeSelect.dataset.themeSetting = '';
+  for (const value of ['light', 'dark']) {
+    const option = document.createElement('option');
+    option.value = value; option.textContent = themeCopy[value]; themeSelect.append(option);
+  }
+  themeSelect.value = S.theme === 'dark' ? 'dark' : 'light';
+  themeSelect.addEventListener('change', () => setTheme(themeSelect.value));
+  const themeHint = document.createElement('p');
+  themeHint.className = 'calendar-setting-hint';
+  themeHint.id = 'calendar-settings-theme-hint'; themeHint.textContent = themeCopy.hint;
+  themeSelect.setAttribute('aria-describedby', themeHint.id);
+  themeLabel.append(themeSelect); hosts.about.append(themeLabel, themeHint);
   hosts.about.append(updates);
 
   const setInput = (key, value) => { const input = today.querySelector(`[data-key="${key}"]`); if (input) input.checked = value; };
@@ -379,6 +411,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
   saveButton.hidden = true;
   api.open(recommendationsOnly ? null : tabs[requestedSection]);
   if (!recommendationsOnly) {
+    disposePersonalImport = mountPersonalTaskImport(hosts.calendar, { invoke, setPending: value => api.setPending(value), onChanged: () => window.dispatchEvent(new window.Event('hanni:calendar-refresh')) });
     processSettings = mountProcessSettings(hosts.processes, {
       invoke,
       setPending: value => { api.setPending(value); refreshFooter(); },

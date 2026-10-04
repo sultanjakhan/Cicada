@@ -1,3 +1,5 @@
+import {taskProgress} from './task-progress.js';
+import { readNativeTaskObservations, nativeTaskKey, observationMatches } from './native-task-observations.js';
 import { renderTaskImportance } from './task-importance.js';
 import { ICONS } from './icons.js';
 import { sphereLabel, isInstantTask, taskTime, compareTaskTime, isWorkTask } from './task-model.js';
@@ -8,7 +10,7 @@ const stableJson = value => JSON.stringify(value, (_key, item) => {
   if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
   return Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]]));
 });
-const closed = row => row.completed || ['done', 'skipped', 'missed'].includes(row.status_extra);
+const closed = row => row._review ? row._review.reviewState==='accepted' : row.completed || ['done', 'skipped', 'missed'].includes(row.status_extra);
 const dayOf = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const shiftDay = (day, delta) => { const date = new Date(`${day}T12:00:00`); date.setDate(date.getDate() + delta); return dayOf(date); };
 // Running work leads the list (2026-09-24); other active tasks are grouped by how
@@ -56,32 +58,52 @@ export function mountCalendarTasks(host, dependencies) {
   if (!SPHERE_TABS.some(([id]) => id === state.sphere)) state.sphere = '';
   if (state.sphere !== 'personal' || !PERSONAL_TABS.some(([id]) => id === state.personal)) state.personal = '';
   if (state.groupBy !== 'goal') state.groupBy = 'date';
+  if(state.filter==='review'&&!dependencies.readTaskReview)state.filter='active';
   const prefix = `calendar-tasks-${++sequence}`;
+  let observationState={contexts:new Map(),unboundCount:0,available:false};
   let rows = [], goals = [], links = [], processes = [], stageBlocks = new Map(), readSignature = null, ready = false, disposed = false, revision = 0, busy = false, queued = false, feedback = '';
   let bulk = null, confirming = null, overdue = [], shown = new Set();
   let today = dayOf(new Date());
+  const expandedRows = new Set();
   host.classList.add('calendar-tasks');
   host.innerHTML = `<section aria-labelledby="${prefix}-title"><div class="ct-heading"><h2 id="${prefix}-title" tabindex="-1">Задачи <span data-tasks-count></span></h2>
     <div class="ct-grouping" role="group" aria-label="Группировать задачи" data-tasks-grouping>${[['date','По дате'],['goal','По цели']].map(([id,label])=>`<button type="button" data-tasks-group-by="${id}" aria-pressed="false">${label}</button>`).join('')}</div></div>
-    <div class="ct-toolbar"><div class="ct-filters" role="group" aria-label="Какие задачи показать">${[['active','Активные'],['today','Сегодня'],['undated','Без даты'],['completed','Завершённые']].map(([id,label])=>`<button type="button" data-tasks-filter="${id}" aria-pressed="false">${label}</button>`).join('')}</div>
+    <div class="ct-toolbar"><div class="ct-filters" role="group" aria-label="Какие задачи показать">${[['active','Активные'],['today','Сегодня'],['undated','Без даты'],['completed','Завершённые'],['review','На приёмке'],['ai-running','ИИ: running по отчётам']].map(([id,label])=>`<button type="button" data-tasks-filter="${id}" aria-pressed="false">${label}</button>`).join('')}</div>
     <div class="ct-search-row"><label class="ct-search"><span class="ct-search-icon">${SEARCH_ICON}</span><input type="search" data-tasks-search placeholder="Найти задачу" aria-label="Найти задачу"></label><span class="ct-select"><select data-tasks-goal aria-label="Фильтр по цели"><option value="">Любая цель</option></select></span></div></div>
     <div class="ct-spheres" role="group" aria-label="Рабочие или личные задачи">${SPHERE_TABS.map(([id,label])=>`<button type="button" data-tasks-sphere="${id}" aria-pressed="false"><span>${label}</span><span class="ct-sphere-count" data-tasks-sphere-count></span></button>`).join('')}</div>
     <div class="ct-subspheres" role="group" aria-label="Сфера личных задач" data-tasks-personal hidden></div>
     <p data-tasks-message role="status" aria-live="polite"></p><p class="ct-visually-hidden" data-tasks-stage-announcement role="status" aria-live="polite"></p><button type="button" data-tasks-retry hidden>Повторить загрузку</button>
     <div data-tasks-list></div><div class="ct-pages" data-tasks-pages hidden><button type="button" data-tasks-prev>Назад</button><span data-tasks-page></span><button type="button" data-tasks-next>Далее</button></div></section>`;
+  host.querySelector('[data-tasks-filter="review"]').hidden=!dependencies.readTaskReview;
   const q = name => host.querySelector(`[data-tasks-${name}]`);
   const heading = host.querySelector('h2'), message = q('message'), list = q('list'), search = q('search'), goalFilter = q('goal');
   const grouping = q('grouping');
+  const filterDetails = doc.createElement('details'); filterDetails.className = 'ct-filter-details';
+  const filterSummary = doc.createElement('summary'); filterSummary.textContent = 'Фильтры и группировка';
+  const filterBody = doc.createElement('div'); filterBody.className = 'ct-filter-body';
+  filterDetails.append(filterSummary, filterBody);
+  const observationFilters=doc.createElement('div');
+  const observationSelects={};
+  for(const [key,label]of [['source','Источник задачи'],['project','Проект'],['tag','Тег']]){const caption=doc.createElement('label');caption.textContent=label;const select=doc.createElement('select');select.dataset.tasksObservation=key;caption.append(select);observationFilters.append(caption);observationSelects[key]=select;select.addEventListener('change',()=>{state[key]=select.value;state.page=0;render();});}
+  const observationNote=doc.createElement('p');observationNote.dataset.tasksObservationNote='';observationNote.setAttribute('role','status');filterBody.append(observationFilters);
+  const toolbar = host.querySelector('.ct-toolbar'), filters = host.querySelector('.ct-filters');
+  toolbar.after(filterDetails); filterBody.append(filters, goalFilter.parentElement, grouping);
+  const applied = doc.createElement('div'); applied.className = 'ct-applied-filters';
+  const appliedLabel = doc.createElement('span'); appliedLabel.dataset.tasksApplied = '';
+  const reset = doc.createElement('button'); reset.type = 'button'; reset.textContent = 'Сбросить фильтры'; reset.dataset.tasksReset = '';
+  applied.append(appliedLabel, reset); filterDetails.after(applied);applied.after(observationNote);
+  reset.addEventListener('click', () => { Object.assign(state, {filter:'active',search:'',goal:'',sphere:'',personal:'',groupBy:'date',source:'',project:'',tag:'',page:0}); search.value=''; goalFilter.value=''; render(); search.focus(); });
   search.value = state.search || '';
   const node = (tag, cls, text) => { const el = doc.createElement(tag); if(cls)el.className=cls; if(text!=null)el.textContent=text; return el; };
   const control = (cls,text,action) => { const el=node('button',cls,text);el.type='button';el.addEventListener('click',action);return el; };
   const findButton = (id, action='open') => [...host.querySelectorAll('[data-task-control]')].find(el => el.dataset.taskId === id && el.dataset.taskControl === action);
-  const restore = (id, action='open') => { if(!disposed && host.isConnected)(findButton(id,action)||heading).focus({preventScroll:true}); };
+  const restore = (id, action='open') => { if(!disposed && host.isConnected){const target=findButton(id,action)||heading;const details=target.closest('details');if(details)details.open=true;target.focus({preventScroll:true});} };
   const say = (text, alert=false) => { feedback=text; message.textContent=text; message.setAttribute('role',alert?'alert':'status'); };
   const goalFor = row => links.find(link=>taskKey(link)===taskKey(row))?.goal_id;
   const goalChain = id => { const chain=[], seen=new Set();let goal=goals.find(g=>String(g.id)===String(id));while(goal&&!seen.has(String(goal.id))){seen.add(String(goal.id));chain.unshift(goal);goal=goals.find(g=>String(g.id)===String(goal.parent_goal_id));}return chain; };
   const goalParts = id => goalChain(id).map(goal=>goal.title);
   const goalPath = id => goalParts(id).join(' / ');
+  const contextFor=row=>observationState.contexts.get(nativeTaskKey(row))||{sources:[],projects:[],tags:[],observations:[],reports:[],review:null};
   function matchesGoal(row) {
     const id=goalFor(row); if(!state.goal)return true;if(state.goal==='none')return id==null;
     const seen=new Set();let value=id;
@@ -107,11 +129,15 @@ export function mountCalendarTasks(host, dependencies) {
   function renderRow(row, section, byGoal) {
     const id=taskKey(row), done=closed(row), overdue=!done&&!!row.date&&row.date<today, running=!done&&!!row.is_active;
     const item=node('li','ct-row');item.dataset.contextRecord=id;item.classList.toggle('is-running',running);item.classList.toggle('is-overdue',overdue);item.classList.toggle('is-done',done);
-    const complete=control('ct-complete',done?'✓':'',()=>void finish(row));complete.disabled=busy||done;complete.setAttribute('aria-label',`${done?'Завершена':'Завершить'}: ${row.title}`);if(!done)complete.title='Завершить';
+    const complete=control('ct-complete',done?'✓':'',()=>void finish(row));complete.disabled=busy||done||!!row.readonly;complete.setAttribute('aria-label',`${done?'Завершена':'Завершить'}: ${row.title}`);if(!done)complete.title='Завершить';
     const title=control('ct-title',row.title,()=>openTask(row,()=>restore(id)));title.title=row.title;
     const meta=node('span','ct-meta');
     // The running accent says «В работе»; a paused task keeps a small mark.
-    if(!done&&!running&&row.has_work)meta.append(node('span','ct-status','пауза'));
+    const primaryMeta=node('span','ct-primary-meta');
+    const progress=taskProgress({...contextFor(row),completed:done,waiting:!!row.waiting});
+    primaryMeta.append(node('span','ct-status',done?'Завершена':running?'Таймер идёт':row.has_work||row.actual_minutes>0?'На паузе':'Не начата'));
+    if(progress)primaryMeta.firstChild.textContent=progress.label;
+    if(!done)primaryMeta.append(node('span','ct-timer-status',running?'Таймер идёт':row.has_work||row.actual_minutes>0?'Таймер на паузе':'Таймер не запущен'));
     const instant=isInstantTask(row), time=taskTime(row), sphere=sphereLabel(row.sphere);
     if(instant){const kind=node('span','ct-kind','Моментальная');kind.title='Отмечается одним нажатием, без таймера';meta.append(kind);}
     // A day the group or filter already names is not repeated; «Без даты» is never printed.
@@ -119,7 +145,7 @@ export function mountCalendarTasks(host, dependencies) {
     const day=row.date&&!sameDay?dateLabel(row.date):'', when=[day,time].filter(Boolean).join(', ');
     let date=null;
     if(when){
-      date=control('ct-date',when,()=>editDate(row,()=>restore(id,'date')));date.disabled=busy;date.classList.toggle('is-overdue',overdue);
+      date=control('ct-date',when,()=>editDate(row,()=>restore(id,'date')));date.disabled=busy||!!row.readonly;date.classList.toggle('is-overdue',overdue);
       date.title=`${formatDate(row.date,{day:'numeric',month:'long',weekday:'short'})}${time?`, ${time}`:''}${overdue?' · просрочено':''} — изменить дату`;
       if(overdue)date.setAttribute('aria-label',`${when}, просрочено. Изменить дату`);
       meta.append(date);
@@ -127,6 +153,7 @@ export function mountCalendarTasks(host, dependencies) {
     // Stages belong to a task with a process (2026-09-25); instant and closed tasks show none.
     const stage=!done&&!instant?taskStage(row,processes):null;
     if(stage){
+      if(stage.waiting){if(!running)primaryMeta.firstChild.textContent='Жду ответа';else primaryMeta.append(node('span','ct-status','Жду ответа'));}
       const group=node('span','ct-stage-group');
       const chip=node('span','ct-stage');chip.dataset.taskId=id;chip.title=stageTitleOf(row,stage);
       chip.append(node('span','ct-stage-prefix','Этап:'),node('span','ct-stage-label',stage.label||(stage.waiting?'Жду ответа':'Не выбран')));
@@ -137,28 +164,38 @@ export function mountCalendarTasks(host, dependencies) {
       if(stage.next){
         const next=control('ct-stage-next',null,()=>void advance(id));next.innerHTML=ARROW_ICON;
         next.title=`${stage.stage?'Дальше':'Начать'}: ${stage.next.title}`;next.setAttribute('aria-label',`Следующая стадия «${stage.next.title}»: ${row.title}`);
-        next.disabled=busy;next.dataset.taskId=id;next.dataset.taskControl='stage-next';group.append(next);
+        next.disabled=busy||!!row.readonly;next.dataset.taskId=id;next.dataset.taskControl='stage-next';group.append(next);
       }
-      meta.append(group);
+      primaryMeta.append(group);
     }
-    const work=effort(row);if(work.text){const estimate=node('span','ct-estimate',work.text);estimate.title=work.hint;meta.append(estimate);}
+    const work=effort(row);if(work.text){const estimate=node('span','ct-estimate',work.text);estimate.title=work.hint;primaryMeta.append(estimate);}
     // A row names its sphere unless the switch already does.
     if(sphere&&state.sphere!=='work'&&!state.personal&&!(state.sphere==='personal'&&row.sphere==='personal')){const label=node('span','ct-sphere',sphere);label.title=`Сфера: ${sphere}`;meta.append(label);}
     // A goal group already names the top-level goal; the row keeps the sub-goal.
     const goalId=goalFor(row), chain=goalParts(goalId), parts=byGoal&&section.startsWith('goal:')?chain.slice(1):chain;
     if(parts.length&&!(state.goal&&String(goalId)===state.goal)){const goal=node('span','ct-goal',parts.at(-1));goal.title=chain.join(' / ');meta.append(goal);}
     renderTaskImportance(doc,meta,row,item);
-    const content=node('div','ct-content');content.append(title,meta);
+    const ctx=contextFor(row);
+    if(ctx.review)primaryMeta.append(node('span','ct-status',ctx.review.reviewState==='awaiting_review'?`На приёмке · результат v${ctx.review.resultVersion}`:ctx.review.reviewState==='awaiting_dispatch'?'Ожидает передачи исполнителю':`Принято · результат v${ctx.review.resultVersion}`));
+    if(ctx.reports.length){const reported=ctx.reports.at(-1);meta.append(node('span',null,`По отчёту: ${reported.agent} / ${reported.model||'модель не сообщена'} · ${reported.status}. Live feed отсутствует.`));}
+    for(const observation of ctx.observations)meta.append(node('span',null,`Источник ${observation.snapshot.source.publisherId}: ${observation.task.status} · ${observation.freshness}${observation.task.result?` · результат источника: ${observation.task.result}`:''}`));
+    if(ctx.reviewReadError||(ctx.review&&ctx.review.reviewState!=='accepted'))complete.disabled=true;
+    if(ctx.reviewReadError)primaryMeta.append(node('span','ct-status','Состояние приёмки не обновлено. Повтори чтение.'));
+    const content=node('div','ct-content');content.append(title,primaryMeta);
+    if(meta.childNodes.length){const details=node('details','ct-row-details'),summary=node('summary',null,'Детали');details.open=expandedRows.has(id);summary.setAttribute('aria-label',`Детали: ${row.title}`);details.append(summary,meta);content.append(details);}
+    else content.append(meta);
     if(running)content.append(node('span','ct-visually-hidden','В работе'));
     const actions=node('div','ct-actions');
     if(!done&&(!instant||row.is_active)){
-      const label=row.is_active?'Пауза':row.has_work||row.actual_minutes>0?'Продолжить':'Начать';
-      const run=control('ct-run ct-icon-button',null,()=>void finish(row,row.is_active?'pause':'start'));
+      const review=stage?.waiting&&!running;
+      const label=review?'Открыть ожидание':row.is_active?'Пауза':row.has_work||row.actual_minutes>0?'Продолжить':'Начать';
+      const run=control('ct-run ct-icon-button',null,()=>review?openTask(row,()=>restore(id,'execute')):void finish(row,row.is_active?'pause':'start'));
       const glyph=node('span','ct-glyph');glyph.setAttribute('aria-hidden','true');glyph.innerHTML=ICONS[row.is_active?'pause':'play'];
-      run.append(glyph,node('span','ct-visually-hidden',label));run.classList.toggle('is-running',running);
-      run.disabled=busy;run.dataset.taskId=id;run.dataset.taskControl='execute';run.title=label;run.setAttribute('aria-label',`${label}: ${row.title}`);actions.append(run);
+      if(review)glyph.innerHTML=WAIT_ICON;
+      run.append(glyph,node('span','ct-action-label',label));run.classList.toggle('is-running',running);
+      run.disabled=busy||!!row.readonly;run.dataset.taskId=id;run.dataset.taskControl='execute';run.title=label;run.setAttribute('aria-label',`${label}: ${row.title}`);actions.append(run);
     }
-    const more=control('ct-more ct-icon-button',null,()=>{});more.innerHTML=MORE_ICON;more.dataset.recordMenu='';more.title='Действия';more.setAttribute('aria-label',`Действия: ${row.title}`);more.setAttribute('aria-haspopup','menu');more.setAttribute('aria-expanded','false');more.disabled=busy;
+    const more=control('ct-more ct-icon-button',null,()=>{});more.innerHTML=MORE_ICON;more.dataset.recordMenu='';more.title='Действия';more.setAttribute('aria-label',`Действия: ${row.title}`);more.setAttribute('aria-haspopup','menu');more.setAttribute('aria-expanded','false');more.disabled=busy||!!row.readonly;
     actions.append(more);
     for(const [button,action] of [[title,'open'],[date,'date'],[more,'menu'],[complete,'finish']])if(button){button.dataset.taskId=id;button.dataset.taskControl=action;}
     item.append(complete,content,actions);
@@ -202,9 +239,12 @@ export function mountCalendarTasks(host, dependencies) {
   }
   function render() {
     if(disposed||!ready)return;
+    for(const details of host.querySelectorAll('.ct-row-details')){const id=details.closest('[data-context-record]').dataset.contextRecord;if(details.open)expandedRows.add(id);else expandedRows.delete(id);}
     const focused=doc.activeElement, focusId=focused?.dataset.taskId, focusAction=focused?.dataset.taskControl, focusedBulk=focused?.dataset.tasksBulk;
+    observationNote.textContent=[observationState.available?'':'Не удалось прочитать наблюдения источников.',observationState.unboundCount?`Наблюдения без связи с задачами: ${observationState.unboundCount}. Данные источников сохранены.`:'',state.filter==='ai-running'?'Здесь показаны отчёты исполнителей; текущие обновления не подключены.':''].filter(Boolean).join(' ');
+    observationNote.hidden=!observationNote.textContent;
     const query=state.search.trim().toLocaleLowerCase('ru');
-    const eligible=rows.filter(row=>(state.filter==='completed'?closed(row):!closed(row))&&(state.filter!=='today'||row.date===today)&&(state.filter!=='undated'||!row.date));
+    const eligible=rows.filter(row=>(state.filter==='completed'?closed(row):!closed(row))&&(state.filter!=='today'||row.date===today)&&(state.filter!=='undated'||!row.date)&&(state.filter!=='review'||contextFor(row).review?.reviewState==='awaiting_review')&&(state.filter!=='ai-running'||contextFor(row).reports.some(r=>r.status==='running'))&&observationMatches(contextFor(row),state));
     const matching=eligible.filter(row=>matchesGoal(row)&&`${row.title} ${goalPath(goalFor(row))}`.toLocaleLowerCase('ru').includes(query));
     const counts=new Map(SPHERE_TABS.map(([id])=>[id,0]));
     for(const row of matching){counts.set('',counts.get('')+1);counts.set(bucketOf(row),counts.get(bucketOf(row))+1);}
@@ -214,6 +254,8 @@ export function mountCalendarTasks(host, dependencies) {
       ||(byGoal?groupIndex(a.row,today)-groupIndex(b.row,today):0)||(Number(b.row.priority)||0)-(Number(a.row.priority)||0)||(a.row.date||'9999').localeCompare(b.row.date||'9999')||compareTaskTime(a.row,b.row)||a.row.title.localeCompare(b.row.title,'ru')||taskKey(a.row).localeCompare(taskKey(b.row)));
     shown=new Set(visible.map(({row})=>taskKey(row)));
     q('count').textContent=String(visible.length);
+    appliedLabel.textContent=[{active:'Активные',today:'Сегодня',undated:'Без даты',completed:'Завершённые',review:'На приёмке','ai-running':'ИИ: running по отчётам'}[state.filter],state.groupBy==='goal'?'По цели':null,state.goal?(state.goal==='none'?'Без цели':`Цель: ${goalPath(state.goal)}`):null,state.sphere?SPHERE_TABS.find(([id])=>id===state.sphere)?.[1]:null,state.personal?PERSONAL_TABS.find(([id])=>id===state.personal)?.[1]:null,state.search?`Поиск: ${state.search}`:null,...['source','project','tag'].map(k=>state[k]?observationSelects[k].selectedOptions[0]?.textContent:null)].filter(Boolean).join(' · ');
+    reset.hidden=state.filter==='active'&&!state.search&&!state.goal&&!state.sphere&&!state.personal&&state.groupBy==='date'&&!state.source&&!state.project&&!state.tag;
     host.querySelectorAll('[data-tasks-filter]').forEach(el=>el.setAttribute('aria-pressed',String(el.dataset.tasksFilter===state.filter)));
     host.querySelectorAll('[data-tasks-sphere]').forEach(el=>{const id=el.dataset.tasksSphere,count=String(counts.get(id));el.setAttribute('aria-pressed',String(id===state.sphere));el.querySelector('[data-tasks-sphere-count]').textContent=count;el.setAttribute('aria-label',`${SPHERE_TABS.find(([tab])=>tab===id)[1]}: ${count}`);});
     host.querySelectorAll('[data-tasks-group-by]').forEach(el=>el.setAttribute('aria-pressed',String(el.dataset.tasksGroupBy===state.groupBy)));
@@ -244,15 +286,20 @@ export function mountCalendarTasks(host, dependencies) {
       const result=await Promise.all([invoke('get_calendar_tasks',{includeCompleted:true}),invoke('get_goals',{tabName:null}),invoke('get_calendar_task_goals'),loadProcesses(invoke)]);
       if(disposed||request!==revision||canCommit&&!canCommit())return;
       if(result.some(value=>!Array.isArray(value)))throw new Error('Invalid task response');
-      const nextRows=[...new Map(result[0].filter(row=>row.source_type==='note'&&!row.readonly&&!row.archived).map(row=>[taskKey(row),row])).values()];
+      const nextRows=[...new Map(result[0].filter(row=>row.source_type==='note'&&!row.archived).map(row=>[taskKey(row),row])).values()];
       // Time per stage is context for the tooltip; a failed read leaves it empty.
       const blocks=await loadStageBlocks(invoke,nextRows.filter(row=>!closed(row)&&!isInstantTask(row)&&taskStage(row,result[3])).map(row=>row.source_id));
       if(disposed||request!==revision||canCommit&&!canCommit())return;
       const nextToday=dayOf(new Date());
-      const nextSignature=stableJson([nextToday,nextRows,result[1],result[2],result[3],[...blocks].sort(([a],[b])=>String(a).localeCompare(String(b)))]);
+      const nextObservations=await (dependencies.readTaskObservations||readNativeTaskObservations)(nextRows,invoke,{readReview:dependencies.readTaskReview||null,previousContexts:observationState.contexts});
+      if(disposed||request!==revision||canCommit&&!canCommit())return;
+      const nextSignature=stableJson([nextToday,nextRows,result[1],result[2],result[3],[...blocks].sort(([a],[b])=>String(a).localeCompare(String(b))),[...nextObservations.contexts],nextObservations.available,nextObservations.unboundCount]);
       ready=true;
       if(nextSignature===readSignature){message.textContent=feedback;q('retry').hidden=true;return;}
-      rows=nextRows;goals=result[1];links=result[2];processes=result[3];stageBlocks=blocks;today=nextToday;
+      observationState=nextObservations;
+      rows=nextRows.map(row=>{const review=observationState.contexts.get(nativeTaskKey(row))?.review;const reviewReadError=observationState.contexts.get(nativeTaskKey(row))?.reviewReadError;return review||reviewReadError?{...row,_review:review,_reviewReadError:!!reviewReadError}:row;});
+      for(const key of ['source','project','tag']){const options=new Map();for(const ctx of observationState.contexts.values())for(const item of ctx[key==='source'?'sources':key==='project'?'projects':'tags'])options.set(typeof item==='string'?item:item.id,typeof item==='string'?item:item.label);const select=observationSelects[key];select.replaceChildren(new win.Option('Все',''),...Array.from(options,([id,label])=>new win.Option(label,id)));if(state[key]&&!options.has(state[key]))state[key]='';select.value=state[key]||'';}
+      goals=result[1];links=result[2];processes=result[3];stageBlocks=blocks;today=nextToday;
       goalFilter.replaceChildren(new win.Option('Любая цель',''),new win.Option('Без цели','none'),...goals.map(goal=>new win.Option(goalPath(goal.id),String(goal.id))));
       if(state.goal&&!['none',...goals.map(goal=>String(goal.id))].includes(state.goal))state.goal='';goalFilter.value=state.goal;
       message.textContent=feedback;q('retry').hidden=true;render();readSignature=nextSignature;
@@ -260,13 +307,13 @@ export function mountCalendarTasks(host, dependencies) {
     finally{if(!disposed&&request===revision)host.removeAttribute('aria-busy');}
   }
   async function finish(row,action='finish'){
-    if(busy||disposed)return;busy=true;revision++;feedback='';message.textContent='';render();
+    if(busy||disposed||row.readonly||(action==='finish'&&(contextFor(row).reviewReadError||(contextFor(row).review&&contextFor(row).review.reviewState!=='accepted'))))return;busy=true;revision++;feedback='';message.textContent='';render();
     try{const result=await executeAction(row,action);if(result===false)return;notifyChange();busy=false;await refresh();if(!disposed){say({start:'Задача в работе.',pause:'Задача на паузе.',finish:'Задача завершена.'}[action]);restore(taskKey(row),action==='finish'?'open':'execute');}}
     catch(error){if(error?.refreshRequired)notifyChange();busy=false;await refresh();if(!disposed)say(error?.message||'Не удалось выполнить действие.',true);}
     finally{busy=false;render();}
   }
   async function moveOverdue(kind) {
-    const targets=[...overdue];
+    const targets=overdue.filter(row=>!row.readonly);
     if(busy||disposed||!targets.length)return;
     busy=true;bulk=kind;confirming=null;revision++;feedback='';message.textContent='';render();
     const dueDate=kind==='today'?dayOf(new Date()):null, failed=[];
@@ -284,7 +331,7 @@ export function mountCalendarTasks(host, dependencies) {
   }
   async function advance(id) {
     const row=rows.find(item=>taskKey(item)===id), stage=row&&taskStage(row,processes), next=stage?.next;
-    if(!next||busy||disposed)return;
+    if(!next||busy||disposed||row.readonly)return;
     busy=true;revision++;feedback='';message.textContent='';render();
     let succeeded=false;
     try{
@@ -311,10 +358,10 @@ export function mountCalendarTasks(host, dependencies) {
   search.addEventListener('input',()=>choose('search',search.value));goalFilter.addEventListener('change',()=>choose('goal',goalFilter.value));
   q('retry').addEventListener('click',()=>void refresh());for(const [name,delta]of[['prev',-1],['next',1]])q(name).addEventListener('click',()=>{state.page+=delta;render();heading.focus();});
   const onChange=event=>{if(queued||disposed)return;queued=true;queueMicrotask(()=>{queued=false;void refresh(event.detail?.remoteSync?event.detail.canCommit:null);});};
-  win.addEventListener('task-state-changed',onChange);win.addEventListener('hanni:calendar-refresh',onChange);win.addEventListener('hanni:processes-changed',onChange);win.addEventListener('focus',onChange);
+  win.addEventListener('task-state-changed',onChange);win.addEventListener('hanni:calendar-refresh',onChange);win.addEventListener('hanni:processes-changed',onChange);win.addEventListener('focus',onChange);win.addEventListener('hanni:work-registry-changed',onChange);
   // Stage tooltips of running tasks follow their timer.
   const updateStageTitles=()=>host.querySelectorAll('.ct-stage[data-task-id]').forEach(chip=>{const row=rows.find(item=>taskKey(item)===chip.dataset.taskId),stage=row?.is_active&&taskStage(row,processes);if(stage)chip.title=stageTitleOf(row,stage);});
   const timer=win.setInterval(()=>{if(dayOf(new Date())!==today)void refresh();else updateStageTitles();},30000);
   void refresh();
-  return ()=>{disposed=true;revision++;disposeMenu?.();win.clearInterval(timer);win.removeEventListener('task-state-changed',onChange);win.removeEventListener('hanni:calendar-refresh',onChange);win.removeEventListener('hanni:processes-changed',onChange);win.removeEventListener('focus',onChange);};
+  return ()=>{disposed=true;revision++;disposeMenu?.();win.clearInterval(timer);win.removeEventListener('task-state-changed',onChange);win.removeEventListener('hanni:calendar-refresh',onChange);win.removeEventListener('hanni:processes-changed',onChange);win.removeEventListener('focus',onChange);win.removeEventListener('hanni:work-registry-changed',onChange);};
 }

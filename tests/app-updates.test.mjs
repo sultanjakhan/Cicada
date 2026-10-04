@@ -37,7 +37,7 @@ test('update errors allow retry and do not claim installed; disposal ignores lat
   assert.equal(host.textContent, text); dom.window.close();
 });
 
-test('native scheduler owns checks and installs; UI reports safe leases even offline', async () => {
+test('entry requests a check but never installation; UI reports safe leases even offline', async () => {
   const dom = new JSDOM('', { pretendToBeVisual:true }), calls = [], notices = [];
   Object.defineProperty(dom.window.navigator, 'onLine', { value:false });
   const stop = startAppUpdates({ window:dom.window, invoke:async (command,args) => {
@@ -45,8 +45,8 @@ test('native scheduler owns checks and installs; UI reports safe leases even off
   }, listen:async () => () => {}, notify:message => notices.push(message) });
   await tick();
   assert.ok(calls.some(([c,a]) => c === 'mvp_update_activity' && !a.activity.hidden && a.activity.safeToInstall));
-  assert.ok(calls.some(([c]) => c === 'mvp_update_status'));
-  assert.ok(calls.every(([c]) => !['mvp_update_check','mvp_update_install','mvp_update_auto_install'].includes(c)));
+  assert.equal(calls.filter(([c]) => c === 'mvp_update_check').length, 1);
+  assert.ok(calls.every(([c]) => !['mvp_update_install','mvp_update_auto_install'].includes(c)));
   assert.equal(notices.length, 0);
   stop(); await tick();
   assert.deepEqual(calls.at(-1), ['mvp_update_activity', { activity:{ hidden:false, safeToInstall:false } }]);
@@ -96,4 +96,17 @@ test('Android requested confirmation only opens from explicit action and never c
   host.querySelector('[data-update-install]').click(); await tick();
   assert.equal(calls[1][0], 'mvp_update_confirm');
   stop(); dom.window.close();
+});
+
+test('missing updater version is explicitly unknown for disabled/unavailable status without changing action policy', async () => {
+  for (const installed_version of [undefined,null,'','   ',12,false,{},[]]) {
+    const dom=new JSDOM('<section></section>'),host=dom.window.document.querySelector('section'),calls=[];
+    const stop=mountAppUpdates(host,{invoke:async command=>{calls.push(command);return {configured:false,phase:'error',installed_version,error:'synthetic disabled channel'};}});
+    try{await tick();assert.match(host.querySelector('[data-update-status]').textContent,/^Cicada\. Версия не сообщена\./);assert.match(host.querySelector('[data-update-status]').textContent,/Канал обновлений недоступен/);assert.equal(host.querySelector('[data-update-check]').disabled,true);assert.equal(host.querySelector('[data-update-install]').hidden,true);assert.equal(host.querySelector('[data-update-permission]').hidden,true);assert.equal(host.querySelector('[data-update-error]').textContent,'synthetic disabled channel');assert.deepEqual(calls,['mvp_update_status']);}finally{stop();dom.window.close();}
+  }
+});
+test('failed initial status read has unknown version; a later reported version remains authoritative', async () => {
+  const dom=new JSDOM('<section></section>'),host=dom.window.document.querySelector('section'),calls=[];
+  const stop=mountAppUpdates(host,{invoke:async command=>{calls.push(command);throw Error('synthetic status unavailable');}});
+  try{await tick();assert.match(host.querySelector('[data-update-status]').textContent,/^Cicada\. Версия не сообщена\./);assert.equal(host.querySelector('[data-update-check]').disabled,true);dom.window.dispatchEvent(new dom.window.CustomEvent('hanni:update-status',{detail:{configured:true,installed_version:'0.4.4',phase:'current'}}));assert.equal(host.querySelector('[data-update-status]').textContent,'Cicada 0.4.4. Установлена последняя версия.');assert.equal(host.querySelector('[data-update-check]').disabled,false);assert.deepEqual(calls,['mvp_update_status']);}finally{stop();dom.window.close();}
 });

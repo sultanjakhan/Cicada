@@ -188,3 +188,10 @@ test('a goal deleted elsewhere turns the popup into a notice instead of stale de
   assert.equal(x.modal.querySelector('.goal-popup__actions').hidden, true);
   assert.equal(x.modal.querySelector('[data-goal-development]').hidden, true);
 });
+
+test('long Unicode goal context remains complete and keyboard-focusable without record changes', async t => {
+  const data=backend(),title='Жұмыс 🚀 '+ '界'.repeat(500);data.goals.find(g=>g.id==='g1').title=title;
+  const x=await open(t,data,'g1'),context=x.modal.querySelector('.calendar-editor-header > div');
+  assert.equal(x.modal.querySelector('h2').textContent,title);assert.equal(context.tabIndex,0);assert.equal(context.getAttribute('aria-labelledby'),x.modal.getAttribute('aria-labelledby'));
+  const before=data.count('set_ui_state');context.focus();assert.equal(document.activeElement,context);assert.equal(data.count('set_ui_state'),before);
+});

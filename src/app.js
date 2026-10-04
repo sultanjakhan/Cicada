@@ -27,7 +27,7 @@ if (window.__TAURI__?.core?.invoke) {
   startSleepImport({ window, invoke, requestSync: requestMvpSync, requestRefresh: requestHealthViewRefresh });
   startHealthActivityImport({ window, invoke, requestSync: requestMvpSync, requestRefresh: requestHealthViewRefresh });
   startAppUpdates({ window, invoke, listen, getPendingOperations: getPendingMvpOperations,
-    hasUnsavedDrafts: hasUnsavedCalendarNoteDrafts, notify: message => toast(message) });
+    hasUnsavedDrafts: hasUnsavedCalendarNoteDrafts });
 } else {
   showError('Открой установленную Cicada: этот экран работает с локальной базой приложения.');
 }

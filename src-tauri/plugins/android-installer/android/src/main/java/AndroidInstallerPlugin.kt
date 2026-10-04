@@ -55,8 +55,7 @@ internal object InstallPolicy {
 
     fun hasAllowedSize(size: Long): Boolean = size in 1..maxApkBytes
 
-    fun usesUnattendedSession(apiLevel: Int, automatic: Boolean): Boolean =
-        automatic && apiLevel >= Build.VERSION_CODES.S
+    fun acceptsInstallRequest(automatic: Boolean): Boolean = !automatic
 
     fun acceptsCallback(expectedSessionId: Int, expectedToken: String, sessionId: Int, token: String?): Boolean =
         expectedSessionId == sessionId && expectedToken.isNotBlank() && expectedToken == token
@@ -172,27 +171,16 @@ class AndroidInstallerPlugin(private val activity: Activity) : Plugin(activity) 
     fun installVerified(invoke: Invoke) {
         try {
             val args = invoke.parseArgs(InstallVerifiedArgs::class.java)
+            require(InstallPolicy.acceptsInstallRequest(args.automatic)) { "Installation requires your action in Cicada" }
             val apk = validateCandidate(args)
-
-            if (args.automatic && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-                // Android 7–11 cannot request unattended sessions. Never start
-                // a confirmation Activity from a background automatic request.
-                invoke.resolve(status("unsupported"))
-                return
-            }
             if (!canRequestPackageInstalls()) {
                 InstallStatusStore(activity).save(STATUS_PERMISSION_REQUIRED, -1, message = "Android install permission is required", versionCode = args.expectedVersionCode)
                 invoke.resolve(status(STATUS_PERMISSION_REQUIRED))
                 return
             }
 
-            if (InstallPolicy.usesUnattendedSession(Build.VERSION.SDK_INT, args.automatic)) {
-                WorkerSession.commit(activity, apk, args.expectedVersionCode)
-                invoke.resolve(status(STATUS_INSTALLING))
-            } else {
-                launchLegacyInstaller(apk)
-                invoke.resolve(status(STATUS_LAUNCHED))
-            }
+            launchLegacyInstaller(apk)
+            invoke.resolve(status(STATUS_LAUNCHED))
         } catch (error: Exception) {
             invoke.reject(error.message ?: "Could not prepare Android system installer")
         }

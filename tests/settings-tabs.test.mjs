@@ -1,9 +1,54 @@
 import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { JSDOM } from 'jsdom';
 
 const tick = async () => { for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve)); };
 const windows = new Set();
+test('theme select is labelled in RU/EN, switches immediately and survives reopening settings', async () => {
+  for (const [lang, label, options] of [['ru', 'Тема', ['Светлая', 'Тёмная']], ['en-US', 'Theme', ['Light', 'Dark']]]) {
+    const x = await boot({ section: 'about', lang });
+    const select = x.modal.querySelector('[data-theme-setting]');
+    assert.equal(select.closest('label').firstChild.textContent, label);
+    assert.deepEqual([...select.options].map(o => o.textContent), options);
+    assert.equal(document.getElementById(select.getAttribute('aria-describedby')).textContent.length > 0, true);
+    select.focus(); select.value = 'dark'; select.dispatchEvent(new x.dom.window.Event('change'));
+    assert.equal(document.activeElement, select);
+    assert.equal(document.documentElement.dataset.theme, 'dark');
+    assert.equal(localStorage.getItem('hanni_theme'), 'dark');
+    assert.equal(x.writes.length, 0, 'theme does not write calendar preferences or data');
+    x.modal.close();
+    const module = await import(`../src/hanni/js/calendar-settings.js?${Math.random()}`);
+    module.showCalendarSettings(document.querySelector('#settings'), { section: 'about' });
+    await tick();
+    const reopened = document.querySelector('[data-theme-setting]');
+    assert.equal(reopened.value, 'dark');
+    reopened.value = 'light'; reopened.dispatchEvent(new x.dom.window.Event('change'));
+    assert.equal(document.documentElement.dataset.theme, 'light');
+    assert.equal(localStorage.getItem('hanni_theme'), 'light');
+    document.querySelector('dialog').close();
+  }
+});
+
+test('production theme initialization restores valid choices and normalizes invalid persisted values', () => {
+  const source = fs.readFileSync(new URL('../src/hanni/js/state.js', import.meta.url), 'utf8');
+  const themeSource = source.slice(source.indexOf('export const S ='), source.indexOf('export const _s =')).replace(/export /g, '');
+  const initialize = new Function('packageInfo', 'localStorage', 'document', themeSource + '\nreturn S.theme;');
+  const dom = new JSDOM('', { url: 'http://cicada.local' });
+  try {
+    for (const [saved, expected] of [['dark', 'dark'], ['light', 'light'], ['system', 'light'], ['corrupted', 'light'], ['', 'light']]) {
+      dom.window.localStorage.setItem('hanni_theme', saved);
+      assert.equal(initialize({}, dom.window.localStorage, dom.window.document), expected);
+      assert.equal(dom.window.document.documentElement.dataset.theme, expected);
+      assert.equal(dom.window.localStorage.getItem('hanni_theme'), expected);
+    }
+  } finally { dom.window.close(); }
+});
+
+test('recommendation-only settings do not expose application theme', async () => {
+  const x = await boot({ recommendationsOnly: true });
+  assert.equal(x.modal.querySelector('[data-theme-setting]'), null);
+});
 afterEach(() => {
   for (const window of windows) {
     window.document.querySelectorAll('dialog').forEach(dialog => dialog.close());
@@ -12,9 +57,10 @@ afterEach(() => {
   windows.clear();
 });
 
-async function boot({ failPreferenceSave = false, failPreferenceLoad = false, delayPreferenceLoad = false, deferProcessSave = false, initialPreferences = null, section = 'next-action', recommendationsOnly = false } = {}) {
+async function boot({ failPreferenceSave = false, failPreferenceLoad = false, delayPreferenceLoad = false, deferProcessSave = false, initialPreferences = null, section = 'next-action', recommendationsOnly = false, lang = 'ru', theme = 'light' } = {}) {
   const dom = new JSDOM('<button id="settings">Настройки</button>', { url: 'http://cicada.local', pretendToBeVisual: true });
   windows.add(dom.window);
+  dom.window.document.documentElement.lang = lang;
   Object.assign(globalThis, {
     window: dom.window, document: dom.window.document, localStorage: dom.window.localStorage,
     CustomEvent: dom.window.CustomEvent, FormData: dom.window.FormData,
@@ -56,6 +102,8 @@ async function boot({ failPreferenceSave = false, failPreferenceLoad = false, de
     throw Error(command);
   } } };
 
+  const state = await import('../src/hanni/js/state.js');
+  state.setTheme(theme);
   const module = await import(`../src/hanni/js/calendar-settings.js?${Math.random()}`);
   module.showCalendarSettings(document.querySelector('#settings'), { section, recommendationsOnly });
   await tick();

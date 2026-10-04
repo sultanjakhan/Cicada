@@ -21,6 +21,22 @@ __pycache__/
 .mcp.json
 .claude/settings.json
 .local/
+# Private application configuration and credentials never belong in source.
+storage.local.json
+connection.local.json
+credentials.*
+secrets.*
+*.dpapi
+*.pem
+*.key
+*.p12
+*.pfx
+keys/
+profiles/
+sessions/
+private/
+backups/
+exports/
 test-results/
 playwright-report/
 .DS_Store

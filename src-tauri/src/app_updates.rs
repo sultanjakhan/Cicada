@@ -462,31 +462,8 @@ pub fn start(app: AppHandle) {
                             + Duration::from_secs(crate::update_journal::retry_seconds(failures));
                     }
                 }
-                let status = app.state::<UpdateState>().snapshot(&app);
-                if matches!(status.phase.as_str(), "prepared" | "deferred") {
-                    if let Some(version) = status.version {
-                        if let Err(error) = mvp_update_auto_install(
-                            app.clone(),
-                            app.state::<UpdateState>(),
-                            version,
-                        )
-                        .await
-                        {
-                            let deferred = error.starts_with("Автообновление отложено:");
-                            app.state::<UpdateState>().change(&app, |s| {
-                                s.phase = if deferred { "deferred" } else { "error" }.into();
-                                s.error = if deferred { None } else { Some(error) };
-                            });
-                            if !deferred {
-                                failures = failures.saturating_add(1);
-                                next_check = Instant::now()
-                                    + Duration::from_secs(crate::update_journal::retry_seconds(
-                                        failures,
-                                    ));
-                            }
-                        }
-                    }
-                }
+                // A prepared update is offered when the app next becomes
+                // active. Polling never opens an installer or restarts it.
             }
             tokio::time::sleep(Duration::from_secs(60)).await;
         }
@@ -715,16 +692,15 @@ fn auto_install_allowed(app: &AppHandle, state: &UpdateState) -> Result<(), Stri
     Ok(())
 }
 
-/// The unattended foreground path is deliberately narrower than the manual
-/// action: it needs a fresh hidden/safe renderer lease and no active timer.
+/// Preserve the old IPC name, but never let an old renderer install silently.
 #[tauri::command(rename_all = "camelCase")]
-pub async fn mvp_update_auto_install(
-    app: AppHandle,
+pub async fn mvp_update_auto_install<R: tauri::Runtime>(
+    app: AppHandle<R>,
     state: State<'_, UpdateState>,
     expected_version: String,
 ) -> Result<UpdateStatus, String> {
-    auto_install_allowed(&app, state.inner())?;
-    install_update(app, state, expected_version, true).await
+    let _ = (app, state, expected_version);
+    Err("Установка обновления требует твоего действия в Cicada.".into())
 }
 
 #[tauri::command]
@@ -789,6 +765,9 @@ pub(crate) async fn install_update(
     expected_version: String,
     automatic: bool,
 ) -> Result<UpdateStatus, String> {
+    if automatic {
+        return Err("Установка обновления требует твоего действия в Cicada.".into());
+    }
     let _busy = state.acquire()?;
     let candidate = state
         .candidate
@@ -1009,6 +988,19 @@ pub fn mvp_update_confirm(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn legacy_auto_install_command_refuses_before_touching_a_candidate_or_installer() {
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        use tauri::Manager;
+        app.manage(super::UpdateState::default());
+        let result = tauri::async_runtime::block_on(super::mvp_update_auto_install(
+            app.handle().clone(), app.state::<super::UpdateState>(), "99.99.99".into(),
+        ));
+        assert!(matches!(result, Err(message) if message.contains("твоего действия")));
+        assert!(app.state::<super::UpdateState>().candidate.lock().unwrap().is_none());
+    }
     use super::*;
     #[test]
     fn returning_to_editor_or_missing_heartbeat_restarts_safe_wait() {

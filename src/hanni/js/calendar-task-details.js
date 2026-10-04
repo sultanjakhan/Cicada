@@ -1,8 +1,10 @@
+import {taskProgress} from './task-progress.js';
 import { createCalendarDialog } from './calendar-dialog.js';
 import { readActiveBlocks, sourceKey } from './calendar-execution.js';
 import { ICONS } from './icons.js';
 import { isInstantTask, sphereLabel } from './task-model.js';
 import { loadProcesses, mountStageTime, taskStage } from './task-processes.js';
+import { mountTaskWorkflow } from './task-workflow-view.js';
 
 const errorText = error => (typeof error === 'string' ? error : error?.message) || '';
 const finite = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
@@ -34,14 +36,19 @@ export function openCalendarTaskDetails(record, dependencies) {
 
   const window = document.defaultView;
   let current = { ...record }, processes = [], goals = [], activeBlocks = [], closedSeconds = 0;
-  let stageState = null, historyStop = null, clockTimer = null, disposed = false, pending = false, loadFailed = false, activeStatusKnown = false, timeAvailable = false, loadRevision = 0;
+  let stageState = null, historyStop = null, workflowStop = null, clockTimer = null, disposed = false, pending = false, loadFailed = false, activeStatusKnown = false, timeAvailable = false, loadRevision = 0;
   const live = () => !disposed && api.modal.isConnected && isCurrent();
   const api = createCalendarDialog({
     document, title: current.title, hint: 'Задача', returnFocus, isCurrent,
-    onClose: () => { disposed = true; loadRevision++; historyStop?.(); if (clockTimer) window.clearInterval(clockTimer); },
+    beforeClose: () => workflowStop?.beforeClose?.(),
+    onClose: () => { disposed = true; loadRevision++; historyStop?.(); workflowStop?.(); if (clockTimer) window.clearInterval(clockTimer); },
   });
   const modal = api.modal;
   modal.classList.add('calendar-task-details');
+  const headingContext = modal.querySelector('.calendar-editor-header > div');
+  headingContext.tabIndex = 0;
+  headingContext.setAttribute('role', 'group');
+  headingContext.setAttribute('aria-labelledby', modal.getAttribute('aria-labelledby'));
   const headingHint = modal.querySelector('.calendar-editor-header p');
   const fields = api.body;
   fields.classList.add('calendar-task-details__fields');
@@ -64,6 +71,10 @@ export function openCalendarTaskDetails(record, dependencies) {
   const announcement = document.createElement('span'); announcement.className = 'task-details-sr-only'; announcement.setAttribute('role', 'status'); announcement.setAttribute('aria-live', 'polite');
   card.append(total, metadata, goal, stageRow, waiting, history, announcement);
   fields.append(card);
+  let confirmedWorkflow=null,workflowReadError=false;
+  workflowStop = mountTaskWorkflow(fields, { record: current, invoke, review:dependencies.review||null, onState:(state,failed)=>{confirmedWorkflow=state;workflowReadError=failed;syncSummary();}, onClean: () => {
+    if (['Сохрани шаг или результат перед закрытием.', 'Дождись сохранения шагов.'].includes(api.error.textContent)) api.showError('');
+  } });
 
   const actions = modal.querySelector('.calendar-editor-actions');
   actions.replaceChildren();
@@ -96,8 +107,9 @@ export function openCalendarTaskDetails(record, dependencies) {
     current.is_active = active;
     const hasWork = active || !!current.has_work || (closedSeconds > 0);
     const status = loadFailed ? 'Статус недоступен' : !activeStatusKnown ? 'Проверяем статус…' : isInstantTask(current) ? (completed ? 'Завершена' : 'К выполнению') : active ? 'В работе' : hasWork ? 'На паузе' : 'Не запускалась';
-    headingHint.textContent = `${scope} · ${status}`;
-    const label = isInstantTask(current) ? 'Завершить' : active ? 'Пауза' : hasWork ? 'Продолжить' : 'Начать';
+    const progress=taskProgress({completed,workflow:confirmedWorkflow,workflowReadError,waiting:!!current.waiting,review:current._review,reviewReadError:!!current._reviewReadError});
+    headingHint.textContent = `${scope} · ${progress?.label||status}${progress?` · ${!activeStatusKnown?'Таймер неизвестен':active?'Таймер идёт':hasWork?'Таймер на паузе':'Таймер не запущен'}`:''}`;
+    const label = isInstantTask(current) ? 'Завершить' : active ? 'Пауза таймера' : hasWork ? 'Продолжить таймер' : 'Начать таймер';
     syncButton.replaceChildren();
     const glyph = document.createElement('span'); glyph.className = 'task-details-button-icon'; glyph.innerHTML = isInstantTask(current) ? ICONS.check : active ? ICONS.pause : ICONS.play;
     syncButton.append(glyph, document.createTextNode(label));
@@ -206,7 +218,7 @@ export function openCalendarTaskDetails(record, dependencies) {
       const updated = await invoke('set_calendar_task_stage', { id: String(current.source_id), stage: next, waiting: null });
       if (!live()) return;
       current = { ...current, ...updated, stage: typeof updated?.stage === 'string' ? updated.stage : next, waiting: typeof updated?.waiting === 'boolean' ? updated.waiting : !!current.waiting };
-      syncStageOptions(); syncMetadata(); remountHistory();
+      syncStageOptions(); syncSummary();syncMetadata(); remountHistory();
       announcement.textContent = `Этап: ${stageState?.label || 'Без этапа'}.`;
       onChanged?.();
     } catch (error) {
@@ -221,8 +233,7 @@ export function openCalendarTaskDetails(record, dependencies) {
   edit.addEventListener('click', () => {
     if (pending || !live()) return;
     const latest = { ...current };
-    api.close({ restoreFocus: false });
-    onEdit?.(latest, returnFocus);
+    void Promise.resolve(api.close({ restoreFocus: false })).then(() => { if (!api.modal.isConnected) onEdit?.(latest, returnFocus); });
   });
 
   execute.addEventListener('click', async () => {

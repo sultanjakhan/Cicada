@@ -31,6 +31,48 @@ function fixture({ invoke: invokeOverride, task = record, seconds = 61, activeBl
 }
 const settle = async () => { for (let i = 0; i < 6; i++) await new Promise(resolve => setImmediate(resolve)); };
 
+test('task primary action explicitly starts a timer, not an agent', async t => {
+  const actions = [];
+  const f = fixture({ task: { ...record, has_work: false }, seconds: 0, executeAction: async (_task, action) => { actions.push(action); } });
+  t.after(() => { f.dispose(); f.dom.window.close(); });
+  await settle();
+  assert.match(f.window.document.querySelector('.task-details-execute').getAttribute('aria-label'), /^Начать таймер:/);
+  f.window.document.querySelector('.task-details-execute').click(); await settle();
+  assert.deepEqual(actions, ['start']);
+  assert.ok(f.calls.every(([command]) => !/dispatch|launch_agent|start_agent/.test(command)));
+});
+
+test('workflow close warning clears after explicit discard or acknowledged result save', async t => {
+  const f = fixture(); t.after(() => { f.dispose(); f.dom.window.close(); });
+  await settle();
+  const modal = f.window.document.querySelector('dialog');
+  const warning = modal.querySelector('[data-dialog-error]');
+  const panel = modal.querySelector('.task-workflow');
+  panel.open = true;
+  const next = panel.querySelector('input');
+  next.value = 'Unsubmitted step';
+  next.dispatchEvent(new f.window.Event('input', { bubbles: true }));
+  modal.querySelector('[data-dialog-close]').click(); await settle();
+  assert.equal(modal.open, true);
+  assert.equal(warning.hidden, false);
+  assert.match(warning.textContent, /Сохрани шаг или результат/);
+  [...panel.querySelectorAll('button')].find(b => b.textContent === 'Отменить ввод').click();
+  assert.equal(next.value, '');
+  assert.equal(warning.hidden, true);
+  assert.equal(f.calls.filter(([command]) => command === 'set_ui_state').length, 0);
+  const result = panel.querySelector('textarea');
+  result.value = 'Explicit synthetic result';
+  result.dispatchEvent(new f.window.Event('input', { bubbles: true }));
+  modal.querySelector('[data-dialog-close]').click(); await settle();
+  assert.equal(warning.hidden, false);
+  [...panel.querySelectorAll('button')].find(b => b.textContent === 'Сохранить результат').click(); await settle();
+  assert.equal(warning.hidden, true);
+  assert.equal(f.calls.filter(([command]) => command === 'set_ui_state').length, 1);
+  assert.equal(result.value, 'Explicit synthetic result');
+  modal.querySelector('[data-dialog-close]').click(); await settle();
+  assert.equal(modal.isConnected, false);
+});
+
 test('opens as a read-only operational card, with goal/stage/time and no mutation', async t => {
   const f = fixture(); t.after(() => { f.dispose(); f.dom.window.close(); });
   await settle();
@@ -121,7 +163,7 @@ test('active-block read failure stays visible and read-only until Retry succeeds
 });
 
 test('the fetched active-block list replaces a stale row is_active flag', async t => {
-  const f = fixture({ task: { ...record, is_active: true, has_work: false, actual_seconds: 0 }, seconds: 0 });
+  const f = fixture({ task: { ...record, waiting:false, is_active: true, has_work: false, actual_seconds: 0 }, seconds: 0 });
   t.after(() => { f.dispose(); f.dom.window.close(); });
   await settle();
   const dialog = f.window.document.querySelector('.calendar-task-details');
@@ -153,4 +195,20 @@ test('does not render a false zero when both seconds APIs fail and no row fallba
   t.after(() => { f.dispose(); f.dom.window.close(); });
   await settle();
   assert.equal(f.window.document.querySelector('.task-details-total').textContent, 'Время недоступно');
+});
+
+test('long Unicode task context remains complete and keyboard-focusable without mutations', async t => {
+  const title='Жұмыс 🚀 '+ '界'.repeat(500),f=fixture({task:{...record,title}});
+  t.after(()=>{f.dispose();f.dom.window.close();});await settle();
+  const modal=f.window.document.querySelector('dialog'),context=modal.querySelector('.calendar-editor-header > div');
+  assert.equal(modal.querySelector('h2').textContent,title);assert.equal(context.tabIndex,0);assert.equal(context.getAttribute('aria-labelledby'),modal.getAttribute('aria-labelledby'));
+  const before=f.calls.length;context.focus();assert.equal(f.window.document.activeElement,context);assert.equal(f.calls.length,before);
+});
+
+test('card shows confirmed workflow progress independently of inactive timer', async t=>{
+ const f=fixture({task:{...record,waiting:false,has_work:false},seconds:0,invoke:async(command,args,fallback)=>command==='get_ui_state'&&args.key.startsWith('calendar_task_workflow_v1:')?JSON.stringify({version:1,taskId:'cicada:note:n-1',steps:[{id:'step',title:'Manual work',status:'running'}],result:'',run:null}):fallback(command,args)});t.after(()=>{f.dispose();f.dom.window.close();});await settle();assert.match(f.window.document.querySelector('.calendar-editor-hint')?.textContent||f.window.document.body.textContent,/В работе/);assert.match(f.window.document.body.textContent,/Таймер не запущен/);
+});
+
+test('active timer and blocked workflow remain separate visible states',async t=>{
+ const f=fixture({task:{...record,waiting:false},activeBlocks:[{source_type:'note',source_id:'n-1',date:'2026-10-03',start_time:'00:00:00'}],invoke:async(command,args,fallback)=>command==='get_ui_state'&&args.key.startsWith('calendar_task_workflow_v1:')?JSON.stringify({version:1,taskId:'cicada:note:n-1',steps:[{id:'step',title:'Wait for person',status:'blocked'}],result:'',run:null}):fallback(command,args)});t.after(()=>{f.dispose();f.dom.window.close();});await settle();const hint=f.window.document.querySelector('.calendar-editor-header p').textContent;assert.match(hint,/Ждёт ответа/);assert.match(hint,/Таймер идёт/);
 });

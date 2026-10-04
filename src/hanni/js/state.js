@@ -31,7 +31,7 @@ export const IS_DESKTOP = !IS_MOBILE;
 document.documentElement.classList.add(IS_MOBILE ? 'mobile' : 'desktop');
 if (FORCE_MOBILE) document.documentElement.classList.add('mobile-preview');
 export const S = {
-  APP_VERSION: packageInfo.version, activeTab: 'calendar', openTabs: ['calendar'], activeSubTab: {},
+  APP_VERSION: packageInfo.version, APP_BUILD_ID: packageInfo.cicadaBuildId ?? 'unknown', activeTab: 'calendar', openTabs: ['calendar'], activeSubTab: {},
   tabCustomizations: {}, theme: localStorage.getItem('hanni_theme') || 'light',
   calendarYear: new Date().getFullYear(), calendarMonth: new Date().getMonth(),
   selectedCalendarDate: null, calWeekOffset: 0, calDayDate: null,
@@ -40,6 +40,7 @@ export function setTheme(theme) {
   S.theme = theme === 'dark' ? 'dark' : 'light';
   document.documentElement.setAttribute('data-theme', S.theme);
   localStorage.setItem('hanni_theme', S.theme);
+  window.dispatchEvent(new window.CustomEvent('hanni:theme-changed', { detail: S.theme }));
 }
 setTheme(S.theme);
 export const _s = d => '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">' + d + '</svg>';

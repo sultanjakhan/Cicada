@@ -9,6 +9,21 @@
   --ct-focus: var(--text-primary);
   max-width: 1040px; margin: 0; padding: 8px 0 20px; min-width: 0;
 }
+
+/* The first layer keeps task/state/action; native disclosures retain controls. */
+.ct-filter-details { margin: 8px 0; border: 1px solid var(--ui-line); border-radius: var(--ui-radius-surface); background: var(--ui-surface); }
+.ct-filter-details > summary { padding: 10px 12px; min-height: var(--ui-control-height); box-sizing: border-box; cursor: pointer; color: var(--ui-secondary); font-size: 13px; }
+.ct-filter-body { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 0 12px 12px; }
+.ct-applied-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--ui-secondary); font-size: 13px; overflow-wrap: anywhere; }
+.ct-applied-filters button { min-height: var(--ui-control-height); padding: 0 12px; border: 1px solid var(--ui-line); border-radius: var(--ui-radius-control); background: var(--ui-surface); color: var(--ui-text); cursor: pointer; }
+.ct-primary-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--ui-secondary); font-size: 13px; }
+.ct-row-details { min-width: 0; color: var(--ui-secondary); font-size: 13px; }
+.ct-row-details > summary { width: fit-content; min-height: 44px; display: list-item; align-content: center; cursor: pointer; padding: 0 6px; }
+.ct-row-details .ct-meta { max-height: none; overflow: visible; clip-path: none; margin: 0; padding: 0; gap: 8px; }
+.ct-row-details .ct-meta > * { padding-left: 0; white-space: normal; }
+.ct-row-details .ct-meta > *::before { content: none; }
+.ct-row-details .ct-date { min-height: 44px; }
+.ct-filter-details summary:focus-visible, .ct-row-details summary:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 2px; border-radius: var(--ui-radius-control); }
 [data-theme="dark"] .calendar-tasks { --ct-danger: #f2a197; --ct-segment-active: color-mix(in srgb, var(--text-primary) 15%, var(--bg-page)); }
 .calendar-tasks, .calendar-tasks * { box-sizing: border-box; }
 .calendar-tasks [hidden] { display: none !important; }
@@ -190,4 +205,17 @@
   .ct-actions { gap: 0; }
   .ct-icon-button { width: 36px; height: 36px; }
   .ct-goal { flex: 1 1 0; min-width: 56px; max-width: 100%; }
+}
+/* Shared controls on the compact Tasks surface, including keyboard focus. */
+.calendar-tasks .ct-run { display: inline-flex; width: auto; min-height: 44px; height: auto; gap: 6px; padding: 0 10px; opacity: 1; border: 1px solid var(--ui-line); border-radius: var(--ui-radius-control); color: var(--ui-text) !important; font-size: 13px; }
+.calendar-tasks .ct-more { width: 44px; height: 44px; }
+.calendar-tasks .ct-stage-next { width: 44px; height: 44px; }
+.calendar-tasks .ct-filters, .calendar-tasks .ct-grouping { flex-wrap: wrap; }
+.calendar-tasks .ct-filters button, .calendar-tasks .ct-grouping button, .calendar-tasks .ct-spheres button, .calendar-tasks .ct-subspheres button { min-height: 44px; height: auto; }
+.calendar-tasks .ct-search input, .calendar-tasks .ct-select select { min-height: 44px; }
+@media (max-width: 520px) {
+  .calendar-tasks .ct-row { grid-template-columns: 20px minmax(0,1fr); }
+  .calendar-tasks .ct-actions { grid-column: 2; justify-content: flex-start; }
+  .calendar-tasks .ct-filter-body > * { max-width: 100%; }
+  .calendar-tasks .ct-filter-body .ct-select { flex: 1 1 100%; }
 }

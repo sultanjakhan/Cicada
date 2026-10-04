@@ -4,6 +4,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
+import os
+import contextlib
+import io
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'scripts' / 'check-private-data.py'
 spec = importlib.util.spec_from_file_location('privacy_guard', SCRIPT)
@@ -35,6 +39,38 @@ class PrivacyGuardTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1, result.stderr)
             self.assertIn('example.txt:1: access-token', result.stdout)
             self.assertNotIn(secret, result.stdout + result.stderr)
+
+    def test_private_metadata_is_reported_without_reading_contents(self):
+        private_paths = ['storage.local.json', 'connection.local.json', 'credentials.bin', 'secrets.txt',
+                         'secret.dpapi', 'keys/fixture.txt', 'profiles/fixture.txt', 'sessions/fixture.txt',
+                         'private/fixture.txt', 'backups/fixture.txt', 'exports/fixture.txt']
+        for path in private_paths:
+            self.assertEqual(guard.path_rules(path), ['private-file'])
+        self.assertEqual(guard.path_rules('.env.example'), [])
+        self.assertEqual(guard.path_rules('src/public.txt'), [])
+        with tempfile.TemporaryDirectory() as directory:
+            subprocess.run(['git', 'init', '--quiet', directory], check=True)
+            root = Path(directory)
+            for relative in private_paths:
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('Synthetic private bytes must never be read', encoding='utf-8')
+            previous = Path.cwd()
+            try:
+                os.chdir(root)
+                with mock.patch.object(Path, 'read_bytes', side_effect=AssertionError('private content read')), mock.patch.object(sys, 'argv', [str(SCRIPT)]), contextlib.redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(guard.main(), 1)
+                self.assertEqual(output.getvalue().count(':0: private-file'), len(private_paths))
+            finally:
+                os.chdir(previous)
+
+    def test_linked_ancestor_blocks_scan_before_child_content(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = root / 'redirect'
+            parent.mkdir()
+            with mock.patch.object(Path, 'is_symlink', lambda path: path == parent):
+                self.assertTrue(guard.unreviewed_reparse(root, 'redirect/public.txt'))
 
 
 if __name__ == '__main__':

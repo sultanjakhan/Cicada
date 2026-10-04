@@ -442,7 +442,7 @@ test('modal settings save without replacing the current calendar pane and return
   assert.equal(w.document.querySelector('.calendar-settings-dialog h2').textContent, 'Настройки Cicada');
   assert.equal(w.document.querySelector('.uni-pane'), pane);
   assert.equal(w.document.querySelectorAll('.setting-pills').length, 3);
-  assert.equal(w.document.querySelector('[data-theme-setting]'), null);
+  assert.equal(w.document.querySelector('[data-theme-setting]').closest('[role="tabpanel"]').id, 'calendar-settings-panel-about');
   assert.equal(w.document.querySelector('#mvp-settings'), null);
   await click('#calendar-settings-tab-calendar');
   await click('[data-key="first_day"] [data-value="sun"]');

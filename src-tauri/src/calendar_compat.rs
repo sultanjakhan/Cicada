@@ -601,20 +601,31 @@ pub fn get_notes(
     state: State<'_, AppState>,
 ) -> Result<Vec<Value>, String> {
     let conn = lock(&state)?;
+    let personal_import = filter.as_deref() == Some("personal-import");
+    if personal_import {
+        let marker = search.as_deref().and_then(|value| value.strip_prefix("personal-import:personal-backlog:"))
+            .filter(|value| !value.is_empty() && value.len() <= 80 && value.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'));
+        if marker.is_none() { return Err(fail("invalid personal import marker")); }
+    }
     let mut q = "SELECT id FROM items WHERE kind='task'".to_string();
-    if filter.as_deref() == Some("tasks") {
+    if personal_import {
+        // Includes archived/completed own imports so retries cannot recreate them.
+        q.push_str(" AND status IN ('task','done') AND instr(tags,?1)>0 ");
+    } else if filter.as_deref() == Some("tasks") {
         q.push_str(" AND archived=0 AND status IN ('task','done')");
     } else if filter.as_deref() == Some("tab:calendar") {
         q.push_str(" AND archived=0 AND status='note'");
     } else {
         q.push_str(" AND status='note'");
     }
-    if search.as_deref().is_some_and(|v| !v.trim().is_empty()) {
+    if !personal_import && search.as_deref().is_some_and(|v| !v.trim().is_empty()) {
         q.push_str(" AND (title LIKE ?1 OR notes LIKE ?1)");
     }
     q.push_str(" ORDER BY completed,date,updated_at DESC");
     let mut s = conn.prepare(&q).map_err(|e| fail(e.to_string()))?;
-    let ids = match search {
+    let mut ids = match search.clone() {
+        Some(q) if personal_import => s.query_map([q], |r| r.get::<_, String>(0))
+            .map_err(|e| fail(e.to_string()))?.collect::<Result<Vec<_>, _>>(),
         Some(q) => s
             .query_map([format!("%{q}%")], |r| r.get::<_, String>(0))
             .map_err(|e| fail(e.to_string()))?
@@ -626,11 +637,40 @@ pub fn get_notes(
     }
     .map_err(|e| fail(e.to_string()))?;
     drop(s);
+    if personal_import {
+        let mut exact_ids = Vec::new();
+        // Inspect only matching IDs' scope metadata before loading any content.
+        // A manually changed personal sphere remains deduplicated; work/unknown
+        // scope is a conflict, not a hidden row that could be recreated.
+        for id in &ids {
+            let tags: String = conn.query_row("SELECT tags FROM items WHERE id=?1", [id], |row| row.get(0)).map_err(|e| fail(e.to_string()))?;
+            if !tags.split(',').any(|tag| tag.trim() == search.as_deref().unwrap_or("")) { continue; }
+            let positive = crate::task_attributes::sphere(&tags).is_some_and(|sphere| sphere != "work");
+            let prohibited = tags.split(',').any(|tag| { let tag = tag.trim().to_ascii_lowercase(); tag.starts_with("jira") || tag.starts_with("investlink") || tag == "task-sphere:work" });
+            if !positive || prohibited { return Err(fail("personal import scope changed")); }
+            exact_ids.push(id.clone());
+        }
+        ids = exact_ids;
+    }
     ids.into_iter().map(|id| load(&conn, &id)).collect()
 }
 #[tauri::command(rename_all = "camelCase")]
-pub fn get_note(id: String, state: State<'_, AppState>) -> Result<Value, String> {
+pub fn get_note(id: String, personal_only: Option<bool>, state: State<'_, AppState>) -> Result<Value, String> {
     let conn = lock(&state)?;
+    if personal_only.unwrap_or(false) {
+        // Scope check reads metadata only, before any title/content is loaded.
+        let tags: Option<String> = conn.query_row("SELECT tags FROM items WHERE id=?1 AND kind='task' AND status IN ('task','note','done')", [&id], |row| row.get(0))
+            .optional().map_err(|e| fail(e.to_string()))?;
+        let allowed = tags.as_deref().is_some_and(|tags| {
+            let positive = crate::task_attributes::sphere(tags).is_some_and(|sphere| sphere != "work")
+                || tags.split(',').any(|tag| tag.trim() == "personal-template");
+            positive && !tags.split(',').any(|tag| {
+                let tag = tag.trim().to_ascii_lowercase();
+                tag.starts_with("jira") || tag.starts_with("investlink") || tag == "task-sphere:work" || tag.starts_with("personal-import:")
+            })
+        });
+        if !allowed { return Err(fail("personal template scope not confirmed")); }
+    }
     let item = get_item(&conn, &id)?;
     if item.kind != "task" {
         return Err(fail("note not found"));
@@ -645,18 +685,69 @@ pub fn create_note(
     status: Option<String>,
     due_date: Option<String>,
     priority: Option<i64>,
+    personal_import_receipt: Option<bool>,
     state: State<'_, AppState>,
-) -> Result<String, String> {
-    validate_title(&title)?;
-    date(&due_date)?;
+) -> Result<Value, String> {
     let record_status = status.unwrap_or_else(|| "note".into());
-    validate_note_status(&record_status)?;
-    let conn = lock(&state)?;
+    let receipt = personal_import_receipt.unwrap_or(false);
+    let marker = tags.split(',').map(str::trim).find(|tag| tag.starts_with("personal-import:personal-backlog:")).map(str::to_owned);
+    if receipt && marker.is_none() { return Err(fail("personal import receipt requires identity")); }
+    let mut conn = lock(&state)?;
+    let outcome = create_note_record(&mut conn, &title, &content, &tags, &record_status, &due_date, priority)?;
+    if receipt { Ok(json!({"schemaVersion":1,"id":outcome.id,"created":outcome.created,"marker":marker.unwrap()})) }
+    else { Ok(json!(outcome.id)) }
+}
+
+// Shared by the native command and synthetic two-connection replay tests.
+// BEGIN IMMEDIATE serializes identity lookup + insertion across SQLite writers,
+// not only one frontend or one AppState mutex. No schema migration is needed.
+#[derive(Debug)]
+pub(crate) struct NoteCreateOutcome { pub id: String, pub created: bool }
+pub(crate) fn create_note_record(
+    conn: &mut Connection, title: &str, content: &str, tags: &str,
+    record_status: &str, due_date: &Option<String>, priority: Option<i64>,
+) -> Result<NoteCreateOutcome, String> {
+    validate_title(title)?;
+    date(due_date)?;
+    validate_note_status(record_status)?;
+    let markers: Vec<&str> = tags.split(',').map(str::trim).filter(|tag| tag.starts_with("personal-import:personal-backlog:")).collect();
+    if markers.len() > 1 { return Err(fail("ambiguous personal import identity")); }
+    let marker = markers.first().copied();
+    let personal_scope = |tags: &str| {
+        crate::task_attributes::sphere(tags).is_some_and(|sphere| sphere != "work")
+            && !tags.split(',').any(|tag| { let tag = tag.trim().to_ascii_lowercase(); tag.starts_with("jira") || tag.starts_with("investlink") || tag == "task-sphere:work" })
+    };
+    let projects = |tags: &str| -> std::collections::BTreeSet<String> {
+        tags.split(',').map(str::trim).filter(|tag| matches!(*tag,"project:cicada" | "project:agent-city")).map(str::to_owned).collect()
+    };
+    if let Some(marker) = marker {
+        let suffix = marker.strip_prefix("personal-import:personal-backlog:").filter(|id| !id.is_empty() && id.len() <= 80 && id.as_bytes()[0].is_ascii_alphanumeric() && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'));
+        if suffix.is_none() || record_status != "task" || !personal_scope(tags) { return Err(fail("invalid personal import create scope")); }
+    }
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| fail(e.to_string()))?;
+    if let Some(marker) = marker {
+        let matches = {
+            // Read scope metadata first; never load foreign title/content.
+            let mut query = tx.prepare("SELECT id,kind,status,archived,completed,tags FROM items WHERE instr(tags,?1)>0").map_err(|e| fail(e.to_string()))?;
+            let rows = query.query_map([marker], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,i64>(3)?,row.get::<_,i64>(4)?,row.get::<_,String>(5)?))).map_err(|e| fail(e.to_string()))?;
+            rows.collect::<Result<Vec<_>,_>>().map_err(|e| fail(e.to_string()))?.into_iter().filter(|row| row.5.split(',').any(|tag| tag.trim() == marker)).collect::<Vec<_>>()
+        };
+        if matches.len() > 1 { return Err(fail("ambiguous existing personal import identity")); }
+        if let Some((id,kind,status,archived,completed,current_tags)) = matches.first() {
+            if kind != "task" || status != "task" || *archived != 0 || *completed != 0 || !personal_scope(current_tags) { return Err(fail("existing personal import scope conflict")); }
+            let (current_title,current_content): (String,String) = tx.query_row("SELECT title,notes FROM items WHERE id=?1", [id], |row| Ok((row.get(0)?,row.get(1)?))).map_err(|e| fail(e.to_string()))?;
+            if current_title != title.trim() || current_content != content || projects(current_tags) != projects(tags) { return Err(fail("personal import already exists; refresh preview")); }
+            // Idempotent replay preserves all existing workflow, dates and tags.
+            let id = id.clone(); tx.commit().map_err(|e| fail(e.to_string()))?; return Ok(NoteCreateOutcome { id, created: false });
+        }
+    }
     let id = Uuid::new_v4().to_string();
     let n = now();
-    conn.execute("INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,status) VALUES(?1,'task',?2,?3,?4,NULL,30,?5,1,?6,?6,'task','#9B9B9B',?7,0,?8,?9)",params![id,title.trim(),content,due_date,(record_status=="done") as i64,n,priority.unwrap_or(0),tags,record_status]).map_err(|e|fail(e.to_string()))?;
-    Ok(id)
+    tx.execute("INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,status) VALUES(?1,'task',?2,?3,?4,NULL,30,?5,1,?6,?6,'task','#9B9B9B',?7,0,?8,?9)",params![id,title.trim(),content,due_date,(record_status=="done") as i64,n,priority.unwrap_or(0),tags,record_status]).map_err(|e|fail(e.to_string()))?;
+    tx.commit().map_err(|e| fail(e.to_string()))?;
+    Ok(NoteCreateOutcome { id, created: true })
 }
+
 #[tauri::command(rename_all = "camelCase")]
 pub fn update_note(
     id: String,

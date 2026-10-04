@@ -1,4 +1,41 @@
 /* Cicada settings: one compact panel with persistent, keyboard-accessible sections. */
+.calendar-theme-control {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 44px; width: 44px; min-height: 44px; margin-left: auto;
+  padding: 0; border: 1px solid var(--border-default); border-radius: 6px;
+  color: var(--text-primary); background: var(--bg-card); cursor: pointer;
+}
+.calendar-theme-control:hover { background: var(--bg-hover); }
+.calendar-theme-control:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.calendar-settings-dialog .data-source-settings { min-width: 0; }
+.calendar-settings-dialog .data-source-settings > summary { cursor: pointer; padding: 10px 0; font-weight: 600; }
+.calendar-settings-dialog .data-source-setting {
+  display: grid; gap: 10px; min-width: 0; margin: 12px 0 0; padding: 12px 0;
+  border: 0; border-top: 1px solid var(--border-default);
+}
+.calendar-settings-dialog .data-source-setting legend { font-size: 14px; font-weight: 600; }
+.calendar-settings-dialog .data-source-field { display: grid; gap: 6px; min-width: 0; }
+.calendar-settings-dialog .data-source-field input,
+.calendar-settings-dialog .data-source-field select {
+  box-sizing: border-box; width: 100%; min-width: 0; min-height: 44px;
+  padding: 8px 10px; border: 1px solid var(--border-default); border-radius: 6px;
+  font: inherit; background: var(--bg-card); color: var(--text-primary);
+}
+.calendar-settings-dialog .data-source-setting input[type="checkbox"] { width: 18px; height: 18px; margin: 0; }
+.calendar-settings-dialog .data-source-settings button { width: auto; min-height: 44px; padding: 8px 12px; }
+.calendar-settings-dialog .data-source-settings p,
+.calendar-settings-dialog .data-source-settings pre { overflow-wrap: anywhere; white-space: pre-wrap; font-size: 13px; line-height: 1.5; }
+.calendar-settings-dialog .data-source-settings pre { max-width: 100%; }
+.calendar-settings-theme { display: grid; gap: 8px; margin: 12px 0 8px; }
+.calendar-settings-theme select {
+  width: min(100%, 240px); min-width: 0; min-height: 44px;
+  padding: 8px 12px; font: inherit; color: var(--text-primary);
+  background: var(--bg-card); border: 1px solid var(--border-default);
+  border-radius: var(--ui-radius-control, 6px);
+}
+.calendar-settings-theme select:focus-visible {
+  outline: 2px solid var(--border-focus); outline-offset: 2px;
+}
 .calendar-settings-dialog {
   width: min(760px, calc(100vw - 32px));
   max-width: 760px;
