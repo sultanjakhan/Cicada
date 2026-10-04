@@ -26,7 +26,7 @@ struct Report {
 #[serde(deny_unknown_fields)]
 struct Counter { server: String, tool: String, calls: u64 }
 fn err() -> String { "agent_request_rejected".into() }
-fn token(s:&str, min:usize, max:usize)->bool { (min..=max).contains(&s.len()) && s.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'_'||b==b'-') }
+pub(crate) fn token(s:&str, min:usize, max:usize)->bool { (min..=max).contains(&s.len()) && s.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'_'||b==b'-') }
 fn label(value:&Option<String>, limit:usize)->bool { value.as_ref().is_none_or(|s|!s.trim().is_empty()&&s.chars().count()<=limit&&!s.chars().any(char::is_control)) }
 fn validate_report(mut r:Report)->Result<Report,String> {
     if !token(&r.run_id,8,100)|| !(1..=1_000_000_000).contains(&r.sequence)||
@@ -46,26 +46,45 @@ fn validate_report(mut r:Report)->Result<Report,String> {
     Ok(r)
 }
 pub(crate) fn read(conn:&Connection,key:&str)->Result<Option<Value>,String> {
+    if crate::agent_history::ready(conn) {
+        if key==EXCHANGE {return crate::agent_history::load(conn).map(Some)}
+        if key==OPERATIONS {return crate::agent_history::receipts(conn).map(Some)}
+        if key=="calendar_agent_report_times_v1" {return crate::agent_history::times(conn).map(Some)}
+    }
     let raw:Option<String>=conn.query_row("SELECT value FROM ui_state WHERE key=?1",[key],|r|r.get(0)).optional().map_err(|_|err())?;
     raw.map(|s|if s.len()>MAX_STATE {Err(err())}else{serde_json::from_str(&s).map_err(|_|err())}).transpose()
 }
 pub(crate) fn write(conn:&Connection,key:&str,value:&Value)->Result<(),String> {
+    if key==EXCHANGE {return crate::agent_history::save(conn,value)}
+    if key==OPERATIONS && crate::agent_history::ready(conn) {
+        validate_operations(value)?;
+        for (id,receipt) in value.as_object().unwrap() {
+            if crate::agent_history::receipt(conn,id)?.is_none() {crate::agent_history::insert_receipt(conn,id,receipt["digest"].as_str().unwrap(),&receipt["result"])?;}
+        }
+        return Ok(())
+    }
     let raw=value.to_string();if raw.len()>MAX_STATE{return Err(err())}
     conn.execute("INSERT INTO ui_state(key,value,updated_at) VALUES(?1,?2,?3) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",rusqlite::params![key,raw,chrono::Utc::now().to_rfc3339()]).map_err(|_|err())?;Ok(())
 }
 pub(crate) fn personal(conn:&Connection,id:&str)->Result<Value,String> {
+    personal_with_archive(conn,id,false)
+}
+fn personal_with_archive(conn:&Connection,id:&str,allow_archived:bool)->Result<Value,String> {
     if !token(id,1,80){return Err(err())}
     let row:(String,String,i64,i64,i64,String)=conn.query_row("SELECT kind,tags,archived,completed,version,status FROM items WHERE id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).map_err(|_|err())?;
-    if row.0!="task"||row.2!=0||!row.1.split(',').any(|s|s.trim()=="task-sphere:personal")||row.1.split(',').any(|s|{let t=s.trim().to_ascii_lowercase();t.starts_with("jira")||t.starts_with("investlink")||t=="task-sphere:work"}){return Err("personal_task_required".into())}
+    if row.0!="task"||(!allow_archived&&row.2!=0)||!row.1.split(',').any(|s|s.trim()=="task-sphere:personal")||row.1.split(',').any(|s|{let t=s.trim().to_ascii_lowercase();t.starts_with("jira")||t.starts_with("investlink")||t=="task-sphere:work"}){return Err("personal_task_required".into())}
     let (title,content):(String,String)=conn.query_row("SELECT title,notes FROM items WHERE id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?))).map_err(|_|err())?;
     Ok(json!({"id":id,"title":title,"content":content,"version":row.4,"completed":row.3!=0,"status":row.5}))
 }
 pub(crate) fn exchange(conn:&Connection)->Result<Value,String> {
-    let state=read(conn,EXCHANGE)?.unwrap_or_else(||json!({"version":1,"sourceNamespace":Uuid::new_v4().to_string(),"order":0,"bindings":{},"runs":{}}));
+    crate::agent_history::load(conn)
+}
+pub(crate) fn validate_exchange(state:&Value)->Result<(),String> {
     let keys=["version","sourceNamespace","order","bindings","runs"];
     if state.as_object().is_none_or(|s|s.len()!=5||keys.iter().any(|k|!s.contains_key(*k)))||state["version"]!=1||
         state["sourceNamespace"].as_str().is_none_or(|s|Uuid::parse_str(s).is_err()||Uuid::parse_str(s).unwrap().to_string()!=s)||state["order"].as_u64().is_none()||
-        state["bindings"].as_object().is_none_or(|s|s.len()>500)||state["runs"].as_object().is_none_or(|s|s.len()>500){return Err("exchange_state_invalid".into())}
+        state["order"].as_u64().is_some_and(|n|n>9_007_199_254_740_991)||
+        !state["bindings"].is_object()||!state["runs"].is_object(){return Err("exchange_state_invalid".into())}
     for (key,b) in state["bindings"].as_object().unwrap(){
         let id=b["sourceId"].as_str().ok_or_else(err)?;
         if !token(id,1,80)||*b!=binding(&state,id)||b["taskKey"]!=*key{return Err("exchange_state_invalid".into())}
@@ -80,7 +99,7 @@ pub(crate) fn exchange(conn:&Connection)->Result<Value,String> {
             if serde_json::to_value(&r).map_err(|_|err())?!=run["report"]||r.run_id!=*id||["taskKey","agent","model","provider"].iter().any(|k|run[*k]!=run["report"][*k]){return Err("exchange_state_invalid".into())}
         }
     }
-    Ok(state)
+    Ok(())
 }
 pub(crate) fn binding(state:&Value,id:&str)->Value {
     let ns=state["sourceNamespace"].as_str().unwrap();let prefix=hex::encode(Sha256::digest(ns.as_bytes()));
@@ -100,7 +119,7 @@ fn apply_report(state:&mut Value,b:&Value,input:Report)->Result<Report,String> {
         if ["done","error","cancelled"].contains(&old.status.as_str())&&old.status!=r.status{return Err("new_run_id_required".into())}
         if [(old.input_tokens,r.input_tokens),(old.output_tokens,r.output_tokens)].iter().any(|(a,b)|a.is_some_and(|a|b.is_none_or(|b|b<a))){return Err("usage_decreased".into())}
         for c in old.mcp_calls.unwrap_or_default(){if !r.mcp_calls.as_ref().is_some_and(|cs|cs.iter().any(|n|n.server==c.server&&n.tool==c.tool&&n.calls>=c.calls)){return Err("usage_decreased".into())}}
-    }else if state["runs"].as_object().unwrap().len()>=500{return Err("exchange_capacity".into())}
+    }
     let order=state["order"].as_u64().unwrap()+1;state["order"]=json!(order);
     state["runs"][&r.run_id]=json!({"runId":r.run_id,"taskKey":r.task_key,"agent":r.agent,"model":r.model,"provider":r.provider,"report":r,"receivedOrder":order});Ok(r)
 }
@@ -129,12 +148,8 @@ pub(crate) fn execute(conn:&mut Connection,mut req:Request)->Result<Value,String
     }
     let digest=hex::encode(Sha256::digest(json!({"action":req.action,"body":req.body}).to_string().as_bytes()));
     let tx=conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_|err())?;
-    let mut ops=read(&tx,OPERATIONS)?.unwrap_or_else(||json!({}));
-    let map=ops.as_object().ok_or_else(err)?;
-    if map.iter().any(|(id,receipt)|!token(id,8,100)||receipt.as_object().is_none_or(|r|r.len()!=2)||receipt["digest"].as_str().is_none_or(|d|d.len()!=64||!d.bytes().all(|b|b.is_ascii_digit()||(b'a'..=b'f').contains(&b)))||!receipt["result"].is_object()){return Err("operation_state_invalid".into())}
-    if let Some(receipt)=map.get(&req.operation_id){if receipt["digest"]!=digest{return Err("operation_payload_conflict".into())}personal(&tx,receipt["result"]["task"]["id"].as_str().ok_or_else(err)?)?;return Ok(receipt["result"].clone())}
-    if map.len()>=500{return Err("operation_capacity".into())}
-    let mut state=exchange(&tx)?;
+    crate::agent_history::ensure(&tx)?;
+    if let Some(receipt)=crate::agent_history::receipt(&tx,&req.operation_id)?{if receipt["digest"]!=digest{return Err("operation_payload_conflict".into())}personal_with_archive(&tx,receipt["result"]["task"]["id"].as_str().ok_or_else(err)?,true)?;tx.commit().map_err(|_|err())?;return Ok(receipt["result"].clone())}
     let (task,input)=if req.action=="begin" {
         let input:Begin=serde_json::from_value(req.body).map_err(|_|err())?;
         if input.report.status!="running"||input.report.sequence!=1||input.content.len()>16000||input.projects.len()>10||input.projects.iter().any(|p|!token(p,1,80)){return Err(err())}
@@ -148,22 +163,24 @@ pub(crate) fn execute(conn:&mut Connection,mut req:Request)->Result<Value,String
         let input:Input=serde_json::from_value(req.body).map_err(|_|err())?;let task=personal(&tx,&input.task_id)?;
         if task["version"]!=input.expected_version{return Err("task_version_conflict".into())}(task,input.report)
     };
-    let b=binding(&state,task["id"].as_str().unwrap());let key=b["taskKey"].as_str().unwrap();
+    let id=task["id"].as_str().unwrap();
+    let mut state=crate::agent_history::context(&tx,id,&input.run_id)?;
+    let b=binding(&state,id);let key=b["taskKey"].as_str().unwrap();
     if req.action=="report"&&state["bindings"].get(key)!=Some(&b){return Err("unknown_task_binding".into())}
-    if state["bindings"].get(key).is_none()&&state["bindings"].as_object().unwrap().len()>=500{return Err("exchange_capacity".into())}
     let previous_order=state["order"].clone();
     state["bindings"][key]=b.clone();let row=apply_report(&mut state,&b,input)?;
     if previous_order!=state["order"] {record_received_at(&tx,&row.run_id)?;}
     let result=json!({"task":task,"binding":b,"report":row,"taskCompletedAutomatically":false});
-    ops[&req.operation_id]=json!({"digest":digest,"result":result});write(&tx,EXCHANGE,&state)?;write(&tx,OPERATIONS,&ops)?;
+    write(&tx,EXCHANGE,&state)?;crate::agent_history::insert_receipt(&tx,&req.operation_id,&digest,&result)?;
     tx.commit().map_err(|_|err())?;Ok(result)
 }
 
 pub(crate) fn record_received_at(c:&Connection,run:&str)->Result<(),String>{
-    let mut times=read(c,"calendar_agent_report_times_v1")?.unwrap_or_else(||json!({}));
-    if !times.is_object(){return Err("invalid_report_times".into())}
-    times[run]=json!(chrono::Utc::now().to_rfc3339());
-    write(c,"calendar_agent_report_times_v1",&times)
+    crate::agent_history::touch(c,run)
+}
+pub(crate) fn validate_operations(ops:&Value)->Result<(),String>{
+    let map=ops.as_object().ok_or_else(err)?;
+    if map.iter().any(|(id,receipt)|!token(id,8,100)||receipt.as_object().is_none_or(|r|r.len()!=2)||receipt["digest"].as_str().is_none_or(|d|d.len()!=64||!d.bytes().all(|b|b.is_ascii_digit()||(b'a'..=b'f').contains(&b)))||!receipt["result"].is_object()){return Err("operation_state_invalid".into())}Ok(())
 }
 
 // Reject duplicate keys before converting nested objects to Value.
@@ -187,7 +204,7 @@ pub(crate) fn parse(raw:&[u8])->Result<Request,String>{
             }d.deserialize_any(V)
         }
     }
-    if raw.len()>16000{return Err(err())}let Unique(v)=serde_json::from_slice(raw).map_err(|_|err())?;
+    if raw.len()>64*1024{return Err(err())}let Unique(v)=serde_json::from_slice(raw).map_err(|_|err())?;
     fn depth(v:&Value,n:usize)->bool{n<=32&&match v{Value::Object(m)=>m.values().all(|v|depth(v,n+1)),Value::Array(a)=>a.iter().all(|v|depth(v,n+1)),_=>true}}
     if !depth(&v,0){return Err(err())}serde_json::from_value(v).map_err(|_|err())
 }
@@ -229,15 +246,27 @@ pub(crate) fn parse(raw:&[u8])->Result<Request,String>{
         assert!(parse(br#"{"version":1,"operation_id":"test-parse-001","action":"get","body":{"taskId":"a","taskId":"b"}}"#).is_err());
         assert!(parse(br#"{"version":1,"operation_id":"test-parse-001","action":"list","body":{},"owner":"invented"}"#).is_err());
     }
+    #[test]fn archived_personal_receipt_replays_but_new_writes_and_corporate_receipts_are_denied(){
+        let mut c=conn();let a=begin(&mut c);let id=a["task"]["id"].as_str().unwrap();
+        c.execute("UPDATE items SET archived=1 WHERE id=?1",[id]).unwrap();assert_eq!(begin(&mut c),a);
+        assert_eq!(call(&mut c,"test-archived-01","report",json!({"taskId":id,"expectedVersion":1,"report":report("test-run-001","running",2)})).unwrap_err(),"personal_task_required");
+        c.execute("UPDATE items SET tags='task-sphere:work' WHERE id=?1",[id]).unwrap();
+        assert_eq!(call(&mut c,"test-begin-001","begin",json!({"title":"Synthetic Ж 文 task","content":"Synthetic only","taskId":null,"projects":["cicada"],"report":report("test-run-001","running",1)})).unwrap_err(),"personal_task_required");
+    }
     #[test]fn replay_survives_reopen_and_full_capacity_while_stale_versions_fail(){
         let root=std::env::temp_dir().join(format!("cicada-agent-test-{}",Uuid::new_v4()));std::fs::create_dir(&root).unwrap();let path=root.join("synthetic.db");
         let mut c=Connection::open(&path).unwrap();crate::init_schema(&c).unwrap();let a=begin(&mut c);drop(c);
         let mut c=Connection::open(&path).unwrap();assert_eq!(a,begin(&mut c));
         let mut ops=read(&c,OPERATIONS).unwrap().unwrap();let receipt=ops["test-begin-001"].clone();for n in 1..500{ops[format!("synthetic-op-{n:04}")]=receipt.clone();}write(&c,OPERATIONS,&ops).unwrap();
         assert_eq!(a,begin(&mut c));
-        write(&c,OPERATIONS,&json!({})).unwrap();
+        let id=a["task"]["id"].as_str().unwrap().to_owned();
+        call(&mut c,"test-after-500","report",json!({"taskId":id,"expectedVersion":1,"report":report("test-run-001","running",2)})).unwrap();
+        assert_eq!(read(&c,OPERATIONS).unwrap().unwrap().as_object().unwrap().len(),501);
+        drop(c);let mut c=Connection::open(&path).unwrap();assert_eq!(a,begin(&mut c));
+        assert_eq!(c.query_row("SELECT count(*) FROM items",[],|r|r.get::<_,i64>(0)).unwrap(),1);
+        assert_eq!(c.query_row("SELECT count(*) FROM timeline_blocks",[],|r|r.get::<_,i64>(0)).unwrap(),0);
         let id=a["task"]["id"].as_str().unwrap();c.execute("UPDATE items SET version=2 WHERE id=?1",[id]).unwrap();
-        assert_eq!(call(&mut c,"test-stale-001","report",json!({"taskId":id,"expectedVersion":1,"report":report("test-run-001","done",2)})).unwrap_err(),"task_version_conflict");
+        assert_eq!(call(&mut c,"test-stale-001","report",json!({"taskId":id,"expectedVersion":1,"report":report("test-run-001","done",3)})).unwrap_err(),"task_version_conflict");
         assert_eq!(read(&c,EXCHANGE).unwrap().unwrap()["runs"]["test-run-001"]["report"]["status"],"running");drop(c);
         std::fs::remove_file(path).unwrap();std::fs::remove_dir(root).unwrap();
     }

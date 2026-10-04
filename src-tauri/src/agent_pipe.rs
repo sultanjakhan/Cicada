@@ -4,7 +4,7 @@ use sha2::{Digest,Sha256};
 use tokio::{io::{AsyncReadExt,AsyncWriteExt},net::windows::named_pipe::ServerOptions};
 use tauri::{Manager,Emitter};
 use serde_json::json;
-const LIMIT:usize=16000;
+const LIMIT:usize=64*1024;
 #[repr(C)]struct Security {len:u32,descriptor:*mut c_void,inherit:i32}
 #[link(name="advapi32")]unsafe extern "system" {
     fn OpenProcessToken(process:*mut c_void,access:u32,token:*mut *mut c_void)->i32;
