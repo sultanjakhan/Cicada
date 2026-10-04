@@ -5,6 +5,7 @@ import { ICONS } from './icons.js';
 import { isInstantTask, sphereLabel } from './task-model.js';
 import { loadProcesses, mountStageTime, taskStage } from './task-processes.js';
 import { mountTaskWorkflow } from './task-workflow-view.js';
+import { mountSharedTaskControls } from './shared-task-controls.js';
 
 const errorText = error => (typeof error === 'string' ? error : error?.message) || '';
 const finite = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
@@ -36,12 +37,12 @@ export function openCalendarTaskDetails(record, dependencies) {
 
   const window = document.defaultView;
   let current = { ...record }, processes = [], goals = [], activeBlocks = [], closedSeconds = 0;
-  let stageState = null, historyStop = null, workflowStop = null, clockTimer = null, disposed = false, pending = false, loadFailed = false, activeStatusKnown = false, timeAvailable = false, loadRevision = 0, editHandoff = null;
+  let stageState = null, historyStop = null, workflowStop = null, sharedControlsStop = null, clockTimer = null, disposed = false, pending = false, loadFailed = false, activeStatusKnown = false, timeAvailable = false, loadRevision = 0, editHandoff = null;
   const live = () => !disposed && api.modal.isConnected && isCurrent();
   const api = createCalendarDialog({
     document, title: current.title, hint: 'Задача', returnFocus, isCurrent,
     beforeClose: () => workflowStop?.beforeClose?.(),
-    onClose: () => { disposed = true; loadRevision++; historyStop?.(); workflowStop?.(); if (clockTimer) window.clearInterval(clockTimer); },
+    onClose: () => { disposed = true; loadRevision++; historyStop?.(); workflowStop?.(); sharedControlsStop?.(); if (clockTimer) window.clearInterval(clockTimer); },
   });
   const modal = api.modal;
   modal.classList.add('calendar-task-details');
@@ -54,6 +55,12 @@ export function openCalendarTaskDetails(record, dependencies) {
   fields.classList.add('calendar-task-details__fields');
 
   const card = document.createElement('div'); card.className = 'task-details-card';
+  const route = document.createElement('section'); route.className = 'task-details-route'; route.hidden = true; route.setAttribute('aria-label', 'Маршрут задачи');
+  const routeTitle = document.createElement('strong'); routeTitle.className = 'task-details-route-title';
+  const routeCurrent = document.createElement('p'); routeCurrent.className = 'task-details-route-current';
+  const routeNext = document.createElement('p'); routeNext.className = 'task-details-route-next';
+  const routeHint = document.createElement('p'); routeHint.className = 'task-details-route-hint'; routeHint.textContent = 'Шаблоны: Настройки → Этапы задач';
+  route.append(routeTitle, routeCurrent, routeNext, routeHint);
   const total = document.createElement('strong'); total.className = 'task-details-total';
   const metadata = document.createElement('div'); metadata.className = 'task-details-meta';
   const goal = document.createElement('div'); goal.className = 'task-details-goal'; goal.hidden = true;
@@ -69,12 +76,19 @@ export function openCalendarTaskDetails(record, dependencies) {
   const historyContent = document.createElement('div'); historyContent.className = 'task-details-history-content';
   history.append(historySummary, historyContent);
   const announcement = document.createElement('span'); announcement.className = 'task-details-sr-only'; announcement.setAttribute('role', 'status'); announcement.setAttribute('aria-live', 'polite');
-  card.append(total, metadata, goal, stageRow, waiting, history, announcement);
+  card.append(total, metadata, goal, route, stageRow, waiting, history, announcement);
   fields.append(card);
+  const sharedControlsHost = document.createElement('section'); sharedControlsHost.className = 'task-details-shared-controls'; sharedControlsHost.setAttribute('aria-label', 'Связь задачи');
+  fields.append(sharedControlsHost);
+  sharedControlsStop = mountSharedTaskControls(sharedControlsHost, { record: current, invoke, onShared: () => onChanged?.() });
   let confirmedWorkflow=null,workflowReadError=false;
   workflowStop = mountTaskWorkflow(fields, { record: current, invoke, review:dependencies.review||null, onState:(state,failed)=>{confirmedWorkflow=state;workflowReadError=failed;syncSummary();}, onClean: () => {
     if (['Сохрани шаг или результат перед закрытием.', 'Дождись сохранения шагов.'].includes(api.error.textContent)) api.showError('');
   } });
+  if (dependencies.review) {
+    const resultReview = fields.querySelector('.task-result-review');
+    if (resultReview) fields.prepend(resultReview);
+  }
 
   const actions = modal.querySelector('.calendar-editor-actions');
   actions.replaceChildren();
@@ -126,6 +140,12 @@ export function openCalendarTaskDetails(record, dependencies) {
   function syncStageOptions() {
     stageState = taskStage(current, processes);
     stageRow.hidden = !stageState || isInstantTask(current);
+    route.hidden = !stageState || isInstantTask(current);
+    if (stageState && !isInstantTask(current)) {
+      routeTitle.textContent = `Маршрут: ${stageState.processTitle}`;
+      routeCurrent.textContent = stageState.label ? `Текущий этап: ${stageState.label}` : 'Текущий этап: не выбран';
+      routeNext.textContent = stageState.next ? `Следующий этап: ${stageState.next.title}` : stageState.isLast ? 'Следующий этап: маршрут завершён' : 'Следующий этап: выбери этап';
+    }
     waiting.hidden = !stageState?.waiting;
     if (!stageState) { stageSelect.replaceChildren(); return; }
     const options = [new window.Option('Без этапа', '')];
@@ -200,7 +220,8 @@ export function openCalendarTaskDetails(record, dependencies) {
       if (live() && request === loadRevision) {
         setLoading(false);
         if (!loadFailed) {
-          if (stageState && !stageRow.hidden) stageSelect.focus({ preventScroll: true });
+          if (dependencies.review) headingContext.focus({ preventScroll: true });
+          else if (stageState && !stageRow.hidden) stageSelect.focus({ preventScroll: true });
           else execute.focus({ preventScroll: true });
         }
       }
@@ -302,7 +323,7 @@ export function openCalendarTaskDetails(record, dependencies) {
     } finally { if (live()) { setPending(false); if (loadFailed) { edit.disabled = true; execute.disabled = true; stageSelect.disabled = true; } } }
   });
 
-  api.open(stageRow.hidden ? execute : stageSelect);
+  api.open(dependencies.review ? headingContext : stageRow.hidden ? execute : stageSelect);
   void loadData();
   const dispose = () => { editHandoff?.cancel(); if (!disposed) api.dispose(); };
   dispose.modal = modal;

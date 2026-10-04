@@ -242,6 +242,7 @@ pub(crate) fn allowed(command: &str) -> bool {
             | "save_calendar_task"
             | "complete_calendar_task"
             | "set_calendar_task_stage"
+            | "shared_task_command"
             | "get_calendar_records"
             | "get_ui_state"
             | "set_ui_state"
