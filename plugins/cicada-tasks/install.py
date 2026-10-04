@@ -18,7 +18,7 @@ from typing import Any
 
 
 PLUGIN = "cicada-local-tasks"
-VERSION = "0.4.7"
+VERSION = "0.4.8"
 SERVER = "cicada-local-task-command"
 
 
@@ -46,7 +46,7 @@ def json_bytes(value: Any) -> bytes:
 def validate_package(package: Path) -> tuple[dict, dict, dict]:
     manifest = read_json(package / "plugin.json")
     if manifest.get("name") != PLUGIN or manifest.get("version") != VERSION:
-        raise ValueError("package identity/version is not Cicada 0.4.7")
+        raise ValueError("package identity/version is not Cicada " + VERSION)
     if (package / "hooks").exists() or (package / "hooks.json").exists():
         raise ValueError("automatic hooks are not allowed in this package")
     mcp = read_json(package / "mcp.json")
@@ -69,7 +69,7 @@ def manual_cicada_present(codex_home: Path) -> bool:
 
 def materialize(package: Path, destination: Path, runtime_root: Path, helper_path: Path, manual: bool) -> Path:
     stage = Path(tempfile.mkdtemp(prefix="cicada-plugin-", dir=destination.parent))
-    shutil.copytree(package, stage / package.name)
+    shutil.copytree(package, stage / package.name, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
     out = stage / package.name
     if manual:
         compat_path = out / ".mcp.json"
