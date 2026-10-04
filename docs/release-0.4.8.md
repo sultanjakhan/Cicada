@@ -17,6 +17,15 @@ remain compatible with 0.4.7.
   still update the list. Task details distinguish recorded time from the estimate.
 - Notes refresh reads the complete active/archive set in one database query.
   It no longer treats 200 records as truncation or performs one query per note.
+- The agent-durable build keeps operation receipts and run history in indexed
+  local SQLite tables beyond the former 500-entry lifetime limit. Legacy state
+  migrates atomically; repeated operations retain their original receipts.
+- Rework results must come from the run that acknowledged the current intent.
+  Existing acknowledgements recover only from unambiguous immutable receipts;
+  missing evidence blocks submission rather than completing another run's work.
+- Agent wire envelopes admit up to 64KiB of escaped JSON, while task result text
+  still has its existing 8000 UTF-8-byte limit. Timer start and human acceptance
+  remain separate actions.
 
 Windows native DEV acceptance and signed CI delivery are separate gates.
 Publication does not establish installation or physical macOS/Android acceptance.

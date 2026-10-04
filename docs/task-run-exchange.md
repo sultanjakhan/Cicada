@@ -78,8 +78,25 @@ key ordering, skill and MCP-counter ordering, is idempotent and performs no
 write. Different same-sequence or older snapshots conflict. Previously reported
 token/MCP counters cannot decrease or become unknown. Unknown stays null;
 observed zero is allowed. Extra fields, task text/prompts fields and MCP
-arguments/results are rejected. Reports and namespace share one atomic KV
-snapshot, with up to 500 bindings/runs and a 4 MiB limit.
+arguments/results are rejected. Native AI writes commit task, report and
+operation receipt in one SQLite transaction. Durable bindings, runs and receipts
+have no lifetime limit of 500. Indexed receipt lookup preserves exact retries;
+the same operation ID with a changed payload conflicts.
+
+The version-1 `ui_state` exchange remains a compatibility view of at most 500
+recent runs/bindings and 4 MiB, not a retention boundary. Native commands use the
+durable history, including older runs omitted from that view. The first native
+write or exchange import migrates valid existing namespace, reports, receipt
+digests/results and receipt times atomically; invalid legacy state aborts without
+partial migration. A partial compatibility import never deletes omitted history.
+Archived personal tasks may replay an existing exact receipt but cannot accept
+new AI writes; reassignment to work/Jira scope still denies access.
+
+This additive component uses schema version 2 without changing the main SQLite
+schema version. Keep a consistent database backup before installing a build that
+uses it. An older executable cannot interpret new SQL history: file replacement
+alone is not a data rollback. Restore the matching pre-upgrade backup for that
+rollback, retaining any later data separately.
 
 The task card shows the **last imported report**, not independently verified
 activity. A done run does not complete its native task or overwrite its result.
