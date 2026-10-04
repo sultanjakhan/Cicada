@@ -1,0 +1,21 @@
+{
+  "name": "cicada-local-tasks",
+  "version": "0.4.7",
+  "description": "Local Cicada task authority for explicit AI execution, stages, results, and human review.",
+  "mcpServers": "./mcp.json",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Cicada local tasks",
+    "shortDescription": "Read and report work against native Cicada tasks",
+    "longDescription": "Uses an explicitly configured local Cicada profile and named-pipe client. Cicada remains the task authority.",
+    "developerName": "Cicada",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Use Cicada for the exact task UUID and keep stage, result, and review state synchronized."
+    ]
+  }
+}

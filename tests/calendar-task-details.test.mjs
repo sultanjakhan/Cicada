@@ -88,6 +88,23 @@ test('opens as a read-only operational card, with goal/stage/time and no mutatio
   assert.equal(f.calls.some(([command]) => ['set_calendar_task_stage', 'start_task_block', 'pause_task_block'].includes(command)), false);
 });
 
+test('shows process route and shared controls only for a personal task without inventing a review result', async t => {
+  const f = fixture({ task: { ...record, sphere: 'personal' }, invoke: async (command, args, baseInvoke, calls) => {
+    if (command === 'shared_task_command') return { isError: true, status: 404, code: 'shared_task_not_found' };
+    return baseInvoke(command, args);
+  } });
+  t.after(() => { f.dispose(); f.dom.window.close(); });
+  await settle();
+  const card = f.window.document.querySelector('.calendar-task-details');
+  assert.match(card.querySelector('.task-details-route-title').textContent, /Маршрут: Системный анализ/);
+  assert.match(card.querySelector('.task-details-route-current').textContent, /Текущий этап: Требования/);
+  assert.match(card.querySelector('.task-details-route-next').textContent, /Следующий этап: Анализ и модели/);
+  assert.match(card.querySelector('.task-details-route-hint').textContent, /Настройки → Этапы задач/);
+  assert.ok(card.querySelector('.task-details-shared-controls'));
+  assert.equal(card.querySelector('.task-result-review'), null);
+  assert.equal(f.calls.some(([command]) => /start|pause|dispatch|launch_agent/.test(command)), false);
+});
+
 test('stage change is immediate, preserves waiting and exposes an error before allowing retry', async t => {
   let attempts = 0;
   const f = fixture({ invoke: async (command, args, baseInvoke, calls) => {

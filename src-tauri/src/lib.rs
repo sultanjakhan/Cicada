@@ -21,6 +21,10 @@ mod update_macos;
 mod update_journal;
 mod calendar_compat;
 mod calendar_goal_lifecycle;
+mod agent_access;
+mod shared_tasks;
+#[cfg(windows)]
+mod agent_pipe;
 mod data_sources;
 mod isolated_test;
 mod task_attributes;
@@ -670,6 +674,12 @@ pub fn run() {
                 data_sources::mark_new_profile(&connection, database_was_present)?;
                 app.manage(AppState(Mutex::new(connection)));
                 app.manage(instance_lock);
+                #[cfg(windows)]
+                if !startup_options.is_one_shot() {
+                    if agent_pipe::start(app.handle().clone(), &data_dir).is_err() {
+                        eprintln!("Cicada local agent access unavailable");
+                    }
+                }
                 #[cfg(target_os = "macos")]
                 if !startup_options.is_one_shot() {
                     window_placement_macos::restore(
@@ -749,6 +759,7 @@ pub fn run() {
             calendar_compat::update_note_status,
             calendar_compat::toggle_note_archive,
             calendar_compat::get_calendar_tasks,
+            shared_tasks::shared_task_command,
             native_result_review::prototype_publish_task_result,
             native_result_review::read_task_result_review,
             native_result_review::enqueue_task_result_review,

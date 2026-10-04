@@ -1,4 +1,4 @@
-import { createNativeResultReviewAdapter, prepareNativeResultReview } from './native-result-review-adapter.js';
+import { createSharedResultReviewAdapter, prepareSharedResultReview } from './shared-result-review-adapter.js';
 import { canRefreshHealthView, mayCommitHealthView, retryHealthViewRefresh, startHealthViewRefresh } from './health-view-refresh.js';
 import { S, invoke, tabLoaders, TAB_ICONS, loadTabSetting, IS_MOBILE } from './state.js';
 import { ICONS } from './icons.js';
@@ -500,7 +500,7 @@ export function openCalendarCreate(button) {
   });
 }
 
-export async function loadCalendarWorkspace(el, { nativeReview = false } = {}) {
+export async function loadCalendarWorkspace(el, { nativeReview = true } = {}) {
   if(routinesRouteHandler){window.removeEventListener('hanni:open-recurring-settings',routinesRouteHandler);window.removeEventListener('hanni:open-routines-pane',routinesRouteHandler);routinesRouteHandler=null;}
   startHealthViewRefresh();
   cleanupWorkspace(); tabLoaders.cleanupCalendar = cleanupWorkspace;
@@ -532,15 +532,18 @@ export async function loadCalendarWorkspace(el, { nativeReview = false } = {}) {
     if (tab) tab.focus();
     else if (heading) { heading.tabIndex = -1; heading.focus(); }
   };
-  // Explicit opt-in only. Native command authority still enforces feature + isolated profile.
-  const readTaskReview=nativeReview ? id=>createNativeResultReviewAdapter(id,invoke).read(id) : null;
+  // The shared command is read-only here: bound personal tasks expose their
+  // review projection, while ordinary tasks return the expected 404 absence.
+  // Native command authority still enforces the isolated profile.
+  const readTaskReview=nativeReview ? id=>createSharedResultReviewAdapter(id,invoke).read(id) : null;
   let nativeTaskOpenRevision=0;
   const openNativeTask=async(row,restore)=>{
     const request=++nativeTaskOpenRevision,revision=workspaceRevision,selectedPane=S._unifiedPane.calendar;
     const current=()=>request===nativeTaskOpenRevision&&revision===workspaceRevision&&el.isConnected&&S.activeTab==='calendar'&&S._unifiedPane.calendar===selectedPane;
-    if(!nativeReview||row.readonly){showRecord(calendarRecord(row),restore);return;}
+    const personal=row.sphere==='personal'||String(row.tags||'').split(',').includes('task-sphere:personal');
+    if(!personal||row.readonly){showRecord(calendarRecord(row),restore);return;}
     let review;
-    try{review=await prepareNativeResultReview(row,invoke,()=>crypto.randomUUID());}
+    try{review=await prepareSharedResultReview(row,invoke,()=>crypto.randomUUID());}
     catch{if(current())showRecord(calendarRecord(row),restore);return;}
     if(!current())return;
     const submit=review.adapter.submit;

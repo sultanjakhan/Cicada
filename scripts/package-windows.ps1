@@ -25,6 +25,11 @@ try {
     $binary = Join-Path $releaseDirectory 'hanni-mvp.exe'
     & python -B scripts/check-update-configuration.py --executable $binary
     if ($LASTEXITCODE -ne 0) { throw 'Built executable has no matching update configuration.' }
+    New-Item -ItemType Directory -Path (Join-Path $repository '.local') -Force | Out-Null
+    $apiCheckRoot = Join-Path $repository ('.local/agent-api-check-' + [Guid]::NewGuid().ToString('N'))
+    $apiReceipt = Join-Path $repository ('.local/agent-api-receipt-' + $sourceCommit.Substring(0, 12) + '.json')
+    & python -B scripts/verify-agent-api.py --exe $binary --root $apiCheckRoot --receipt $apiReceipt
+    if ($LASTEXITCODE -ne 0) { throw 'Built executable failed native API acceptance; refuse distribution.' }
     $installers = @(Get-ChildItem -LiteralPath (Join-Path $releaseDirectory 'bundle/nsis') -Filter "*_$($config.version)_x64-setup.exe" -File)
     if ($installers.Count -ne 1) { throw 'Expected exactly one Windows x64 installer for this version.' }
     $packageDirectory = Join-Path $repository ('.local/windows-package/' + $sourceCommit.Substring(0, 12))
@@ -42,6 +47,7 @@ try {
         profile = 'release-with-embedded-web-assets'
         build_id = (Get-Content -LiteralPath 'package.json' -Raw -Encoding UTF8 | ConvertFrom-Json).cicadaBuildId
         updates_configured = $true
+        local_agent_api_verified = $true
         source_repository = $origin
         source_commit = $sourceCommit
         installer = $installerName
