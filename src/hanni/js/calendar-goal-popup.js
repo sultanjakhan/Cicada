@@ -59,6 +59,16 @@ export function openCalendarGoalPopup({ document, invoke, goal, selection = {}, 
   const button = name => dialog.body.querySelector(`[data-goal-popup-action="${name}"]`);
   const refocus = target => () => { if (!closed && target?.isConnected && !target.hidden && !target.disabled) target.focus(); else if (!closed) dialog.modal.querySelector('[data-dialog-close]')?.focus(); };
   const path = () => calendarGoalPath(goals, current);
+  const ancestors = () => {
+    const rows = [], seen = new Set([goalId]);
+    let parentId = current.parent_goal_id;
+    while (parentId != null && !seen.has(String(parentId))) {
+      const parent = goals.find(item => String(item.id) === String(parentId));
+      if (!parent) break;
+      seen.add(String(parent.id)); rows.unshift(parent); parentId = parent.parent_goal_id;
+    }
+    return rows;
+  };
   const isGoal = () => current.goal_kind === 'goal';
   // The task dialog owns focus while open; closing it restores the same goal.
   const returnToGoal = () => onOpenGoal ? onOpenGoal(current, returnFocus) : returnFocus?.();
@@ -85,8 +95,8 @@ export function openCalendarGoalPopup({ document, invoke, goal, selection = {}, 
   function renderOverview() {
     renderHeader();
     const sections = [], relatedSections = [];
-    const trail = path();
-    if (trail.length > 1) sections.push(field('Входит в', `<p>${trail.slice(0, -1).map(escapeHtml).join(' → ')}</p>`, 'path'));
+    const parents = ancestors();
+    if (parents.length) sections.push(field('Входит в', `<nav class="goal-popup__breadcrumbs" aria-label="Родительские цели">${parents.map(item => onOpenGoal ? `<button type="button" data-goal-popup-parent="${escapeHtml(String(item.id))}" aria-haspopup="dialog">${escapeHtml(item.title || 'Без названия')}</button>` : `<span>${escapeHtml(item.title || 'Без названия')}</span>`).join('<span aria-hidden="true"> / </span>')}</nav>`, 'path'));
     if (String(current.description || '').trim()) sections.push(field('Результат', `<p class="goal-popup__text">${escapeHtml(current.description)}</p>`, 'description'));
     const criteria = String(current.criteria || '').split('\n').map(line => line.trim()).filter(Boolean);
     if (criteria.length) sections.push(field('Готово, когда', `<ul class="goal-popup__list">${criteria.map(line => `<li>${escapeHtml(line)}</li>`).join('')}</ul>`, 'criteria'));
@@ -213,8 +223,9 @@ export function openCalendarGoalPopup({ document, invoke, goal, selection = {}, 
       if (child) return;
       child = openCalendarGoalDeletion({ document, invoke, goal: current, returnFocus: refocus(target), onClose: () => { child = null; },
         onDeleted: () => { missing = true; dialog.close(); } });
-    } else if (target.dataset.goalPopupSubgoal) {
-      const next = goals.find(item => String(item.id) === target.dataset.goalPopupSubgoal);
+    } else if (target.dataset.goalPopupSubgoal || target.dataset.goalPopupParent) {
+      const nextId = target.dataset.goalPopupSubgoal || target.dataset.goalPopupParent;
+      const next = goals.find(item => String(item.id) === nextId);
       if (next && onOpenGoal) leave(() => onOpenGoal(next, returnFocus));
     } else if (target.dataset.goalPopupTask) {
       const row = tasks.find(item => keyOf(item) === target.dataset.goalPopupTask);

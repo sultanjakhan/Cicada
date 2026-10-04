@@ -105,6 +105,8 @@
 .goal-popup__related .goal-popup__rows button { align-items: flex-start; flex-wrap: wrap; gap: 0 8px; }
 .goal-popup__related .goal-popup__rows button small { margin-left: auto; }
 .goal-popup__overview,.goal-popup__related,.goal-popup__development { scroll-margin-top: 12px; }
+.goal-popup__breadcrumbs { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; }
+.goal-popup__breadcrumbs button { border:0; padding:4px 0; background:transparent; color:var(--text-primary); font:inherit; text-align:left; text-decoration:underline; text-underline-offset:4px; overflow-wrap:anywhere; cursor:pointer; }
 .goal-popup__workgrid:has(> [data-goal-development][hidden]) { grid-template-columns: minmax(0,1fr); }
 .goal-popup__workgrid:has(> [data-goal-development][hidden]) .goal-popup__related { border: 0; padding-left: 0; }
 @media (max-width: 800px) {

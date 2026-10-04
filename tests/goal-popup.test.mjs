@@ -129,6 +129,19 @@ test('leaving actions close the popup first and hand back the original focus tar
   assert.equal(x.events.skills[0].skill.skillId, 's1'); assert.equal(x.modal.isConnected, false);
 });
 
+test('a subgoal opens its parent by exact ID, preserves focus on refresh and leaves no stacked goal dialog', async t => {
+  const data = backend(), x = await open(t, data, 'g2');
+  const parents = [...x.field('path').querySelectorAll('[data-goal-popup-parent]')];
+  assert.deepEqual(parents.map(button => button.dataset.goalPopupParent), ['g0', 'g1']);
+  parents[1].focus(); await x.popup.refresh();
+  assert.equal(document.activeElement.dataset.goalPopupParent, 'g1');
+  document.activeElement.click(); await settle();
+  assert.equal(x.events.goals.at(-1).id, 'g1');
+  assert.equal(x.modal.isConnected, false);
+  assert.equal(document.querySelectorAll('[data-goal-popup]').length, 0);
+  assert.equal(data.count('save_calendar_goal'), 0);
+});
+
 test('editing and adding a subgoal stack over the popup and refresh it; deletion closes it', async t => {
   const data = backend(), x = await open(t, data, 'g1', { primaryGoalId: 'g0' });
   x.action('edit').click(); await settle();
