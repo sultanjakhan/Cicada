@@ -14,8 +14,8 @@ export function mountCalendarDashboardTasks(element, dependencies) {
   const document = element.ownerDocument, window = document.defaultView;
   const prefix = `calendar-task-overview-${++instance}`;
   let rows = null, current = { key: '', state: '' }, date = localDate(now()), followToday = true;
-  let disposed = false, revision = 0, loading = false, failed = false, expanded = false, page = 0;
-  let actionBusy = false;
+  let disposed = false, revision = 0, loading = false, quietLoading = false, failed = false, expanded = false, page = 0;
+  let actionBusy = false, renderedList = '';
   // Tasks listed in the dashboard «В работе» widget are not repeated in the embedded Today list.
   let inProgress = new Set();
   const listedToday = row => taskKey(row) !== current.key && !(embedded && inProgress.has(taskKey(row)));
@@ -101,7 +101,7 @@ export function mountCalendarDashboardTasks(element, dependencies) {
     if (disposed) return;
     if (embedded) return renderEmbedded();
     element.setAttribute('aria-busy', String(loading));
-    message.textContent = failed ? 'Не удалось обновить список задач. Повтори загрузку.' : loading ? (rows ? 'Обновляем задачи…' : 'Загружаем задачи…') : '';
+    message.textContent = failed ? 'Не удалось обновить список задач. Повтори загрузку.' : loading && !quietLoading ? (rows ? 'Обновляем задачи…' : 'Загружаем задачи…') : '';
     retry.hidden = !failed; retry.disabled = loading;
     toggle.disabled = todayFilter.disabled = rows === null;
     if (rows === null) return;
@@ -120,6 +120,9 @@ export function mountCalendarDashboardTasks(element, dependencies) {
     const visibleItems = expanded ? items : todayItems;
     page = Math.max(0, Math.min(page, Math.ceil(visibleItems.length / PAGE_SIZE) - 1));
     const slice = visibleItems.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+    const signature = JSON.stringify([items, date, expanded, page, current, actionBusy]);
+    if (signature === renderedList) return;
+    renderedList = signature;
     today.replaceChildren();
     if (!expanded) {
       if (slice.length) today.append(taskList(slice, 'today'));
@@ -153,18 +156,21 @@ export function mountCalendarDashboardTasks(element, dependencies) {
     const todayAllItems = date === localDate(now()) ? items.filter(row => row.date === date) : [];
     const todayItems = todayAllItems.filter(listedToday);
     notifyCount({ visible: todayItems.length, currentKey: current.key, currentState: current.state });
+    const signature = JSON.stringify([todayItems, date, current, actionBusy, failed]);
+    if (signature === renderedList) return;
+    renderedList = signature;
     embeddedHost.replaceChildren();
     if (failed) { empty(embeddedHost, 'Не удалось обновить список задач.'); return; }
     if (!todayItems.length) return;
     const heading=document.createElement('h3');heading.className='cto-group-title';heading.textContent='Задачи';
     embeddedHost.append(heading,taskList(todayItems, 'today'));
   }
-  async function refresh(canCommit = null) {
+  async function refresh(canCommit = null, quiet = false) {
     if (disposed) return;
     if (canCommit && !canCommit()) return;
-    const request = ++revision; if (!embedded || followToday) date = localDate(now()); loading = true; failed = false;
+    const request = ++revision; if (!embedded || followToday) date = localDate(now()); loading = true; quietLoading = quiet && rows !== null; failed = false;
     element.setAttribute('aria-busy', 'true');
-    if (!embedded) { message.textContent = rows ? 'Обновляем задачи…' : 'Загружаем задачи…'; retry.hidden = true; }
+    if (!embedded) { if (!quietLoading) message.textContent = rows ? 'Обновляем задачи…' : 'Загружаем задачи…'; retry.hidden = true; }
     try {
       const result = await invoke('get_calendar_tasks', {});
       if (disposed || request !== revision || (canCommit && !canCommit())) return;
@@ -221,7 +227,7 @@ export function mountCalendarDashboardTasks(element, dependencies) {
       }
     }
   }
-  const onExternal = event => { void refresh(event.detail?.remoteSync ? event.detail.canCommit : null); };
+  const onExternal = event => { void refresh(event.detail?.remoteSync ? event.detail.canCommit : null, true); };
   const onKey = event => { if (!embedded && event.key === 'Escape' && expanded && all.contains(event.target)) { event.preventDefault(); event.stopPropagation(); expanded = false; page = 0; render(); todayFilter.focus(); } };
   element.addEventListener('click', onClick);
   element.addEventListener('keydown', onKey);

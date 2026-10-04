@@ -12,6 +12,41 @@ async function mount(t, rows, now = () => new Date('2026-09-12T12:00:00')) {
   return { host, dispose, window:dom.window, q:name => host.querySelector(`[data-overview-${name}]`) };
 }
 
+test('unchanged background reads preserve the mounted task choice and its focus', async t => {
+  const rows = [task('same')], x = await mount(t, rows);
+  const choice = x.host.querySelector('[data-overview-task="note:same"]');
+  choice.focus();
+  for (let i = 0; i < 3; i++) {
+    x.window.dispatchEvent(new x.window.Event('task-state-changed'));
+    assert.equal(x.q('message').textContent, '', 'background reading adds no loading layout shift');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.ok(x.host.querySelector('[data-overview-task="note:same"]') === choice, 'unchanged read replaced the choice');
+    assert.ok(x.window.document.activeElement === choice, 'unchanged read lost focus');
+  }
+  rows[0].title = 'Изменённое название';
+  x.window.dispatchEvent(new x.window.Event('task-state-changed'));
+  await new Promise(resolve => setImmediate(resolve));
+  const updated = x.host.querySelector('[data-overview-task="note:same"]');
+  assert.match(updated.textContent, /Изменённое название/);
+  assert.equal(x.window.document.activeElement, updated);
+});
+
+test('an unchanged embedded Today list preserves its task controls during refresh', async t => {
+  const dom = new JSDOM('<main></main>'), host = dom.window.document.querySelector('main');
+  const rows = [task('same')];
+  const dispose = mountCalendarDashboardTasks(host, { embedded: true, invoke: async () => rows, now: () => new Date('2026-09-12T12:00:00') });
+  t.after(() => { dispose(); dom.window.close(); });
+  await new Promise(resolve => setImmediate(resolve));
+  const choice = host.querySelector('[data-overview-task="note:same"]');
+  choice.focus();
+  dom.window.dispatchEvent(new dom.window.Event('task-state-changed'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.ok(host.querySelector('[data-overview-task="note:same"]') === choice, 'unchanged embedded read replaced the choice');
+  assert.ok(dom.window.document.activeElement === choice, 'unchanged embedded read lost focus');
+  dispose.setInProgress(['note:same']);
+  assert.equal(host.querySelector('[data-overview-task="note:same"]'), null);
+});
+
 test('Today shows all five other tasks; All includes current and other dates without duplicate visible lists', async t => {
   const rows = [task('current'), ...Array.from({length:5},(_,i) => task(String(i))), task('later',{date:'2026-09-13'}), task('undated',{date:null}), task('done',{completed:true}), task('archived',{archived:true}), task('event',{source_type:'event'}), task('readonly',{readonly:true})];
   const x = await mount(t,rows); x.dispose.setCurrentTask({key:'note:current',state:'recommendation'});

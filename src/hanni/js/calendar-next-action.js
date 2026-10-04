@@ -175,7 +175,7 @@ export function mountCalendarNextAction(element, dependencies) {
     const hasWork = Boolean(selected?.type === 'task' && (selected.task?.has_work || Number(selected.task?.actual_seconds) > 0 || Number(selected.task?.actual_minutes) > 0));
     const compactRunning = Boolean(dependencies.compactRunning && selected?.type === 'task' && (selected.action === 'open' || hasWork) && focusedTaskKey === selected.key);
     element.dataset.running = String(!!compactRunning);
-    const signature = JSON.stringify([preferences, selected && [selected.key, selected.type, selected.title, selected.reason, selected.action, selected.context], compactRunning, Boolean(error), feedback, Boolean(snapshot), busy]);
+    const signature = JSON.stringify([preferences, selected && [selected.key, selected.type, selected.title, selected.reason, selected.action, selected.context], compactRunning, error, feedback, Boolean(snapshot), busy]);
     if (signature === renderedKey) {
       const retry = element.querySelector('[data-next-action-retry]'); if (retry) retry.disabled = busy;
       element.querySelectorAll('[data-next-action-action]').forEach(button => { button.disabled = busy; });
