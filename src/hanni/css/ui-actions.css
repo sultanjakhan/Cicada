@@ -8,10 +8,88 @@
   --ui-action-focus: var(--accent-fill, var(--text-primary));
 }
 
+/* Remove the component-level box from ordinary action controls too.  The
+   selectors name action regions so event/calendar data containers, native
+   fields and editor toolbars retain their own visual language.  Selection and
+   hover affordances below add the underline back without changing hit areas. */
+:is(
+  #calendar-content .uni-header-action,
+  #calendar-content .uni-tabs .uni-tab,
+  #calendar-content .calendar-running__button,
+  #calendar-content [data-calendar-launch],
+  #calendar-content [data-task-launcher] [data-launch-scopes] button,
+  #calendar-content .cm-toolbar button,
+  #calendar-content .cm-date button,
+  #calendar-content .cm-actions button,
+  #calendar-content .cm-goal button,
+  #calendar-content .cm-segment button,
+  #calendar-content .calendar-theme-control,
+  #calendar-content .calendar-today-action__scopes button,
+  #calendar-content .calendar-today-links button,
+  #calendar-content .calendar-task-overview button,
+  #calendar-content .calendar-tasks .ct-filters button,
+  #calendar-content .calendar-tasks .ct-grouping button,
+  #calendar-content .calendar-tasks .ct-spheres button,
+  #calendar-content .calendar-tasks .ct-subspheres button,
+  #calendar-content .calendar-tasks .ct-group-action,
+  #calendar-content .calendar-tasks .ct-pages button,
+  #calendar-content [data-tasks-retry],
+  #calendar-content .calendar-panels .cp-goals-switch button,
+  #calendar-content .calendar-panels .cp-note-tabs button,
+  #calendar-content .calendar-panels .cp-wish-closed-toggle,
+  #calendar-content .calendar-panels .cp-primary,
+  #calendar-content .calendar-next-action__surface header > button,
+  #calendar-content .calendar-next-action__actions button,
+  #calendar-content .calendar-now .calendar-now__primary,
+  #calendar-content .calendar-now .calendar-now__secondary,
+  #calendar-content .calendar-now .calendar-now__quiet,
+  #calendar-content .calendar-day-banner button:not(.is-started),
+  #calendar-content .calendar-routine-controls button,
+  #calendar-content .calendar-routine-library-row > button,
+  #calendar-content .calendar-routine-choices__heading button,
+  #calendar-content .calendar-routine-step-choice,
+  #calendar-content .calendar-routine-editor button,
+  #calendar-content .calendar-routine-editor .cre-layout button,
+  #calendar-content .calendar-pages button,
+  #calendar-content .calendar-mvp-dialog button,
+  #calendar-content [data-add-goal],
+  #calendar-content [data-retry],
+  .settings-btn,
+  .chat-settings-tab,
+  .tab-settings-tab,
+  .calendar-settings-dialog button,
+  .calendar-settings-dialog .calendar-settings-tab,
+  .calendar-settings-dialog .setting-pill,
+  .calendar-record-menu button,
+  .calendar-create-menu > button,
+  .goal-popup__nav button,
+  .goal-popup__breadcrumbs button,
+  .goal-popup__rows button,
+  .goal-popup__actions button,
+  .calendar-goal-popup .calendar-editor-close,
+  .calendar-development button,
+  .calendar-routine-editor button,
+  .calendar-native-dialog .calendar-editor-actions button,
+  .calendar-native-dialog .calendar-editor-primary,
+  .evm-modal button,
+  .evm-modal .evm-actions button,
+  .evm-modal .evm-save-btn,
+  .evm-modal .evm-delete-btn,
+  .evm-modal .evm-type-picker button,
+  .evm-modal .evm-kind-option span,
+  .evm-modal .evm-scope-option,
+  .evm-modal .evm-pri-pill
+) {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
 /* Shared text-action treatment. These selectors intentionally name controls
    rather than resetting every .active class used by data and execution UI. */
 :is(
   #calendar-content .uni-tabs .uni-tab,
+  #calendar-content .calendar-running__button,
   #calendar-content .uni-header-action,
   #calendar-content [data-task-launcher] [data-launch-scopes] button,
   #calendar-content .cm-segment button,
@@ -35,12 +113,17 @@
   .goal-popup__breadcrumbs button,
   .goal-popup__rows button,
   .calendar-routine-step-choice,
+  .calendar-routine-editor button,
   .calendar-routine-editor .cre-layout button,
   .calendar-development .dev-picker-topics button,
   .calendar-native-dialog .evm-type-picker button,
   .calendar-native-dialog .evm-kind-option span,
   .calendar-native-dialog .evm-scope-option,
-  .calendar-native-dialog .evm-pri-pill
+  .calendar-native-dialog .evm-pri-pill,
+  .evm-modal .evm-type-picker button,
+  .evm-modal .evm-kind-option span,
+  .evm-modal .evm-scope-option,
+  .evm-modal .evm-pri-pill
 ) {
   text-decoration-thickness: var(--ui-action-underline-thickness);
   text-underline-offset: var(--ui-action-underline-offset);
@@ -48,6 +131,7 @@
 
 :is(
   #calendar-content .uni-tabs .uni-tab,
+  #calendar-content .calendar-running__button,
   #calendar-content .calendar-panels .cp-goals-switch button,
   #calendar-content .calendar-panels .cp-note-tabs button,
   #calendar-content [data-task-launcher] [data-launch-scopes] button,
@@ -61,18 +145,26 @@
   [data-task-launcher] [data-launch-scopes] button,
   #calendar-content .calendar-settings-tab,
   #calendar-content .setting-pill,
+  .settings-btn,
+  .chat-settings-tab,
+  .tab-settings-tab,
   .calendar-settings-dialog .calendar-settings-tab,
   .calendar-settings-dialog .setting-pill,
   .goal-popup__nav button,
   .goal-popup__breadcrumbs button,
   .goal-popup__rows button,
   .calendar-routine-step-choice,
+  .calendar-routine-editor button,
   .calendar-routine-editor .cre-layout button,
   .calendar-development .dev-picker-topics button,
   .calendar-native-dialog .evm-type-picker button,
   .calendar-native-dialog .evm-kind-option span,
   .calendar-native-dialog .evm-scope-option,
-  .calendar-native-dialog .evm-pri-pill
+  .calendar-native-dialog .evm-pri-pill,
+  .evm-modal .evm-type-picker button,
+  .evm-modal .evm-kind-option span,
+  .evm-modal .evm-scope-option,
+  .evm-modal .evm-pri-pill
 ):is(:hover, [aria-pressed="true"], [aria-selected="true"], [aria-current="true"]):not(:disabled) {
   background: transparent;
   box-shadow: none;
@@ -95,6 +187,8 @@
   #calendar-content .calendar-panels .cp-note-tabs button[aria-pressed="true"],
   #calendar-content .calendar-settings-tab[aria-selected="true"],
   #calendar-content .setting-pill.active,
+  .chat-settings-tab.active,
+  .tab-settings-tab.active,
   .calendar-settings-dialog .calendar-settings-tab[aria-selected="true"],
   .calendar-settings-dialog .setting-pill.active,
   .calendar-routine-step-choice[aria-pressed="true"],
@@ -103,9 +197,16 @@
   .calendar-native-dialog .evm-type-picker button[aria-pressed="true"],
   .calendar-native-dialog .evm-kind-option input:checked + span,
   .calendar-native-dialog .evm-scope-option[aria-pressed="true"],
-  .calendar-native-dialog .evm-pri-pill.active
+  .calendar-native-dialog .evm-pri-pill.active,
+  .calendar-routine-editor button[aria-pressed="true"],
+  .evm-modal .evm-type-picker button[aria-pressed="true"],
+  .evm-modal .evm-kind-option input:checked + span,
+  .evm-modal .evm-scope-option[aria-pressed="true"],
+  .evm-modal .evm-pri-pill.active
 ) {
+  background: transparent;
   border-color: transparent;
+  box-shadow: none;
   font-weight: 600;
   text-decoration-line: underline;
 }
@@ -113,7 +214,30 @@
 /* The workspace tabs keep their existing geometry; only the fill is removed. */
 #calendar-content .uni-tabs .uni-tab[aria-pressed="true"] {
   border: 0;
-  border-bottom: 2px solid var(--text-primary);
+  border-bottom: 2px solid transparent;
+}
+
+.calendar-running__button:hover:not(:disabled) {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  text-decoration-line: underline;
+  text-underline-offset: var(--ui-action-underline-offset);
+}
+
+.calendar-running__button:focus-visible {
+  outline: 2px solid var(--ui-action-focus);
+  outline-offset: 3px;
+}
+
+.tab-item.active {
+  background: transparent;
+  box-shadow: none;
+}
+
+:is(.chat-settings-tab.active, .tab-settings-tab.active) {
+  border: 0;
+  border-bottom: 2px solid transparent;
 }
 
 /* Primary and destructive text actions keep hierarchy through weight and
@@ -123,6 +247,8 @@
   #calendar-content [data-calendar-launch],
   #calendar-content .calendar-now .calendar-now__primary,
   #calendar-content .calendar-today .calendar-next-action__actions > button:first-child,
+  #calendar-content .calendar-mvp button.cm-primary,
+  .calendar-mvp-dialog button.cm-primary,
   .goal-popup__actions [data-goal-popup-action="task"],
   .calendar-native-dialog .calendar-editor-primary,
   .evm-modal .evm-save-btn
@@ -133,6 +259,31 @@
   font-weight: 600;
   text-decoration-line: underline;
   text-decoration-thickness: var(--ui-action-underline-thickness);
+  text-underline-offset: var(--ui-action-underline-offset);
+}
+
+/* Ordinary controls across dialogs and settings use the same text affordance
+   on hover and keyboard focus.  Icon-only close buttons stay icon-only. */
+:is(
+  #calendar-content .calendar-mvp-dialog button:not(.cm-dialog-close),
+  #calendar-content .calendar-routine-editor button,
+  .calendar-mvp-dialog button:not(.cm-dialog-close),
+  .calendar-routine-editor button,
+  .calendar-development button,
+  .settings-btn,
+  .chat-settings-tab,
+  .tab-settings-tab,
+  .calendar-settings-dialog button,
+  .goal-popup__actions button:not(.calendar-editor-close),
+  .goal-popup__nav button,
+  .goal-popup__breadcrumbs button,
+  .goal-popup__rows button,
+  .evm-modal button:not(.evm-close)
+):not(:disabled):is(:hover, :focus-visible) {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  text-decoration-line: underline;
   text-underline-offset: var(--ui-action-underline-offset);
 }
 
@@ -174,6 +325,7 @@
 /* Keyboard users need a persistent, non-color-only focus indication. */
 :is(
   #calendar-content .uni-tabs .uni-tab,
+  #calendar-content .calendar-running__button,
   #calendar-content .uni-header-action,
   #calendar-content [data-task-launcher] [data-launch-scopes] button,
   #calendar-content .cm-segment button,

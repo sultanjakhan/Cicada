@@ -20,14 +20,14 @@
 .calendar-panels .cp-goal-list { display: grid; gap: 6px; }
 .calendar-panels .cp-goal-list > .cp-goal-group { margin: 12px 0 2px; font-size: 12px; line-height: 16px; font-weight: 600; color: var(--text-muted); }
 .calendar-panels .cp-goal-list > .cp-goal-group:first-child { margin-top: 0; }
-.calendar-panels .cp-goal-row { position: relative; display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; column-gap: 4px; min-width: 0; margin-left: min(calc(var(--goal-depth, 0) * 22px), 132px); padding: 8px 6px 8px 4px; border: 0; border-radius: 0; background: transparent; cursor: pointer; transition: color .12s; }
-.calendar-panels .cp-goal-row.is-subgoal { padding-top: 0; padding-bottom: 0; min-height: 42px; border: 0; border-radius: 0; background: transparent; }
+.calendar-panels .cp-goal-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 4px; min-width: 0; margin-left: min(calc(var(--goal-depth, 0) * 22px), 132px); padding: 8px 6px 9px 4px; border: 0; border-bottom: 1px solid var(--border-subtle); border-radius: 0; background: transparent; cursor: pointer; transition: color .12s; }
+.calendar-panels .cp-goal-row.is-subgoal { padding-top: 0; padding-bottom: 8px; min-height: 42px; border: 0; border-bottom: 1px solid var(--border-subtle); border-radius: 0; background: transparent; }
 .calendar-panels .cp-goal-row.is-subgoal .cp-goal-row__desc { display: none; }
 .calendar-panels .cp-goal-row.is-subgoal.is-primary { border-left: 0; }
 .calendar-panels .cp-goal-row:hover, .calendar-panels .cp-goal-row:has(:focus-visible) { background: transparent; }
 .calendar-panels .cp-goal-row.is-primary { border-left: 0; padding-left: 4px; }
 .calendar-panels .cp-goal-row.is-achieved { background: transparent; }
-.calendar-panels .cp-goal-row__lead { display: flex; justify-content: center; }
+.calendar-panels .cp-goal-row__lead { display: none; }
 .calendar-panels button.cp-goal-row__collapse { display: grid; place-items: center; width: 26px; height: 26px; min-height: 0; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--text-muted); font-size: 14px; line-height: 1; }
 .calendar-panels button.cp-goal-row__collapse[aria-expanded="false"] span { display: inline-block; transform: rotate(-90deg); }
 .calendar-panels button.cp-goal-row__collapse:hover:not(:disabled) { border: 0; background: var(--cg-hover-strong); color: var(--text-primary); }
@@ -80,9 +80,9 @@
 .cp-wish-fields .cp-wish-price { display: grid; grid-template-columns: minmax(0, 1fr) 96px; gap: 10px; align-items: end; }
 
 @media (max-width: 560px) {
-  .calendar-panels .cp-goal-row { grid-template-columns: 24px minmax(0, 1fr) auto; margin-left: min(calc(var(--goal-depth, 0) * 14px), 70px); }
+  .calendar-panels .cp-goal-row { grid-template-columns: minmax(0, 1fr) auto; margin-left: min(calc(var(--goal-depth, 0) * 14px), 70px); }
   .calendar-panels .cp-goal-row__tools { display: contents; }
-  .calendar-panels button.cp-goal-row__more { grid-column: 3; grid-row: 1; align-self: start; }
+  .calendar-panels button.cp-goal-row__more { grid-column: 2; grid-row: 1; align-self: start; }
   .calendar-panels .cp-wish-row { grid-template-columns: minmax(0, 1fr); row-gap: 6px; }
   .calendar-panels .cp-wish-row__actions { justify-content: flex-end; }
   .calendar-panels.calendar-goals .cp-heading { flex-wrap: nowrap; align-items: center; }
