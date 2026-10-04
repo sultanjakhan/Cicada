@@ -5,6 +5,16 @@ test('legacy List preference migrates to month grid',()=>{assert.equal(m.normali
 test('invalid snapshot rejects without write',async()=>{await assert.rejects(()=>m.loadCalendarPreferences(async()=>'{bad'));});
 test('save one acknowledged write',async()=>{let n=0;await m.saveCalendarPreferences({version:1,first_day:'mon',default_view:'Месяц',density:'compact',showCompleted:false},async c=>{if(c==='set_ui_state')n++});assert.equal(n,1);});
 test('save failure is not acknowledged',async()=>{await assert.rejects(()=>m.saveCalendarPreferences({},async()=>{throw Error('down')}));});
+test('full calendar save uses the fresh snapshot as a CAS precondition',async()=>{
+  let raw=JSON.stringify(m.normalizeCalendarPreferences({first_day:'mon'}));
+  const draft=m.normalizeCalendarPreferences({first_day:'sun'}); let write;
+  await m.saveCalendarPreferences(draft,async(command,args)=>{
+    if(command==='get_ui_state') return raw;
+    if(command==='set_ui_state'){write=args;if(args.expectedValue!==raw)throw Error('mvp_sync_stale_ui_state');raw=args.value;return null;}
+    throw Error(command);
+  });
+  assert.equal(write.expectedValue,JSON.stringify(m.normalizeCalendarPreferences({first_day:'mon'})));
+});
 test('recommendation choices survive save/load while old preferences receive defaults',async()=>{const old=m.normalizeCalendarPreferences({showCompleted:true});assert.equal(old.recommendationsEnabled,true);let raw;await m.saveCalendarPreferences({...old,recommendTasks:false,recommendRoutines:true},async(_,{value})=>{raw=value;});const loaded=await m.loadCalendarPreferences(async()=>raw);assert.equal(loaded.recommendTasks,false);assert.equal(loaded.recommendRoutines,true);assert.throws(()=>m.normalizeCalendarPreferences({recommendTasks:'yes'}));});
 
 test('recommendation save uses an expected empty state and rejects a concurrent update',async()=>{
