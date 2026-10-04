@@ -170,36 +170,26 @@ test('parent goal counts linked records through all subgoals once and follows re
   assert.equal(label(4), '2 задачи');
 });
 
-test('goal editor offers only valid parents, clears a parent, and starts a task with the visible goal path', async t => {
+test('root goal menu starts work without exposing subgoal rows', async t => {
   const x = await setup(t);
   x.goals.push({ id: 1, title: 'Карьерный путь', goal_kind: 'goal', target_value: 1 }, { id: 2, title: 'API', goal_kind: 'goal', parent_goal_id: 1, target_value: 1 });
   await x.refresh();
-  await x.menu('[data-goal-menu="2"]', 'task');
-  assert.deepEqual(x.created(), { goalId: 2, title: 'API', path: 'Карьерный путь → API' });
-  const edit = await x.menu('[data-goal-menu="2"]', 'edit'), parent = edit.querySelector('[name=parent_goal_id]');
-  assert.deepEqual([...parent.options].map(option => option.value), ['', '1']);
-  parent.value = ''; await x.submit(edit);
-  assert.deepEqual(x.calls.filter(call => call.name === 'save_calendar_goal').at(-1).args, {
-    id: 2, title: 'API', targetValue: 1, unit: '', deadline: null, goalKind: 'goal', description: '', criteria: '', parentGoalId: null, clearParent: true, currentValue: null, numericProgress: false,
-  });
+  assert.equal(x.root.querySelector('[data-goal-id="2"]'), null);
+  await x.menu('[data-goal-menu="1"]', 'task');
+  assert.deepEqual(x.created(), { goalId: 1, title: 'Карьерный путь', path: 'Карьерный путь' });
 });
 
-test('nested rows collapse and reopen with focus, keeping a bounded deep indent', async t => {
+test('goal catalog lists roots only without accordion state or tree indentation', async t => {
   const x = await setup(t);
   x.goals.push({ id: 1, title: 'Корень', goal_kind: 'goal', target_value: 1 }, { id: 2, title: 'Подцель', goal_kind: 'goal', parent_goal_id: 1, target_value: 1 }, { id: 3, title: 'Шаг', goal_kind: 'goal', parent_goal_id: 2, target_value: 1 });
   await x.refresh();
   const rootRow = x.root.querySelector('[data-goal-id="1"]');
+  assert.ok(rootRow);
+  assert.equal(x.root.querySelector('[data-goal-id="2"]'), null);
+  assert.equal(x.root.querySelector('[data-goal-id="3"]'), null);
+  assert.equal(x.root.querySelector('[data-goal-collapse]'), null);
   assert.equal(rootRow.classList.contains('is-subgoal'), false);
-  assert.equal(x.root.querySelector('[data-goal-id="3"]').classList.contains('is-subgoal'), true);
-  const collapse = rootRow.querySelector('[data-goal-collapse]'); collapse.click();
-  assert.equal(x.root.querySelector('[data-goal-id="2"]'), null);
-  assert.equal(x.root.querySelector('[data-goal-collapse="1"]').getAttribute('aria-expanded'), 'false');
-  assert.equal(x.w.document.activeElement, x.root.querySelector('[data-goal-collapse="1"]'));
-  await x.refresh();
-  assert.equal(x.root.querySelector('[data-goal-id="2"]'), null);
-  assert.equal(x.w.document.activeElement, x.root.querySelector('[data-goal-collapse="1"]'));
-  x.root.querySelector('[data-goal-collapse="1"]').click();
-  assert.equal(x.root.querySelector('[data-goal-id="3"]').style.getPropertyValue('--goal-depth'), '2');
+  assert.equal(rootRow.style.getPropertyValue('--goal-depth'), '');
 });
 
 test('qualitative goals keep backend-compatible defaults without forcing numeric input', async t => {
@@ -281,8 +271,7 @@ test('goal rows show title, one-line description, current stage and deadline; th
   assert.equal(row('g1').querySelector('.cp-goal-row__desc').textContent, 'Уверенно описывать требования', 'only the first line of the description');
   assert.equal(row('g1').querySelector('.cp-goal-row__meta').textContent, 'Этап: Основы требований · до 1 декабря 2026 г. · Подцели: 1');
   assert.match(row('g3').querySelector('.cp-goal-row__meta').textContent, /^Этап не выбран · 12 из 21 км$/);
-  assert.equal(row('g2').querySelector('.cp-goal-row__meta'), null, 'a goal without stages, value or deadline has no meta line');
-  assert.equal(row('g2').style.getPropertyValue('--goal-depth'), '1');
+  assert.equal(row('g2'), null, 'subgoals are available through the parent popup, not as catalog rows');
   assert.equal(row('g4').closest('[data-list]').querySelectorAll('.cp-goal-group')[1].textContent, 'Ежедневные нормы');
   assert.equal(row('g4').querySelector('.cp-goal-row__meta').textContent, 'Каждый день: 2 л');
   assert.doesNotMatch(x.root.querySelector('[data-list]').textContent, /Пишу спецификацию|Связано/, 'criteria and links stay in the popup');
@@ -290,6 +279,14 @@ test('goal rows show title, one-line description, current stage and deadline; th
   assert.equal(row('g3').querySelector('[data-select]'), null, 'selection lives in the overflow menu');
   assert.deepEqual(x.menuItems('[data-goal-menu="g3"]').map(item => item.dataset.menuAction), ['task', 'subgoal', 'select', 'edit', 'delete']);
   assert.equal(row('g4').querySelector('[data-select]'), null, 'daily norms cannot be the main goal');
+});
+
+test('a selected subgoal marks its root as the parent of the main goal', async t => {
+  const x = await setup(t, { ui: { calendar_now_v1: JSON.stringify({ version: 1, goalId: 'child' }) } });
+  x.goals.push({ id: 'root', title: 'Карьерный путь', goal_kind: 'goal', target_value: 1 }, { id: 'child', title: 'Практика API', goal_kind: 'goal', parent_goal_id: 'root', target_value: 1 });
+  await x.refresh();
+  const row = x.root.querySelector('[data-goal-id="root"]');
+  assert.ok(row); assert.equal(x.root.querySelector('[data-goal-id="child"]'), null); assert.match(row.querySelector('.cp-goal-row__meta').textContent, /Главная подцель: Практика API/); assert.equal(row.querySelector('.cp-goal-row__badge'), null);
 });
 
 test('a goal row opens the popup with its context; the menu holds task, subgoal, select, edit and delete', async t => {
@@ -324,7 +321,7 @@ test('a running task keeps main-goal selection available through the menu', asyn
   assert.equal(x.selected(), 1);
 });
 
-test('goal status marks achieved rows, keeps achieved children in their tree, and preserves the main goal', async t => {
+test('goal status keeps achieved roots grouped and does not expose subgoal rows', async t => {
   const x = await setup(t, { ui: { calendar_now_v1: JSON.stringify({ version: 1, goalId: 'g1' }) } });
   x.goals.push(
     { id: 'g1', title: 'Активный корень', goal_kind: 'goal' },
@@ -335,14 +332,10 @@ test('goal status marks achieved rows, keeps achieved children in their tree, an
   await x.refresh();
   const groups = [...x.root.querySelectorAll('.cp-goal-group')].map(node => node.textContent);
   assert.deepEqual(groups, ['Долгосрочные цели', 'Достигнутые цели']);
-  assert.ok(x.root.querySelector('[data-goal-id="g2"]'), 'achieved child stays visible under its parent tree');
-  assert.equal(x.root.querySelector('[data-goal-id="g2"]')?.classList.contains('is-achieved'), true);
-  assert.equal(x.root.querySelector('[data-goal-id="g2"] .cp-goal-row__status').textContent, 'Достигнута');
+  assert.equal(x.root.querySelector('[data-goal-id="g2"]'), null);
   assert.equal(x.root.querySelector('[data-goal-id="g3"] .cp-goal-row__status').textContent, 'Достигнута');
-  assert.equal(x.root.querySelector('[data-goal-id="g4"]')?.closest('.cp-goal-list')?.textContent.includes('Ещё одна подцель'), true);
+  assert.equal(x.root.querySelector('[data-goal-id="g4"]'), null);
   assert.equal(x.root.querySelector('[data-goal-id="g1"] .cp-goal-row__badge').textContent, 'Главная');
-  assert.equal(x.menuItems('[data-goal-menu="g2"]').some(item => item.dataset.menuAction === 'select'), false);
-  x.w.document.dispatchEvent(new x.w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   assert.equal(x.menuItems('[data-goal-menu="g3"]').some(item => item.dataset.menuAction === 'select'), false);
 });
 

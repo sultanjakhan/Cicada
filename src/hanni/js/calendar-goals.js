@@ -158,7 +158,6 @@ export async function mountCalendarGoals(element, dependencies = {}) {
   const viewState = dependencies.state || { view: 'goals' };
   let disposed = false, revision = 0, busy = false, creating = false;
   let goals = [], goalsLoaded = false, development = readDevelopmentState(null), selectedId = null, active = null, creationDialog = null, wishes = null;
-  const collapsedGoalIds = new Set();
   element.classList.add('calendar-panels', 'calendar-goals');
   element.innerHTML = `<header class="cp-heading"><div><h2>Цели</h2><p data-goals-hint></p></div></header>
     <div class="cp-goals-switch" role="group" aria-label="Что показать"><button type="button" data-goals-view="goals">Цели</button><button type="button" data-goals-view="wishes">Желания</button></div>
@@ -218,7 +217,10 @@ export async function mountCalendarGoals(element, dependencies = {}) {
   }
   function renderCards() {
     list.innerHTML = '';
-    const longTerm = calendarGoalForest(goals.filter(goal => goal.goal_kind === 'goal'));
+    const forest = calendarGoalForest(goals.filter(goal => goal.goal_kind === 'goal'));
+    const longTerm = forest.filter(row => row.depth === 0);
+    const selectedGoal = selectedId == null ? null : goalById(selectedId);
+    const selectedRootId = selectedGoal ? forest.find(row => String(row.goal.id) === String(selectedGoal.id))?.rootId : null;
     const longTermActive = [], longTermAchieved = [];
     const rootStatuses = new Map(longTerm.filter(row => row.depth === 0).map(row => [String(row.rootId), row.goal.status === 'achieved' ? 'achieved' : 'active']));
     longTerm.forEach(row => (rootStatuses.get(String(row.rootId)) === 'achieved' ? longTermAchieved : longTermActive).push(row));
@@ -228,23 +230,16 @@ export async function mountCalendarGoals(element, dependencies = {}) {
     const renderGroup = (title, rows) => {
       const heading = document.createElement('h3'); heading.className = 'cp-goal-group'; heading.textContent = title; list.append(heading);
       rows.forEach(row => {
-        const goal = row.goal || row, depth = row.depth || 0, id = String(goal.id);
-        if (row.ancestorIds?.some(ancestor => collapsedGoalIds.has(ancestor))) return;
+        const goal = row.goal || row, id = String(goal.id);
         const selected = goal.goal_kind === 'goal' && id === selectedId, achieved = goal.status === 'achieved', meta = rowMeta(goal, id);
+        const selectedChild = selectedGoal && selectedRootId === id && id !== String(selectedGoal.id) ? selectedGoal : null;
         if (row.children?.length) meta.push(`Подцели: ${row.children.length}`);
+        if (selectedChild) meta.push(`Главная подцель: ${selectedChild.title || 'Без названия'}`);
         const description = String(goal.description || '').split('\n').find(line => line.trim())?.trim() || '';
         const card = document.createElement('article');
-        card.className = `cp-goal-row${selected ? ' is-primary' : ''}${depth ? ' is-subgoal' : ''}${achieved ? ' is-achieved' : ''}`; card.style.setProperty('--goal-depth', String(depth));
+        card.className = `cp-goal-row${selected ? ' is-primary' : ''}${achieved ? ' is-achieved' : ''}`;
         card.dataset.goalId = id; card.dataset.contextRecord = id;
         const lead = document.createElement('span'); lead.className = 'cp-goal-row__lead';
-        if (row.children?.length) {
-          const collapsed = collapsedGoalIds.has(id);
-          const collapse = document.createElement('button'); collapse.type = 'button'; collapse.className = 'cp-goal-row__collapse'; collapse.dataset.goalCollapse = id;
-          collapse.setAttribute('aria-expanded', String(!collapsed)); collapse.setAttribute('aria-label', `${collapsed ? 'Показать подцели' : 'Свернуть подцели'}: ${goal.title || 'Без названия'}`);
-          collapse.innerHTML = '<span aria-hidden="true">▾</span>';
-          collapse.onclick = () => { if (collapsedGoalIds.has(id)) collapsedGoalIds.delete(id); else collapsedGoalIds.add(id); renderCards(); element.querySelector(`[data-goal-collapse="${id}"]`)?.focus(); };
-          lead.append(collapse);
-        }
         const open = document.createElement('button'); open.type = 'button'; open.className = 'cp-goal-row__open'; open.dataset.goalOpen = id; open.setAttribute('aria-haspopup', 'dialog');
         open.innerHTML = `<span class="cp-goal-row__line"><span class="cp-goal-row__title">${escapeHtml(goal.title || 'Без названия')}</span>${selected ? '<span class="cp-goal-row__badge">Главная</span>' : ''}${achieved ? '<span class="cp-goal-row__status">Достигнута</span>' : ''}</span>${description ? `<span class="cp-goal-row__desc">${escapeHtml(description)}</span>` : ''}${meta.length ? `<span class="cp-goal-row__meta">${meta.map(escapeHtml).join(' · ')}</span>` : ''}`;
         open.onclick = () => openGoal(goal);
@@ -265,7 +260,7 @@ export async function mountCalendarGoals(element, dependencies = {}) {
   async function refresh(success = '', canCommit = null) {
     if (canCommit && !canCommit()) return;
     const rev = ++revision; message.textContent = 'Загружаем цели…'; list.setAttribute('aria-busy', 'true'); element.querySelector('[data-retry]').hidden = true;
-    const focused = document.activeElement?.closest?.('[data-goal-collapse], [data-goal-open], [data-goal-menu]');
+    const focused = document.activeElement?.closest?.('[data-goal-open], [data-goal-menu]');
     const focusSelector = focused && list.contains(focused) ? Object.entries(focused.dataset).map(([key, value]) => `[data-${key.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`)}="${value}"]`).join('') : '';
     try {
       const [loadedGoals, raw, block, developmentRaw] = await Promise.all([api('get_goals', { tabName: null }), api('get_ui_state', { key: 'calendar_now_v1' }), api('get_active_block'), api('get_ui_state', { key: DEVELOPMENT_STATE_KEY }).catch(() => null)]);
