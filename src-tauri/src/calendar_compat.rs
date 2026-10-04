@@ -607,7 +607,11 @@ pub fn get_notes(
             .filter(|value| !value.is_empty() && value.len() <= 80 && value.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'));
         if marker.is_none() { return Err(fail("invalid personal import marker")); }
     }
-    let mut q = "SELECT id FROM items WHERE kind='task'".to_string();
+    let mut q = if personal_import {
+        "SELECT id FROM items WHERE kind='task'".to_string()
+    } else {
+        "SELECT id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,content_blocks,status FROM items WHERE kind='task'".to_string()
+    };
     if personal_import {
         // Includes archived/completed own imports so retries cannot recreate them.
         q.push_str(" AND status IN ('task','done') AND instr(tags,?1)>0 ");
@@ -623,6 +627,30 @@ pub fn get_notes(
     }
     q.push_str(" ORDER BY completed,date,updated_at DESC");
     let mut s = conn.prepare(&q).map_err(|e| fail(e.to_string()))?;
+    if !personal_import {
+        let note_from_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<Value> {
+            let item = crate::row_item(row)?;
+            Ok(item_value(
+                &item,
+                row.get(11)?,
+                row.get(12)?,
+                row.get(13)?,
+                row.get::<_, i64>(14)? != 0,
+                row.get(15)?,
+                row.get(16)?,
+                row.get(17)?,
+            ))
+        };
+        let rows = if search.as_deref().is_some_and(|value| !value.trim().is_empty()) {
+            s.query_map([format!("%{}%", search.as_deref().unwrap())], note_from_row)
+        } else {
+            s.query_map([], note_from_row)
+        }
+        .map_err(|e| fail(e.to_string()))?;
+        return rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| fail(format!("read calendar notes: {e}")));
+    }
     let mut ids = match search.clone() {
         Some(q) if personal_import => s.query_map([q], |r| r.get::<_, String>(0))
             .map_err(|e| fail(e.to_string()))?.collect::<Result<Vec<_>, _>>(),
@@ -1847,6 +1875,38 @@ mod task_model_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn get_notes_returns_complete_rows_without_truncating_archive_or_metadata() {
+        use tauri::Manager;
+        let conn = Connection::open_in_memory().unwrap();
+        crate::init_schema(&conn).unwrap();
+        for i in 0..201 {
+            let id = format!("boundary-{i:03}");
+            let archived = i == 200;
+            let blocks = (i == 3).then(|| {
+                r#"{"time":8,"version":"fixture","blocks":[{"type":"paragraph","data":{"text":"rich"}}]}"#.to_string()
+            });
+            conn.execute(
+                "INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,content_blocks,status) VALUES(?1,'task',?2,?3,'2026-01-01',NULL,30,0,2,'created',?4,'fixture','#123456',4,?5,'calendar,fixture',?6,'note')",
+                params![id, format!("Boundary {i}"), format!("content-{i}"), format!("2026-01-{day:02}", day = (i % 28) + 1), archived as i64, blocks],
+            )
+            .unwrap();
+        }
+        let app = tauri::test::mock_builder()
+            .manage(AppState(std::sync::Mutex::new(conn)))
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let all = get_notes(None, None, app.state()).unwrap();
+        assert_eq!(all.len(), 201);
+        let rich = all.iter().find(|note| note["id"] == "boundary-003").unwrap();
+        assert_eq!(rich["category"], "fixture");
+        assert_eq!(rich["color"], "#123456");
+        assert_eq!(rich["priority"], 4);
+        let blocks: Value = serde_json::from_str(rich["content_blocks"].as_str().unwrap()).unwrap();
+        assert_eq!(blocks["version"], "fixture");
+        assert_eq!(all.iter().find(|note| note["id"] == "boundary-200").unwrap()["archived"], true);
+        assert_eq!(get_notes(Some("tab:calendar".into()), None, app.state()).unwrap().len(), 200);
+    }
     #[test]
     fn health_events_are_readonly_in_calendar_lists_and_native_actions() {
         use tauri::Manager;
