@@ -224,6 +224,36 @@ test('a preference write failure stays in its edited tab and retains the draft',
   assert.doesNotMatch(x.modal.querySelector('[data-prefs-error]').textContent, /ничего не изменено/i);
 });
 
+test('full preference save merges an independent remote change into the open draft', async () => {
+  const x = await boot({ initialPreferences: { version: 1, first_day: 'mon', default_view: 'Месяц', density: 'comfortable', showCompleted: false, recommendationsEnabled: true, recommendTasks: true, recommendRoutines: true } });
+  const density = x.modal.querySelector('[data-value="compact"]');
+  density.click();
+  const remote = JSON.parse(x.ui.get('calendar_preferences_v1'));
+  remote.first_day = 'sun';
+  x.ui.set('calendar_preferences_v1', JSON.stringify(remote));
+  x.modal.querySelector('form').dispatchEvent(new x.dom.window.Event('submit', { bubbles: true, cancelable: true }));
+  await tick();
+  const saved = JSON.parse(x.ui.get('calendar_preferences_v1'));
+  assert.equal(saved.density, 'compact');
+  assert.equal(saved.first_day, 'sun');
+  assert.equal(x.modal.open, false);
+});
+
+test('full preference save rejects a conflicting remote field and retains the draft', async () => {
+  const x = await boot({ initialPreferences: { version: 1, first_day: 'mon', default_view: 'Месяц', density: 'comfortable', showCompleted: false, recommendationsEnabled: true, recommendTasks: true, recommendRoutines: true } });
+  const day = x.modal.querySelector('[data-value="День"]');
+  day.click();
+  const remote = JSON.parse(x.ui.get('calendar_preferences_v1'));
+  remote.default_view = 'Неделя';
+  x.ui.set('calendar_preferences_v1', JSON.stringify(remote));
+  x.modal.querySelector('form').dispatchEvent(new x.dom.window.Event('submit', { bubbles: true, cancelable: true }));
+  await tick();
+  assert.equal(JSON.parse(x.ui.get('calendar_preferences_v1')).default_view, 'Неделя');
+  assert.equal(x.modal.open, true);
+  assert.equal(x.modal.querySelector('[data-value="День"]').classList.contains('active'), true);
+  assert.match(x.modal.querySelector('[data-prefs-error]').textContent, /конфликтующее поле/i);
+});
+
 test('connection actions remain available after preference load failure and do not use the calendar Save', async () => {
   const x = await boot({ failPreferenceLoad: true });
   assert.ok(x.modal.querySelector('[data-sync-save]'));

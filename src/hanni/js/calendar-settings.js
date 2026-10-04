@@ -380,7 +380,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
     api.setPending(true); prefsError.hidden = true;
     try {
       const changedRecommendations = Object.fromEntries(['recommendationsEnabled','recommendTasks','recommendRoutines'].filter(key => draft[key] !== original[key]).map(key => [key,draft[key]]));
-      const saved = await (recommendationsOnly ? saveRecommendationPreferences(changedRecommendations) : saveCalendarPreferences(draft));
+      const saved = await (recommendationsOnly ? saveRecommendationPreferences(changedRecommendations) : saveCalendarPreferences(draft, undefined, { base: original }));
       if (closed) return;
       original = saved; draft = { ...saved };
       window.dispatchEvent(new window.CustomEvent('hanni:calendar-settings-changed', { detail: { changes: saved } }));
