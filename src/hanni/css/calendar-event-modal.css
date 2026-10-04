@@ -68,9 +68,14 @@
 .evm-modal .evm-untimed { display: inline-flex; gap: 9px; align-items: center; min-height: 40px; margin: 4px 0 8px; color: var(--text-secondary); font-size: 13px; cursor: pointer; }
 .evm-modal .evm-untimed input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent-fill); }
 .evm-modal .form-input:disabled { opacity: .5; }
-.evm-modal .evm-desc-wrap, .evm-modal .evm-advanced { margin: 0; padding: 0; border-top: 1px solid var(--border-default); }
+.evm-modal .evm-desc-wrap, .evm-modal .evm-advanced, .evm-modal .evm-planning, .evm-modal .evm-task-options, .evm-modal .evm-goal-details { margin: 0; padding: 0; border-top: 1px solid var(--border-default); }
 .evm-modal summary { min-height: 44px; padding: 13px 0; cursor: pointer; font-size: 13px; font-weight: 550; color: var(--text-primary); }
 .evm-modal summary span { margin-left: 6px; font-weight: 400; color: var(--text-secondary); font-size: 12px; }
+.evm-modal .evm-planning-content, .evm-modal .evm-task-options-content, .evm-modal .evm-goal-content { display: grid; gap: 12px; padding: 0 0 16px; }
+.evm-modal .evm-task-options-content .evm-task-row { margin-bottom: 0; }
+.evm-modal details.evm-event-layout { border-top: 0; }
+.evm-modal details.evm-event-layout > summary { display: none; }
+.evm-modal details.evm-event-layout > .evm-planning-content, .evm-modal details.evm-event-layout > .evm-goal-content { padding-top: 0; }
 .evm-modal .evm-desc-wrap textarea { margin: 0 0 16px; }
 .evm-modal .evm-advanced-content { display: grid; gap: 12px; padding: 0 0 16px; }
 .evm-modal .evm-event-details { display: grid; gap: 12px; }

@@ -174,14 +174,19 @@ export async function showEventModal(eventId = null, initialDate = null, options
         <label class="evm-sphere-fine" for="evm-sphere" data-evm-personal><span class="evm-sr-only">Сфера личной задачи</span>
           <select class="form-select" id="evm-sphere">${personalOptions(loadedSphere === 'work' ? 'personal' : isEdit ? loadedSphere : 'personal', isEdit && loadedSphere === '')}</select></label>
       </div>
-      <div class="evm-date-row">
-        <label class="evm-field evm-date-field" for="evm-date"><span class="evm-field-label">Дата</span>
-          <input class="form-input" id="evm-date" type="date" value="${escapeHtml(initDate)}" required></label>
-        <label class="evm-field evm-task-time" for="evm-task-time" data-editor-task><span class="evm-field-label">Время</span>
-          <input class="form-input" id="evm-task-time" type="time" value="${escapeHtml(initTaskTime)}"></label>
-        <label class="evm-untimed" data-editor-task><input type="checkbox" id="evm-no-date"${(taskId != null && !task?.date) || (!isEdit && kind === 'task' && options.initialNoDate) ? ' checked' : ''}> Без даты</label>
-        <label class="evm-untimed" data-editor-event><input type="checkbox" id="evm-all-day"${isEdit && event && !event.time ? ' checked' : ''}> Без времени</label>
-      </div>
+      <details class="evm-planning"${taskId != null && (task?.date || task?.time) ? ' open' : ''}>
+        <summary id="evm-planning-summary">Планирование <span>необязательно</span></summary>
+        <div class="evm-planning-content">
+          <div class="evm-date-row">
+            <label class="evm-field evm-date-field" for="evm-date"><span class="evm-field-label">Дата</span>
+              <input class="form-input" id="evm-date" type="date" value="${escapeHtml(initDate)}" required></label>
+            <label class="evm-field evm-task-time" for="evm-task-time" data-editor-task><span class="evm-field-label">Время</span>
+              <input class="form-input" id="evm-task-time" type="time" value="${escapeHtml(initTaskTime)}"></label>
+            <label class="evm-untimed" data-editor-task><input type="checkbox" id="evm-no-date"${(taskId != null && !task?.date) || (!isEdit && kind === 'task' && options.initialNoDate) ? ' checked' : ''}> Без даты</label>
+            <label class="evm-untimed" data-editor-event><input type="checkbox" id="evm-all-day"${isEdit && event && !event.time ? ' checked' : ''}> Без времени</label>
+          </div>
+        </div>
+      </details>
       <div class="evm-task-kind" data-editor-task role="radiogroup" aria-labelledby="evm-task-kind-label" aria-describedby="evm-kind-hint">
         <span class="evm-field-label" id="evm-task-kind-label">Вид</span>
         <div class="evm-kind-line"><div class="evm-kind-options">
@@ -189,17 +194,22 @@ export async function showEventModal(eventId = null, initialDate = null, options
           <label class="evm-kind-option"><input type="radio" name="evm-task-kind" value="instant"${loadedTaskKind === 'instant' ? ' checked' : ''}><span>Моментальная</span></label>
         </div><p class="evm-kind-hint" id="evm-kind-hint"></p></div>
       </div>
-      <div class="evm-task-row" data-editor-task data-editor-work>
-        <label class="evm-field evm-estimate" for="evm-task-estimate"><span class="evm-field-label">Оценка, мин</span><input class="form-input" id="evm-task-estimate" type="number" min="1" step="1" inputmode="numeric" placeholder="Не задана" value="${task?.duration_minutes ?? ''}"></label>
-        <label class="evm-field evm-process" for="evm-process" data-editor-stage><span class="evm-field-label">Процесс</span>
-          <select class="form-select" id="evm-process">${processOptions(loadedProcess)}</select></label>
-      </div>
-      <div class="evm-task-row evm-stage-row" data-editor-task data-editor-stage data-evm-stage-fields>
-        <label class="evm-field" for="evm-stage"><span class="evm-field-label">Стадия</span>
-          <select class="form-select" id="evm-stage"></select></label>
-        <label class="evm-untimed evm-waiting" for="evm-waiting"><input type="checkbox" id="evm-waiting"${loadedWaiting ? ' checked' : ''}> Жду ответа</label>
-      </div>
-      <p class="evm-stage-time" id="evm-stage-time" data-editor-task data-editor-stage hidden></p>
+      <details class="evm-task-options" data-editor-task${taskId != null && (task?.duration_minutes || loadedProcess || loadedStage || task?.goal_id != null || Number(task?.priority) >= 5) ? ' open' : ''}>
+        <summary id="evm-task-options-summary">Дополнительные поля <span>необязательно</span></summary>
+        <div class="evm-task-options-content">
+          <div class="evm-task-row" data-editor-task data-editor-work>
+            <label class="evm-field evm-estimate" for="evm-task-estimate"><span class="evm-field-label">Оценка, мин</span><input class="form-input" id="evm-task-estimate" type="number" min="1" step="1" inputmode="numeric" placeholder="Не задана" value="${task?.duration_minutes ?? ''}"></label>
+            <label class="evm-field evm-process" for="evm-process" data-editor-stage><span class="evm-field-label">Процесс</span>
+              <select class="form-select" id="evm-process">${processOptions(loadedProcess)}</select></label>
+          </div>
+          <div class="evm-task-row evm-stage-row" data-editor-task data-editor-stage data-evm-stage-fields>
+            <label class="evm-field" for="evm-stage"><span class="evm-field-label">Стадия</span>
+              <select class="form-select" id="evm-stage"></select></label>
+            <label class="evm-untimed evm-waiting" for="evm-waiting"><input type="checkbox" id="evm-waiting"${loadedWaiting ? ' checked' : ''}> Жду ответа</label>
+          </div>
+          <p class="evm-stage-time" id="evm-stage-time" data-editor-task data-editor-stage hidden></p>
+        </div>
+      </details>
       <div class="evm-when-row" data-editor-event>
         <label class="evm-field" for="evm-time" data-evm-timing><span class="evm-field-label">Время начала</span>
           <input class="form-input" id="evm-time" type="time" value="${escapeHtml(initTime)}"></label>
@@ -214,11 +224,16 @@ export async function showEventModal(eventId = null, initialDate = null, options
       <input id="evm-dur" type="hidden" value="${initDur}">
       <p class="evm-duration-summary" id="evm-duration-summary" data-editor-event></p>
       <p class="evm-range-hint" id="evm-range-hint" hidden>В календаре событие показано в дне начала.</p>
-      <label class="evm-field evm-goal-field" for="evm-goal"><span class="evm-field-label">Цель · необязательно</span>
-        <select class="form-select" id="evm-goal" disabled>${options.goalId != null ? `<option value="${escapeHtml(String(options.goalId))}">${escapeHtml(options.goalTitle || 'Выбранная цель')}</option>` : '<option value="">Загружаем цели…</option>'}</select></label>
-      <p class="evm-goal-path" id="evm-goal-path" aria-live="polite" hidden></p>
-      <p class="evm-error" id="evm-goal-error" role="alert" hidden></p>
-      <button type="button" class="btn-secondary" id="evm-goal-retry" hidden>Повторить загрузку целей</button>
+      <details class="evm-goal-details"${(taskId != null && task?.goal_id != null) || options.goalId != null ? ' open' : ''}>
+        <summary id="evm-goal-summary">Цель <span>необязательно</span></summary>
+        <div class="evm-goal-content">
+          <label class="evm-field evm-goal-field" for="evm-goal"><span class="evm-field-label">Цель</span>
+            <select class="form-select" id="evm-goal" disabled>${options.goalId != null ? `<option value="${escapeHtml(String(options.goalId))}">${escapeHtml(options.goalTitle || 'Выбранная цель')}</option>` : '<option value="">Загружаем цели…</option>'}</select></label>
+          <p class="evm-goal-path" id="evm-goal-path" aria-live="polite" hidden></p>
+          <p class="evm-error" id="evm-goal-error" role="alert" hidden></p>
+          <button type="button" class="btn-secondary" id="evm-goal-retry" hidden>Повторить загрузку целей</button>
+        </div>
+      </details>
       <label class="evm-important" data-editor-task for="evm-important"><input type="checkbox" id="evm-important"${taskId != null && Number(task?.priority) >= 5 ? ' checked' : ''}> <span>Важная задача</span></label>
       <details class="evm-advanced" data-editor-event>
         <summary>Детали <span>необязательно</span></summary>
@@ -301,6 +316,9 @@ export async function showEventModal(eventId = null, initialDate = null, options
   const sphereSelect = overlay.querySelector('#evm-sphere');
   const processSelect = overlay.querySelector('#evm-process');
   const stageSelect = overlay.querySelector('#evm-stage');
+  const planningDetails = overlay.querySelector('.evm-planning');
+  const planningSummary = overlay.querySelector('#evm-planning-summary');
+  const taskOptionsSummary = overlay.querySelector('#evm-task-options-summary');
   let scope = loadedSphere === 'work' ? 'work' : 'personal';
   const selectedSphere = () => scope === 'work' ? 'work' : sphereSelect.value;
   const updateScope = () => {
@@ -321,10 +339,20 @@ export async function showEventModal(eventId = null, initialDate = null, options
     // Another process starts at its first stage unless the current one belongs to it.
     fillStages(processSelect.value, stages.some(stage => stage.id === stageSelect.value) ? stageSelect.value : stages[0]?.id || '');
     updateTiming();
+    updateTaskOptionsSummary();
   });
   const waitingInput = overlay.querySelector('#evm-waiting');
   const kindHint = overlay.querySelector('#evm-kind-hint');
   const selectedTaskKind = () => overlay.querySelector('[name="evm-task-kind"]:checked')?.value === 'instant' ? 'instant' : 'normal';
+  const updatePlanningSummary = () => {
+    if (!planningSummary) return;
+    if (kind === 'event') { planningSummary.firstChild.textContent = 'Расписание '; return; }
+    const parts = [];
+    if (noDate?.checked) parts.push('Без даты');
+    else if (dateInput?.value) parts.push(dateInput.value);
+    if (!noDate?.checked && taskTimeInput?.value) parts.push(taskTimeInput.value);
+    planningSummary.firstChild.textContent = parts.length ? `Планирование · ${parts.join(' · ')} ` : 'Планирование ';
+  };
   // Types other than Task/Event own one panel each (calendar-create-types.js).
   const panels = new Map();
   for (const id of offeredTypes) {
@@ -386,6 +414,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
     overlay.querySelector('[data-evm-stage-fields]').hidden = kind !== 'task' || instant || !processSelect.value;
     overlay.querySelector('#evm-stage-time').hidden = kind !== 'task' || instant || !retryLoaded.process || taskId == null;
     kindHint.textContent = instant ? 'Отмечается одним нажатием, без таймера.' : 'С оценкой времени, таймером и фактом.';
+    updatePlanningSummary();
     updateRangeHint();
   };
   overlay.querySelectorAll('[name="evm-task-kind"]').forEach(input => input.addEventListener('change', updateTiming));
@@ -415,6 +444,11 @@ export async function showEventModal(eventId = null, initialDate = null, options
     titleInput.placeholder = other ? other.titlePlaceholder : kind === 'task' ? 'Например, описать пользовательский сценарий' : 'Например, встреча по проекту';
     if (kind !== 'event') titleInput.maxLength = 500; else titleInput.removeAttribute('maxlength');
     overlay.querySelector('[data-editor-schedule]').hidden = !!other;
+    planningDetails.hidden = !!other;
+    planningDetails.classList.toggle('evm-event-layout', kind === 'event');
+    if (kind === 'event') planningDetails.open = true;
+    goalDetails.classList.toggle('evm-event-layout', kind === 'event');
+    if (kind === 'event') goalDetails.open = true;
     panels.forEach((panel, id) => { panel.hidden = id !== kind; });
     overlay.querySelectorAll('[data-editor-task]').forEach(node => { node.hidden = kind !== 'task'; });
     overlay.querySelectorAll('[data-editor-event]').forEach(node => { node.hidden = kind !== 'event'; });
@@ -437,6 +471,8 @@ export async function showEventModal(eventId = null, initialDate = null, options
     updateEditorType();
   };
   const goalSelect = overlay.querySelector('#evm-goal');
+  const goalDetails = overlay.querySelector('.evm-goal-details');
+  const goalSummary = overlay.querySelector('#evm-goal-summary');
   const goalPath = overlay.querySelector('#evm-goal-path');
   const goalError = overlay.querySelector('#evm-goal-error');
   const goalRetry = overlay.querySelector('#evm-goal-retry');
@@ -444,8 +480,23 @@ export async function showEventModal(eventId = null, initialDate = null, options
     const option = goalSelect.selectedOptions[0];
     goalPath.hidden = !goalSelect.value || !option;
     goalPath.textContent = goalPath.hidden ? '' : option.textContent;
+    if (goalSummary) {
+      goalSummary.firstChild.textContent = goalSelect.value && option ? `Цель · ${option.textContent} ` : 'Цель ';
+    }
+  };
+  const updateTaskOptionsSummary = () => {
+    if (!taskOptionsSummary) return;
+    const parts = [];
+    if (estimateInput?.value.trim()) parts.push(`${estimateInput.value.trim()} мин`);
+    if (processSelect?.value) parts.push(processSelect.selectedOptions[0]?.textContent || 'Процесс');
+    if (stageSelect?.value && !stageSelect.closest('[hidden]')) parts.push(stageSelect.selectedOptions[0]?.textContent || 'Стадия');
+    taskOptionsSummary.firstChild.textContent = parts.length ? `Дополнительные поля · ${parts.join(' · ')} ` : 'Дополнительные поля ';
   };
   goalSelect.addEventListener('change', () => { goalDraft = goalSelect.value; updateGoalPath(); });
+  estimateInput?.addEventListener('input', updateTaskOptionsSummary);
+  stageSelect?.addEventListener('change', updateTaskOptionsSummary);
+  waitingInput?.addEventListener('change', updateTaskOptionsSummary);
+  updateTaskOptionsSummary();
   updateGoalPath();
   const loadGoals = async () => {
     if (!recordReady) return;
@@ -468,6 +519,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
       if (goalDraft && ![...goalSelect.options].some(option => option.value === goalDraft)) goalSelect.add(new Option('Выбранная цель недоступна', goalDraft));
       goalSelect.value = goalDraft ?? (persistedGoalId == null ? '' : String(persistedGoalId));
       updateGoalPath(); goalSelect.disabled = false; goalsReady = true;
+      if (isEdit && persistedGoalId != null) goalDetails.open = true;
       if (restoreSelectionFocus && isTopModal()) goalSelect.focus();
     } catch (err) {
       if (!overlay.isConnected) return;
@@ -603,7 +655,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
     if (!title) { showError(kind === 'task' ? 'Укажи название задачи.' : 'Укажи название события.', titleInput); return; }
     // New unlinked records do not depend on optional goals. Editing must still
     // wait, because clearing an unknown existing link would lose user data.
-    if (!goalsReady && isEdit) { overlay.querySelector('.evm-advanced').open = true; showError('Дождись загрузки целей или повтори её.', goalRetry.hidden ? null : goalRetry); return; }
+    if (!goalsReady && isEdit) { goalDetails.open = true; showError('Дождись загрузки целей или повтори её.', goalRetry.hidden ? null : goalRetry); return; }
     const desiredGoalId = goalSelect.value ? String(goalSelect.value) : null;
     if (kind === 'task') {
       if (title.length > 500) { showError('Сократи название задачи до 500 символов.', titleInput); return; }
