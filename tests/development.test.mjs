@@ -44,6 +44,50 @@ test('active stage limits the compact skill view and can return to the whole goa
   controller.dispose(); t.after(() => root.remove());
 });
 
+test('a stage may be created with only an intermediate result and no skills', async t => {
+  const root = document.createElement('div'); document.body.append(root);
+  let stored = JSON.stringify({ version:1, goals:{ g:{ skills:[], stages:[] } } });
+  const invoke = async (command, args) => { if (command === 'get_ui_state') return stored; if (command === 'set_ui_state') { stored = args.value; return; } throw Error(command); };
+  const controller = await mountGoalDevelopment(root, { invoke, goal:{ id:'g', title:'Goal' } }); t.after(() => { controller.dispose(); root.remove(); });
+  root.querySelector('[data-dev-stage-add]').click(); await settle();
+  const dialog = document.querySelector('dialog[open]'); dialog.querySelector('[name=title]').value = 'Первый результат'; dialog.querySelector('[name=outcome]').value = 'Готовый черновик';
+  dialog.querySelector('form').dispatchEvent(new window.Event('submit', { bubbles:true, cancelable:true })); await settle();
+  const saved = JSON.parse(stored).goals.g;
+  assert.equal(saved.stages.length, 1); assert.deepEqual(saved.stages[0].skillIds, []); assert.equal(saved.stages[0].outcome, 'Готовый черновик'); assert.equal(saved.activeStageId, null);
+});
+
+test('stage view is local and explicit current selection is the only write', async t => {
+  const root = document.createElement('div'); document.body.append(root);
+  let stored = JSON.stringify({ version:1, goals:{ g:{ skills:[{id:'a',title:'A',topic:'T'},{id:'b',title:'B',topic:'T'}], stages:[{id:'one',title:'One',skillIds:['a']},{id:'two',title:'Two',skillIds:['b']}], activeStageId:'one' } } }), writes = 0;
+  const invoke = async (command, args) => { if (command === 'get_ui_state') return stored; if (command === 'set_ui_state') { writes++; stored = args.value; return; } throw Error(command); };
+  const controller = await mountGoalDevelopment(root, { invoke, goal:{ id:'g', title:'Goal' } }); t.after(() => { controller.dispose(); root.remove(); });
+  root.querySelector('[data-dev-stage-active="two"]').click();
+  assert.equal(JSON.parse(stored).goals.g.activeStageId, 'one'); assert.equal(writes, 0); assert.equal(root.querySelector('[data-dev-skill]').textContent, 'B');
+  root.querySelector('[data-dev-stage-current="two"]').click(); await settle();
+  assert.equal(JSON.parse(stored).goals.g.activeStageId, 'two'); assert.equal(writes, 1);
+});
+
+test('completing the current stage keeps it current and allows reopening', async t => {
+  const root = document.createElement('div'); document.body.append(root);
+  let stored = JSON.stringify({ version:1, goals:{ g:{ skills:[], stages:[{id:'s',title:'Stage',outcome:'Result',skillIds:[]}], activeStageId:'s' } } });
+  const invoke = async (command, args) => { if (command === 'get_ui_state') return stored; if (command === 'set_ui_state') { stored = args.value; return; } throw Error(command); };
+  const controller = await mountGoalDevelopment(root, { invoke, goal:{ id:'g', title:'Goal' } }); t.after(() => { controller.dispose(); root.remove(); });
+  root.querySelector('[data-dev-stage-complete="s"]').click(); await settle();
+  const dialog = document.querySelector('dialog[open]'); dialog.querySelector('form').dispatchEvent(new window.Event('submit', { bubbles:true, cancelable:true })); await settle();
+  assert.equal(JSON.parse(stored).goals.g.activeStageId, 's'); assert.equal(JSON.parse(stored).goals.g.stages[0].status, 'completed'); assert.match(root.textContent, /текущий этап.*завершён/i); assert.ok(root.querySelector('[data-dev-stage-reopen="s"]'));
+  root.querySelector('[data-dev-stage-reopen="s"]').click(); await settle(); assert.equal(JSON.parse(stored).goals.g.stages[0].status, 'active'); assert.equal(JSON.parse(stored).goals.g.activeStageId, 's');
+});
+
+test('skill task links show only existing note rows and mark completed rows', async t => {
+  const root = document.createElement('div'); document.body.append(root); const opened = []; let writes = 0;
+  const stored = JSON.stringify({ version:1, goals:{ g:{ skills:[{id:'s',title:'Skill',topic:'Topic',taskIds:['done-task','missing-task']}], stages:[] } } });
+  const invoke = async command => { if (command === 'get_ui_state') return stored; writes++; throw Error(command); };
+  const done = { id:'row-1', source_type:'note', source_id:'done-task', title:'Готовая задача', completed:true };
+  const controller = await mountGoalDevelopment(root, { invoke, goal:{ id:'g', title:'Goal' }, getTasks:() => [done, { id:'event-1', source_type:'event', source_id:'missing-task', title:'Не задача' }], onOpenTask: row => opened.push(row) }); t.after(() => { controller.dispose(); root.remove(); });
+  const link = root.querySelector('[data-dev-task-link="done-task"]'); assert.ok(link); assert.match(link.textContent, /Готовая задача.*Выполнено/); assert.equal(root.querySelector('[data-dev-task-link="missing-task"]'), null);
+  link.click(); assert.deepEqual(opened, [done]); assert.equal(writes, 0);
+});
+
 test('JSON import accepts generic skills and rejects malformed or empty input', () => {
   const imported = validateDevelopmentImport(JSON.stringify([{ id:'x', title:'Indexes', topic:'SQL', group:'soft', level:2, result:'Show index plan', exercise:'Compare query' }]));
   assert.equal(imported.goals.imported.skills[0].title, 'Indexes');
