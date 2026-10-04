@@ -21,11 +21,12 @@ jobs:
   mac:
     runs-on: macos-latest
     env:
-      TMPDIR: ${{ runner.temp }}
+      TMPDIR: ${{ github.workspace }}/.local/ci-temp
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - run: mkdir -p "$TMPDIR"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
