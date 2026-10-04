@@ -64,6 +64,11 @@ export function openCalendarRoutineEditor({ document, store, plan = null, kind =
   });
   const body = dialog.body;
 
+  function showFieldError(message, field) {
+    for (let details = field?.closest('details'); details; details = details.parentElement?.closest('details')) details.open = true;
+    dialog.showError(message, field);
+  }
+
   function capture() {
     title = body.querySelector('[data-routine-title]')?.value ?? title;
     weekdays = [...body.querySelectorAll('[data-routine-weekday]:checked')].map(input => Number(input.value));
@@ -78,7 +83,9 @@ export function openCalendarRoutineEditor({ document, store, plan = null, kind =
       const step = steps.find(item => item.id === row.dataset.routineStep);
       if (!step) return;
       step.title = row.querySelector('[data-step-title]')?.value ?? step.title;
-      step.trackingMode = row.querySelector('[data-step-tracking]:checked, [data-step-tracking]')?.value ?? step.trackingMode;
+      const checkedTracking = row.querySelector('[data-step-tracking]:checked');
+      const legacyTracking = row.querySelector('select[data-step-tracking]');
+      step.trackingMode = checkedTracking?.value ?? legacyTracking?.value ?? step.trackingMode;
       step.optional = row.querySelector('[data-step-optional]')?.checked ?? step.optional;
     });
   }
@@ -178,8 +185,14 @@ export function openCalendarRoutineEditor({ document, store, plan = null, kind =
       const id = target.value, checked = target.checked;
       capture(); switchChainToGraph();
       if (step) { if (checked) step.dependsOn.add(id); else step.dependsOn.delete(id); }
-      if (cyclic(steps) && step) { step.dependsOn.delete(id); dialog.showError('Эта связь создаёт цикл. Выбери другой шаг.'); }
-      render(step?.id, 'details summary'); return;
+      const hasCycle = cyclic(steps);
+      if (hasCycle && step) step.dependsOn.delete(id);
+      render(step?.id, 'details summary');
+      if (hasCycle) {
+        const field = [...body.querySelectorAll('[data-step-dependency]')].find(input => input.value === id);
+        showFieldError('Эта связь создаёт цикл. Выбери другой шаг.', field);
+      }
+      return;
     }
     if (target.matches('[data-step-tracking], [data-step-optional]')) {
       const row = target.closest('[data-routine-step]'), id = row?.dataset.routineStep;
@@ -223,19 +236,19 @@ export function openCalendarRoutineEditor({ document, store, plan = null, kind =
   dialog.form.addEventListener('submit', async () => {
     if (dialog.pending) return;
     capture();
-    if (!title.trim() || title.trim().length > 160) { dialog.showError('Название должно содержать от 1 до 160 символов.', body.querySelector('[data-routine-title]')); return; }
-    if (layout === 'multi' && (!steps.length || steps.length > 50)) { dialog.showError('Добавь от 1 до 50 шагов.', body.querySelector('[data-add-step]')); return; }
+    if (!title.trim() || title.trim().length > 160) { showFieldError('Название должно содержать от 1 до 160 символов.', body.querySelector('[data-routine-title]')); return; }
+    if (layout === 'multi' && (!steps.length || steps.length > 50)) { showFieldError('Добавь от 1 до 50 шагов.', body.querySelector('[data-add-step]')); return; }
     if (layout === 'multi') {
       const invalidStep = steps.find(step => !step.title.trim() || step.title.trim().length > 160);
       if (invalidStep) {
         const field = [...body.querySelectorAll('[data-routine-step]')].find(row => row.dataset.routineStep === invalidStep.id)?.querySelector('[data-step-title]');
-        dialog.showError('Заполни название шага: от 1 до 160 символов.', field); return;
+        showFieldError('Заполни название шага: от 1 до 160 символов.', field); return;
       }
     }
-    if (startsOn && endsOn && endsOn < startsOn) { dialog.showError('Конец курса не может быть раньше начала.', body.querySelector('[data-routine-ends]')); return; }
+    if (startsOn && endsOn && endsOn < startsOn) { showFieldError('Конец курса не может быть раньше начала.', body.querySelector('[data-routine-ends]')); return; }
     if (layout === 'multi' && cyclic(steps)) {
       const field = body.querySelector('[data-step-dependency]:checked') || body.querySelector('[data-step-dependency]');
-      dialog.showError('Проверь зависимости: шаги не должны образовывать цикл.', field); return;
+      showFieldError('Проверь зависимости: шаги не должны образовывать цикл.', field); return;
     }
     const savedMode = currentKind === 'rule' ? 'check' : layout === 'single' ? singleMode : mode;
     const graphSteps = steps.map(step => ({ title: step.title.trim(), dependsOn: [...step.dependsOn].map(id => steps.findIndex(candidate => candidate.id === id)).filter(index => index >= 0).sort((a, b) => a - b), trackingMode: step.trackingMode, optional: step.optional }));
