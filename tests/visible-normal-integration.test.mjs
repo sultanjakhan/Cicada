@@ -20,7 +20,7 @@ test('explicit injected review consumer remains separate and visible without ena
  assert.equal(x.host.querySelector('[data-tasks-filter="review"]').hidden,false);x.host.querySelector('[data-tasks-filter="review"]').click();assert.equal(x.host.querySelectorAll('li.ct-row').length,1);assert.equal(x.host.querySelector('[data-task-control="finish"]').disabled,true);stop();x.dom.window.close();
 });
 test('integrated source defaults review off and preserves native feature/profile guards unchanged',()=>{
- const workspace=readFileSync(new URL('../src/hanni/js/calendar-workspace.js',import.meta.url),'utf8');assert.match(workspace,/nativeReview = false/);assert.doesNotMatch(workspace,/mountRegistrySources/);assert.match(workspace,/mountDashboardAiWork/);const native=readFileSync(new URL('../src-tauri/src/native_result_review.rs',import.meta.url),'utf8');assert.match(native,/review_prototype_disabled/);assert.match(native,/local-result-review-prototype/);
+ const workspace=readFileSync(new URL('../src/hanni/js/calendar-workspace.js',import.meta.url),'utf8');assert.match(workspace,/nativeReview = false/);assert.doesNotMatch(workspace,/mountRegistrySources/);assert.doesNotMatch(workspace,/mountDashboardAiWork|data-calendar-ai-work|disposeAiWork/);const native=readFileSync(new URL('../src-tauri/src/native_result_review.rs',import.meta.url),'utf8');assert.match(native,/review_prototype_disabled/);assert.match(native,/local-result-review-prototype/);
 });
 
 test('readonly-only list preserves exact open identity and disables every mutation',async()=>{

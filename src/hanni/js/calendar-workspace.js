@@ -1,6 +1,4 @@
 import { createNativeResultReviewAdapter, prepareNativeResultReview } from './native-result-review-adapter.js';
-import { mountDashboardAiWork } from './dashboard-ai-work.js';
-import { readNativeTaskObservations, dashboardFromNativeTasks } from './native-task-observations.js';
 import { canRefreshHealthView, mayCommitHealthView, retryHealthViewRefresh, startHealthViewRefresh } from './health-view-refresh.js';
 import { S, invoke, tabLoaders, TAB_ICONS, loadTabSetting, IS_MOBILE } from './state.js';
 import { ICONS } from './icons.js';
@@ -34,7 +32,7 @@ import { showCalendarSettings } from './calendar-settings.js';
 import { openCalendarCreateMenu } from './calendar-create-menu.js';
 
 let disposeNow = null, disposeTable = null, disposePanel = null, disposeTasks = null;
-let disposeSourceOnboarding = null, disposeAiWork = null;
+let disposeSourceOnboarding = null;
 let disposeRecurring = null, goalPopup = null, tasksDialog = null;
 let disposeDayBanner = null, disposeInProgress = null, todayTaskSelection = null;
 let disposeNextAction = null, disposeTaskDetails = null, disposeRoutineChoices = null;
@@ -46,7 +44,7 @@ const tasksPaneState = { filter:'active', search:'', goal:'', sphere:'', page:0 
 // The Goals/Wishes choice survives pane switches within a session; it is not a stored preference.
 const goalsPaneState = { view:'goals' };
 let closeCreateMenu = null;
-function cleanupWorkspace() { disposeAiWork?.(); disposeAiWork=null; disposeSourceOnboarding?.(); disposeSourceOnboarding=null; workspaceRevision++; disposeNextAction?.(); disposeTaskDetails?.(); disposeRoutineChoices?.(); disposeNextAction = disposeTaskDetails = disposeRoutineChoices = null; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeRecurring?.(); disposeDayBanner?.(); disposeInProgress?.(); goalPopup?.dispose(); tasksDialog?.dispose(); disposeInProgress = null; disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; disposeRecurring = null; disposeDayBanner = null; goalPopup = null; tasksDialog = null; }
+function cleanupWorkspace() { disposeSourceOnboarding?.(); disposeSourceOnboarding=null; workspaceRevision++; disposeNextAction?.(); disposeTaskDetails?.(); disposeRoutineChoices?.(); disposeNextAction = disposeTaskDetails = disposeRoutineChoices = null; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeRecurring?.(); disposeDayBanner?.(); disposeInProgress?.(); goalPopup?.dispose(); tasksDialog?.dispose(); disposeInProgress = null; disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; disposeRecurring = null; disposeDayBanner = null; goalPopup = null; tasksDialog = null; }
 const nextActionPreferences = () => ({ enabled:preferences.recommendationsEnabled, includeTasks:preferences.recommendTasks, includeRoutines:preferences.recommendRoutines });
 const view = { period: 'day', mode: 'grid', date: views.iso(new Date()), firstDay:'mon' };
 let initialViewLoaded = false;
@@ -705,14 +703,9 @@ export async function loadCalendarWorkspace(el, { nativeReview = false } = {}) {
       pane.innerHTML = `<section class="calendar-today" aria-label="Сегодня">
         <div data-calendar-day-banner></div><div data-calendar-next-action></div>
         <div data-calendar-in-progress></div>
-      </section><div data-calendar-now-slot></div><div data-calendar-ai-work></div>`;
+      </section><div data-calendar-now-slot></div>`;
       pane.querySelector('[data-calendar-now-slot]').replaceWith(nowHost);
       nowHost.hidden = false;
-      const aiRevision=workspaceRevision;let aiNativeRows=[];
-      disposeAiWork=mountDashboardAiWork(pane.querySelector('[data-calendar-ai-work]'),{
-        read:async()=>{const all=await invoke('get_calendar_tasks',{includeCompleted:true});const native=all.filter(row=>row.source_type==='note'&&!row.readonly&&!row.archived);const observed=await readNativeTaskObservations(native,invoke,{readReview:readTaskReview});if(!observed.available)throw Error('AI observations unavailable');aiNativeRows=native;return dashboardFromNativeTasks(native,observed.contexts);},
-        onOpenTask:id=>{if(aiRevision!==workspaceRevision||!pane.isConnected)return;const row=aiNativeRows.find(row=>String(row.source_id)===id);if(row)void openNativeTask(row);},
-      });
       disposeDayBanner = mountCalendarDayBanner(pane.querySelector('[data-calendar-day-banner]'), {
         invoke,
         onOpenSettings:button => showCalendarSettings(button, {section:'next-action',recommendationsOnly:true,returnFocus:() => button.isConnected ? button.focus({preventScroll:true}) : disposeNextAction?.focus()}),
