@@ -14,6 +14,15 @@
 .task-details-icon { display: inline-flex; flex: 0 0 16px; width: 16px; height: 16px; color: currentColor; }
 .task-details-icon svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .task-details-goal:not([hidden]) { color: var(--text-secondary); font-size: 13px; }
+.task-details-route { display: grid; gap: 4px; padding: 10px 12px; border-left: 3px solid var(--border-default); background: var(--bg-card); color: var(--text-secondary); font-size: 13px; }
+.task-details-route[hidden] { display: none; }
+.task-details-route-title { color: var(--text-primary); }
+.task-details-route p { margin: 0; overflow-wrap: anywhere; }
+.task-details-route-hint { color: var(--text-muted); font-size: 12px; }
+.task-details-shared-controls:empty { display: none; }
+.task-details-shared-controls { display: grid; gap: 6px; border-top: 1px solid var(--border-default); padding-top: 12px; }
+.task-details-shared-controls button { justify-self: start; min-height: 36px; padding: 6px 10px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-page); color: var(--text-primary); font: inherit; cursor: pointer; }
+.task-details-shared-controls p { margin: 0; color: var(--text-secondary); font-size: 12px; overflow-wrap: anywhere; }
 .task-details-stage-row { display: grid; grid-template-columns: minmax(92px, auto) minmax(0, 1fr); align-items: center; gap: 12px; color: var(--text-secondary); font-size: 13px; }
 .task-details-stage-caption { display: inline-flex; align-items: center; gap: 7px; }
 .task-details-stage { box-sizing: border-box; width: 100%; min-width: 0; min-height: 44px; padding: 8px 10px; border: 1px solid var(--border-default); border-radius: 8px; color: var(--text-primary); background: var(--bg-page); font: inherit; }
