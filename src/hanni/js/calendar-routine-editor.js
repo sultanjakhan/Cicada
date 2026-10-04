@@ -189,7 +189,8 @@ export function openCalendarRoutineEditor({ document, store, plan = null, kind =
       if (hasCycle && step) step.dependsOn.delete(id);
       render(step?.id, 'details summary');
       if (hasCycle) {
-        const field = [...body.querySelectorAll('[data-step-dependency]')].find(input => input.value === id);
+        const row = [...body.querySelectorAll('[data-routine-step]')].find(item => item.dataset.routineStep === step?.id);
+        const field = [...(row?.querySelectorAll('[data-step-dependency]') || [])].find(input => input.value === id);
         showFieldError('Эта связь создаёт цикл. Выбери другой шаг.', field);
       }
       return;

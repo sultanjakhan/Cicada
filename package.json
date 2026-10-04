@@ -1,7 +1,7 @@
 {
   "name": "cicada",
-  "version": "0.4.7",
-  "cicadaBuildId": "20261004-agent-api.1",
+  "version": "0.4.8",
+  "cicadaBuildId": "20261004-design.1",
   "private": true,
   "type": "module",
   "scripts": {
