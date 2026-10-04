@@ -12,6 +12,7 @@
 #calendar-content .calendar-tasks .ct-run,
 #calendar-content .calendar-mvp .calv-record-action,
 .calendar-mvp-dialog button,
+.calendar-focus__tools button,
 .calendar-development .dev-stage-actions > summary {
   background: transparent;
   border-color: transparent;
@@ -26,12 +27,14 @@
   text-underline-offset: var(--ui-action-underline-offset);
 }
 #calendar-content .calendar-mvp .calv-record-action:is(:hover, :focus-visible):not(:disabled),
+.calendar-focus__tools button:is(:hover, :focus-visible):not(:disabled),
 .calendar-development .dev-stage-actions > summary:is(:hover, :focus-visible) {
   background: transparent;
   text-decoration: underline;
   text-underline-offset: var(--ui-action-underline-offset);
 }
-.calendar-development .dev-stage-actions > summary:focus-visible {
+.calendar-development .dev-stage-actions > summary:focus-visible,
+.calendar-focus__tools button:focus-visible {
   outline: 2px solid var(--ui-action-focus);
   outline-offset: 3px;
 }
