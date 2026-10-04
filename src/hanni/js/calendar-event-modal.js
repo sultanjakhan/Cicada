@@ -612,6 +612,31 @@ export async function showEventModal(eventId = null, initialDate = null, options
     sel.innerHTML = tmp.firstElementChild.innerHTML;
     sel.dataset.prev = sel.value;
   };
+  let categoryRefreshRevision = 0;
+  let categoryRefreshRequest = null, categoryRefreshFailed = false, categorySelection = null;
+  const refreshCategories = (selection) => {
+    const revision = ++categoryRefreshRevision;
+    categorySelection = selection;
+    categoryRefreshRequest = (async () => {
+      try {
+        const fresh = await loadCategories(true);
+        if (!overlay.isConnected || revision !== categoryRefreshRevision) return false;
+        if (!fresh.some(category => category.name === 'general')) {
+          categoryRefreshFailed = true;
+          showError('Не удалось обновить категории. Данные остались в форме. Повтори сохранение, чтобы загрузить категории ещё раз.');
+          return false;
+        }
+        cats = fresh;
+        refreshCatOptions(selection(fresh));
+        if (categoryRefreshFailed) showError('');
+        categoryRefreshFailed = false;
+        return true;
+      } finally {
+        if (revision === categoryRefreshRevision) categoryRefreshRequest = null;
+      }
+    })();
+    return categoryRefreshRequest;
+  };
   const catSel = overlay.querySelector('#evm-cat');
   if (catSel) catSel.dataset.prev = catSel.value;
   catSel?.addEventListener('change', (e) => {
@@ -619,16 +644,12 @@ export async function showEventModal(eventId = null, initialDate = null, options
     const prev = e.target.dataset.prev || 'general';
     if (v === CAT_ACTION_NEW) {
       e.target.value = prev;
-      showAddCategory(async (newName) => {
-        cats = await loadCategories(true);
-        refreshCatOptions(newName);
-      });
+      showAddCategory(newName => refreshCategories(() => newName));
     } else if (v === CAT_ACTION_MANAGE) {
       e.target.value = prev;
-      showCategoryManager(async () => {
-        cats = await loadCategories(true);
-        refreshCatOptions(prev);
-      });
+      const categoryId = cats.find(category => category.name === prev)?.id;
+      showCategoryManager(() => refreshCategories(fresh => categoryId == null
+        ? prev : fresh.find(category => category.id === categoryId)?.name || 'general'));
     } else {
       e.target.dataset.prev = v;
     }
@@ -715,6 +736,14 @@ export async function showEventModal(eventId = null, initialDate = null, options
         changed = true; overlay.remove(); notifyChange();
       } catch (error) { setPending(false); showError('Не удалось сохранить задачу. Введённые данные сохранены в форме: ' + error); }
       return;
+    }
+    if (categoryRefreshRequest || categoryRefreshFailed) {
+      setPending(true);
+      try {
+        while (categoryRefreshRequest) await categoryRefreshRequest;
+        if (categoryRefreshFailed) await refreshCategories(categorySelection);
+      } finally { setPending(false); }
+      if (!overlay.isConnected || options.isCurrent?.() === false || categoryRefreshFailed) return;
     }
     const now = startNow ? localNowParts() : null;
     const date = now?.date || dateInput.value;
