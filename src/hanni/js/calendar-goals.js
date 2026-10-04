@@ -31,10 +31,10 @@ export function calendarGoalForest(goals) {
     else parent.children.push(item);
   }
   const seen = new Set();
-  const visit = (item, depth = 0, out = [], ancestorIds = [], path = []) => {
+  const visit = (item, depth = 0, out = [], ancestorIds = [], path = [], rootId = String(item.goal.id)) => {
     if (seen.has(String(item.goal.id))) return out;
-    seen.add(String(item.goal.id)); out.push({ ...item, depth, ancestorIds, path: [...path, item.goal.title || 'Без названия'] });
-    item.children.forEach(child => visit(child, depth + 1, out, [...ancestorIds, String(item.goal.id)], [...path, item.goal.title || 'Без названия'])); return out;
+    seen.add(String(item.goal.id)); out.push({ ...item, depth, rootId, ancestorIds, path: [...path, item.goal.title || 'Без названия'] });
+    item.children.forEach(child => visit(child, depth + 1, out, [...ancestorIds, String(item.goal.id)], [...path, item.goal.title || 'Без названия'], rootId)); return out;
   };
   const out = roots.flatMap(item => visit(item));
   for (const item of byId.values()) visit(item, 0, out);
@@ -80,7 +80,8 @@ export function openCalendarGoalEditor({ document, invoke, goal = null, parent =
   fields.description.value = goal?.description || draft?.description || ''; fields.criteria.value = goal?.criteria || '';
   fields.target_value.value = goal?.target_value > 0 ? goal.target_value : draft?.targetValue > 0 ? draft.targetValue : 1; fields.unit.value = goal?.unit || (!goal && draft?.unit) || '';
   fields.current_value.value = goal?.current_value ?? '';
-  fields.numeric_progress.checked = fields.goal_kind.value === 'daily_norm' || !!(goal && (goal.unit || Number(goal.target_value) !== 1 || Number(goal.current_value) > 0)) || (!goal && draft?.targetValue > 0);
+  const legacyNumeric = !!(goal && (goal.unit || Number(goal.target_value) !== 1 || Number(goal.current_value) > 0));
+  fields.numeric_progress.checked = fields.goal_kind.value === 'daily_norm' || (goal ? (goal.numeric_progress ?? legacyNumeric) : !!(draft?.targetValue > 0));
   const parentSelect = fields.parent_goal_id; const blocked = new Set([String(goal?.id || '')]);
   let changed = true; while (changed) { changed = false; goals.forEach(item => { if (blocked.has(String(item.parent_goal_id)) && !blocked.has(String(item.id))) { blocked.add(String(item.id)); changed = true; } }); }
   goals.filter(item => item.goal_kind === 'goal' && !blocked.has(String(item.id))).forEach(item => parentSelect.add(new window.Option(calendarGoalPath(goals, item).join(' → '), String(item.id))));
@@ -112,7 +113,7 @@ export function openCalendarGoalEditor({ document, invoke, goal = null, parent =
     if (currentValue != null && (!Number.isFinite(currentValue) || currentValue < 0)) { editor.showError('Укажи неотрицательный прогресс или очисти поле.', fields.current_value); return; }
     creating = true; onSavingChange?.(true); editor.setPending(true);
     try {
-      const id = await invoke('save_calendar_goal', { id: goal?.id || null, title, targetValue, unit: numeric ? fields.unit.value.trim() : (goal?.unit || ''), deadline, goalKind: fields.goal_kind.value || null, description: fields.description.value.trim(), criteria: fields.criteria.value.trim(), parentGoalId: parentSelect.value ? String(parentSelect.value) : null, clearParent: !!goal?.parent_goal_id && !parentSelect.value, currentValue });
+      const id = await invoke('save_calendar_goal', { id: goal?.id || null, title, targetValue, unit: numeric ? fields.unit.value.trim() : (goal?.unit || ''), deadline, goalKind: fields.goal_kind.value || null, description: fields.description.value.trim(), criteria: fields.criteria.value.trim(), parentGoalId: parentSelect.value ? String(parentSelect.value) : null, clearParent: !!goal?.parent_goal_id && !parentSelect.value, currentValue, numericProgress: numeric });
       // Saving succeeded. Close before rereading: a failed refresh must not offer Create again.
       editor.setPending(false); editor.close();
       window.dispatchEvent(new window.Event('task-state-changed'));
@@ -187,6 +188,9 @@ export async function mountCalendarGoals(element, dependencies = {}) {
     if (goal.goal_kind === 'goal') {
       actions.push({ id: 'task', label: 'Добавить задачу', dialog: true, run: () => dependencies.onCreateTask?.({ goalId: goal.id, title: goal.title, path: path.join(' → ') }) });
       actions.push({ id: 'subgoal', label: 'Подцель', dialog: true, run: restore => openCreation(null, goal, { returnFocus: restore }) });
+      if (goal.status !== 'achieved' && String(goal.id) !== String(selectedId) && dependencies.onSelectGoal) {
+        actions.push({ id: 'select', label: 'Сделать главной', run: () => selectGoal(goal.id) });
+      }
     }
     actions.push({ id: 'edit', label: 'Редактировать', dialog: true, run: restore => openCreation(goal, null, { returnFocus: restore }) });
     actions.push({ id: 'delete', label: 'Удалить', dialog: true, run: restore => openDeletion(goal, restore) });
@@ -215,6 +219,9 @@ export async function mountCalendarGoals(element, dependencies = {}) {
   function renderCards() {
     list.innerHTML = '';
     const longTerm = calendarGoalForest(goals.filter(goal => goal.goal_kind === 'goal'));
+    const longTermActive = [], longTermAchieved = [];
+    const rootStatuses = new Map(longTerm.filter(row => row.depth === 0).map(row => [String(row.rootId), row.goal.status === 'achieved' ? 'achieved' : 'active']));
+    longTerm.forEach(row => (rootStatuses.get(String(row.rootId)) === 'achieved' ? longTermAchieved : longTermActive).push(row));
     const daily = goals.filter(goal => goal.goal_kind === 'daily_norm');
     const unknown = goals.filter(goal => goal.goal_kind !== 'goal' && goal.goal_kind !== 'daily_norm');
     if (!goals.length) { list.innerHTML = '<div class="cp-empty"><h3>Начни с того, что важно тебе</h3><p>Можно сохранить идею без срока и без готового плана.</p></div>'; return; }
@@ -223,10 +230,10 @@ export async function mountCalendarGoals(element, dependencies = {}) {
       rows.forEach(row => {
         const goal = row.goal || row, depth = row.depth || 0, id = String(goal.id);
         if (row.ancestorIds?.some(ancestor => collapsedGoalIds.has(ancestor))) return;
-        const selected = goal.goal_kind === 'goal' && id === selectedId, meta = rowMeta(goal, id);
+        const selected = goal.goal_kind === 'goal' && id === selectedId, achieved = goal.status === 'achieved', meta = rowMeta(goal, id);
         const description = String(goal.description || '').split('\n').find(line => line.trim())?.trim() || '';
         const card = document.createElement('article');
-        card.className = `cp-goal-row${selected ? ' is-primary' : ''}${depth ? ' is-subgoal' : ''}`; card.style.setProperty('--goal-depth', String(depth));
+        card.className = `cp-goal-row${selected ? ' is-primary' : ''}${depth ? ' is-subgoal' : ''}${achieved ? ' is-achieved' : ''}`; card.style.setProperty('--goal-depth', String(depth));
         card.dataset.goalId = id; card.dataset.contextRecord = id;
         const lead = document.createElement('span'); lead.className = 'cp-goal-row__lead';
         if (row.children?.length) {
@@ -238,14 +245,9 @@ export async function mountCalendarGoals(element, dependencies = {}) {
           lead.append(collapse);
         }
         const open = document.createElement('button'); open.type = 'button'; open.className = 'cp-goal-row__open'; open.dataset.goalOpen = id; open.setAttribute('aria-haspopup', 'dialog');
-        open.innerHTML = `<span class="cp-goal-row__line"><span class="cp-goal-row__title">${escapeHtml(goal.title || 'Без названия')}</span>${selected ? '<span class="cp-goal-row__badge">Главная</span>' : ''}</span>${description ? `<span class="cp-goal-row__desc">${escapeHtml(description)}</span>` : ''}${meta.length ? `<span class="cp-goal-row__meta">${meta.map(escapeHtml).join(' · ')}</span>` : ''}`;
+        open.innerHTML = `<span class="cp-goal-row__line"><span class="cp-goal-row__title">${escapeHtml(goal.title || 'Без названия')}</span>${selected ? '<span class="cp-goal-row__badge">Главная</span>' : ''}${achieved ? '<span class="cp-goal-row__status">Достигнута</span>' : ''}</span>${description ? `<span class="cp-goal-row__desc">${escapeHtml(description)}</span>` : ''}${meta.length ? `<span class="cp-goal-row__meta">${meta.map(escapeHtml).join(' · ')}</span>` : ''}`;
         open.onclick = () => openGoal(goal);
         const tools = document.createElement('span'); tools.className = 'cp-goal-row__tools';
-        if (!selected && goal.goal_kind === 'goal' && dependencies.onSelectGoal) {
-          const select = document.createElement('button'); select.type = 'button'; select.className = 'cp-goal-row__select'; select.dataset.select = id; select.textContent = 'Сделать главной'; select.disabled = busy || !!active;
-          select.setAttribute('aria-label', `Сделать главной: ${goal.title || 'Без названия'}`);
-          select.onclick = () => selectGoal(id); tools.append(select);
-        }
         const more = document.createElement('button'); more.type = 'button'; more.className = 'cp-goal-row__more'; more.textContent = '⋯';
         more.dataset.recordMenu = ''; more.dataset.goalMenu = id; more.setAttribute('aria-label', `Действия: ${goal.title || 'Без названия'}`); more.setAttribute('aria-haspopup', 'menu'); more.setAttribute('aria-expanded', 'false');
         tools.append(more);
@@ -254,14 +256,15 @@ export async function mountCalendarGoals(element, dependencies = {}) {
         list.append(card);
       });
     };
-    if (longTerm.length) renderGroup('Долгосрочные цели', longTerm);
+    if (longTermActive.length) renderGroup('Долгосрочные цели', longTermActive);
+    if (longTermAchieved.length) renderGroup('Достигнутые цели', longTermAchieved);
     if (daily.length) renderGroup('Ежедневные нормы', daily);
     if (unknown.length) renderGroup('Без типа — выбери, как учитывать', unknown);
   }
   async function refresh(success = '', canCommit = null) {
     if (canCommit && !canCommit()) return;
     const rev = ++revision; message.textContent = 'Загружаем цели…'; list.setAttribute('aria-busy', 'true'); element.querySelector('[data-retry]').hidden = true;
-    const focused = document.activeElement?.closest?.('[data-goal-collapse], [data-goal-open], [data-goal-menu], [data-select]');
+    const focused = document.activeElement?.closest?.('[data-goal-collapse], [data-goal-open], [data-goal-menu]');
     const focusSelector = focused && list.contains(focused) ? Object.entries(focused.dataset).map(([key, value]) => `[data-${key.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`)}="${value}"]`).join('') : '';
     try {
       const [loadedGoals, raw, block, developmentRaw] = await Promise.all([api('get_goals', { tabName: null }), api('get_ui_state', { key: 'calendar_now_v1' }), api('get_active_block'), api('get_ui_state', { key: DEVELOPMENT_STATE_KEY }).catch(() => null)]);
@@ -269,7 +272,7 @@ export async function mountCalendarGoals(element, dependencies = {}) {
       const saved = raw ? JSON.parse(raw) : null;
       if (saved && saved.version !== 1) throw new Error('Unsupported calendar state');
       goals = loadedGoals; goalsLoaded = true; selectedId = saved?.goalId == null ? null : String(saved.goalId); active = block; development = readDevelopmentState(developmentRaw);
-      renderCards(); focusSelector && list.querySelector(focusSelector)?.focus(); message.textContent = active ? 'Задача сейчас выполняется. Поставь её на паузу, чтобы сменить главную цель.' : success;
+      renderCards(); focusSelector && list.querySelector(focusSelector)?.focus(); message.textContent = active ? 'Задача сейчас выполняется. Главную цель можно сменить.' : success;
       wishes?.render();
     } catch {
       if (disposed || rev !== revision || (canCommit && !canCommit())) return;
@@ -282,8 +285,6 @@ export async function mountCalendarGoals(element, dependencies = {}) {
     busy = true; renderCards(); message.textContent = 'Выбираем главную цель…';
     let selectionError = '';
     try {
-      // Recheck at the action boundary; the callback performs the serialized final check.
-      if (await api('get_active_block')) { await refresh(); return; }
       try { await dependencies.onSelectGoal(id); }
       catch (error) { selectionError = typeof error?.message === 'string' ? error.message : ''; throw error; }
       if (!disposed) await refresh('Главная цель выбрана. Задача начнётся только после нажатия «Начать».');
