@@ -1117,6 +1117,9 @@ pub fn get_calendar_records(
 ) -> Result<Vec<Value>, String> {
     validate_date(&start)?;
     validate_date(&end)?;
+    if start > end {
+        return Err(fail("calendar range start must not be after end"));
+    }
     let conn = lock(&state)?;
     let mut rows = calendar_list(
         &conn,

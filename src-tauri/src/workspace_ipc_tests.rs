@@ -2418,6 +2418,24 @@ fn event_form_accepts_all_day_and_cross_midnight_and_rejects_stale_updates() {
 }
 
 #[test]
+fn calendar_records_reject_an_inverted_date_range() {
+    let (_app, view) = fixture();
+    call(
+        &view,
+        "save_calendar_task",
+        json!({"id":null,"title":"Undated task","dueDate":null,"estimateMinutes":null,"goalId":null,"expectedVersion":null}),
+    )
+    .unwrap();
+    let error = call(
+        &view,
+        "get_calendar_records",
+        json!({"start":"2026-09-24","end":"2026-09-23"}),
+    )
+    .unwrap_err();
+    assert_eq!(error, json!("calendar range start must not be after end"));
+}
+
+#[test]
 fn atomic_day_and_snapshot_cas_use_the_real_ipc_contract() {
     let (_app, webview) = fixture();
     let first = call(&webview, "start_calendar_day", json!({})).unwrap();
