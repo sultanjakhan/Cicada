@@ -52,7 +52,7 @@ def validate_package(package: Path) -> tuple[dict, dict, dict]:
     mcp = read_json(package / "mcp.json")
     if SERVER not in mcp.get("mcpServers", {}):
         raise ValueError("portable MCP server entry is missing")
-    compat = read_json(package / ".mcp.json")
+    compat = read_json(package / "mcp.json")
     if SERVER not in compat.get("mcpServers", {}):
         raise ValueError("compatibility MCP server entry is missing")
     if "${" in json.dumps(mcp) or "${" in json.dumps(compat):
@@ -73,13 +73,15 @@ def materialize(package: Path, destination: Path, runtime_root: Path, helper_pat
     out = stage / package.name
     if manual:
         compat_path = out / ".mcp.json"
-        compat = read_json(compat_path)
+        compat = read_json(out / "mcp.json")
         compat["mcpServers"][SERVER]["enabled_tools"] = ["cicada_task_command"]
     else:
         compat_path = out / ".mcp.json"
-        compat = read_json(compat_path)
+        compat = read_json(out / "mcp.json")
         compat["mcpServers"][SERVER].pop("enabled_tools", None)
     server = compat["mcpServers"][SERVER]
+    server["enabled"] = True
+    server.pop("default_tools_approval_mode", None)
     # The installed compatibility format runs with the chat cwd, not the
     # plugin root. Resolve the launcher and cwd in the cached machine copy;
     # the distributed package remains portable and contains no user path.

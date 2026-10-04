@@ -62,6 +62,7 @@ def main():
         compat = json.loads((cached / ".mcp.json").read_text(encoding="utf-8"))
         assert compat["mcpServers"]["cicada-local-task-command"]["enabled_tools"] == ["cicada_task_command"]
         installed_server = compat["mcpServers"]["cicada-local-task-command"]
+        assert installed_server["enabled"] is True
         assert Path(installed_server["cwd"]) == cached.resolve()
         assert Path(installed_server["args"][2]) == (cached / "scripts" / "cicada_mcp.py").resolve()
         assert Path(installed_server["args"][2]).is_file()

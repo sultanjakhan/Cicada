@@ -11,11 +11,15 @@ sys.path.insert(0, str(ROOT / "vendor"))
 import agent_mcp
 
 
-def run(config: Path, payload: str):
+def run(config: Path, payload: str, via_arg=False):
     env = os.environ.copy()
-    env["CICADA_LOCAL_CONFIG"] = str(config)
+    command = [sys.executable, str(WRAPPER)]
+    if via_arg:
+        command += ["--config", str(config)]
+    else:
+        env["CICADA_LOCAL_CONFIG"] = str(config)
     return subprocess.run(
-        [sys.executable, str(WRAPPER)], input=payload, text=True,
+        command, input=payload, text=True,
         capture_output=True, env=env, cwd=ROOT
     )
 
@@ -24,13 +28,16 @@ def main():
     manifest = json.loads((ROOT / "plugin.json").read_text(encoding="utf-8"))
     mcp = json.loads((ROOT / "mcp.json").read_text(encoding="utf-8"))
     compat = json.loads((ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
-    compat_mcp = json.loads((ROOT / ".mcp.json").read_text(encoding="utf-8"))
     marketplace = json.loads((ROOT / "marketplace.json").read_text(encoding="utf-8"))
     assert manifest["version"] == "0.4.7"
     assert "hooks" not in manifest.get("extensions", {}).get("com.openai", {})
     assert mcp["mcpServers"]["cicada-local-task-command"]["type"] == "stdio"
-    assert compat["mcpServers"] == "./.mcp.json"
-    assert "cicada-local-task-command" in compat_mcp["mcpServers"]
+    assert compat["mcpServers"] == "./mcp.json"
+    assert not (ROOT / ".mcp.json").exists(), "private compatibility config must not ship"
+    server = mcp["mcpServers"]["cicada-local-task-command"]
+    assert server.get("enabled", True) is not False
+    assert server["cwd"] == "."
+    assert server["args"][0] == "./scripts/cicada_mcp.py"
     assert marketplace["plugins"][0]["source"]["path"] == "./"
     command_tool = next(t for t in agent_mcp.tools_for("cicada") if t["name"] == "cicada_task_command")
     assert command_tool["inputSchema"]["properties"]["command"]["enum"] == agent_mcp.TASK_COMMANDS
@@ -81,7 +88,7 @@ def main():
             json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}),
             "",
         ])
-        result = run(config, payload)
+        result = run(config, payload, via_arg=True)
         assert result.returncode == 0, result.stderr
         lines = [json.loads(line) for line in result.stdout.splitlines()]
         assert lines[0]["result"]["serverInfo"]["name"] == "cicada-local-authority"
