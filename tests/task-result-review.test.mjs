@@ -29,7 +29,7 @@ test('accept binds exact task/result revisions and shows persisted accepted hist
  const x=fixture(),stop=x.mount();await tick();
  assert.match(x.doc.body.textContent,/ревизия 2/);x.button('Принять').click();await tick();
  assert.deepEqual(x.calls[0],{task_id:'fixture-task',expected_revision:3,result_version:2,operation_id:'fixture-op-1',action:'accept'});
- assert.equal(x.projection().reviewState,'accepted');assert.match(x.doc.querySelector('ol').textContent,/accept.*2/);
+ assert.equal(x.projection().reviewState,'accepted');assert.match(x.doc.querySelector('ol').textContent,/Принят.*2/);
  assert.equal(x.button('Доработать').disabled,true);stop();x.dom.window.close();
 });
 test('rework requires comment and distinguishes queued, awaiting dispatch and running',async()=>{

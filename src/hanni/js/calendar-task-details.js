@@ -85,6 +85,10 @@ export function openCalendarTaskDetails(record, dependencies) {
   workflowStop = mountTaskWorkflow(fields, { record: current, invoke, review:dependencies.review||null, onState:(state,failed)=>{confirmedWorkflow=state;workflowReadError=failed;syncSummary();}, onClean: () => {
     if (['Сохрани шаг или результат перед закрытием.', 'Дождись сохранения шагов.'].includes(api.error.textContent)) api.showError('');
   } });
+  if (dependencies.review) {
+    const resultReview = fields.querySelector('.task-result-review');
+    if (resultReview) fields.prepend(resultReview);
+  }
 
   const actions = modal.querySelector('.calendar-editor-actions');
   actions.replaceChildren();
@@ -216,7 +220,8 @@ export function openCalendarTaskDetails(record, dependencies) {
       if (live() && request === loadRevision) {
         setLoading(false);
         if (!loadFailed) {
-          if (stageState && !stageRow.hidden) stageSelect.focus({ preventScroll: true });
+          if (dependencies.review) headingContext.focus({ preventScroll: true });
+          else if (stageState && !stageRow.hidden) stageSelect.focus({ preventScroll: true });
           else execute.focus({ preventScroll: true });
         }
       }
@@ -318,7 +323,7 @@ export function openCalendarTaskDetails(record, dependencies) {
     } finally { if (live()) { setPending(false); if (loadFailed) { edit.disabled = true; execute.disabled = true; stageSelect.disabled = true; } } }
   });
 
-  api.open(stageRow.hidden ? execute : stageSelect);
+  api.open(dependencies.review ? headingContext : stageRow.hidden ? execute : stageSelect);
   void loadData();
   const dispose = () => { editHandoff?.cancel(); if (!disposed) api.dispose(); };
   dispose.modal = modal;

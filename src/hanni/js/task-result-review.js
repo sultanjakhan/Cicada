@@ -5,6 +5,7 @@ export function mountTaskResultReview(host, { taskId, adapter, drafts, operation
   const document = host.ownerDocument;
   const section = document.createElement('section'); section.className = 'task-result-review';
   section.setAttribute('aria-label', 'Проверка результата ИИ');
+  const title = document.createElement('h3'); title.textContent = 'Результат ИИ';
   const revision = document.createElement('p');
   const result = document.createElement('pre');
   const state = document.createElement('p');
@@ -27,7 +28,10 @@ export function mountTaskResultReview(host, { taskId, adapter, drafts, operation
   const refresh = button('Обновить результат', () => void load());
   const retry = button('Повторить отправку', () => void send(unresolved)); retry.hidden = true;
   const cancel = button('Отменить решение', () => { if (!live() || busy || unresolved || (snapshot && snapshot.reviewState !== 'awaiting_review')) return; remember(); status.textContent = 'Решение не отправлено. Замечание осталось в черновике.'; });
-  section.append(revision, result, state, label, accept, rework, cancel, refresh, retry, status, history); host.append(section);
+  const actions = document.createElement('div'); actions.className = 'task-result-review-actions';
+  accept.className = 'btn btn-primary'; rework.className = 'btn btn-secondary';
+  actions.append(accept, rework, cancel, refresh, retry);
+  section.append(title, revision, result, state, label, actions, status, history); host.append(section);
   function controls() {
     section.setAttribute('aria-busy', String(busy));
     const actionable = snapshot?.reviewState === 'awaiting_review' && !unresolved;
@@ -45,7 +49,8 @@ export function mountTaskResultReview(host, { taskId, adapter, drafts, operation
     history.replaceChildren();
     for (const entry of value.history) {
       const row = document.createElement('li');
-      row.textContent = `${entry.action} · результат ${entry.resultVersion}${entry.comment ? ` · ${entry.comment}` : ''}`; history.append(row);
+      const action = {submit_result:'Передан на приёмку',accept:'Принят',rework:'На доработку',acknowledge:'Доработка начата'}[entry.action] || 'Изменение';
+      row.textContent = `${action} · результат ${entry.resultVersion}${entry.comment ? ` · ${entry.comment}` : ''}`; history.append(row);
     }
   }
   async function load() {
