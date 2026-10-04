@@ -116,7 +116,7 @@ test('bundled shell boots six workspace panes with only Calendar in the sidebar'
   assert.ok(calls.some(call => call.command === 'get_calendar_records'));
   assert.ok(calls.some(call => call.command === 'get_notes'));
   await click('[data-pane="table"]');
-  assert.deepEqual([...w.document.querySelectorAll('.calendar-workspace .uni-header-action')].map(el => el.textContent.trim()), ['Создать', 'Начать']);
+  assert.deepEqual([...w.document.querySelectorAll('.calendar-workspace .uni-header-action')].filter(el=>!el.hidden).map(el => el.textContent.trim()), ['Создать', 'Начать']);
   assert.equal(w.document.querySelector('[data-calendar-create]').getAttribute('aria-label'), 'Создать');
   assert.equal(w.document.querySelector('[data-mode="list"]'), null);
   assert.deepEqual(errors, []);
@@ -400,7 +400,8 @@ test('one persistent action below the Calendar heading opens the shared Task/Eve
   const trigger = w.document.querySelector('[data-calendar-create]');
   assert.ok(trigger.closest('.uni-header-actions'));
   assert.equal(trigger.closest('.uni-header-actions').previousElementSibling.className, 'uni-header');
-  assert.equal(trigger.closest('.uni-header-actions').nextElementSibling.className, 'uni-navigation');
+  assert.equal(trigger.closest('.uni-header-actions').nextElementSibling.className, 'calendar-focus');
+  assert.equal(w.document.querySelector('.calendar-focus').nextElementSibling.className, 'uni-navigation');
   assert.equal(w.document.querySelector('#tab-bar [data-calendar-create]'), null);
   assert.equal(w.document.querySelector('.uni-header-desc'), null);
   assert.equal(trigger.closest('.uni-content'), null);

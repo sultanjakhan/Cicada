@@ -17,6 +17,7 @@ test('routine library preserves read errors through search and recovers without 
   const dom=new JSDOM('<main></main>',{url:'https://fixture.invalid'}),host=dom.window.document.querySelector('main');let failed=false;
   const invoke=async()=>{if(failed)throw Error('Read unavailable');return JSON.stringify(state);};
   const dispose=mountCalendarRecurring(host,{invoke,library:true,now:()=>new Date(`${today}T12:00:00`)});t.after(()=>{dispose();dom.window.close();});
+  assert.equal(host.querySelector('[data-library-empty]'),null,'loading must not claim that no routines exist');
   const flush=async()=>{await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));};
   await flush();const row=host.querySelector('[data-library-id]');failed=true;
   dom.window.dispatchEvent(new dom.window.CustomEvent('hanni:calendar-refresh'));await flush();
@@ -27,6 +28,34 @@ test('routine library preserves read errors through search and recovers without 
   failed=false;host.querySelector('[data-recurring-retry]').click();await flush();
   assert.equal(host.querySelector('[data-recurring-error]').hidden,true);
   assert.equal(host.querySelector('[data-library-id]'),row);
+});
+
+test('empty routine library explains its purpose without search, counts, or a duplicate create button',async t=>{
+  const dom=new JSDOM('<main></main>',{url:'https://fixture.invalid'}),host=dom.window.document.querySelector('main');
+  let raw=JSON.stringify({version:1,plans:[],days:{}});
+  const invoke=async(command,args)=>command==='get_ui_state'?raw:command==='set_ui_state'?(raw=args.value,null):null;
+  const dispose=mountCalendarRecurring(host,{invoke,now:()=>new Date(`${today}T12:00:00`),library:true});t.after(()=>{dispose();dom.window.close();});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(host.querySelector('[data-routine-search]').closest('[data-library-controls]').hidden,true);
+  assert.equal(host.querySelector('[data-recurring-count]').hidden,true);
+  assert.equal(host.querySelector('[data-library-no-results]').hidden,true);
+  const empty=host.querySelector('[data-library-empty]');
+  assert.ok(empty);
+  assert.match(empty.textContent,/Рутин пока нет/);
+  assert.match(empty.textContent,/Создай их через общий «Создать» → «Рутина»/);
+  assert.equal(host.querySelector('[data-recurring-add]'),null);
+  raw=JSON.stringify({...JSON.parse(raw),plans:[plan]});
+  dom.window.dispatchEvent(new dom.window.CustomEvent('hanni:calendar-refresh'));
+  await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(host.querySelector('[data-library-empty]'),null);
+  assert.equal(host.querySelector('[data-library-controls]').hidden,false);
+  assert.equal(host.querySelector('[data-recurring-count]').hidden,false);
+  assert.equal(host.querySelectorAll('[data-library-title]').length,1);
+  const search=host.querySelector('[data-routine-search]');
+  search.value='нет такого';search.dispatchEvent(new dom.window.Event('input',{bubbles:true}));
+  assert.equal(host.querySelector('[data-library-no-results]').hidden,false);
+  search.value='';search.dispatchEvent(new dom.window.Event('input',{bubbles:true}));
+  assert.equal(host.querySelector('[data-library-no-results]').hidden,true);
 });
 
 test('open recurring editor keeps its draft when the same plan was changed remotely', async t => {

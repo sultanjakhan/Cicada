@@ -125,7 +125,7 @@ export function mountCalendarNextAction(element, dependencies) {
   const document = element.ownerDocument, window = document.defaultView;
   const clock = dependencies.clock || (() => new Date());
   const store = createRecurringStore(invoke, { now: clock });
-  let preferences = normalizedPreferences(dependencies.preferences), disposed = false, revision = 0, busy = false, preferencesChangedWhileBusy = false, snapshot = null, recommendation = null, currentTaskKey = '', focusedTaskKey = '', renderedKey = '', error = '', feedback = '', lastDay = '', focusTarget = null, refreshQueued = false;
+  let preferences = normalizedPreferences(dependencies.preferences), disposed = false, revision = 0, busy = false, preferencesChangedWhileBusy = false, snapshot = null, recommendation = null, currentTaskKey = dependencies.initialTask ? keyOfTask(dependencies.initialTask) : '', focusedTaskKey = '', renderedKey = '', error = '', feedback = '', lastDay = '', focusTarget = null, refreshQueued = false;
 
   element.classList.add('calendar-next-action');
   if (!dependencies.hideHeading) element.setAttribute('aria-labelledby', 'calendar-next-action-title');
@@ -175,7 +175,7 @@ export function mountCalendarNextAction(element, dependencies) {
     const hasWork = Boolean(selected?.type === 'task' && (selected.task?.has_work || Number(selected.task?.actual_seconds) > 0 || Number(selected.task?.actual_minutes) > 0));
     const compactRunning = Boolean(dependencies.compactRunning && selected?.type === 'task' && (selected.action === 'open' || hasWork) && focusedTaskKey === selected.key);
     element.dataset.running = String(!!compactRunning);
-    const signature = JSON.stringify([preferences, selected && [selected.key, selected.type, selected.title, selected.reason, selected.action, selected.context], compactRunning, Boolean(error), feedback, Boolean(snapshot), busy]);
+    const signature = JSON.stringify([preferences, selected && [selected.key, selected.type, selected.title, selected.reason, selected.action, selected.context], compactRunning, error, feedback, Boolean(snapshot), busy]);
     if (signature === renderedKey) {
       const retry = element.querySelector('[data-next-action-retry]'); if (retry) retry.disabled = busy;
       element.querySelectorAll('[data-next-action-action]').forEach(button => { button.disabled = busy; });

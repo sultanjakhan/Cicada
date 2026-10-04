@@ -237,11 +237,11 @@ export async function mountCalendarNotes(element, dependencies = {}) {
     if (canCommit && !canCommit()) return;
     const rev = ++revision; list.setAttribute('aria-busy', 'true'); message.textContent = 'Загружаем заметки…'; element.querySelector('[data-retry]').hidden = true;
     try {
-      const [currentNotes, recentNotes] = await Promise.all([api('get_notes', { filter: 'tab:calendar', search: null }), api('get_notes', { filter: null, search: null })]);
+      const recentNotes = await api('get_notes', { filter: null, search: null });
       if (disposed || rev !== revision || (canCommit && !canCommit())) return;
-      notes = [...new Map([...recentNotes, ...currentNotes].filter(isCalendarNote).map(note => [String(note.id), note])).values()];
+      notes = recentNotes.filter(isCalendarNote);
       notes.sort((a, b) => Number(b.pinned) - Number(a.pinned) || String(b.updated_at).localeCompare(String(a.updated_at)));
-      renderList(); message.textContent = [success, recentNotes.length >= 200 || currentNotes.length >= 200 ? 'Показаны последние заметки. Старые записи могут быть вне этого списка.' : ''].filter(Boolean).join(' ');
+      renderList(); message.textContent = success;
     } catch { if (!disposed && rev === revision) { message.textContent = 'Не удалось загрузить заметки. Это не означает, что они исчезли.'; element.querySelector('[data-retry]').hidden = false; } }
     finally { if (!disposed && rev === revision) list.removeAttribute('aria-busy'); }
   }

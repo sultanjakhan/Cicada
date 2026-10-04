@@ -271,7 +271,7 @@ export function mountCalendarInProgress(element, dependencies) {
       if (!row.running && (!row.lastBlock || `${block.end_time || block.start_time}` > `${row.lastBlock.end_time || row.lastBlock.start_time}`)) { row.lastBlock = block; row.completion_date = block.completion_date || block.date; }
     }
     const types = new Set([...entries.values()].map(row => row.source_type));
-    if (dependencies.singleSelection && selectedTaskKey) types.add('note');
+    if (dependencies.singleSelection && selectedTaskKey) types.add(selectedTaskKey.split(':')[0]);
     const [tasks, events, schedules, links, goals] = await Promise.all([
       types.has('note') ? invoke('get_calendar_tasks', {}) : [],
       types.has('event') ? invoke('get_all_events', {}) : [],
@@ -281,7 +281,7 @@ export function mountCalendarInProgress(element, dependencies) {
       types.size ? invoke('get_goals', { tabName: null }).catch(() => []) : [],
     ]);
     if (dependencies.singleSelection && selectedTaskKey && !entries.has(selectedTaskKey)) {
-      const selected = tasks.find(task => sourceKey(task) === selectedTaskKey);
+      const selected = [...tasks, ...schedules, ...events.map(event => ({ ...event, source_type:'event', source_id:String(event.id), status_extra:event.status }))].find(task => sourceKey(task) === selectedTaskKey);
       const work = Number(selected?.actual_seconds) || Number(selected?.actual_minutes) * 60 || 0;
       if (selected && !closedTask(selected) && (selected.has_work || work > 0)) {
         const row = entry(selected);
@@ -353,6 +353,7 @@ export function mountCalendarInProgress(element, dependencies) {
       const unchanged = !!rows && !failed && JSON.stringify(rows) === JSON.stringify(next);
       rows = next; failed = false;
       dependencies.onRowsChange?.(rows.map(row => row.key));
+      dependencies.onRowsSnapshot?.(rows);
       if (unchanged) { renderTimes(); return; }
     } catch {
       if (disposed || request !== revision) return;

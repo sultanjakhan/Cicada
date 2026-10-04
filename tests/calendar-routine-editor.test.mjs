@@ -141,3 +141,67 @@ test('multi to single to multi preserves fork, join, and forward-edge dependenci
   assert.equal(calls[0][0].steps[2].trackingMode, 'check');
   assert.equal(calls[0][0].steps[2].optional, true);
 });
+
+test('single action exposes the two tracking choices before advanced settings', async t => {
+  const { dialog, calls } = setup(t);
+  assert.deepEqual([...dialog.body.querySelectorAll('[data-routine-tracking]')].map(input => input.parentElement.textContent.trim()), ['Отметить', 'Учитывать время']);
+  assert.equal(dialog.body.querySelector('[data-routine-schedule][open]'), null);
+  assert.equal(dialog.body.querySelector('[data-routine-options][open]'), null);
+  dialog.body.querySelector('[data-routine-tracking][value="activity"]').click();
+  dialog.body.querySelector('[data-routine-title]').value = 'Занятие';
+  await submit(dialog);
+  assert.equal(calls[0][0].mode, 'activity');
+});
+
+test('filled schedule and step settings are visible through summaries and disclosures', t => {
+  const plan = { id: 'filled', kind: 'action', mode: 'graph', title: 'Утро', steps: [
+    { title: 'Вода', dependsOn: [], trackingMode: 'track', optional: false },
+    { title: 'Прогулка', dependsOn: [0], trackingMode: 'check', optional: true },
+  ], weekdays: [1, 3], startsOn: '2026-10-05', endsOn: '2026-10-31', time: '08:30', active: true, required: true };
+  const { dialog } = setup(t, plan);
+  assert.equal(dialog.body.querySelector('[data-routine-schedule]')?.open, true);
+  assert.match(dialog.body.querySelector('[data-routine-schedule] summary').textContent, /Пн, Ср/);
+  const step = [...dialog.body.querySelectorAll('[data-routine-step]')][1];
+  assert.equal(step.querySelector('[data-step-skip]')?.open, true);
+  assert.equal(step.querySelector('[data-step-dependencies]')?.open, true);
+  assert.match(step.querySelector('[data-step-dependencies] summary').textContent, /после 1 шага/);
+});
+
+test('invalid step title reveals and focuses the failing field', async t => {
+  const plan = { id: 'invalid-step', kind: 'action', mode: 'graph', title: 'Утро', steps: [
+    { title: '', dependsOn: [], trackingMode: 'track', optional: false },
+  ], weekdays: [0], startsOn: '', endsOn: '', time: '', active: true, required: true };
+  const { dialog, calls } = setup(t, plan);
+  await submit(dialog);
+  assert.equal(calls.length, 0);
+  assert.equal(dialog.body.querySelector('[data-step-title]').getAttribute('aria-invalid'), 'true');
+  assert.equal(dialog.modal.ownerDocument.activeElement, dialog.body.querySelector('[data-step-title]'));
+  assert.match(dialog.error.textContent, /название шага/i);
+});
+
+test('step tracking radios keep both choices through rerender and reorder', async t => {
+  const plan = { id: 'tracking', kind: 'action', mode: 'graph', title: 'План', steps: [
+    { title: 'Первый', dependsOn: [], trackingMode: 'track', optional: false },
+    { title: 'Второй', dependsOn: [], trackingMode: 'check', optional: false },
+  ], weekdays: [0], startsOn: '', endsOn: '', time: '', active: true, required: true };
+  const { dialog, calls } = setup(t, plan);
+  let first = [...dialog.body.querySelectorAll('[data-routine-step]')][0];
+  first.querySelector('[data-step-tracking][value="check"]').click();
+  let second = [...dialog.body.querySelectorAll('[data-routine-step]')].find(row => row.querySelector('[data-step-title]').value === 'Второй');
+  second.querySelector('[data-step-tracking][value="track"]').click();
+  first = [...dialog.body.querySelectorAll('[data-routine-step]')].find(row => row.querySelector('[data-step-title]').value === 'Первый');
+  first.querySelector('[data-move-step="down"]').click();
+  await submit(dialog);
+  assert.deepEqual(calls[0][0].steps.map(step => [step.title, step.trackingMode]), [['Второй', 'track'], ['Первый', 'check']]);
+});
+
+test('invalid date opens the schedule disclosure before focusing its field', async t => {
+  const plan = { id: 'invalid-date', kind: 'action', mode: 'check', title: 'План', steps: [], weekdays: [0], startsOn: '2026-10-20', endsOn: '2026-10-19', time: '', active: true, required: true };
+  const { dialog, calls } = setup(t, plan);
+  assert.equal(dialog.body.querySelector('[data-routine-schedule]').open, true);
+  dialog.body.querySelector('[data-routine-schedule]').open = false;
+  await submit(dialog);
+  assert.equal(calls.length, 0);
+  assert.equal(dialog.body.querySelector('[data-routine-schedule]').open, true);
+  assert.equal(dialog.modal.ownerDocument.activeElement, dialog.body.querySelector('[data-routine-ends]'));
+});

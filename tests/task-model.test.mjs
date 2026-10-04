@@ -161,6 +161,42 @@ test('Enter saves a task with its time, kind and sphere; an instant task skips t
   assert.deepEqual([second.dueDate, second.time, second.estimateMinutes, second.taskKind, second.sphere, second.process, second.stage, second.waiting], [null, '', 20, 'normal', 'personal', '', '', false], 'a new task is personal and has no process');
 });
 
+test('task optional details stay collapsed, save their values, and reveal estimate errors', async t => {
+  const x = useWindow(t, { save_calendar_task: 'new-task' });
+  const { showCalendarCreateModal } = await modal();
+  await showCalendarCreateModal('2026-09-24', {}); await settle();
+  assert.equal(x.q('.evm-planning').open, false);
+  assert.equal(x.q('.evm-task-options').open, false);
+  x.q('#evm-title').value = 'Согласовать макет';
+  x.q('#evm-date').value = '2026-09-26';
+  x.q('#evm-process').value = 'system-analysis';
+  x.q('#evm-process').dispatchEvent(new x.w.Event('change'));
+  x.q('#evm-form').requestSubmit(); await settle();
+  assert.deepEqual([x.saved('save_calendar_task')[0].dueDate, x.saved('save_calendar_task')[0].process], ['2026-09-26', 'system-analysis']);
+
+  await showCalendarCreateModal('2026-09-24', {}); await settle();
+  x.q('#evm-title').value = 'Оценить задачу'; x.q('#evm-task-estimate').value = '-1';
+  x.q('#evm-form').requestSubmit(); await settle();
+  assert.equal(x.q('.evm-task-options').open, true);
+  assert.equal(x.w.document.activeElement, x.q('#evm-task-estimate'));
+});
+
+test('switching task and event keeps the shared schedule and restores task details', async t => {
+  const x = useWindow(t);
+  const { showCalendarCreateModal } = await modal();
+  await showCalendarCreateModal('2026-09-24', {}); await settle();
+  x.q('#evm-date').value = '2026-09-26';
+  x.q('[data-editor-type="event"]').click();
+  assert.equal(x.q('.evm-planning').classList.contains('evm-event-layout'), true);
+  assert.equal(x.q('.evm-planning').open, true);
+  assert.equal(x.q('#evm-date').value, '2026-09-26');
+  assert.equal(x.q('.evm-planning').classList.contains('evm-event-layout'), true, 'event layout suppresses the task disclosure chrome');
+  assert.equal(x.shown('#evm-goal'), true);
+  x.q('[data-editor-type="task"]').click();
+  assert.equal(x.q('.evm-planning').classList.contains('evm-event-layout'), false);
+  assert.equal(x.q('#evm-date').value, '2026-09-26');
+});
+
 test('the built-in process keeps the owner order with «Анализ и модели» after «Требования»', () => {
   assert.deepEqual(TASK_STAGES.map(([id]) => id), ['understanding', 'requirements', 'analysis', 'description', 'agreement', 'decomposition', 'development', 'acceptance']);
   assert.equal(stageLabel('analysis'), 'Анализ и модели'); assert.equal(stageLabel('development'), 'В разработке');

@@ -92,5 +92,13 @@ export function mountCalendarTodayAction(element, dependencies) {
   dispose.setFocusedTaskVisible = controller.setFocusedTaskVisible;
   dispose.openRoutine = openRoutine;
   dispose.choose = openChoices;
+  // Restore the chosen run as a view only, before an automatic recommendation
+  // can replace it. Existing native blocks continue without a new start.
+  if (dependencies.initialTask?.source_type === 'schedule') {
+    try {
+      const [id,date] = JSON.parse(dependencies.initialTask.source_id);
+      if (typeof id === 'string' && typeof date === 'string') openRoutine({id,date,start:false});
+    } catch { /* An invalid device-local selection never starts work. */ }
+  }
   return dispose;
 }
