@@ -8,6 +8,31 @@
   --ui-action-focus: var(--accent-fill, var(--text-primary));
 }
 
+/* Running work is reused by the dashboard and the compact window. */
+.calendar-in-progress :is(.cip-title, .cip-stage-next, .cip-launch, .cip-start, .cip-icon),
+.calendar-in-progress .cip-confirm button {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+.calendar-in-progress :is(.cip-title, .cip-stage-next, .cip-launch, .cip-start, .cip-icon):is(:hover, :focus-visible, [aria-expanded="true"]):not(:disabled),
+.calendar-in-progress .cip-confirm button:is(:hover, :focus-visible):not(:disabled) {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  text-decoration: underline;
+  text-underline-offset: var(--ui-action-underline-offset);
+}
+.calendar-in-progress :is(.cip-start, .cip-confirm-yes) {
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: var(--ui-action-underline-offset);
+}
+.calendar-in-progress button:focus-visible {
+  outline: 2px solid var(--ui-action-focus);
+  outline-offset: 3px;
+}
+
 /* Remaining controls found in native acceptance, including disclosure menus. */
 #calendar-content .calendar-tasks .ct-run,
 #calendar-content .calendar-mvp .calv-record-action,
