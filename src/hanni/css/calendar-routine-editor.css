@@ -6,10 +6,14 @@
 .calendar-routine-editor button:disabled{opacity:.48;cursor:default}
 .calendar-routine-editor :focus-visible{outline:3px solid color-mix(in srgb,var(--accent-fill,#252525) 70%,transparent);outline-offset:2px}
 .calendar-routine-editor .cre-title{font-weight:600}
-.calendar-routine-editor .cre-layout,.calendar-routine-editor .cre-dependencies,.calendar-routine-editor .cre-week{min-width:0;margin:0;padding:12px;border:1px solid var(--border-default,#dedede);border-radius:10px}
+.calendar-routine-editor .cre-layout,.calendar-routine-editor .cre-tracking,.calendar-routine-editor .cre-step-tracking,.calendar-routine-editor .cre-dependencies,.calendar-routine-editor .cre-week{min-width:0;margin:0;padding:12px;border:1px solid var(--border-default,#dedede);border-radius:10px}
 .calendar-routine-editor .cre-layout{border:0;padding:0}
 .calendar-routine-editor .cre-layout>div{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
 .calendar-routine-editor .cre-layout button[aria-pressed=true]{border-color:var(--accent-fill,#252525);background:color-mix(in srgb,var(--accent-fill,#252525) 10%,var(--bg-card,#fff))}
+.calendar-routine-editor .cre-tracking,.calendar-routine-editor .cre-step-tracking{display:grid;gap:8px}
+.calendar-routine-editor .cre-tracking>div,.calendar-routine-editor .cre-step-tracking>div{display:flex;flex-wrap:wrap;gap:8px}
+.calendar-routine-editor .cre-tracking label,.calendar-routine-editor .cre-step-tracking label{display:flex;align-items:center;gap:7px;min-height:40px;padding:0 8px;border:1px solid var(--border-default,#dedede);border-radius:8px}
+.calendar-routine-editor .cre-tracking label:has(input:checked),.calendar-routine-editor .cre-step-tracking label:has(input:checked){border-color:var(--accent-fill,#252525);background:color-mix(in srgb,var(--accent-fill,#252525) 10%,var(--bg-card,#fff))}
 .calendar-routine-editor .cre-steps{display:grid;gap:12px;min-width:0}
 .calendar-routine-editor .cre-steps-heading{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
 .calendar-routine-editor .cre-steps-heading h3{margin:0;font-size:1.05rem}
@@ -25,6 +29,10 @@
 .calendar-routine-editor .cre-step-options>summary::before,.calendar-routine-editor .cre-advanced>summary::before{content:"›";display:inline-block;width:14px;margin-right:5px;font-size:18px;transform-origin:center}
 .calendar-routine-editor details[open]>summary::before{transform:rotate(90deg)}
 .calendar-routine-editor .cre-step-options>summary{font-weight:400;color:var(--text-secondary);min-height:36px}
+.calendar-routine-editor .cre-step-disclosure{display:grid;gap:8px;padding:0 10px;border-left:2px solid var(--border-subtle,#ebebeb)}
+.calendar-routine-editor .cre-step-disclosure>summary{min-height:40px;display:flex;align-items:center;cursor:pointer;color:var(--text-secondary)}
+.calendar-routine-editor .cre-step-disclosure>summary::before{content:"›";display:inline-block;width:14px;margin-right:5px;font-size:18px;transform-origin:center}
+.calendar-routine-editor .cre-step-disclosure[open]>summary::before{transform:rotate(90deg)}
 .calendar-routine-editor .cre-toggle{display:flex;align-items:center;gap:9px;min-height:44px}
 .calendar-routine-editor .cre-field{max-width:460px}
 .calendar-routine-editor .cre-dependencies{display:grid;gap:7px}
