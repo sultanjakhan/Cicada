@@ -286,7 +286,7 @@ test('a selected subgoal marks its root as the parent of the main goal', async t
   x.goals.push({ id: 'root', title: 'Карьерный путь', goal_kind: 'goal', target_value: 1 }, { id: 'child', title: 'Практика API', goal_kind: 'goal', parent_goal_id: 'root', target_value: 1 });
   await x.refresh();
   const row = x.root.querySelector('[data-goal-id="root"]');
-  assert.ok(row); assert.equal(x.root.querySelector('[data-goal-id="child"]'), null); assert.match(row.querySelector('.cp-goal-row__meta').textContent, /Главная подцель: Практика API/); assert.equal(row.querySelector('.cp-goal-row__badge'), null);
+  assert.ok(row); assert.equal(x.root.querySelector('[data-goal-id="child"]'), null); assert.match(row.querySelector('.cp-goal-row__meta').textContent, /^Главная подцель: Практика API/); assert.equal(row.querySelector('.cp-goal-row__badge'), null);
 });
 
 test('a goal row opens the popup with its context; the menu holds task, subgoal, select, edit and delete', async t => {

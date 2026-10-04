@@ -234,7 +234,7 @@ export async function mountCalendarGoals(element, dependencies = {}) {
         const selected = goal.goal_kind === 'goal' && id === selectedId, achieved = goal.status === 'achieved', meta = rowMeta(goal, id);
         const selectedChild = selectedGoal && selectedRootId === id && id !== String(selectedGoal.id) ? selectedGoal : null;
         if (row.children?.length) meta.push(`Подцели: ${row.children.length}`);
-        if (selectedChild) meta.push(`Главная подцель: ${selectedChild.title || 'Без названия'}`);
+        if (selectedChild) meta.unshift(`Главная подцель: ${selectedChild.title || 'Без названия'}`);
         const description = String(goal.description || '').split('\n').find(line => line.trim())?.trim() || '';
         const card = document.createElement('article');
         card.className = `cp-goal-row${selected ? ' is-primary' : ''}${achieved ? ' is-achieved' : ''}`;
