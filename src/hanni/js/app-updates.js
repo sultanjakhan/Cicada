@@ -62,7 +62,7 @@ export function startAppUpdates({ window, invoke, listen, getPendingOperations, 
     void (async () => {
       try { accept(await invoke('mvp_update_check')); }
       catch { await poll(); }
-      finally { checkingEntry = false; }
+      finally { entryPending = false; checkingEntry = false; }
     })();
   };
   const observer = new window.MutationObserver(report);

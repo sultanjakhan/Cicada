@@ -8,6 +8,6 @@
   {"file":"inline-code.min.js","package":"@editorjs/inline-code","version":"1.5.2","member":"dist/inline-code.umd.js","sha256":"495eeb674d0848fd07810bd2335fa08c569ee05739bb15756d5774e433e32cd0"},
   {"file":"list.min.js","package":"@editorjs/list","version":"2.0.9","member":"dist/editorjs-list.umd.js","sha256":"debc67131a021fc794652fabe1cab901eec73abfdc8859be51d612a3e709886e"},
   {"file":"marker.min.js","package":"@editorjs/marker","version":"1.4.0","member":"dist/marker.umd.js","sha256":"2e00d5c67aa28122f24aecb1c5baf68b9f363fbcd8edb606ea00e0ad64459c39"},
-  {"file":"purify.min.js","package":"dompurify","version":"3.4.14","member":"dist/purify.min.js","sha256":"c2f26ea4fc0d88141c9aa430eb515ac86fce59418ceebd85fa475b87a8d6c3e6"},
+  {"file":"purify.min.js","package":"dompurify","version":"3.4.16","member":"dist/purify.min.js","sha256":"2c90a9b46d6463f26038a29b686e82bc91de01fdac9d5229e7cfe3b360134ea2"},
   {"file":"quote.min.js","package":"@editorjs/quote","version":"2.7.6","member":"dist/quote.umd.js","sha256":"5148cdbf4318d30da8b1756b004e899773761755e143ab986fffc848328f41ee"}
 ]

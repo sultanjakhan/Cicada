@@ -16,7 +16,7 @@ This file covers shipped web assets and, conservatively, all Cargo-resolved crat
 | `@editorjs/inline-code` | `1.5.2` | MIT | `src/public/vendor/inline-code.min.js` | https://github.com/editor-js/inline-code |
 | `@editorjs/list` | `2.0.9` | MIT | `src/public/vendor/list.min.js` | https://github.com/editor-js/list |
 | `@editorjs/marker` | `1.4.0` | MIT | `src/public/vendor/marker.min.js` | https://github.com/editor-js/marker |
-| `dompurify` | `3.4.14` | Apache-2.0 (chosen from MPL-2.0 OR Apache-2.0) | `src/public/vendor/purify.min.js` | git://github.com/cure53/DOMPurify |
+| `dompurify` | `3.4.16` | Apache-2.0 (chosen from MPL-2.0 OR Apache-2.0) | `src/public/vendor/purify.min.js` | git://github.com/cure53/DOMPurify |
 | `@editorjs/quote` | `2.7.6` | MIT | `src/public/vendor/quote.min.js` | https://github.com/editor-js/quote |
 
 ## Shipped standalone web assets
@@ -17998,7 +17998,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### npm dompurify@3.4.14: LICENSE
+### npm dompurify@3.4.16: LICENSE
 
 SHA-256: `cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30`
 
@@ -18207,7 +18207,7 @@ SHA-256: `cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30`
    limitations under the License.
 ```
 
-### npm dompurify@3.4.14: LICENSE-MPL
+### npm dompurify@3.4.16: LICENSE-MPL
 
 SHA-256: `fab3dd6bdab226f1c08630b1dd917e11fcb4ec5e1e020e2c16f83a0a13863e85`
 

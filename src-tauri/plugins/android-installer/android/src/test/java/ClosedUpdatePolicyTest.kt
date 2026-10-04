@@ -15,7 +15,7 @@ class ClosedUpdatePolicyTest {
         val saved = preparedUpdateMetadata("9.8.7", packageInfo)
         assertEquals("9.8.7", saved.getJSONObject("candidate").getString("version"))
         assertEquals(packageInfo.toString(), saved.getJSONObject("candidate").getJSONObject("package").toString())
-        assertTrue(saved.getString("prepared_at").isNotBlank())
+        assertTrue(saved.getString("prepared_at").matches(Regex("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$")))
     }
     @Test
     fun doesNotDownloadTheInstalledOrAnOlderRelease() {

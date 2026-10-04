@@ -26,7 +26,7 @@
     "@editorjs/list": "2.0.9",
     "@editorjs/marker": "1.4.0",
     "@editorjs/quote": "2.7.6",
-    "dompurify": "3.4.14",
+    "dompurify": "3.4.16",
     "editorjs-drag-drop": "1.1.16"
   },
   "devDependencies": {
