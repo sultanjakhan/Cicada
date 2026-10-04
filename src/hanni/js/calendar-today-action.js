@@ -54,6 +54,7 @@ export function mountCalendarTodayAction(element, dependencies) {
     onSelectionChange: selection => { currentRecommendation = selection; syncCurrentTask(selection); },
   });
   function selectScope(scope) {
+    if(scope==='tasks'&&dependencies.onChooseTasks){if(setMode('recommendation'))dependencies.onChooseTasks();return;}
     q('[data-today-routines]').hidden = scope !== 'routines';
     q('[data-today-task-choices]').hidden = scope !== 'tasks';
     element.querySelectorAll('[data-today-scope]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.todayScope === scope)));
@@ -78,6 +79,7 @@ export function mountCalendarTodayAction(element, dependencies) {
     }
   }
   const openChoices = (scope = 'routines') => {
+    if(scope==='tasks'&&dependencies.onChooseTasks){if(setMode('recommendation'))dependencies.onChooseTasks();return;}
     if (setMode('choices')) { selectScope(scope); q(`[data-today-scope="${scope}"]`).focus({preventScroll:true}); }
   };
   choose.onclick = () => {

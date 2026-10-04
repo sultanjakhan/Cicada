@@ -17,3 +17,9 @@ export function mountThemeControl(host, { getTheme, setTheme }) {
   host.append(button); render();
   return () => { window.removeEventListener('hanni:theme-changed', render); button.remove(); };
 }
+
+// Relocate the existing control, retaining its listeners and saved preference.
+export function placeThemeControlNextToToday(root, todayControl) {
+  const button=root.querySelector('[data-home-theme]');
+  if(button&&todayControl)todayControl.after(button);
+}

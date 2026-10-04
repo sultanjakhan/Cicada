@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { mountThemeControl } from '../src/hanni/js/theme-control.js';
+import { mountThemeControl, placeThemeControlNextToToday } from '../src/hanni/js/theme-control.js';
 import { mountAppUpdates } from '../src/hanni/js/app-updates.js';
 import { mountDataSources } from '../src/hanni/js/data-sources.js';
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
@@ -28,7 +28,7 @@ test('unconfigured update channel does not offer install or promise automatic up
   const stop = mountAppUpdates(host, { invoke: async () => ({ configured:false, phase:'available', version:'0.5.0', installed_version:'0.4.4' }) });
   await tick();
   assert.equal(host.querySelector('[data-update-check]').disabled, true);
-  assert.match(host.querySelector('[data-update-hint]').textContent, /Фоновые проверки недоступны/);
+  assert.match(host.querySelector('[data-update-hint]').textContent, /Автоматическая проверка и установка недоступны/);
   assert.equal(host.querySelector('[data-update-install]').hidden, true);
   dom.window.dispatchEvent(new dom.window.CustomEvent('hanni:update-status', { detail:{ configured:true, phase:'available', version:'0.5.0' } }));
   assert.equal(host.querySelector('[data-update-check]').disabled, false);
@@ -47,4 +47,8 @@ test('connection fields group actions and keep checkbox labels associated withou
     assert.ok(section.querySelector('.data-source-field input[type="text"]'));
   }
   assert.deepEqual(calls, ['get_ui_state']); stop(); dom.window.close();
+});
+
+test('theme stays immediately after upper Today control, outside Today body, preserving saved preference and handlers',()=>{
+ const dom=new JSDOM('<html lang="ru"><header><div data-calendar-today-controls><div data-calendar-running><button data-header-action="in-progress">Сегодня</button></div></div></header><section class="calendar-today"><div class="calendar-day-banner"></div></section></html>',{url:'https://fixture.test'}),doc=dom.window.document;dom.window.localStorage.setItem('hanni_theme','dark');const getTheme=()=>dom.window.localStorage.getItem('hanni_theme'),setTheme=value=>{dom.window.localStorage.setItem('hanni_theme',value);};const stop=mountThemeControl(doc.querySelector('header'),{getTheme,setTheme}),button=doc.querySelector('[data-home-theme]'),today=doc.querySelector('[data-calendar-running]');placeThemeControlNextToToday(doc,today);assert.equal(today.nextElementSibling,button);assert.equal(button.closest('.calendar-today'),null);assert.equal(doc.querySelectorAll('[data-home-theme]').length,1);assert.equal(button.getAttribute('aria-pressed'),'true');assert.ok(button.getAttribute('aria-label'));assert.equal(getTheme(),'dark');button.click();assert.equal(getTheme(),'light');stop();assert.equal(doc.querySelector('[data-home-theme]'),null);dom.window.close();
 });

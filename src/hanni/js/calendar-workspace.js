@@ -1,4 +1,6 @@
-import { createNativeResultReviewAdapter, prepareNativeResultReview } from './native-result-review-adapter.js';
+import { placeThemeControlNextToToday } from './theme-control.js';
+import { mountDashboardWorkViews } from './dashboard-work-views.js';
+import { createCalendarReviewSource, isCalendarReviewAbsent } from './calendar-review-source.js';
 import { mountDashboardAiWork } from './dashboard-ai-work.js';
 import { readNativeTaskObservations, dashboardFromNativeTasks } from './native-task-observations.js';
 import { canRefreshHealthView, mayCommitHealthView, retryHealthViewRefresh, startHealthViewRefresh } from './health-view-refresh.js';
@@ -34,7 +36,7 @@ import { showCalendarSettings } from './calendar-settings.js';
 import { openCalendarCreateMenu } from './calendar-create-menu.js';
 
 let disposeNow = null, disposeTable = null, disposePanel = null, disposeTasks = null;
-let disposeSourceOnboarding = null, disposeAiWork = null;
+let disposeSourceOnboarding = null, disposeAiWork = null, disposeWorkViews = null, disposeTodayTasks = null;
 let disposeRecurring = null, goalPopup = null, tasksDialog = null;
 let disposeDayBanner = null, disposeInProgress = null, todayTaskSelection = null;
 let disposeNextAction = null, disposeTaskDetails = null, disposeRoutineChoices = null;
@@ -46,7 +48,7 @@ const tasksPaneState = { filter:'active', search:'', goal:'', sphere:'', page:0 
 // The Goals/Wishes choice survives pane switches within a session; it is not a stored preference.
 const goalsPaneState = { view:'goals' };
 let closeCreateMenu = null;
-function cleanupWorkspace() { disposeAiWork?.(); disposeAiWork=null; disposeSourceOnboarding?.(); disposeSourceOnboarding=null; workspaceRevision++; disposeNextAction?.(); disposeTaskDetails?.(); disposeRoutineChoices?.(); disposeNextAction = disposeTaskDetails = disposeRoutineChoices = null; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeRecurring?.(); disposeDayBanner?.(); disposeInProgress?.(); goalPopup?.dispose(); tasksDialog?.dispose(); disposeInProgress = null; disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; disposeRecurring = null; disposeDayBanner = null; goalPopup = null; tasksDialog = null; }
+function cleanupWorkspace() { disposeTodayTasks?.();disposeTodayTasks=null; disposeWorkViews?.();disposeWorkViews=null; disposeAiWork?.(); disposeAiWork=null; disposeSourceOnboarding?.(); disposeSourceOnboarding=null; workspaceRevision++; disposeNextAction?.(); disposeTaskDetails?.(); disposeRoutineChoices?.(); disposeNextAction = disposeTaskDetails = disposeRoutineChoices = null; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeRecurring?.(); disposeDayBanner?.(); disposeInProgress?.(); goalPopup?.dispose(); tasksDialog?.dispose(); disposeInProgress = null; disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; disposeRecurring = null; disposeDayBanner = null; goalPopup = null; tasksDialog = null; }
 const nextActionPreferences = () => ({ enabled:preferences.recommendationsEnabled, includeTasks:preferences.recommendTasks, includeRoutines:preferences.recommendRoutines });
 const view = { period: 'day', mode: 'grid', date: views.iso(new Date()), firstDay:'mon' };
 let initialViewLoaded = false;
@@ -186,13 +188,13 @@ function occurrenceDialog(record, returnFocus = null) {
   modal.showModal(); (scope || save).focus();
 }
 
-async function showRecord(record, returnFocus = null, initialFocus = null) {
+async function showRecord(record, returnFocus = null, initialFocus = null, { reviewUnavailable = false } = {}) {
   if (record.source_type === 'note' && !record.readonly) {
     const revision = workspaceRevision;
     const isCurrent = () => revision === workspaceRevision && S.activeTab === 'calendar';
     if (initialFocus === 'goal') return taskEditor(record, returnFocus, 'goal', isCurrent);
     disposeTaskDetails?.();
-    disposeTaskDetails = openCalendarTaskDetails(record, { document, invoke, returnFocus, isCurrent,
+    disposeTaskDetails = openCalendarTaskDetails(record, { document, invoke, returnFocus, isCurrent, reviewUnavailable,
       onEdit:(task, restore) => taskEditor(task, restore, 'title', isCurrent),
       onChanged:changed, executeAction:executeCalendarTaskAction });
     return;
@@ -502,7 +504,7 @@ export function openCalendarCreate(button) {
   });
 }
 
-export async function loadCalendarWorkspace(el, { nativeReview = false } = {}) {
+export async function loadCalendarWorkspace(el, { nativeReview = false, readTaskObservations = readNativeTaskObservations } = {}) {
   if(routinesRouteHandler){window.removeEventListener('hanni:open-recurring-settings',routinesRouteHandler);window.removeEventListener('hanni:open-routines-pane',routinesRouteHandler);routinesRouteHandler=null;}
   startHealthViewRefresh();
   cleanupWorkspace(); tabLoaders.cleanupCalendar = cleanupWorkspace;
@@ -534,23 +536,24 @@ export async function loadCalendarWorkspace(el, { nativeReview = false } = {}) {
     if (tab) tab.focus();
     else if (heading) { heading.tabIndex = -1; heading.focus(); }
   };
-  // Explicit opt-in only. Native command authority still enforces feature + isolated profile.
-  const readTaskReview=nativeReview ? id=>createNativeResultReviewAdapter(id,invoke).read(id) : null;
+  // Shared authority confirms explicit bindings. The legacy prototype remains opt-in.
+  const reviewSource=createCalendarReviewSource(invoke,{nativeReview});
+  const readTaskReview=id=>reviewSource.read(id);
   let nativeTaskOpenRevision=0;
   const openNativeTask=async(row,restore)=>{
     const request=++nativeTaskOpenRevision,revision=workspaceRevision,selectedPane=S._unifiedPane.calendar;
     const current=()=>request===nativeTaskOpenRevision&&revision===workspaceRevision&&el.isConnected&&S.activeTab==='calendar'&&S._unifiedPane.calendar===selectedPane;
-    if(!nativeReview||row.readonly){showRecord(calendarRecord(row),restore);return;}
+    if(row.source_type!=='note'||row.readonly){showRecord(calendarRecord(row),restore);return;}
     let review;
-    try{review=await prepareNativeResultReview(row,invoke,()=>crypto.randomUUID());}
-    catch{if(current())showRecord(calendarRecord(row),restore);return;}
+    try{review=await reviewSource.prepare(row);}
+    catch(error){if(current()){const unavailable=!isCalendarReviewAbsent(error);showRecord(calendarRecord({...row,_reviewReadError:unavailable}),restore,null,{reviewUnavailable:unavailable});}return;}
     if(!current())return;
     const submit=review.adapter.submit;
     review.adapter.submit=async request=>{const value=await submit(request);if(value.kind==='acknowledged')changed();return value;};
     disposeTaskDetails?.();
     disposeTaskDetails=openCalendarTaskDetails(calendarRecord(row),{document,invoke,review,returnFocus:restore,isCurrent:current,onEdit:(task,returnFocus)=>taskEditor(task,returnFocus,'title',()=>revision===workspaceRevision),onChanged:changed,executeAction:executeCalendarTaskAction});
   };
-  const taskOptions = { invoke, mountMenu:mountRecordMenu, openTask:(row,returnFocus)=>showRecord(calendarRecord(row),returnFocus), executeAction:(row,action)=>executeCalendarTaskAction(calendarRecord(row),action), notifyChange:changed };
+  const taskOptions = { invoke, mountMenu:mountRecordMenu, openTask:(row,returnFocus)=>void openNativeTask(row,returnFocus), executeAction:(row,action)=>executeCalendarTaskAction(calendarRecord(row),action), notifyChange:changed };
   let renderLauncherState = null;
   const showAllTasks = (button = null, initialScope = null) => {
     if(tasksDialog)return;
@@ -664,7 +667,8 @@ export async function loadCalendarWorkspace(el, { nativeReview = false } = {}) {
       // «● N» running tasks on the right of the shared header; it leads to the dashboard widget.
       const header = document.createElement('div');
       header.dataset.calendarRunning = '';
-      host.querySelector('.uni-header').append(header);
+      const todayControls=document.createElement('div');todayControls.dataset.calendarTodayControls='';
+      todayControls.append(header);host.querySelector('.uni-header').append(todayControls);
       nowHost = document.createElement('div');
       nowHost.dataset.calendarNow = '';
       nowHost.classList.add('calendar-main-goal');
@@ -682,7 +686,7 @@ export async function loadCalendarWorkspace(el, { nativeReview = false } = {}) {
         openTaskDetails: (row, restore) => {
           if(row.source_type==='schedule'){
             const [id,date]=JSON.parse(row.source_id);openRecurringRun({document,invoke,id,date});
-          }else showRecord(calendarRecord({ ...row, date: row.date || row.completion_date || null }), restore);
+          }else void openNativeTask({ ...row, date: row.date || row.completion_date || null }, restore);
         },
         openGoals: async id => {
           await openPane('goals');
@@ -693,24 +697,47 @@ export async function loadCalendarWorkspace(el, { nativeReview = false } = {}) {
         openInProgress: async () => {
           if (S._unifiedPane.calendar !== 'dash') await openPane('dash');
           if (S.activeTab === 'calendar' && S._unifiedPane.calendar === 'dash') {
+            disposeWorkViews?.select('personal');
             const heading = el.querySelector('[data-calendar-day-banner] h2');
             if (heading) { heading.tabIndex = -1; heading.focus({preventScroll:true}); }
           }
         },
         onCurrentTaskChange: value => disposeRecurring?.setCurrentTask(value),
       });
+      placeThemeControlNextToToday(host,header);
     },
     panes: [{id:'dash',label:'Дашборд'}, {id:'table',label:'Календарь'}, {id:'tasks',label:'Задачи'}, {id:'routines',label:'Рутины'}, {id:'notes',label:'Заметки'}, {id:'goals',label:'Цели'}],
     renderDash: (pane) => {
       pane.innerHTML = `<section class="calendar-today" aria-label="Сегодня">
-        <div data-calendar-day-banner></div><div data-calendar-next-action></div>
-        <div data-calendar-in-progress></div>
-      </section><div data-calendar-now-slot></div><div data-calendar-ai-work></div>`;
+        <div data-calendar-day-banner></div>
+        <div data-calendar-next-action></div><div data-calendar-in-progress></div>
+        <section data-calendar-task-widget class="calendar-task-widget" aria-labelledby="calendar-today-tasks-title">
+          <h2 id="calendar-today-tasks-title" tabindex="-1">Задачи на сегодня</h2>
+          <div class="calendar-today-action__scopes calendar-work-views" role="tablist" aria-label="Представление задач">
+            <button id="calendar-work-personal-tab" type="button" role="tab" data-work-view="personal" aria-controls="calendar-work-personal">Мои задачи</button>
+            <button id="calendar-work-ai-tab" type="button" role="tab" data-work-view="ai" aria-controls="calendar-work-ai">Работа ИИ</button>
+          </div>
+          <div id="calendar-work-personal" role="tabpanel" aria-labelledby="calendar-work-personal-tab" data-work-panel="personal"><div data-calendar-today-tasks></div></div>
+          <div id="calendar-work-ai" role="tabpanel" aria-labelledby="calendar-work-ai-tab" data-work-panel="ai" hidden><div data-calendar-ai-work></div></div>
+        </section>
+      </section><div data-calendar-now-slot></div>`;
+      disposeWorkViews=mountDashboardWorkViews(pane.querySelector('[data-calendar-task-widget]'));
+      disposeTodayTasks=mountCalendarDashboardTasks(pane.querySelector('[data-calendar-today-tasks]'),taskOptions);
+      disposeTodayTasks.setCurrentTask({key:todayTaskSelection?`${todayTaskSelection.source_type}:${todayTaskSelection.source_id}`:'',state:todayTaskSelection?'active':''});
       pane.querySelector('[data-calendar-now-slot]').replaceWith(nowHost);
       nowHost.hidden = false;
-      const aiRevision=workspaceRevision;let aiNativeRows=[];
+      const aiRevision=workspaceRevision;let aiNativeRows=[],aiContexts=new Map();
       disposeAiWork=mountDashboardAiWork(pane.querySelector('[data-calendar-ai-work]'),{
-        read:async()=>{const all=await invoke('get_calendar_tasks',{includeCompleted:true});const native=all.filter(row=>row.source_type==='note'&&!row.readonly&&!row.archived);const observed=await readNativeTaskObservations(native,invoke,{readReview:readTaskReview});if(!observed.available)throw Error('AI observations unavailable');aiNativeRows=native;return dashboardFromNativeTasks(native,observed.contexts);},
+        read:async()=>{
+          const all=await invoke('get_calendar_tasks',{includeCompleted:true});
+          const native=all.filter(row=>row.source_type==='note'&&!row.readonly&&!row.archived);
+          const observed=await readTaskObservations(native,invoke,{readReview:readTaskReview,previousContexts:aiContexts});
+          if(aiRevision!==workspaceRevision||!pane.isConnected)throw Error('AI view disposed');
+          if(!observed.available)throw Error('AI observations unavailable');
+          aiContexts=observed.contexts;aiNativeRows=native;
+          return dashboardFromNativeTasks(native,aiContexts);
+        },
+        onOpenTasks:()=>{if(aiRevision===workspaceRevision&&pane.isConnected)void openPane('tasks');},
         onOpenTask:id=>{if(aiRevision!==workspaceRevision||!pane.isConnected)return;const row=aiNativeRows.find(row=>String(row.source_id)===id);if(row)void openNativeTask(row);},
       });
       disposeDayBanner = mountCalendarDayBanner(pane.querySelector('[data-calendar-day-banner]'), {
@@ -720,17 +747,19 @@ export async function loadCalendarWorkspace(el, { nativeReview = false } = {}) {
       disposeNextAction = mountCalendarTodayAction(pane.querySelector('[data-calendar-next-action]'), {
         invoke, preferences:nextActionPreferences(), notifyChange:changed, compactRunning:true,
         taskOptions, openRoutines:() => void openPane('routines'),
+        onChooseTasks:()=>{disposeWorkViews?.select('personal');pane.querySelector('#calendar-today-tasks-title')?.focus({preventScroll:true});},
         onCurrentTaskChange:task => {
           const key = value => value ? `task:${value.source_type}:${String(value.source_id)}` : '';
           const previousKey = key(todayTaskSelection), nextKey = key(task);
           // Update first: clearing old focus can synchronously rerender NextAction
           // and call back into this handler.
           todayTaskSelection = task;
+          disposeTodayTasks?.setCurrentTask({key:task?`${task.source_type}:${task.source_id}`:'',state:task?'active':''});
           if (previousKey && previousKey !== nextKey) disposeNextAction?.setFocusedTaskVisible(previousKey,false);
           disposeInProgress?.setSelectedTask(task);
         },
         onRoutineFocusChange:options => disposeInProgress?.setExcludedRoutine(options?.id || null),
-        openTask:task => showRecord(calendarRecord(task), () => disposeNextAction?.focus()),
+        openTask:task => void openNativeTask(task, () => disposeNextAction?.focus()),
         executeTask:(task,action) => executeCalendarTaskAction(calendarRecord(task),action),
       });
       disposeInProgress = mountCalendarInProgress(pane.querySelector('[data-calendar-in-progress]'), {
@@ -744,7 +773,7 @@ export async function loadCalendarWorkspace(el, { nativeReview = false } = {}) {
         openLauncher:button => showAllTasks(button),
         openTask:(row, restore) => {
           if (row.source_type === 'schedule') { const [id, date] = JSON.parse(row.source_id); disposeNextAction?.openRoutine({id,date,start:false}); }
-          else showRecord(calendarRecord({ ...row, date: row.date || null }), restore);
+          else void openNativeTask({ ...row, date: row.date || null }, restore);
         },
       });
       disposeInProgress.setSelectedTask(todayTaskSelection);
@@ -754,7 +783,7 @@ export async function loadCalendarWorkspace(el, { nativeReview = false } = {}) {
       const revision = workspaceRevision;
       pane.innerHTML = `<div data-workspace-task-list></div><details class="calendar-task-history"><summary>Запущено и на паузе сегодня</summary><div data-calendar-in-progress></div></details>`;
       disposePanel = mountCalendarTasks(pane.querySelector('[data-workspace-task-list]'), {
-        invoke, state:tasksPaneState, readTaskReview, mountMenu:mountRecordMenu, notifyChange:changed,
+        invoke, state:tasksPaneState, readTaskReview, readTaskObservations, mountMenu:mountRecordMenu, notifyChange:changed,
         openTask:(row,restore) => void openNativeTask(row,restore),
         editDate:(row,restore) => taskEditor(calendarRecord(row),restore,'date',()=>revision===workspaceRevision && pane.isConnected),
         executeAction:(row,action) => executeCalendarTaskAction(calendarRecord(row),action),
@@ -763,7 +792,7 @@ export async function loadCalendarWorkspace(el, { nativeReview = false } = {}) {
         invoke, notifyChange:changed, title:'Запущено и на паузе', openLauncher:showAllTasks,
         openTask:(row,restore) => {
           if (row.source_type === 'schedule') { const [id,date] = JSON.parse(row.source_id); openRecurringRun({document,invoke,id,date,start:false}); }
-          else showRecord(calendarRecord(row),restore);
+          else void openNativeTask(row,restore);
         },
       });
 

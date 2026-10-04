@@ -1,3 +1,4 @@
+import { createUiCopy } from './ui-copy.js';
 import { IS_MOBILE, S, invoke, setTheme } from './state.js';
 import { createCalendarDialog } from './calendar-dialog.js';
 import { escapeHtml } from './utils.js';
@@ -10,6 +11,7 @@ import { mountProcessSettings } from './calendar-process-settings.js';
 import { mountWorkRegistry } from './work-registry-view.js';
 import { mountDataSources } from './data-sources.js';
 import { mountPersonalTaskImport } from './personal-task-import-view.js';
+import { mountDataLocation } from './data-location.js';
 
 let settingsDialog = null;
 
@@ -39,19 +41,20 @@ function sectionFor(section) {
 
 export function showCalendarSettings(trigger, { section, returnFocus, recommendationsOnly = false } = {}) {
   if (settingsDialog || document.querySelector('dialog[open]')) return;
+  const copy = createUiCopy(document);
 
   let original = null, draft = null, closed = false, disposeSync = null;
-  let disposeUpdates = null, disposeSleep = null, disposeActivity = null, disposeRegistry = null, disposeSources = null, disposePersonalImport = null;
+  let disposeUpdates = null, disposeSleep = null, disposeActivity = null, disposeRegistry = null, disposeSources = null, disposePersonalImport = null, disposeDataLocation = null;
   let processSettings = null, processObserver = null, preferencesLoading = true, preferencesLoadBusy = false;
   const requestedSection = recommendationsOnly ? 'today' : sectionFor(section);
-  const title = recommendationsOnly ? 'Выбор следующего действия' : 'Настройки Cicada';
+  const title = recommendationsOnly ? copy("Выбор следующего действия") : copy("Настройки Cicada");
   const window = document.defaultView;
 
   const api = createCalendarDialog({
     document,
     title,
     hint: '',
-    submitLabel: recommendationsOnly ? 'Сохранить' : 'Сохранить календарь',
+    submitLabel: recommendationsOnly ? copy("Сохранить") : copy("Сохранить календарь"),
     returnFocus: () => {
       if (returnFocus) { returnFocus(); return; }
       const target = IS_MOBILE ? document.getElementById('mobile-hamburger') : trigger;
@@ -61,7 +64,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
       closed = true;
       processObserver?.disconnect();
       processSettings?.dispose();
-      disposeSync?.(); disposeUpdates?.(); disposeSleep?.(); disposeActivity?.(); disposeRegistry?.(); disposeSources?.(); disposePersonalImport?.();
+      disposeSync?.(); disposeUpdates?.(); disposeSleep?.(); disposeActivity?.(); disposeRegistry?.(); disposeSources?.(); disposePersonalImport?.(); disposeDataLocation?.();
       settingsDialog = null;
     },
   });
@@ -74,7 +77,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
   const nav = document.createElement('div');
   nav.className = 'calendar-settings-tabs';
   nav.setAttribute('role', 'tablist');
-  nav.setAttribute('aria-label', 'Разделы настроек');
+  nav.setAttribute('aria-label', copy("Разделы настроек"));
   nav.setAttribute('aria-orientation', 'horizontal');
 
   const panels = document.createElement('div');
@@ -88,7 +91,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
     tab.id = `calendar-settings-tab-${item.id}`;
     tab.setAttribute('role', 'tab');
     tab.setAttribute('aria-controls', `calendar-settings-panel-${item.id}`);
-    tab.textContent = item.label;
+    tab.textContent = copy(item.label);
     nav.append(tab); tabs[item.id] = tab;
 
     const panel = document.createElement('section');
@@ -120,20 +123,20 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
   const closeButtons = [...api.modal.querySelectorAll('[data-dialog-close]')];
   const footerButtons = [...api.modal.querySelectorAll('.calendar-editor-actions button')];
   const feedback = api.modal.querySelector('.calendar-editor-feedback');
-  cancelButton.textContent = 'Отмена';
-  cancelButton.setAttribute('aria-label', 'Отмена и закрыть настройки');
+  cancelButton.textContent = copy("Отмена");
+  cancelButton.setAttribute('aria-label', copy("Отмена и закрыть настройки"));
   const prefsError = document.createElement('p');
   prefsError.className = 'calendar-settings-error';
   prefsError.dataset.prefsError = '';
   prefsError.setAttribute('role', 'alert');
   prefsError.hidden = true;
   const prefsRetry = document.createElement('button');
-  prefsRetry.type = 'button'; prefsRetry.textContent = 'Повторить загрузку';
+  prefsRetry.type = 'button'; prefsRetry.textContent = copy("Повторить загрузку");
   prefsRetry.className = 'calendar-settings-retry'; prefsRetry.hidden = true;
   prefsRetry.dataset.prefsRetry = '';
   const prefsLoading = document.createElement('p');
   prefsLoading.className = 'calendar-settings-loading';
-  prefsLoading.textContent = recommendationsOnly ? 'Загружаем настройки выбора…' : 'Загружаем настройки календаря…';
+  prefsLoading.textContent = recommendationsOnly ? copy("Загружаем настройки выбора…") : copy("Загружаем настройки календаря…");
   prefsLoading.setAttribute('role', 'status'); prefsLoading.setAttribute('aria-live', 'polite');
   const prefsLoadState = document.createElement('div');
   prefsLoadState.className = 'calendar-settings-load-state';
@@ -143,14 +146,14 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
   closeConfirmation.className = 'calendar-settings-confirmation';
   closeConfirmation.dataset.closeConfirmation = '';
   closeConfirmation.setAttribute('role', 'group');
-  closeConfirmation.setAttribute('aria-label', 'Подтверждение закрытия с несохранёнными изменениями');
+  closeConfirmation.setAttribute('aria-label', copy("Подтверждение закрытия с несохранёнными изменениями"));
   closeConfirmation.hidden = true;
   const closeMessage = document.createElement('p');
-  closeMessage.textContent = 'Есть несохранённые изменения.';
+  closeMessage.textContent = copy("Есть несохранённые изменения.");
   const continueEditing = document.createElement('button');
-  continueEditing.type = 'button'; continueEditing.textContent = 'Продолжить редактирование';
+  continueEditing.type = 'button'; continueEditing.textContent = copy("Продолжить редактирование");
   const discardAndClose = document.createElement('button');
-  discardAndClose.type = 'button'; discardAndClose.textContent = 'Закрыть без сохранения';
+  discardAndClose.type = 'button'; discardAndClose.textContent = copy("Закрыть без сохранения");
   closeConfirmation.append(closeMessage, continueEditing, discardAndClose);
   feedback.prepend(closeConfirmation);
 
@@ -185,8 +188,8 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
     const dirty = preferenceDirty();
     saveButton.hidden = !dirty;
     saveButton.disabled = api.pending || !original || !closeConfirmation.hidden;
-    saveButton.textContent = recommendationsOnly ? 'Сохранить' : 'Сохранить календарь';
-    cancelButton.textContent = hasUnsavedChanges() ? 'Отмена' : 'Закрыть';
+    saveButton.textContent = recommendationsOnly ? copy("Сохранить") : copy("Сохранить календарь");
+    cancelButton.textContent = hasUnsavedChanges() ? copy("Отмена") : copy("Закрыть");
     api.modal.querySelector('.calendar-settings-actions').dataset.dirty = String(hasUnsavedChanges());
     if (!settingsStatus.hidden && !processSettings?.isDirty() && !disposeSync?.isDirty?.()) settingsStatus.hidden = true;
   }
@@ -239,7 +242,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
     if (!dirty) { finishClose(intent); return; }
     closeIntent = intent;
     focusAfterConfirmation = document.activeElement;
-    closeMessage.textContent = 'Есть несохранённые изменения.';
+    closeMessage.textContent = copy("Есть несохранённые изменения.");
     closeConfirmation.hidden = false;
     api.body.setAttribute('inert', '');
     closeButtons.forEach(button => { button.disabled = true; });
@@ -263,18 +266,18 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
 
   const today = hosts.today;
   today.innerHTML = `<section data-next-action-settings>
-    <h3>Рекомендация в «Сегодня»</h3>
-    <p class="calendar-setting-hint">Учитываем текущую работу, даты и важность задач, время суток и отметки рутин. Запуск — только по твоему нажатию.</p>
-    <label class="calendar-setting calendar-settings-toggle"><input type="checkbox" data-key="recommendationsEnabled"> Предлагать, чем заняться</label>
+    <h3>${copy("Рекомендация в «Сегодня»")}</h3>
+    <p class="calendar-setting-hint">${copy("Учитываем текущую работу, даты и важность задач, время суток и отметки рутин. Запуск — только по твоему нажатию.")}</p>
+    <label class="calendar-setting calendar-settings-toggle"><input type="checkbox" data-key="recommendationsEnabled"> ${copy("Предлагать, чем заняться")}</label>
     <div class="calendar-settings-option-group" data-recommendation-sources>
-      <label class="calendar-setting calendar-settings-toggle"><input type="checkbox" data-key="recommendTasks"> Задачи</label>
-      <label class="calendar-setting calendar-settings-toggle"><input type="checkbox" data-key="recommendRoutines"> Рутины</label>
+      <label class="calendar-setting calendar-settings-toggle"><input type="checkbox" data-key="recommendTasks"> ${copy("Задачи")}</label>
+      <label class="calendar-setting calendar-settings-toggle"><input type="checkbox" data-key="recommendRoutines"> ${copy("Рутины")}</label>
     </div>
   </section>
   <section class="calendar-settings-subsection">
-    <h3>Отметки рутин</h3>
-    <label class="calendar-setting calendar-settings-toggle"><input type="checkbox" data-key="showCompleted"> Раскрывать отмеченные рутины</label>
-    <button type="button" class="text-button" data-recurring>Рутины и правила</button>
+    <h3>${copy("Отметки рутин")}</h3>
+    <label class="calendar-setting calendar-settings-toggle"><input type="checkbox" data-key="showCompleted"> ${copy("Раскрывать отмеченные рутины")}</label>
+    <button type="button" class="text-button" data-recurring>${copy("Рутины и правила")}</button>
   </section>`;
   if (recommendationsOnly) {
     today.querySelector('h3').remove();
@@ -290,28 +293,28 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
   today.querySelector('[data-next-action-settings]').append(prefsLoadState);
 
   const calendar = hosts.calendar;
-  calendar.innerHTML = `<h3>Вид календаря</h3>
-    <p class="calendar-setting-hint">Эти изменения сохраняются кнопкой «Сохранить календарь».</p>
-    ${[['first_day','Первый день недели'],['default_view','Вид при запуске'],['density','Плотность интерфейса']].map(([key,label]) => `<fieldset class="calendar-setting"><legend>${label}</legend><div class="setting-pills" data-key="${key}">${OPTIONS[key].map(([value,text]) => `<button type="button" class="setting-pill" data-value="${value}" aria-pressed="false">${escapeHtml(text)}</button>`).join('')}</div></fieldset>`).join('')}`;
+  calendar.innerHTML = `<h3>${copy("Вид календаря")}</h3>
+    <p class="calendar-setting-hint">${copy("Эти изменения сохраняются кнопкой «Сохранить календарь».")}</p>
+    ${[['first_day',copy("Первый день недели")],['default_view',copy("Вид при запуске")],['density',copy("Плотность интерфейса")]].map(([key,label]) => `<fieldset class="calendar-setting"><legend>${label}</legend><div class="setting-pills" data-key="${key}">${OPTIONS[key].map(([value,text]) => `<button type="button" class="setting-pill" data-value="${value}" aria-pressed="false">${escapeHtml(copy(text))}</button>`).join('')}</div></fieldset>`).join('')}`;
 
   hosts.processes.classList.add('calendar-settings-processes-host');
   hosts.connections.classList.add('calendar-settings-connections');
   hosts.about.classList.add('calendar-settings-about');
   const sync = document.createElement('section'), sleep = document.createElement('section'), activity = document.createElement('section');
   const health = document.createElement('details'); health.className = 'calendar-settings-health';
-  const healthTitle = document.createElement('summary'); healthTitle.textContent = 'Здоровье: сон, прогулки и шаги';
+  const healthTitle = document.createElement('summary'); healthTitle.textContent = copy("Здоровье: сон, прогулки и шаги");
   health.append(healthTitle, sleep, activity);
   hosts.connections.append(sync, health);
   // This checkout has no Jira backend. Do not imply that device sync is Jira activity.
   const jira = document.createElement('section');
   const jiraTitle = document.createElement('h3'); jiraTitle.textContent = 'Jira';
   const jiraStatus = document.createElement('p');
-  jiraStatus.textContent = 'В этой сборке интеграция Jira недоступна. Здесь нет данных о подключении или импорте. Подключение на другом устройстве нужно проверить на том устройстве.';
+  jiraStatus.textContent = copy("В этой сборке интеграция Jira недоступна. Здесь нет данных о подключении или импорте. Подключение на другом устройстве нужно проверить на том устройстве.");
   jira.append(jiraTitle, jiraStatus); hosts.connections.append(jira);
   disposeRegistry = mountWorkRegistry(hosts.connections, { invoke });
   disposeSources = mountDataSources(hosts.connections, { invoke });
   const updates = document.createElement('section');
-  const buildInfo = document.createElement('p'); buildInfo.textContent = `Cicada ${S.APP_VERSION} • сборка ${S.APP_BUILD_ID}`;
+  const buildInfo = document.createElement('p'); buildInfo.textContent = `Cicada ${S.APP_VERSION} • ${document.documentElement.lang.toLowerCase().startsWith('en') ? 'build' : 'сборка'} ${S.APP_BUILD_ID}`;
   hosts.about.append(buildInfo);
   const themeCopy = document.documentElement.lang.toLowerCase().startsWith('en')
     ? { label: 'Theme', light: 'Light', dark: 'Dark', hint: 'Applied and saved immediately on this device.' }
@@ -333,6 +336,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
   themeSelect.setAttribute('aria-describedby', themeHint.id);
   themeLabel.append(themeSelect); hosts.about.append(themeLabel, themeHint);
   hosts.about.append(updates);
+  disposeDataLocation = mountDataLocation(hosts.about, { invoke });
 
   const setInput = (key, value) => { const input = today.querySelector(`[data-key="${key}"]`); if (input) input.checked = value; };
   function drawPreferences() {
@@ -387,12 +391,12 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
       api.setPending(false);
       if (processSettings?.isDirty()) {
         hosts.processes.append(settingsStatus);
-        settingsStatus.textContent = 'Настройки календаря сохранены. Черновик этапов ещё не сохранён — сохрани его во вкладке «Этапы задач» или закрой настройки с отменой.';
+        settingsStatus.textContent = copy("Настройки календаря сохранены. Черновик этапов ещё не сохранён — сохрани его во вкладке «Этапы задач» или закрой настройки с отменой.");
         settingsStatus.hidden = false;
         setActive('processes', true);
       } else if (disposeSync?.isDirty?.()) {
         hosts.connections.prepend(settingsStatus);
-        settingsStatus.textContent = 'Настройки календаря сохранены. Изменения подключения ещё не сохранены.';
+        settingsStatus.textContent = copy("Настройки календаря сохранены. Изменения подключения ещё не сохранены.");
         settingsStatus.hidden = false;
         setActive('connections', true);
       } else {
@@ -400,7 +404,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
       }
     } catch (error) {
       if (closed) return;
-      prefsError.textContent = `${error?.message || 'Ошибка сохранения.'} Сохранение ${recommendationsOnly ? 'настроек выбора' : 'календаря'} не подтверждено; черновик остался в форме.`;
+      prefsError.textContent = `${error?.message || copy("Ошибка сохранения.")}${copy(" Сохранение ")}${recommendationsOnly ? copy("настроек выбора") : copy("календаря")}${copy(" не подтверждено; черновик остался в форме.")}`;
       prefsError.hidden = false; setActive(lastEditedSection, true); prefsError.tabIndex = -1; prefsError.focus();
     } finally {
       if (!closed) { api.setPending(false); refreshFooter(); }
@@ -451,7 +455,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
       preferencesLoadBusy = false;
       preferencesLoading = true;
       prefsLoading.hidden = true;
-      prefsError.textContent = error?.message || 'Не удалось загрузить настройки календаря.';
+      prefsError.textContent = error?.message || copy("Не удалось загрузить настройки календаря.");
       prefsError.hidden = false; prefsRetry.hidden = false;
       saveButton.hidden = true; saveButton.disabled = true;
       setActive(['today', 'calendar'].includes(requestedSection) ? requestedSection : 'calendar');

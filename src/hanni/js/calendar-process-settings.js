@@ -1,3 +1,4 @@
+import { createUiCopy } from './ui-copy.js';
 // «Процессы задач» in Calendar settings (owner decision 2026-09-25): rename a
 // process, add, rename, delete and reorder its stages, add a process. Nothing
 // is written until «Сохранить процессы» (or the dialog's «Сохранить»);
@@ -9,15 +10,16 @@ const clone = processes => processes.map(process => ({ ...process, stages: proce
 
 export function mountProcessSettings(element, { invoke, setPending = () => {} }) {
   const doc = element.ownerDocument;
+  const copy = createUiCopy(doc);
   let saved = null, draft = [], busy = false, disposed = false, failed = false;
   element.className = 'calendar-setting calendar-processes';
-  element.innerHTML = `<h3 id="calendar-processes-title">Процессы задач</h3>
-    <p class="calendar-processes-hint">Стадии для задач с процессом. Переименование не меняет задачи. Если удалить стадию, её задачи покажут «Стадия удалена», пока ты не выберешь другую.</p>
-    <p class="calendar-processes-status" data-processes-status role="status" aria-live="polite">Загружаем процессы…</p>
+  element.innerHTML = `<h3 id="calendar-processes-title">${copy("Процессы задач")}</h3>
+    <p class="calendar-processes-hint">${copy("Стадии для задач с процессом. Переименование не меняет задачи. Если удалить стадию, её задачи покажут «Стадия удалена», пока ты не выберешь другую.")}</p>
+    <p class="calendar-processes-status" data-processes-status role="status" aria-live="polite">${copy("Загружаем процессы…")}</p>
     <div class="calendar-processes-list" data-processes-list></div>
-    <button type="button" class="calendar-processes-add" data-processes-add hidden>＋ Новый процесс</button>
+    <button type="button" class="calendar-processes-add" data-processes-add hidden>${copy("＋ Новый процесс")}</button>
     <p class="calendar-processes-error" data-processes-error role="alert" hidden></p>
-    <div class="calendar-processes-actions"><button type="button" data-processes-save disabled>Сохранить процессы</button><button type="button" data-processes-cancel disabled>Отменить изменения</button><button type="button" data-processes-retry hidden>Повторить загрузку</button></div>`;
+    <div class="calendar-processes-actions"><button type="button" data-processes-save disabled>${copy("Сохранить процессы")}</button><button type="button" data-processes-cancel disabled>${copy("Отменить изменения")}</button><button type="button" data-processes-retry hidden>${copy("Повторить загрузку")}</button></div>`;
   const q = name => element.querySelector(`[data-processes-${name}]`);
   const list = q('list'), status = q('status'), error = q('error');
   const node = (tag, className, text) => { const value = doc.createElement(tag); if (className) value.className = className; if (text != null) value.textContent = text; return value; };
@@ -42,30 +44,30 @@ export function mountProcessSettings(element, { invoke, setPending = () => {} })
     if (disposed) return;
     list.replaceChildren(...draft.map(process => {
       const box = node('fieldset', 'cp-process'); box.dataset.processId = process.id; box.disabled = busy;
-      const legend = node('legend', 'cp-legend', process.id === DEFAULT_PROCESS_ID ? 'Встроенный процесс' : isSaved(process.id) ? 'Процесс' : 'Новый процесс');
+      const legend = node('legend', 'cp-legend', process.id === DEFAULT_PROCESS_ID ? copy("Встроенный процесс") : isSaved(process.id) ? copy("Процесс") : copy("Новый процесс"));
       const title = node('label', 'cp-title');
-      const input = node('input'); input.type = 'text'; input.value = process.title; input.maxLength = PROCESS_LIMITS.title; input.dataset.control = 'process-title'; input.autocomplete = 'off'; input.placeholder = 'Например, Ремонт';
+      const input = node('input'); input.type = 'text'; input.value = process.title; input.maxLength = PROCESS_LIMITS.title; input.dataset.control = 'process-title'; input.autocomplete = 'off'; input.placeholder = copy("Например, Ремонт");
       input.addEventListener('input', () => { process.title = input.value; updateActions(); });
-      title.append(node('span', 'cp-label', 'Название процесса'), input);
-      const stages = node('ol', 'cp-stages'); stages.setAttribute('aria-label', `Стадии: ${process.title || 'процесс без названия'}`);
+      title.append(node('span', 'cp-label', copy("Название процесса")), input);
+      const stages = node('ol', 'cp-stages'); stages.setAttribute('aria-label', `${copy("Стадии: ")}${process.title || copy("процесс без названия")}`);
       process.stages.forEach((stage, index) => {
         const item = node('li', 'cp-stage'); item.dataset.stageId = stage.id;
-        const name = stage.title || `стадия ${index + 1}`;
-        const field = node('input'); field.type = 'text'; field.value = stage.title; field.maxLength = PROCESS_LIMITS.title; field.dataset.control = 'stage-title'; field.autocomplete = 'off'; field.placeholder = 'Название стадии';
-        field.setAttribute('aria-label', `Стадия ${index + 1} из ${process.stages.length}`);
+        const name = stage.title || `${copy("стадия ")}${index + 1}`;
+        const field = node('input'); field.type = 'text'; field.value = stage.title; field.maxLength = PROCESS_LIMITS.title; field.dataset.control = 'stage-title'; field.autocomplete = 'off'; field.placeholder = copy("Название стадии");
+        field.setAttribute('aria-label', `${copy("Стадия ")}${index + 1}${copy(" из ")}${process.stages.length}`);
         field.addEventListener('input', () => { stage.title = field.value; updateActions(); });
         // Alt+↑ / Alt+↓ move the stage from its name field too.
         field.addEventListener('keydown', event => { if (event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) { event.preventDefault(); move(process.id, stage.id, event.key === 'ArrowUp' ? -1 : 1, 'stage-title'); } });
         item.append(node('span', 'cp-number', String(index + 1)), field,
-          button('cp-icon', `Выше: ${name}`, '↑', 'stage-up', index === 0),
-          button('cp-icon', `Ниже: ${name}`, '↓', 'stage-down', index === process.stages.length - 1),
-          button('cp-icon cp-delete', `Удалить стадию: ${name}`, '×', 'stage-delete', process.stages.length === 1));
+          button('cp-icon', `${copy("Выше: ")}${name}`, '↑', 'stage-up', index === 0),
+          button('cp-icon', `${copy("Ниже: ")}${name}`, '↓', 'stage-down', index === process.stages.length - 1),
+          button('cp-icon cp-delete', `${copy("Удалить стадию: ")}${name}`, '×', 'stage-delete', process.stages.length === 1));
         stages.append(item);
       });
       const footer = node('div', 'cp-process-actions');
-      footer.append(button('cp-add', `Добавить стадию: ${process.title || 'процесс'}`, '＋ Стадия', 'stage-add', process.stages.length >= PROCESS_LIMITS.stages));
+      footer.append(button('cp-add', `${copy("Добавить стадию: ")}${process.title || copy("процесс")}`, copy("＋ Стадия"), 'stage-add', process.stages.length >= PROCESS_LIMITS.stages));
       // Only a process that is not saved yet can be removed here.
-      if (!isSaved(process.id)) footer.append(button('cp-remove', `Убрать новый процесс: ${process.title || 'без названия'}`, 'Убрать', 'process-remove'));
+      if (!isSaved(process.id)) footer.append(button('cp-remove', `${copy("Убрать новый процесс: ")}${process.title || copy("без названия")}`, copy("Убрать"), 'process-remove'));
       box.append(legend, title, stages, footer);
       return box;
     }));
@@ -78,7 +80,7 @@ export function mountProcessSettings(element, { invoke, setPending = () => {} })
     render();
     // Focus stays with the moved stage; at an edge the other arrow takes it.
     focus([processId, stageId, keep], [processId, stageId, keep === 'stage-up' ? 'stage-down' : 'stage-up'], [processId, stageId, 'stage-title']);
-    status.textContent = `Стадия «${stage.title}» теперь ${to + 1}-я.`;
+    status.textContent = `${copy("Стадия «")}${stage.title}${copy("» теперь ")}${to + 1}${copy("-я.")}`;
   }
   function removeStage(processId, stageId) {
     const { process, index } = find(processId, stageId);
@@ -87,7 +89,7 @@ export function mountProcessSettings(element, { invoke, setPending = () => {} })
     render();
     const neighbour = process.stages[index] || process.stages[index - 1];
     focus([processId, neighbour?.id, 'stage-delete'], [processId, neighbour?.id, 'stage-title'], [processId, null, 'stage-add']);
-    status.textContent = `Стадия «${stage.title || 'без названия'}» будет удалена после сохранения.`;
+    status.textContent = `${copy("Стадия «")}${stage.title || copy("без названия")}${copy("» будет удалена после сохранения.")}`;
   }
   function addStage(processId) {
     const process = draft.find(item => item.id === processId);
@@ -108,17 +110,17 @@ export function mountProcessSettings(element, { invoke, setPending = () => {} })
     if (target) { target.setAttribute('aria-invalid', 'true'); target.focus(); }
   }
   async function load() {
-    failed = false; status.textContent = 'Загружаем процессы…'; showError(''); updateActions();
+    failed = false; status.textContent = copy("Загружаем процессы…"); showError(''); updateActions();
     try {
       const value = await readProcessState(invoke);
       if (disposed) return;
       saved = value; draft = clone(value.state.processes);
-      status.textContent = `${draft.length === 1 ? 'Один процесс' : `Процессов: ${draft.length}`}.`;
+      status.textContent = `${draft.length === 1 ? copy("Один процесс") : `${copy("Процессов: ")}${draft.length}`}.`;
     } catch (cause) {
       if (disposed) return;
       failed = true; saved = null; draft = [];
       status.textContent = '';
-      showError(cause?.message || 'Не удалось загрузить процессы.');
+      showError(copy(cause?.message) || copy("Не удалось загрузить процессы."));
     }
     render();
   }
@@ -128,7 +130,11 @@ export function mountProcessSettings(element, { invoke, setPending = () => {} })
     catch (cause) {
       if (!(cause instanceof ProcessValidationError)) throw cause;
       const target = cause.stageId ? control(cause.processId, cause.stageId, 'stage-title') : cause.field === 'stages' ? control(cause.processId, null, 'stage-add') : control(cause.processId, null, 'process-title');
-      showError(cause.message, target);
+      const process = draft.find(item => item.id === cause.processId);
+      const missingStage = cause.field === 'stages' && process && !process.stages.length;
+      const message = copy.locale === 'en' && missingStage
+        ? `Process “${process.title}” requires at least one stage.` : copy(cause.message);
+      showError(message, target);
       return null;
     }
   }
@@ -139,15 +145,15 @@ export function mountProcessSettings(element, { invoke, setPending = () => {} })
     if (!dirty()) return true;
     const valid = check();
     if (!valid) return false;
-    busy = true; showError(''); status.textContent = 'Сохраняем процессы…'; if (!external) setPending(true); render();
+    busy = true; showError(''); status.textContent = copy("Сохраняем процессы…"); if (!external) setPending(true); render();
     try {
       saved = await saveProcessState(invoke, valid, saved.raw);
       if (disposed) return true;
       draft = clone(saved.state.processes);
-      status.textContent = 'Процессы сохранены.';
+      status.textContent = copy("Процессы сохранены.");
       return true;
     } catch (cause) {
-      if (!disposed) { status.textContent = ''; showError(cause?.message || 'Не удалось сохранить процессы. Изменения остались в форме.'); }
+      if (!disposed) { status.textContent = ''; showError(copy(cause?.message) || copy("Не удалось сохранить процессы. Изменения остались в форме.")); }
       return false;
     } finally {
       busy = false;
@@ -168,7 +174,7 @@ export function mountProcessSettings(element, { invoke, setPending = () => {} })
   // The buttons are disabled once saved: focus moves to the confirmation.
   status.tabIndex = -1;
   q('save').addEventListener('click', () => { void save().then(ok => { if (ok && !disposed) status.focus({ preventScroll: true }); }); });
-  q('cancel').addEventListener('click', () => { void load().then(() => { if (!disposed) { status.textContent = 'Изменения отменены.'; element.querySelector('[data-control="process-title"]')?.focus(); } }); });
+  q('cancel').addEventListener('click', () => { void load().then(() => { if (!disposed) { status.textContent = copy("Изменения отменены."); element.querySelector('[data-control="process-title"]')?.focus(); } }); });
   q('retry').addEventListener('click', () => void load());
   void load();
   return { dispose() { disposed = true; }, isDirty: dirty, check: () => !!check(), save, get ready() { return !!saved; } };

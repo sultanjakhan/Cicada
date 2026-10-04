@@ -707,6 +707,15 @@ pub(crate) fn create_note_record(
     conn: &mut Connection, title: &str, content: &str, tags: &str,
     record_status: &str, due_date: &Option<String>, priority: Option<i64>,
 ) -> Result<NoteCreateOutcome, String> {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| fail(e.to_string()))?;
+    let outcome = create_note_in_transaction(&tx, title, content, tags, record_status, due_date, priority)?;
+    tx.commit().map_err(|e| fail(e.to_string()))?;
+    Ok(outcome)
+}
+pub(crate) fn create_note_in_transaction(
+    tx: &Connection, title: &str, content: &str, tags: &str,
+    record_status: &str, due_date: &Option<String>, priority: Option<i64>,
+) -> Result<NoteCreateOutcome, String> {
     validate_title(title)?;
     date(due_date)?;
     validate_note_status(record_status)?;
@@ -724,7 +733,6 @@ pub(crate) fn create_note_record(
         let suffix = marker.strip_prefix("personal-import:personal-backlog:").filter(|id| !id.is_empty() && id.len() <= 80 && id.as_bytes()[0].is_ascii_alphanumeric() && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'));
         if suffix.is_none() || record_status != "task" || !personal_scope(tags) { return Err(fail("invalid personal import create scope")); }
     }
-    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| fail(e.to_string()))?;
     if let Some(marker) = marker {
         let matches = {
             // Read scope metadata first; never load foreign title/content.
@@ -738,13 +746,12 @@ pub(crate) fn create_note_record(
             let (current_title,current_content): (String,String) = tx.query_row("SELECT title,notes FROM items WHERE id=?1", [id], |row| Ok((row.get(0)?,row.get(1)?))).map_err(|e| fail(e.to_string()))?;
             if current_title != title.trim() || current_content != content || projects(current_tags) != projects(tags) { return Err(fail("personal import already exists; refresh preview")); }
             // Idempotent replay preserves all existing workflow, dates and tags.
-            let id = id.clone(); tx.commit().map_err(|e| fail(e.to_string()))?; return Ok(NoteCreateOutcome { id, created: false });
+            return Ok(NoteCreateOutcome { id: id.clone(), created: false });
         }
     }
     let id = Uuid::new_v4().to_string();
     let n = now();
     tx.execute("INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,status) VALUES(?1,'task',?2,?3,?4,NULL,30,?5,1,?6,?6,'task','#9B9B9B',?7,0,?8,?9)",params![id,title.trim(),content,due_date,(record_status=="done") as i64,n,priority.unwrap_or(0),tags,record_status]).map_err(|e|fail(e.to_string()))?;
-    tx.commit().map_err(|e| fail(e.to_string()))?;
     Ok(NoteCreateOutcome { id, created: true })
 }
 

@@ -217,7 +217,7 @@ pub(crate) fn allowed(command: &str) -> bool {
         "recover_task_result_review") { return true; }
     matches!(
         command,
-        "isolated_test_status"
+        "isolated_test_status" | "shared_task_command"
             | "list_items"
             | "save_item"
             | "set_completed"

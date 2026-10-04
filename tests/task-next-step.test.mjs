@@ -31,7 +31,7 @@ test('unreadable steps are unknown and failed saves keep the confirmed next step
 });
 test('confirmed completion exposes the next planned step and keeps other running work visible',async()=>{
  const x=await mount([{id:'a',title:'First',status:'planned'},{id:'b',title:'Second',status:'planned'}]);
- try{const s=x.host.querySelector('select');s.value='done';s.dispatchEvent(new x.dom.window.Event('change'));await settle();assert.equal(x.host.querySelector('.task-next-step p').textContent,'Ближайший шаг: Second');assert.match(x.host.querySelector('summary').textContent,/1\/2/);}finally{x.close();}
+ try{const s=x.host.querySelector('select');s.value='done';s.dispatchEvent(new x.dom.window.Event('change'));await settle();assert.equal(x.host.querySelector('.task-next-step p').textContent,'Ближайший шаг: Second');assert.match(x.host.querySelector('summary').textContent,/выполнено 1 из 2/);}finally{x.close();}
  const parallel=await mount([{id:'a',title:'First',status:'running'},{id:'b',title:'Second',status:'running'}]);
  try{assert.match(parallel.host.querySelector('.task-next-step p').textContent,/ещё в работе: 1/);assert.ok(parallel.calls.every(c=>c==='get_ui_state'));}finally{parallel.close();}
 });

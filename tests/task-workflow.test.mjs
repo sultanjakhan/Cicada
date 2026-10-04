@@ -92,7 +92,7 @@ test('task card flow adds a step, shows progress, saves result and restores afte
   host.querySelectorAll('details button')[1].click(); await settle();
   dispose.beforeClose(); dispose(); host.replaceChildren();
   dispose = mountTaskWorkflow(host, { record: task, invoke: db.invoke }); await settle();
-  assert.match(host.querySelector('summary').textContent, /1\/1/);
+  assert.match(host.querySelector('summary').textContent, /выполнено 1 из 1/);
   assert.equal(host.querySelector('textarea').value, 'Готовый результат');
   dispose(); dom.window.close();
 });
@@ -125,7 +125,7 @@ test('failed step status save restores confirmed progress without losing Unicode
   const select = host.querySelector('select'); select.value = 'done';
   select.dispatchEvent(new dom.window.Event('change')); await settle();
   assert.equal(host.querySelector('select').value, 'planned');
-  assert.match(host.querySelector('summary').textContent, /0\/1/);
+  assert.match(host.querySelector('summary').textContent, /выполнено 0 из 1/);
   assert.equal((await store.load()).steps[0].status, 'planned');
   assert.equal(host.querySelector('input').value, stepDraft);
   assert.equal(host.querySelector('textarea').value, resultDraft);
@@ -134,7 +134,7 @@ test('failed step status save restores confirmed progress without losing Unicode
   const retrySelect = host.querySelector('select'); retrySelect.value = 'done';
   retrySelect.dispatchEvent(new dom.window.Event('change')); await settle();
   assert.equal(host.querySelector('select').value, 'done');
-  assert.match(host.querySelector('summary').textContent, /1\/1/);
+  assert.match(host.querySelector('summary').textContent, /выполнено 1 из 1/);
   assert.equal((await store.load()).steps[0].status, 'done');
   assert.equal(host.querySelector('input').value, stepDraft);
   assert.equal(host.querySelector('textarea').value, resultDraft);

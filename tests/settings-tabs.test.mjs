@@ -9,6 +9,9 @@ test('theme select is labelled in RU/EN, switches immediately and survives reope
   for (const [lang, label, options] of [['ru', 'Тема', ['Светлая', 'Тёмная']], ['en-US', 'Theme', ['Light', 'Dark']]]) {
     const x = await boot({ section: 'about', lang });
     const select = x.modal.querySelector('[data-theme-setting]');
+    const buildInfo = x.modal.querySelector('#calendar-settings-panel-about > p');
+    assert.ok(buildInfo);
+    assert.match(buildInfo.textContent, lang.startsWith('en') ? /build/ : /\u0441\u0431\u043e\u0440\u043a\u0430/);
     assert.equal(select.closest('label').firstChild.textContent, label);
     assert.deepEqual([...select.options].map(o => o.textContent), options);
     assert.equal(document.getElementById(select.getAttribute('aria-describedby')).textContent.length > 0, true);
@@ -17,6 +20,16 @@ test('theme select is labelled in RU/EN, switches immediately and survives reope
     assert.equal(document.documentElement.dataset.theme, 'dark');
     assert.equal(localStorage.getItem('hanni_theme'), 'dark');
     assert.equal(x.writes.length, 0, 'theme does not write calendar preferences or data');
+    if (lang.startsWith('en')) {
+      for (const id of ['tab-list','tab-bar-bottom']) { const node=document.createElement('div');node.id=id;document.body.append(node); }
+      const {renderTabBar}=await import('../src/hanni/js/tabs.js');renderTabBar();
+      assert.equal(document.querySelector('[data-calendar-settings]').getAttribute('aria-label'),'Settings');
+      assert.deepEqual([...x.modal.querySelectorAll('[role="tab"]')].map(tab=>tab.textContent),['Today','Calendar','Task stages','Connections','About']);
+      const defaults=x.modal.querySelector('[data-key="default_view"]');
+      assert.deepEqual([...defaults.querySelectorAll('button')].map(b=>b.textContent),['Month','Week','Day']);
+      assert.deepEqual([...defaults.querySelectorAll('button')].map(b=>b.dataset.value),['\u041c\u0435\u0441\u044f\u0446','\u041d\u0435\u0434\u0435\u043b\u044f','\u0414\u0435\u043d\u044c']);
+      for (const node of x.modal.querySelectorAll('button,summary,legend,h3,h4,select option')) assert.doesNotMatch(node.textContent,/[\u0400-\u04ff]/,node.outerHTML);
+    }
     x.modal.close();
     const module = await import(`../src/hanni/js/calendar-settings.js?${Math.random()}`);
     module.showCalendarSettings(document.querySelector('#settings'), { section: 'about' });

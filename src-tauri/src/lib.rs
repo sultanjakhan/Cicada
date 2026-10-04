@@ -20,7 +20,12 @@ mod update_background;
 mod update_macos;
 mod update_journal;
 mod calendar_compat;
+mod agent_access;
+mod shared_tasks;
+#[cfg(windows)]
+mod agent_pipe;
 mod data_sources;
+mod data_location;
 mod isolated_test;
 mod task_attributes;
 mod native_result_review;
@@ -37,14 +42,14 @@ mod workspace_ipc_tests;
 const SCHEMA_VERSION: i64 = 5;
 
 pub struct AppState(Mutex<Connection>);
-pub struct AppInstanceLock(std::fs::File);
+pub struct AppInstanceLock(Vec<std::fs::File>);
 
 fn acquire_instance_lock(data_dir: &std::path::Path) -> Result<AppInstanceLock, String> {
     let file = std::fs::OpenOptions::new().read(true).write(true).create(true)
         .open(data_dir.join("hanni-mvp.instance.lock"))
         .map_err(|_| fail("open application instance lock"))?;
     file.try_lock().map_err(|_| fail("Cicada is already open for this profile"))?;
-    Ok(AppInstanceLock(file))
+    Ok(AppInstanceLock(vec![file]))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -467,19 +472,37 @@ fn dirs_like_legacy_documents_path() -> PathBuf {
         .join("Hanni")
 }
 
+fn standard_app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path().app_data_dir().map_err(|e| fail(format!("resolve app data directory: {e}")))
+}
+
 fn app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     if let Some(root) = isolated_test::root(app) { return Ok(root); }
-    let standard = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| fail(format!("resolve app data directory: {e}")))?;
+    let standard = standard_app_data_dir(app)?;
     #[cfg(debug_assertions)]
-    let directory = debug_data_dir(std::env::var_os("HANNI_MVP_DATA_DIR"), standard)?;
+    let directory = match std::env::var_os("HANNI_MVP_DATA_DIR") {
+        Some(raw) => debug_data_dir(Some(raw), standard)?,
+        None => data_location::resolve(&standard)?,
+    };
     #[cfg(not(debug_assertions))]
-    let directory = standard;
+    let directory = data_location::resolve(&standard)?;
     std::fs::create_dir_all(&directory)
         .map_err(|e| fail(format!("create app data directory: {e}")))?;
     Ok(directory)
+}
+
+#[tauri::command]
+fn get_data_location(app: tauri::AppHandle) -> Result<data_location::DataLocation, String> {
+    if isolated_test::root(&app).is_some() { return Ok(data_location::DataLocation { path: app_data_dir(&app)?.to_string_lossy().into_owned(), is_default: true, restart_required: false }); }
+    let standard = standard_app_data_dir(&app)?;
+    data_location::current(&standard)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn prepare_data_location(app: tauri::AppHandle, path: String) -> Result<data_location::DataLocation, String> {
+    if isolated_test::root(&app).is_some() { return Err(fail("Изменение папки данных недоступно в изолированном тесте.")); }
+    let standard = standard_app_data_dir(&app)?;
+    data_location::prepare(&standard, Path::new(path.trim()))
 }
 
 #[tauri::command]
@@ -658,8 +681,30 @@ pub fn run() {
         .manage(app_updates::UpdateState::default())
         .setup(move |app| {
             let initialized = (|| -> Result<(), Box<dyn std::error::Error>> {
+                let source_dir = app_data_dir(app.handle())?;
+                let custom_debug_profile = cfg!(debug_assertions) && std::env::var_os("HANNI_MVP_DATA_DIR").is_some();
+                let production_profile = !isolated && !custom_debug_profile;
+                // Isolated and DEV startup must never touch production pointer,
+                // pending migration or instance lock.
+                let standard_dir = if production_profile { standard_app_data_dir(app.handle())? } else { source_dir.clone() };
+                std::fs::create_dir_all(&standard_dir)?;
+                let standard_instance_lock = if isolated { None } else { Some(acquire_instance_lock(&standard_dir)?) };
+                let source_instance_lock = if source_dir == standard_dir && !isolated { None } else { Some(acquire_instance_lock(&source_dir)?) };
+                if production_profile { data_location::apply_pending(&standard_dir, &source_dir)?; }
                 let data_dir = app_data_dir(app.handle())?;
-                let instance_lock = acquire_instance_lock(&data_dir)?;
+                let instance_lock = if data_dir != source_dir {
+                    let target_instance_lock = acquire_instance_lock(&data_dir)?;
+                    drop(source_instance_lock);
+                    AppInstanceLock(standard_instance_lock.into_iter().flat_map(|l| l.0).chain(target_instance_lock.0).collect())
+                } else {
+                    AppInstanceLock(standard_instance_lock.into_iter().flat_map(|l| l.0).chain(source_instance_lock.into_iter().flat_map(|l| l.0)).collect())
+                };
+                let endpoint_root = data_location::endpoint_source(
+                    &standard_dir,
+                    &data_dir,
+                    isolated,
+                    cfg!(debug_assertions) && std::env::var_os("HANNI_MVP_DATA_DIR").is_some(),
+                );
                 let database_was_present = data_dir.join("calendar.db").try_exists()?;
                 let connection = Connection::open(data_dir.join("calendar.db"))
                     .map_err(|e| fail(format!("open calendar database: {e}")))?;
@@ -669,6 +714,12 @@ pub fn run() {
                 data_sources::mark_new_profile(&connection, database_was_present)?;
                 app.manage(AppState(Mutex::new(connection)));
                 app.manage(instance_lock);
+                #[cfg(windows)]
+                if !startup_options.is_one_shot() {
+                    if agent_pipe::start(app.handle().clone(), &data_dir, endpoint_root).is_err() {
+                        eprintln!("Cicada local agent access unavailable");
+                    }
+                }
                 #[cfg(target_os = "macos")]
                 if !startup_options.is_one_shot() {
                     window_placement_macos::restore(
@@ -720,6 +771,8 @@ pub fn run() {
             set_completed,
             delete_item,
             create_backup,
+            get_data_location,
+            prepare_data_location,
             save_personal_import_recovery,
             app_updates::mvp_update_status,
             app_updates::mvp_update_check,
@@ -748,6 +801,7 @@ pub fn run() {
             calendar_compat::update_note_status,
             calendar_compat::toggle_note_archive,
             calendar_compat::get_calendar_tasks,
+            shared_tasks::shared_task_command,
             native_result_review::prototype_publish_task_result,
             native_result_review::read_task_result_review,
             native_result_review::enqueue_task_result_review,

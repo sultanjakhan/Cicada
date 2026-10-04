@@ -4,7 +4,7 @@ import { JSDOM } from 'jsdom';
 import { mountCalendarTodayAction } from '../src/hanni/js/calendar-today-action.js';
 
 const settle = async () => { for (let i=0;i<12;i++) await new Promise(resolve=>setImmediate(resolve)); };
-async function setup(t, {nextTask=false,activeTask=false,extraTasks=[]}={}) {
+async function setup(t, {nextTask=false,activeTask=false,extraTasks=[],onChooseTasks}={}) {
   const dom = new JSDOM('<main></main>'), host = dom.window.document.querySelector('main');
   const now = new Date(), date = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
   const plan = {id:'routine',title:'Проверка',kind:'action',mode:'graph',active:true,required:true,createdOn:date,startsOn:'',endsOn:'',time:'',weekdays:[0,1,2,3,4,5,6],steps:[{title:'Первая ветка',dependsOn:[],trackingMode:'check'},{title:'Вторая ветка',dependsOn:[],trackingMode:'check'}]};
@@ -25,7 +25,7 @@ async function setup(t, {nextTask=false,activeTask=false,extraTasks=[]}={}) {
     if (['get_calendar_tasks','get_calendar_task_goals','get_goals','get_active_blocks','get_schedules'].includes(name)) return [];
     throw Error(name);
   };
-  const dispose = mountCalendarTodayAction(host, {invoke,taskOptions:{invoke},onRoutineFocusChange:value=>selected.push(value),onCurrentTaskChange:value=>currentTasks.push(value)});
+  const dispose = mountCalendarTodayAction(host, {invoke,taskOptions:{invoke},onRoutineFocusChange:value=>selected.push(value),onCurrentTaskChange:value=>currentTasks.push(value),onChooseTasks});
   t.after(()=>{dispose();dom.window.close();}); await settle();
   return {dom,host,calls,selected,currentTasks,dispose,date,state:()=>JSON.parse(state),failCompletion:value=>{failCompletion=value;}};
 }
@@ -116,4 +116,8 @@ test('completion shows the next existing candidate; failed save keeps the runner
   assert.equal(x.host.dataset.mode,'recommendation');
   assert.match(x.host.querySelector('[data-today-recommendation]').textContent,/Следующая задача/);
   assert.equal(x.calls.some(call=>call.name==='start_task_block'),false);
+});
+
+test('external Today task widget receives task choice without constructing a duplicate native list',async t=>{
+ let choices=0;const x=await setup(t,{nextTask:true,activeTask:true,onChooseTasks:()=>choices++});x.dispose.choose('tasks');assert.equal(choices,1);assert.equal(x.host.dataset.mode,'recommendation');assert.equal(x.host.querySelectorAll('.calendar-task-overview').length,0);x.dispose.choose('routines');x.host.querySelector('[data-today-scope="tasks"]').click();assert.equal(choices,2);assert.equal(x.host.dataset.mode,'recommendation');assert.equal(x.host.querySelectorAll('.calendar-task-overview').length,0);assert.equal(x.calls.some(c=>['start_task_block','pause_task_block','finish_task_block'].includes(c.name)),false);
 });

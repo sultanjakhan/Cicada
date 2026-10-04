@@ -1,3 +1,4 @@
+@import url('./dashboard-ai-work.css');
 /* One full-width workspace, one primary action. Lists retain their own pane. */
 .calendar-today { border:1px solid var(--border-default,#ddd); border-radius:14px; padding:20px; background:var(--bg-card,#fff); }
 .calendar-today [hidden] { display:none !important; }
@@ -59,3 +60,13 @@
   .calendar-main-goal.calendar-now .calendar-now__goal-top { flex-wrap:wrap; }
   .calendar-today .calendar-day-banner { flex-wrap:wrap; gap:8px; }
 }
+
+.calendar-workspace .uni-header:has([data-calendar-today-controls]) { grid-template-columns:28px minmax(0,1fr) auto; }
+.calendar-workspace [data-calendar-today-controls] { grid-column:3; grid-row:1; display:flex; align-items:center; gap:8px; min-width:0; }
+.calendar-workspace [data-calendar-today-controls] .calendar-theme-control { flex:0 0 44px; width:44px; min-height:44px; padding:0; margin-left:0; }
+.calendar-workspace [data-calendar-today-controls] .calendar-running { margin:0; }
+.calendar-today .calendar-task-widget { margin-top:20px; padding-top:16px; border-top:1px solid var(--border-default,#ddd); min-width:0; }
+.calendar-task-widget > h2 { margin:0 0 12px; font-size:15px; line-height:1.4; }
+.calendar-task-widget .calendar-task-overview { margin:0; padding:0; border:0; background:transparent; }
+.calendar-task-widget [data-overview-title] { display:none; }
+@media(max-width:600px) { .calendar-workspace .uni-header:has([data-calendar-today-controls]) { grid-template-columns:28px minmax(0,1fr); } .calendar-workspace [data-calendar-today-controls] { grid-column:2; grid-row:3; } }

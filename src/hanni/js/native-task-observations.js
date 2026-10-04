@@ -6,7 +6,7 @@ export const nativeTaskKey=row=>`${row.source_type}:${row.source_id}`;
 export function nativeTaskTags(row){return [...new Set((typeof row.tags==='string'?row.tags.split(','):[]).map(t=>t.trim()).filter(t=>t&&!t.startsWith('task-')))];}
 // Read-only join onto native rows; never imports tasks, completes them or guesses title matches.
 export async function readNativeTaskObservations(rows,invoke,{readReview=null,previousContexts=new Map()}={}){
- const [registry,exchange]=await Promise.allSettled([createRegistryStore(invoke).load(),createTaskRunExchange(invoke).load()]);
+ const [registry,exchange,reportTimes]=await Promise.allSettled([createRegistryStore(invoke).load(),createTaskRunExchange(invoke).load(),invoke('get_ui_state',{key:'calendar_agent_report_times_v1'}).then(raw=>raw?JSON.parse(raw):{})]);
  const contexts=new Map(),unbound=[];
  const all=registry.status==='fulfilled'?Object.values(registry.value):[],state=exchange.status==='fulfilled'?exchange.value:null;
  for(const row of rows){
@@ -14,7 +14,7 @@ export async function readNativeTaskObservations(rows,invoke,{readReview=null,pr
   if(!row.readonly){try{ctx.workflow=await createWorkflowStore(row,invoke).load();}catch{ctx.workflowReadError=true;}}
   const expected=state&&!row.readonly?await stableTaskBinding(state.sourceNamespace,row):null;
   const bound=expected&&same(state.bindings[expected.taskKey],expected)?expected:null;
-  if(bound){ctx.binding=bound;ctx.reports=Object.values(state.runs).filter(r=>r.taskKey===bound.taskKey&&r.report).sort((a,b)=>a.receivedOrder-b.receivedOrder).map(r=>({...r.report,receivedOrder:r.receivedOrder,receivedAt:null,freshness:'unknown'}));}
+  if(bound){ctx.binding=bound;ctx.reports=Object.values(state.runs).filter(r=>r.taskKey===bound.taskKey&&r.report).sort((a,b)=>a.receivedOrder-b.receivedOrder).map(r=>{const at=reportTimes.status==='fulfilled'?reportTimes.value[r.runId]:null,age=Date.now()-Date.parse(at);return {...r.report,receivedOrder:r.receivedOrder,receivedAt:at||null,freshness:at&&age>=0&&age<=300000?'fresh':at?'stale':'unknown'};});}
   for(const snapshot of all)for(const task of snapshot.tasks){
    if(!bound||!same(task.localBinding,bound))continue;
    const source=`published:${snapshot.source.publisherId}:${snapshot.source.sourceNamespace}`,project=snapshot.projects.find(p=>p.id===task.projectId);
@@ -22,10 +22,10 @@ export async function readNativeTaskObservations(rows,invoke,{readReview=null,pr
    if(project)ctx.projects.push({id:`${source}:${project.id}`,label:project.title});
    ctx.observations.push({source,task,snapshot,freshness:freshness(snapshot,task)});
   }
-  if(readReview&&!row.readonly){try{const review=await readReview(String(row.source_id));if(review?.taskId!==String(row.source_id)||!['awaiting_review','accepted','awaiting_dispatch'].includes(review.reviewState)||!Number.isSafeInteger(review.taskRevision)||review.taskRevision<1||!Number.isSafeInteger(review.resultVersion)||review.resultVersion<1)throw Error('Invalid review');ctx.review=review;}catch(error){
+  if(readReview&&!row.readonly){try{const review=await readReview(String(row.source_id));if(review?.taskId!==String(row.source_id)||!['awaiting_review','accepted','awaiting_dispatch','running'].includes(review.reviewState)||!Number.isSafeInteger(review.taskRevision)||review.taskRevision<1||!Number.isSafeInteger(review.resultVersion)||review.resultVersion<1)throw Error('Invalid review');ctx.review=review;}catch(error){
    ctx.reviewAvailable=false;
    const previous=previousContexts.get(nativeTaskKey(row))?.review;
-   const absent=(error?.status===403&&error?.code==='review_prototype_disabled')||(error?.status===404&&error?.code==='no_review_result');
+   const absent=(error?.status===403&&error?.code==='review_prototype_disabled')||(error?.status===404&&['no_review_result','shared_task_not_found'].includes(error?.code));
    ctx.review=previous||null;ctx.reviewReadError=!!previous||!absent;
   }}
   contexts.set(nativeTaskKey(row),ctx);

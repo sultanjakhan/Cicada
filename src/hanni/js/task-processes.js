@@ -203,18 +203,20 @@ export function stageSeconds({ blocks = [], log = [], stage = '', now = Date.now
   return totals;
 }
 /** «25 мин», «1 ч», «1 ч 10 мин». */
-export function formatStageDuration(seconds) {
+export function formatStageDuration(seconds, language = 'ru') {
+  const en = typeof language === 'string' && language.toLowerCase().startsWith('en');
   const minutes = Math.floor(Math.max(0, Number(seconds) || 0) / 60);
-  if (minutes < 60) return `${minutes} мин`;
+  if (minutes < 60) return `${minutes} ${en ? 'min' : 'мин'}`;
   const hours = Math.floor(minutes / 60), rest = minutes % 60;
-  return rest ? `${hours} ч ${rest} мин` : `${hours} ч`;
+  return rest ? `${hours} ${en ? 'h' : 'ч'} ${rest} ${en ? 'min' : 'мин'}` : `${hours} ${en ? 'h' : 'ч'}`;
 }
 /**
  * Display parts in process order: stages with at least a minute and the
  * current stage (live); then deleted stages together; then time without a stage.
  */
-export function stageTimeParts(state, totals) {
+export function stageTimeParts(state, totals, language = 'ru') {
   if (!state) return [];
+  const text = (ru, en) => language.toLowerCase().startsWith('en') ? en : ru;
   const parts = [], known = new Set(state.stages.map(stage => stage.id));
   for (const stage of state.stages) {
     const seconds = totals.get(stage.id) || 0, current = stage.id === state.stage;
@@ -223,9 +225,9 @@ export function stageTimeParts(state, totals) {
   let deleted = 0, count = 0, current = false;
   for (const [id, seconds] of totals) if (id && !known.has(id)) { deleted += seconds; count++; current ||= id === state.stage; }
   if (state.deleted && !totals.has(state.stage)) { count++; current = true; }
-  if (deleted >= 60 || current) parts.push({ id: '#deleted', label: count > 1 ? 'Удалённые стадии' : DELETED_STAGE_LABEL, seconds: deleted, current });
+  if (deleted >= 60 || current) parts.push({ id: '#deleted', label: count > 1 ? text('Удалённые стадии', 'Deleted stages') : text(DELETED_STAGE_LABEL, 'Deleted stage'), seconds: deleted, current });
   const none = totals.get('') || 0;
-  if (none >= 60) parts.push({ id: '', label: 'Без стадии', seconds: none, current: false });
+  if (none >= 60) parts.push({ id: '', label: text('Без стадии', 'No stage'), seconds: none, current: false });
   return parts;
 }
 /** «Понимание 25 мин · Требования 1 ч 10 мин». */
@@ -256,24 +258,26 @@ export async function loadStageBlocks(invoke, sourceIds) {
  */
 export function mountStageTime(element, { invoke, row, processes, now = () => new Date() }) {
   const state = taskStage(row, processes), doc = element.ownerDocument, win = doc.defaultView;
+  const language = doc.documentElement.lang || 'ru';
+  const text = (ru, en) => language.toLowerCase().startsWith('en') ? en : ru;
   if (!state) { element.hidden = true; return () => {}; }
   element.hidden = false; element.classList.add('stage-time');
-  element.textContent = 'Загружаем время по стадиям…';
+  element.textContent = text('Загружаем время по стадиям…', 'Loading time by stage…');
   let blocks = null, timer = null, stopped = false;
   const paint = () => {
     if (stopped) return;
-    const parts = stageTimeParts(state, stageSeconds({ blocks, log: row.stage_log, stage: state.stage, now: now() }));
+    const parts = stageTimeParts(state, stageSeconds({ blocks, log: row.stage_log, stage: state.stage, now: now() }), language);
     element.replaceChildren();
-    const label = doc.createElement('span'); label.className = 'stage-time-label'; label.textContent = 'Время по стадиям';
+    const label = doc.createElement('span'); label.className = 'stage-time-label'; label.textContent = text('Время по стадиям', 'Time by stage');
     element.append(label);
-    if (!parts.some(part => part.seconds >= 60 || part.current)) { element.append(doc.createTextNode(': пока не учтено.')); return; }
+    if (!parts.some(part => part.seconds >= 60 || part.current)) { element.append(doc.createTextNode(text(': пока не учтено.', ': no recorded time yet.'))); return; }
     element.append(doc.createTextNode(': '));
     parts.forEach((part, index) => {
       if (index) element.append(doc.createTextNode(' · '));
       const item = doc.createElement(part.current ? 'strong' : 'span');
       item.className = 'stage-time-part';
-      item.textContent = `${part.label} ${formatStageDuration(part.seconds)}`;
-      if (part.current) { item.dataset.stageTimeCurrent = ''; item.title = 'Текущая стадия, время идёт, пока работает таймер'; }
+      item.textContent = `${part.label} ${formatStageDuration(part.seconds, language)}`;
+      if (part.current) { item.dataset.stageTimeCurrent = ''; item.title = text('Текущая стадия, время идёт, пока работает таймер', 'Current stage; time increases while the timer runs'); }
       element.append(item);
     });
   };
@@ -283,7 +287,7 @@ export function mountStageTime(element, { invoke, row, processes, now = () => ne
     paint();
     // The current stage grows while its timer runs.
     if (blocks.some(block => block.is_active)) timer = win.setInterval(() => { if (!element.isConnected) stop(); else paint(); }, 15000);
-  }).catch(() => { if (!stopped) element.textContent = 'Время по стадиям сейчас недоступно.'; });
+  }).catch(() => { if (!stopped) element.textContent = text('Время по стадиям сейчас недоступно.', 'Time by stage is currently unavailable.'); });
   const stop = () => { stopped = true; if (timer) win.clearInterval(timer); };
   return stop;
 }

@@ -176,7 +176,7 @@ export function mountCalendarTasks(host, dependencies) {
     if(parts.length&&!(state.goal&&String(goalId)===state.goal)){const goal=node('span','ct-goal',parts.at(-1));goal.title=chain.join(' / ');meta.append(goal);}
     renderTaskImportance(doc,meta,row,item);
     const ctx=contextFor(row);
-    if(ctx.review)primaryMeta.append(node('span','ct-status',ctx.review.reviewState==='awaiting_review'?`На приёмке · результат v${ctx.review.resultVersion}`:ctx.review.reviewState==='awaiting_dispatch'?'Ожидает передачи исполнителю':`Принято · результат v${ctx.review.resultVersion}`));
+    if(ctx.review)primaryMeta.append(node('span','ct-status',ctx.review.reviewState==='awaiting_review'?`На приёмке · результат v${ctx.review.resultVersion}`:ctx.review.reviewState==='awaiting_dispatch'?'Ожидает передачи исполнителю':ctx.review.reviewState==='running'?'В работе · подтверждено исполнителем':`Принято · результат v${ctx.review.resultVersion}`));
     if(ctx.reports.length){const reported=ctx.reports.at(-1);meta.append(node('span',null,`По отчёту: ${reported.agent} / ${reported.model||'модель не сообщена'} · ${reported.status}. Live feed отсутствует.`));}
     for(const observation of ctx.observations)meta.append(node('span',null,`Источник ${observation.snapshot.source.publisherId}: ${observation.task.status} · ${observation.freshness}${observation.task.result?` · результат источника: ${observation.task.result}`:''}`));
     if(ctx.reviewReadError||(ctx.review&&ctx.review.reviewState!=='accepted'))complete.disabled=true;
