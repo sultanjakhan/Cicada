@@ -37,8 +37,10 @@
 }
 #calendar-content .calendar-panels .cp-goals-switch,
 #calendar-content .cm-segment,
+[data-task-launcher] [data-launch-scopes],
 #calendar-content .calendar-main-goal .calendar-now__eyebrow {
   background: transparent;
+  border-color: transparent;
   box-shadow: none;
   border-radius: 0;
 }
@@ -51,6 +53,12 @@
 .calendar-development .dev-task-link,
 #calendar-content .calendar-panels .cp-goals-switch button {
   min-height: 36px;
+}
+.calendar-create-menu > button:is(:hover, :focus-visible):not(:disabled),
+.calendar-record-menu button:is(:hover, :focus-visible):not(:disabled) {
+  background: transparent;
+  text-decoration: underline;
+  text-underline-offset: var(--ui-action-underline-offset);
 }
 
 /* Remove the component-level box from ordinary action controls too.  The
