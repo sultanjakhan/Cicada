@@ -493,7 +493,7 @@ fn app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 
 #[tauri::command]
 fn get_data_location(app: tauri::AppHandle) -> Result<data_location::DataLocation, String> {
-    if isolated_test::root(&app).is_some() { return Ok(data_location::DataLocation { path: app_data_dir(&app)?.to_string_lossy().into_owned(), is_default: true, restart_required: false }); }
+    if isolated_test::root(&app).is_some() { return Ok(data_location::DataLocation { path: app_data_dir(&app)?.to_string_lossy().into_owned(), is_default: true, restart_required: false, migration_error: None }); }
     let standard = standard_app_data_dir(&app)?;
     data_location::current(&standard)
 }
@@ -690,7 +690,10 @@ pub fn run() {
                 std::fs::create_dir_all(&standard_dir)?;
                 let standard_instance_lock = if isolated { None } else { Some(acquire_instance_lock(&standard_dir)?) };
                 let source_instance_lock = if source_dir == standard_dir && !isolated { None } else { Some(acquire_instance_lock(&source_dir)?) };
-                if production_profile { data_location::apply_pending(&standard_dir, &source_dir)?; }
+                if production_profile && data_location::apply_pending(&standard_dir, &source_dir).is_err() {
+                    // Keep the original profile usable and retain the failed job.
+                    data_location::record_failure(&standard_dir)?;
+                }
                 let data_dir = app_data_dir(app.handle())?;
                 let instance_lock = if data_dir != source_dir {
                     let target_instance_lock = acquire_instance_lock(&data_dir)?;

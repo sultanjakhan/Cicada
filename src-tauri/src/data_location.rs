@@ -12,6 +12,7 @@ pub struct DataLocation {
     pub path: String,
     pub is_default: bool,
     pub restart_required: bool,
+    pub migration_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +49,17 @@ pub fn endpoint_source<'a>(
 }
 fn pending_path(standard: &Path) -> PathBuf {
     standard.parent().unwrap_or(standard).join(PENDING_FILE)
+}
+fn failure_path(standard: &Path) -> PathBuf {
+    standard.parent().unwrap_or(standard).join("Cicada.data-location.failure.json")
+}
+pub fn record_failure(standard: &Path) -> Result<(), String> {
+    let pending=pending_path(standard);
+    if pending.exists() {
+        let saved=pending.with_file_name(format!("Cicada.data-location.pending.failed-{}.json",Uuid::new_v4()));
+        fs::rename(&pending,saved).map_err(|_| "Не удалось сохранить отказ переноса.")?;
+    }
+    atomic_write(&failure_path(standard),b"{\"state\":\"error\"}")
 }
 
 fn canonical_or_absolute(path: &Path) -> Result<PathBuf, String> {
@@ -186,6 +198,7 @@ pub fn current(standard: &Path) -> Result<DataLocation, String> {
         is_default: path == *standard,
         path: path.to_string_lossy().into_owned(),
         restart_required: pending_path(standard).exists(),
+        migration_error: if failure_path(standard).exists() { Some("Перенос не завершён. Исходная папка остаётся активной; выбери новую пустую папку.".into()) } else {None},
     })
 }
 
@@ -236,10 +249,14 @@ pub fn prepare(standard: &Path, target: &Path) -> Result<DataLocation, String> {
     })
     .map_err(|_| "Не удалось подготовить перемещение.")?;
     atomic_write(&pending_path(standard), &pending)?;
+    if failure_path(standard).exists() {
+        fs::remove_file(failure_path(standard)).map_err(|_| "Не удалось обновить статус переноса.")?;
+    }
     Ok(DataLocation {
         path: target.to_string_lossy().into_owned(),
         is_default: false,
         restart_required: true,
+        migration_error: None,
     })
 }
 
@@ -248,15 +265,19 @@ fn hash(path: &Path) -> Result<Vec<u8>, String> {
 }
 
 fn copy_tree(source: &Path, target: &Path) -> Result<(), String> {
+    copy_tree_inner(source, target, true)
+}
+fn copy_tree_inner(source: &Path, target: &Path, active_root: bool) -> Result<(), String> {
     fs::create_dir_all(target).map_err(|_| "Не удалось создать папку данных.")?;
     for entry in fs::read_dir(source).map_err(|_| "Не удалось прочитать исходные данные.")?
     {
         let entry = entry.map_err(|_| "Не удалось прочитать исходные данные.")?;
         let name = entry.file_name();
-        if name == "hanni-mvp.instance.lock"
+        if active_root && (name == "hanni-mvp.instance.lock"
             || name == "calendar.db"
             || name == "calendar.db-wal"
             || name == "calendar.db-shm"
+            || name == "mvp-sync.credentials")
         {
             continue;
         }
@@ -272,7 +293,7 @@ fn copy_tree(source: &Path, target: &Path) -> Result<(), String> {
             return Err("Исходные данные содержат ссылку или reparse-point.".into());
         }
         if kind.is_dir() {
-            copy_tree(&from, &to)?;
+            copy_tree_inner(&from, &to, false)?;
         } else if kind.is_file() {
             fs::copy(&from, &to).map_err(|_| "Не удалось скопировать данные.")?;
             if hash(&from)? != hash(&to)? {
@@ -344,6 +365,8 @@ pub fn apply_pending(standard: &Path, source: &Path) -> Result<(), String> {
         fs::remove_dir(&target).map_err(|_| "Не удалось подготовить пустую целевую папку.")?;
     }
     fs::rename(&temp, &target).map_err(|_| "Не удалось включить новое расположение данных.")?;
+    crate::mvp_sync::relocate_credentials(&source_db, &target.join("calendar.db"))
+        .map_err(|_| "Не удалось перенести защищённый профиль синхронизации. Исходная папка сохранена.")?;
     let pointer_result = atomic_write(
         &pointer_path(standard),
         serde_json::to_string(&Pointer {
@@ -363,6 +386,32 @@ pub fn apply_pending(standard: &Path, source: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+    #[test]
+    fn failed_migration_can_resume_original_profile_without_retrying_forever() {
+        let root=tempdir().unwrap();let source=root.path().join("app");fs::create_dir(&source).unwrap();
+        drop(rusqlite::Connection::open(source.join("calendar.db")).unwrap());
+        let target=root.path().join("new");prepare(&source,&target).unwrap();
+        fs::create_dir(&target).unwrap();fs::write(target.join("foreign"),b"keep").unwrap();
+        assert!(apply_pending(&source,&source).is_err());record_failure(&source).unwrap();
+        assert_eq!(resolve(&source).unwrap(),source);assert!(!current(&source).unwrap().restart_required);
+        assert!(current(&source).unwrap().migration_error.is_some());
+        assert_eq!(fs::read(target.join("foreign")).unwrap(),b"keep");
+        prepare(&source,&root.path().join("retry")).unwrap();assert!(current(&source).unwrap().migration_error.is_none());
+    }
+    #[cfg(windows)]
+    #[test]
+    fn actual_dpapi_profile_is_reprotected_for_the_new_database_path() {
+        let root=tempdir().unwrap();let source=root.path().join("app");fs::create_dir(&source).unwrap();
+        drop(rusqlite::Connection::open(source.join("calendar.db")).unwrap());
+        let raw="synthetic-device-and-key-payload";
+        crate::mvp_sync::seed_migration_credentials(&source.join("calendar.db"),raw).unwrap();
+        let old=fs::read(source.join("mvp-sync.credentials")).unwrap();
+        let target=root.path().join("new");prepare(&source,&target).unwrap();apply_pending(&source,&source).unwrap();
+        assert_eq!(crate::mvp_sync::read_migration_credentials(&target.join("calendar.db")).unwrap().as_deref(),Some(raw));
+        assert_eq!(crate::mvp_sync::read_migration_credentials(&source.join("calendar.db")).unwrap().as_deref(),Some(raw));
+        assert_eq!(fs::read(source.join("mvp-sync.credentials")).unwrap(),old);
+        assert_ne!(fs::read(target.join("mvp-sync.credentials")).unwrap(),old);
+    }
     #[test]
     fn rejects_nonempty_and_preserves_pointer_on_failure() {
         let root = tempdir().unwrap();

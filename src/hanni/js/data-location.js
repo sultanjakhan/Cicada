@@ -19,7 +19,7 @@ export function mountDataLocation(element, { invoke }) {
   const action = section.querySelector('[data-location-prepare]');
   const status = section.querySelector('[data-location-status]');
   let disposed = false;
-  invoke('get_data_location').then(value => { if (!disposed) current.textContent = `${text.current} ${value.path}${value.restart_required ? (en ? ' · move will apply after restart' : ' · перенос будет применён после перезапуска') : ''}`; }).catch(error => { current.textContent = error?.message || (en ? 'Could not determine the data folder.' : 'Не удалось определить папку данных.'); });
+  invoke('get_data_location').then(value => { if (!disposed) { current.textContent = `${text.current} ${value.path}${value.restart_required ? (en ? ' · move will apply after restart' : ' · перенос будет применён после перезапуска') : ''}`; if(value.migration_error) status.textContent = en ? 'The move failed. The original folder stays active. Choose another empty folder.' : value.migration_error; } }).catch(error => { current.textContent = error?.message || (en ? 'Could not determine the data folder.' : 'Не удалось определить папку данных.'); });
   action.addEventListener('click', async () => {
     if (!input.value.trim()) { status.textContent = text.empty; return; }
     action.disabled = true; status.textContent = text.checking;
