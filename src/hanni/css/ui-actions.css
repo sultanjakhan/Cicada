@@ -8,6 +8,51 @@
   --ui-action-focus: var(--accent-fill, var(--text-primary));
 }
 
+/* Remaining controls found in native acceptance, including disclosure menus. */
+#calendar-content .calendar-tasks .ct-run,
+#calendar-content .calendar-mvp .calv-record-action,
+.calendar-mvp-dialog button,
+.calendar-development .dev-stage-actions > summary {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+#calendar-content .calendar-tasks .ct-run,
+#calendar-content .calendar-mvp .calv-record-action[data-record-action="start"] {
+  color: var(--text-primary);
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-thickness: var(--ui-action-underline-thickness);
+  text-underline-offset: var(--ui-action-underline-offset);
+}
+#calendar-content .calendar-mvp .calv-record-action:is(:hover, :focus-visible):not(:disabled),
+.calendar-development .dev-stage-actions > summary:is(:hover, :focus-visible) {
+  background: transparent;
+  text-decoration: underline;
+  text-underline-offset: var(--ui-action-underline-offset);
+}
+.calendar-development .dev-stage-actions > summary:focus-visible {
+  outline: 2px solid var(--ui-action-focus);
+  outline-offset: 3px;
+}
+#calendar-content .calendar-panels .cp-goals-switch,
+#calendar-content .cm-segment,
+#calendar-content .calendar-main-goal .calendar-now__eyebrow {
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+}
+#calendar-content .calendar-now .calendar-now__goal-link > [data-ui="goal-title"] {
+  text-decoration: underline;
+  text-underline-offset: var(--ui-action-underline-offset);
+}
+.goal-popup__nav button,
+.goal-popup__breadcrumbs button,
+.calendar-development .dev-task-link,
+#calendar-content .calendar-panels .cp-goals-switch button {
+  min-height: 36px;
+}
+
 /* Remove the component-level box from ordinary action controls too.  The
    selectors name action regions so event/calendar data containers, native
    fields and editor toolbars retain their own visual language.  Selection and
@@ -43,7 +88,7 @@
   #calendar-content .calendar-now .calendar-now__primary,
   #calendar-content .calendar-now .calendar-now__secondary,
   #calendar-content .calendar-now .calendar-now__quiet,
-  #calendar-content .calendar-day-banner button:not(.is-started),
+  #calendar-content .calendar-day-banner button,
   #calendar-content .calendar-routine-controls button,
   #calendar-content .calendar-routine-library-row > button,
   #calendar-content .calendar-routine-choices__heading button,
@@ -252,7 +297,7 @@
   .goal-popup__actions [data-goal-popup-action="task"],
   .calendar-native-dialog .calendar-editor-primary,
   .evm-modal .evm-save-btn
-):not(:disabled) {
+) {
   border-color: transparent;
   background: transparent;
   color: var(--text-primary);

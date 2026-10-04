@@ -106,5 +106,12 @@ export async function renderUnifiedLayout(el, tabId, config = {}) {
   const pane = el.querySelector(`#uni-pane-${tabId}`);
   await renderActivePane(pane, activePane, config);
   if (renderRevisions.get(el) !== revision || config.isCurrent?.() === false) return;
+  const selectedTab = el.querySelector(`.uni-tab[data-pane="${activePane}"]`);
+  const tabStrip = selectedTab?.parentElement;
+  if (tabStrip && tabStrip.scrollWidth > tabStrip.clientWidth) {
+    const selectedRect = selectedTab.getBoundingClientRect(), stripRect = tabStrip.getBoundingClientRect();
+    if (selectedRect.left < stripRect.left) tabStrip.scrollLeft -= stripRect.left - selectedRect.left;
+    else if (selectedRect.right > stripRect.right) tabStrip.scrollLeft += selectedRect.right - stripRect.right;
+  }
   if (restoreTabFocus && el.ownerDocument.activeElement === el.ownerDocument.body) el.querySelector(`.uni-tab[data-pane="${activePane}"]`)?.focus({preventScroll:true});
 }

@@ -142,6 +142,22 @@ test('a subgoal opens its parent by exact ID, preserves focus on refresh and lea
   assert.equal(data.count('save_calendar_goal'), 0);
 });
 
+test('navigation waits for the native close event to release the popup owner', async t => {
+  const nativeClose = dom.window.HTMLDialogElement.prototype.close;
+  dom.window.HTMLDialogElement.prototype.close = function () { this.open = false; setImmediate(() => this.dispatchEvent(new dom.window.Event('close'))); };
+  t.after(() => { dom.window.HTMLDialogElement.prototype.close = nativeClose; });
+  let owned = true, opened = null;
+  const x = await open(t, backend(), 'g1', {
+    onClose: () => { owned = false; },
+    onOpenGoal: goal => { if (!owned) opened = goal.id; },
+  });
+  x.field('subgoals').querySelector('button').click();
+  assert.equal(opened, null, 'navigation must not run before the queued close event');
+  await settle();
+  assert.equal(opened, 'g2'); assert.equal(x.modal.isConnected, false);
+  assert.equal(x.events.restored, 0, 'intermediate navigation does not restore the catalog focus');
+});
+
 test('editing and adding a subgoal stack over the popup and refresh it; deletion closes it', async t => {
   const data = backend(), x = await open(t, data, 'g1', { primaryGoalId: 'g0' });
   x.action('edit').click(); await settle();

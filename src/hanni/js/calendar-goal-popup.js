@@ -23,9 +23,9 @@ export function openCalendarGoalPopup({ document, invoke, goal, selection = {}, 
   const window = document.defaultView;
   const goalId = String(goal.id);
   let current = goal, goals = [goal], links = [], tasks = [], primaryId = primaryGoalId === undefined ? undefined : primaryGoalId == null ? null : String(primaryGoalId);
-  let loaded = false, missing = false, revision = 0, development = null, child = null, leaving = false, closed = false;
+  let loaded = false, missing = false, revision = 0, development = null, child = null, leaving = false, closed = false, afterClose = null;
   const dialog = createCalendarDialog({ document, title: goal.title || 'Цель', isCurrent, returnFocus: () => { if (!leaving) returnFocus?.(); },
-    onClose: () => { closed = true; revision++; child?.dispose(); development?.dispose(); window.removeEventListener('task-state-changed', onExternal); window.removeEventListener('hanni:calendar-refresh', onExternal); onClose?.(); } });
+    onClose: () => { closed = true; revision++; child?.dispose(); development?.dispose(); window.removeEventListener('task-state-changed', onExternal); window.removeEventListener('hanni:calendar-refresh', onExternal); onClose?.(); const run = afterClose; afterClose = null; if (isCurrent()) run?.(); } });
   dialog.modal.classList.add('calendar-development-dialog', 'calendar-goal-popup');
   const headingContext = dialog.modal.querySelector('.calendar-editor-header > div');
   headingContext.tabIndex = 0;
@@ -80,8 +80,10 @@ export function openCalendarGoalPopup({ document, invoke, goal, selection = {}, 
   };
 
   function leave(run) {
-    if (closed) return;
-    leaving = true; dialog.close(); run();
+    if (closed || leaving || dialog.pending) return;
+    // Native dialog.close queues its close event; the workspace must release
+    // the old popup owner before the next goal can open.
+    leaving = true; afterClose = run; dialog.close();
   }
   function renderHeader() {
     heading.textContent = current.title || 'Без названия';
