@@ -410,6 +410,17 @@ export async function showEventModal(eventId = null, initialDate = null, options
     const title = titleInput.value.trim();
     if (titleInput.getAttribute('aria-invalid') === 'true' && title && (kind === 'event' || title.length <= 500)) showError('');
   });
+  const clearRangeValidation = () => {
+    if (kind !== 'event' || untimed.checked) return;
+    const timing = [dateInput, timeInput, endDateInput, endTimeInput];
+    if (!timing.some(input => input.getAttribute('aria-invalid') === 'true')) return;
+    const duration = readDuration();
+    if (Number.isSafeInteger(duration) && duration > 0) showError('');
+  };
+  for (const input of [dateInput, timeInput, endDateInput, endTimeInput]) {
+    input.addEventListener('input', clearRangeValidation);
+    input.addEventListener('change', clearRangeValidation);
+  }
   const updateEditorType = () => {
     const other = SCHEDULE_TYPES.includes(kind) ? null : createType(kind);
     overlay.querySelector('.calendar-editor-shell').dataset.editorKind = kind;

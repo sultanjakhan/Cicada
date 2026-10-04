@@ -24,7 +24,7 @@ function assertIdleHeader(header) {
   assert.equal(action.querySelector('.calendar-running__dot').hidden, true, 'zero running tasks has no dot');
 }
 
-async function launch(t, { mobile = false, initialSettings = [], width, userAgent, taskState = null } = {}) {
+async function launch(t, { mobile = false, initialSettings = [], width, userAgent, taskState = null, notes = [] } = {}) {
   const dom = new JSDOM(html, { url: 'http://localhost/', runScripts: 'outside-only', pretendToBeVisual: true });
   const w = dom.window, calls = [], settings = new Map(initialSettings), errors = [], before = new Map();
   if (width != null) Object.defineProperty(w, 'innerWidth', { value: width, configurable: true });
@@ -41,7 +41,13 @@ async function launch(t, { mobile = false, initialSettings = [], width, userAgen
     calls.push({ command, args });
     if (before.has(command)) await before.get(command)(args);
     if (command === 'get_calendar_task') return taskState?.tasks.find(task => task.source_id === args.id) || null;
-    if (command === 'get_note') return taskState?.tasks.find(task => task.source_id === args.id) || null;
+    if (command === 'get_note') return taskState?.tasks.find(task => task.source_id === args.id) || notes.find(note => note.id === args.id) || null;
+    if (command === 'get_notes') return notes;
+    if (command === 'create_note') {
+      const id = `note-${notes.length + 1}`;
+      notes.push({ ...args, id, tab_name: args.tabName, updated_at: new Date().toISOString(), version: 1 });
+      return id;
+    }
     if (command === 'get_goals') return taskState?.goals || [];
     if (command === 'get_calendar_task_goals') return taskState?.links || [];
     if (command === 'get_calendar_records' || command === 'get_calendar_tasks') return taskState?.tasks.map(task => ({ ...task,
@@ -96,6 +102,33 @@ async function launch(t, { mobile = false, initialSettings = [], width, userAgen
   const click = async selector => { const el = w.document.querySelector(selector); assert.ok(el, 'Missing ' + selector); el.click(); await settle(); return el; };
   return { w, calls, click, errors, before, settings };
 }
+
+test('shared Create continues one note draft across panes and saves it once', async t => {
+  const notes = [], { w, click, calls } = await launch(t, { notes });
+  await click('[data-pane="notes"]');
+  await click('[data-calendar-create]'); await click('[data-create-kind="note"]');
+  const draft = { title: 'Fictional draft', content: 'Keep this thought across panes' };
+  for (const [name, value] of Object.entries(draft)) {
+    const input = w.document.querySelector(`dialog [name="${name}"]`);
+    input.value = value; input.dispatchEvent(new w.Event('input', { bubbles: true }));
+  }
+  await click('dialog footer [data-dialog-close]');
+  assert.equal(calls.filter(call => call.command === 'create_note').length, 0);
+  await click('[data-pane="tasks"]');
+  await click('[data-calendar-create]'); await click('[data-create-kind="note"]');
+  assert.ok(w.document.querySelector('dialog[data-note-editor]'), 'shared Create must use the retained-draft editor');
+  for (const [name, value] of Object.entries(draft)) assert.equal(w.document.querySelector(`dialog [name="${name}"]`).value, value);
+  assert.equal(w.document.querySelector('#evm-form'), null);
+  await click('dialog button[type="submit"]');
+  assert.equal(calls.filter(call => call.command === 'create_note').length, 1);
+  assert.equal(notes[0].content, draft.content);
+  assert.equal(w.document.querySelector('dialog'), null);
+  assert.equal(w.document.activeElement, w.document.querySelector('[data-calendar-create]'));
+  await click('[data-pane="dash"]');
+  await click('[data-calendar-create]'); await click('[data-create-kind="note"]');
+  assert.equal(w.document.querySelector('dialog [name="content"]').value, '', 'a successful save clears the draft');
+  assert.equal(calls.filter(call => call.command === 'start_task_block').length, 0);
+});
 
 test('bundled shell boots six workspace panes with only Calendar in the sidebar', async t => {
   const { w, click, calls, errors } = await launch(t);

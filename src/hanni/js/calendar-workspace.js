@@ -477,7 +477,7 @@ export async function mountCalendarTable(el) {
   await refresh();
 }
 
-export function openCalendarCreate(button) {
+export function openCalendarCreate(button, openNoteCreate) {
   const el = document.getElementById('calendar-content');
   if (!el?.querySelector('.uni-pane') || document.querySelector('dialog[open]')) return;
   if (closeCreateMenu) { closeCreateMenu(); return; }
@@ -491,7 +491,11 @@ export function openCalendarCreate(button) {
     onSelect: kind => {
       if (!isCurrent()) return;
       if (kind === 'routine') { window.dispatchEvent(new CustomEvent('hanni:open-routines-pane', { detail:{create:true} })); return; }
-      if (kind === 'note' && pane === 'notes' && disposePanel?.openCreate) { void disposePanel.openCreate({returnFocus}); return; }
+      if (kind === 'note') {
+        if (pane === 'notes' && disposePanel?.openCreate) void disposePanel.openCreate({returnFocus});
+        else void openNoteCreate?.();
+        return;
+      }
       if (kind === 'goal' && pane === 'goals' && disposePanel?.openGoalCreate) { disposePanel.openGoalCreate({returnFocus}); return; }
       showCalendarCreateModal(pane === 'tasks' ? null : pane === 'table' ? view.date : views.iso(new Date()), {
         kind, types:[kind], initialNoDate:pane === 'tasks', isCurrent, returnFocus,
@@ -531,6 +535,14 @@ export async function loadCalendarWorkspace(el, { nativeReview = true } = {}) {
     const heading = el.querySelector('#uni-pane-calendar h2');
     if (tab) tab.focus();
     else if (heading) { heading.tabIndex = -1; heading.focus(); }
+  };
+  const openNoteCreate = async () => {
+    const navigation = openPane('notes'), revision = workspaceRevision;
+    await navigation;
+    if (revision !== workspaceRevision || S.activeTab !== 'calendar' || !el.isConnected || S._unifiedPane.calendar !== 'notes') return;
+    await disposePanel?.openCreate?.({ returnFocus: () => {
+      if (S.activeTab === 'calendar' && el.isConnected) el.querySelector('[data-calendar-create]')?.focus({ preventScroll: true });
+    } });
   };
   // The shared command is read-only here: bound personal tasks expose their
   // review projection, while ordinary tasks return the expected 404 absence.
@@ -650,7 +662,7 @@ export async function loadCalendarWorkspace(el, { nativeReview = true } = {}) {
   let nowHost = null;
   const config = { title:'Календарь', headerIcon:TAB_ICONS.calendar, editableHeader:false, subtitle:'События и расписание', hideDescription:true, hideMemory:true, accessibleTabs:true, beforeRender:cleanupWorkspace, isCurrent:() => S.activeTab === 'calendar',
     toolbarActions: [
-      { label:'Создать', title:'Создать задачу, событие, цель, заметку, желание или рутину', icon:TAB_ICONS.add, onClick:openCalendarCreate },
+      { label:'Создать', title:'Создать задачу, событие, цель, заметку, желание или рутину', icon:TAB_ICONS.add, onClick:button => openCalendarCreate(button, openNoteCreate) },
       { label:'Начать', title:'Начать учёт времени задачи или рутины', icon:ICONS.play, onClick:showAllTasks },
     ],
     renderHeaderExtra: host => {

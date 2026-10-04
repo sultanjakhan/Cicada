@@ -31,6 +31,26 @@ function useWindow(t, handlers = {}) {
 }
 const modal = () => import('../src/hanni/js/calendar-event-modal.js');
 
+test('correcting an event interval clears only its own validation after it becomes valid', async t => {
+  const x = useWindow(t);
+  const { showCalendarCreateModal } = await modal();
+  await showCalendarCreateModal('2026-10-04', { kind: 'event', types: ['event'], initialTime: '10:00' }); await settle();
+  x.q('#evm-title').value = 'Fictional meeting';
+  const end = x.q('#evm-end-time'), error = x.q('#evm-error');
+  end.value = '09:00'; end.dispatchEvent(new x.w.Event('change', { bubbles: true }));
+  x.q('#evm-save').click(); await settle();
+  assert.equal(end.getAttribute('aria-invalid'), 'true');
+  end.value = '10:00'; end.dispatchEvent(new x.w.Event('input', { bubbles: true }));
+  assert.equal(error.hidden, false, 'equal start and end remains invalid');
+  end.value = '11:00'; end.dispatchEvent(new x.w.Event('input', { bubbles: true }));
+  assert.equal(error.hidden, true);
+  assert.equal(end.hasAttribute('aria-invalid'), false);
+  assert.equal(x.saved('create_event').length, 0, 'correcting the input does not save');
+  x.q('#evm-title').value = ''; x.q('#evm-save').click(); await settle();
+  end.value = '12:00'; end.dispatchEvent(new x.w.Event('input', { bubbles: true }));
+  assert.equal(error.hidden, false, 'a valid interval does not hide an unrelated title error');
+});
+
 test('correcting an empty title clears its validation, whitespace does not', async t => {
   const x = useWindow(t);
   const { showCalendarCreateModal } = await modal();
