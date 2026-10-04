@@ -31,6 +31,31 @@ function fixture({ invoke: invokeOverride, task = record, seconds = 61, activeBl
 }
 const settle = async () => { for (let i = 0; i < 6; i++) await new Promise(resolve => setImmediate(resolve)); };
 
+test('saved manual progress notifies the parent; reads and failed saves do not', async t => {
+  const values = new Map(); let changed = 0, fail = false;
+  const f = fixture({ onChanged: () => changed++, invoke: async (command, args, baseInvoke) => {
+    if (command === 'get_ui_state') return values.get(args.key) ?? null;
+    if (command === 'set_ui_state') { if (fail) throw new Error('disk unavailable'); values.set(args.key, args.value); return; }
+    return baseInvoke(command, args);
+  } });
+  t.after(() => { f.dispose(); f.dom.window.close(); });
+  await settle(); assert.equal(changed, 0);
+  const panel = f.window.document.querySelector('.task-workflow');
+  panel.querySelector('input').value = 'Check fields';
+  [...panel.querySelectorAll('button')].find(b => b.textContent === 'Добавить шаг').click(); await settle();
+  assert.equal(changed, 1);
+  fail = true;
+  let select = panel.querySelector('select'); select.value = 'done'; select.dispatchEvent(new f.window.Event('change')); await settle();
+  assert.equal(changed, 1); assert.equal(panel.querySelector('select').value, 'planned');
+  fail = false;
+  select = panel.querySelector('select'); select.value = 'done'; select.dispatchEvent(new f.window.Event('change')); await settle();
+  assert.equal(changed, 2); assert.match(panel.querySelector('summary').textContent, /1\/1/);
+  panel.querySelector('textarea').value = 'Fields checked';
+  [...panel.querySelectorAll('button')].find(b => b.textContent === 'Сохранить результат').click(); await settle();
+  assert.equal(changed, 3);
+  assert.ok(f.calls.every(([command]) => !['start_task_block', 'pause_task_block', 'set_calendar_task_stage'].includes(command)));
+});
+
 test('task primary action explicitly starts a timer, not an agent', async t => {
   const actions = [];
   const f = fixture({ task: { ...record, has_work: false }, seconds: 0, executeAction: async (_task, action) => { actions.push(action); } });

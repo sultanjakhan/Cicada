@@ -37,5 +37,14 @@ test('known managed ownership survives failed read and recovers on subsequent re
  fail=false;x.dom.window.dispatchEvent(new x.dom.window.Event('task-state-changed'));await tick();await tick();assert.equal(x.host.querySelector('[data-task-control="finish"]').disabled,true);assert.doesNotMatch(x.host.textContent,/Состояние приёмки не обновлено/);stop();x.dom.window.close();
 });
 test('explicit disabled prototype or absent result permits ordinary manual tasks',async()=>{
- for(const error of [{status:403,code:'review_prototype_disabled'},{status:404,code:'no_review_result'}]){const x=fixture();const stop=mountCalendarTasks(x.host,{invoke:x.invoke,readTaskReview:async()=>{throw error;},openTask(){},editDate(){},executeAction(){},notifyChange(){}});await tick();await tick();assert.equal(x.host.querySelector('[data-task-control="finish"]').disabled,false);stop();x.dom.window.close();}
+ for(const error of [{status:403,code:'review_prototype_disabled'},{status:404,code:'no_review_result'},{status:404,code:'shared_task_not_found'}]){const x=fixture();const stop=mountCalendarTasks(x.host,{invoke:x.invoke,readTaskReview:async()=>{throw error;},openTask(){},editDate(){},executeAction(){},notifyChange(){}});await tick();await tick();assert.equal(x.host.querySelector('[data-task-control="finish"]').disabled,false);stop();x.dom.window.close();}
+});
+
+test('an absent binding cannot erase previously observed pending review or unlock manual completion',async()=>{
+ const x=fixture();let absent=false;
+ const stop=mountCalendarTasks(x.host,{invoke:x.invoke,readTaskReview:async id=>{if(absent)throw{status:404,code:'shared_task_not_found'};return{taskId:id,taskRevision:2,resultVersion:1,reviewState:'awaiting_review'};},openTask(){},editDate(){},executeAction(){throw Error('No manual finish');},notifyChange(){}});
+ await tick();await tick();assert.equal(x.host.querySelector('[data-task-control="finish"]').disabled,true);
+ absent=true;x.dom.window.dispatchEvent(new x.dom.window.Event('task-state-changed'));await tick();await tick();
+ assert.equal(x.host.querySelector('[data-task-control="finish"]').disabled,true);assert.match(x.host.textContent,/Состояние приёмки не обновлено/);
+ stop();x.dom.window.close();
 });

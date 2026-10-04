@@ -406,6 +406,10 @@ export async function showEventModal(eventId = null, initialDate = null, options
       field.setAttribute('aria-invalid', 'true'); field.setAttribute('aria-describedby', 'evm-error'); field.focus();
     } else if (message) { error.tabIndex = -1; error.focus(); }
   };
+  titleInput.addEventListener('input', () => {
+    const title = titleInput.value.trim();
+    if (titleInput.getAttribute('aria-invalid') === 'true' && title && (kind === 'event' || title.length <= 500)) showError('');
+  });
   const updateEditorType = () => {
     const other = SCHEDULE_TYPES.includes(kind) ? null : createType(kind);
     overlay.querySelector('.calendar-editor-shell').dataset.editorKind = kind;

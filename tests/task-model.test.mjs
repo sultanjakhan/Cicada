@@ -31,6 +31,22 @@ function useWindow(t, handlers = {}) {
 }
 const modal = () => import('../src/hanni/js/calendar-event-modal.js');
 
+test('correcting an empty title clears its validation, whitespace does not', async t => {
+  const x = useWindow(t);
+  const { showCalendarCreateModal } = await modal();
+  await showCalendarCreateModal('2026-10-04', {}); await settle();
+  x.q('#evm-save').click(); await settle();
+  const title = x.q('#evm-title'), error = x.q('#evm-error');
+  assert.equal(title.getAttribute('aria-invalid'), 'true');
+  title.value = '  '; title.dispatchEvent(new x.w.Event('input', { bubbles: true }));
+  assert.equal(error.hidden, false);
+  title.value = 'Valid task'; title.dispatchEvent(new x.w.Event('input', { bubbles: true }));
+  assert.equal(error.hidden, true);
+  assert.equal(title.hasAttribute('aria-invalid'), false);
+  assert.equal(title.hasAttribute('aria-describedby'), false);
+  assert.equal(x.saved('create_calendar_task').length, 0);
+});
+
 test('task model helpers read legacy rows as normal, untimed and without sphere', () => {
   assert.deepEqual(TASK_SPHERES.map(([id, label]) => `${id}:${label}`), ['work:Работа', 'home:Дом', 'health:Здоровье', 'growth:Развитие', 'personal:Личное']);
   assert.equal(sphereLabel('home'), 'Дом'); assert.equal(sphereLabel('finance'), ''); assert.equal(sphereLabel(null), '');

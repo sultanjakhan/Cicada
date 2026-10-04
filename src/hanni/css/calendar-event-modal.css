@@ -88,7 +88,7 @@
 .evm-modal .evm-actions button, .evm-modal .evm-start-now-btn { min-height: 44px; border-radius: 8px; }
 .evm-modal .evm-save-btn { min-width: 154px; }
 .evm-modal .evm-actions .btn-primary { background: var(--accent-fill); color: var(--bg-page); }
-.evm-modal .evm-error { margin: 12px 0; padding: 10px 12px; border-radius: 8px; background: var(--bg-hover); color: var(--color-red); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.evm-modal .evm-error { margin: 12px 0; padding: 10px 12px; border-radius: 8px; background: var(--bg-hover); color: var(--editor-error, #a8322e); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
 .evm-modal #evm-error { flex-shrink: 0; max-height: 25dvh; overflow-y: auto; margin: 0 24px 12px; }
 .evm-modal [aria-invalid="true"] { border-color: var(--color-red); }
 .evm-modal :focus-visible { outline: 2px solid var(--accent-fill); outline-offset: 3px; }

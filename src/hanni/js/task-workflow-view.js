@@ -7,7 +7,7 @@ import { registryStatusLabel, registryFreshnessLabel } from './work-registry-lab
 const labels = { planned: 'Запланирован', running: 'В работе', blocked: 'Жду ответа', done: 'Готов' };
 
 /** Manual product progress, independent of task stages, timers and executor telemetry. */
-export function mountTaskWorkflow(host, { record, invoke, onClean = () => {}, onState = () => {}, review = null }) {
+export function mountTaskWorkflow(host, { record, invoke, onClean = () => {}, onState = () => {}, onSaved = () => {}, review = null }) {
   const document = host.ownerDocument;
   const store = createWorkflowStore(record, invoke);
   let disposed = false, busy = false, loadedResult = '', confirmedState = null, runStatus = null, runReadFailed = false;
@@ -116,6 +116,7 @@ export function mountTaskWorkflow(host, { record, invoke, onClean = () => {}, on
       const state = await change();
       if (disposed) return false;
       paint(state, { restoreDraft: false }); status.textContent = message; retry.hidden = true;
+      onSaved();
       return true;
     } catch { if (!disposed) { if (confirmedState) paint(confirmedState, { restoreDraft: false }); status.textContent = 'Не удалось сохранить. Данные не подтверждены; перечитай состояние и повтори.'; retry.hidden = false; } return false; }
     finally { if (!disposed) { controls(false); notifyClean(); } }
