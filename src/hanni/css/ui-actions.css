@@ -33,6 +33,18 @@
   outline-offset: 3px;
 }
 
+#calendar-content .calendar-tasks .ct-filter-details {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  border-radius: 0;
+}
+#calendar-content .calendar-tasks :is(.ct-filter-details, .ct-row-details) > summary:is(:hover, :focus-visible),
+#calendar-content .calendar-tasks :is(.ct-filter-details, .ct-row-details)[open] > summary {
+  text-decoration: underline;
+  text-underline-offset: var(--ui-action-underline-offset);
+}
+
 /* Remaining controls found in native acceptance, including disclosure menus. */
 #calendar-content .calendar-tasks .ct-run,
 #calendar-content .calendar-mvp .calv-record-action,
