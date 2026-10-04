@@ -26,6 +26,7 @@ mod task_attributes;
 mod native_result_review;
 mod external_url;
 mod desktop_launch;
+mod compact_window;
 #[cfg(target_os = "macos")]
 mod window_placement_macos;
 mod mvp_sync;
@@ -656,6 +657,7 @@ pub fn run() {
         .manage(native_result_review::Scope::from_isolated(isolated))
         .manage(test_profile)
         .manage(app_updates::UpdateState::default())
+        .manage(compact_window::CompactWindow::default())
         .setup(move |app| {
             let initialized = (|| -> Result<(), Box<dyn std::error::Error>> {
                 let data_dir = app_data_dir(app.handle())?;
@@ -709,6 +711,8 @@ pub fn run() {
         .invoke_handler(move |invoke| {
             let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
             isolated_test::isolated_test_status,
+            compact_window::get_compact_window_state,
+            compact_window::set_compact_window,
             health_sleep::health_sleep_status,
             health_sleep::health_sleep_connect,
             health_sleep::health_sleep_import,

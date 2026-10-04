@@ -19,6 +19,7 @@ import { mountCalendarRecurring } from './calendar-recurring.js';
 import { openRecurringRun } from './calendar-routine-execution.js';
 import { startCalendarExecution, readActiveBlocks } from './calendar-execution.js';
 import { mountCalendarInProgress } from './calendar-in-progress.js';
+import { mountCalendarFocus } from './calendar-focus.js';
 import { mountCalendarDayBanner } from './calendar-day-banner.js';
 import { loadCalendarPreferences } from './calendar-display-preferences.js';
 import { attachDevelopmentTask, mountGoalGlance } from './calendar-development.js';
@@ -35,6 +36,7 @@ let disposeNow = null, disposeTable = null, disposePanel = null, disposeTasks = 
 let disposeSourceOnboarding = null;
 let disposeRecurring = null, goalPopup = null, tasksDialog = null;
 let disposeDayBanner = null, disposeInProgress = null, todayTaskSelection = null;
+let disposeFocus = null;
 let disposeNextAction = null, disposeTaskDetails = null, disposeRoutineChoices = null;
 let routinesRouteHandler = null;
 let preferences = { density:'comfortable', showCompleted:false };
@@ -44,7 +46,7 @@ const tasksPaneState = { filter:'active', search:'', goal:'', sphere:'', page:0 
 // The Goals/Wishes choice survives pane switches within a session; it is not a stored preference.
 const goalsPaneState = { view:'goals' };
 let closeCreateMenu = null;
-function cleanupWorkspace() { disposeSourceOnboarding?.(); disposeSourceOnboarding=null; workspaceRevision++; disposeNextAction?.(); disposeTaskDetails?.(); disposeRoutineChoices?.(); disposeNextAction = disposeTaskDetails = disposeRoutineChoices = null; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeRecurring?.(); disposeDayBanner?.(); disposeInProgress?.(); goalPopup?.dispose(); tasksDialog?.dispose(); disposeInProgress = null; disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; disposeRecurring = null; disposeDayBanner = null; goalPopup = null; tasksDialog = null; }
+function cleanupWorkspace() { disposeFocus?.(); disposeFocus=null; disposeSourceOnboarding?.(); disposeSourceOnboarding=null; workspaceRevision++; disposeNextAction?.(); disposeTaskDetails?.(); disposeRoutineChoices?.(); disposeNextAction = disposeTaskDetails = disposeRoutineChoices = null; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeRecurring?.(); disposeDayBanner?.(); disposeInProgress?.(); goalPopup?.dispose(); tasksDialog?.dispose(); disposeInProgress = null; disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; disposeRecurring = null; disposeDayBanner = null; goalPopup = null; tasksDialog = null; }
 const nextActionPreferences = () => ({ enabled:preferences.recommendationsEnabled, includeTasks:preferences.recommendTasks, includeRoutines:preferences.recommendRoutines });
 const view = { period: 'day', mode: 'grid', date: views.iso(new Date()), firstDay:'mon' };
 let initialViewLoaded = false;
@@ -649,6 +651,7 @@ export async function loadCalendarWorkspace(el, { nativeReview = false } = {}) {
     toolbarActions: [
       { label:'Создать', title:'Создать задачу, событие, цель, заметку, желание или рутину', icon:TAB_ICONS.add, onClick:openCalendarCreate },
       { label:'Начать', title:'Начать учёт времени задачи или рутины', icon:ICONS.play, onClick:showAllTasks },
+      ...(!IS_MOBILE ? [{label:'Компактно',title:'Задача и время поверх других окон',onClick:()=>{}}] : []),
     ],
     renderHeaderExtra: host => {
       const create = host.querySelector('.uni-header-action');
@@ -659,6 +662,20 @@ export async function loadCalendarWorkspace(el, { nativeReview = false } = {}) {
       const launch = host.querySelector('[data-action-idx="1"]');
       launch.dataset.calendarLaunch = '';
       launch.setAttribute('aria-haspopup', 'dialog');
+      const focusHost=document.createElement('div');
+      host.querySelector('.uni-navigation').before(focusHost);
+      const compactButton=host.querySelector('[data-action-idx="2"]');
+      if(compactButton)compactButton.hidden=true;
+      disposeFocus=mountCalendarFocus(focusHost,{
+        invoke,notifyChange:changed,compactButton,
+        onModeChange:(compact,selected)=>{focusHost.hidden=!compact && (!selected || S._unifiedPane.calendar==='dash');},
+        openLauncher:button=>showAllTasks(button),
+        openTask:(row,restore)=>{
+          if(row.source_type==='schedule'){const [id,date]=JSON.parse(row.source_id);openRecurringRun({document,invoke,id,date,start:false});}
+          else showRecord(calendarRecord(row),restore);
+        },
+      });
+      todayTaskSelection=disposeFocus.getSelection();
       // «● N» running tasks on the right of the shared header; it leads to the dashboard widget.
       const header = document.createElement('div');
       header.dataset.calendarRunning = '';
@@ -711,7 +728,7 @@ export async function loadCalendarWorkspace(el, { nativeReview = false } = {}) {
         onOpenSettings:button => showCalendarSettings(button, {section:'next-action',recommendationsOnly:true,returnFocus:() => button.isConnected ? button.focus({preventScroll:true}) : disposeNextAction?.focus()}),
       });
       disposeNextAction = mountCalendarTodayAction(pane.querySelector('[data-calendar-next-action]'), {
-        invoke, preferences:nextActionPreferences(), notifyChange:changed, compactRunning:true,
+        invoke, preferences:nextActionPreferences(), notifyChange:changed, compactRunning:true,initialTask:todayTaskSelection,
         taskOptions, openRoutines:() => void openPane('routines'),
         onCurrentTaskChange:task => {
           const key = value => value ? `task:${value.source_type}:${String(value.source_id)}` : '';
@@ -719,10 +736,11 @@ export async function loadCalendarWorkspace(el, { nativeReview = false } = {}) {
           // Update first: clearing old focus can synchronously rerender NextAction
           // and call back into this handler.
           todayTaskSelection = task;
+          disposeFocus?.setSelectedTask(task);
           if (previousKey && previousKey !== nextKey) disposeNextAction?.setFocusedTaskVisible(previousKey,false);
           disposeInProgress?.setSelectedTask(task);
         },
-        onRoutineFocusChange:options => disposeInProgress?.setExcludedRoutine(options?.id || null),
+        onRoutineFocusChange:options => {disposeInProgress?.setExcludedRoutine(options?.id || null);disposeFocus?.setSelectedRoutine(options);},
         openTask:task => showRecord(calendarRecord(task), () => disposeNextAction?.focus()),
         executeTask:(task,action) => executeCalendarTaskAction(calendarRecord(task),action),
       });

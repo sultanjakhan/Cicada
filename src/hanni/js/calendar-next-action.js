@@ -125,7 +125,7 @@ export function mountCalendarNextAction(element, dependencies) {
   const document = element.ownerDocument, window = document.defaultView;
   const clock = dependencies.clock || (() => new Date());
   const store = createRecurringStore(invoke, { now: clock });
-  let preferences = normalizedPreferences(dependencies.preferences), disposed = false, revision = 0, busy = false, preferencesChangedWhileBusy = false, snapshot = null, recommendation = null, currentTaskKey = '', focusedTaskKey = '', renderedKey = '', error = '', feedback = '', lastDay = '', focusTarget = null, refreshQueued = false;
+  let preferences = normalizedPreferences(dependencies.preferences), disposed = false, revision = 0, busy = false, preferencesChangedWhileBusy = false, snapshot = null, recommendation = null, currentTaskKey = dependencies.initialTask ? keyOfTask(dependencies.initialTask) : '', focusedTaskKey = '', renderedKey = '', error = '', feedback = '', lastDay = '', focusTarget = null, refreshQueued = false;
 
   element.classList.add('calendar-next-action');
   if (!dependencies.hideHeading) element.setAttribute('aria-labelledby', 'calendar-next-action-title');

@@ -217,6 +217,7 @@ pub(crate) fn allowed(command: &str) -> bool {
         "recover_task_result_review") { return true; }
     matches!(
         command,
+        "get_compact_window_state" | "set_compact_window" |
         "isolated_test_status"
             | "list_items"
             | "save_item"
