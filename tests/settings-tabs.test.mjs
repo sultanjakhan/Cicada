@@ -251,7 +251,10 @@ test('full preference save rejects a conflicting remote field and retains the dr
   assert.equal(JSON.parse(x.ui.get('calendar_preferences_v1')).default_view, 'Неделя');
   assert.equal(x.modal.open, true);
   assert.equal(x.modal.querySelector('[data-value="День"]').classList.contains('active'), true);
-  assert.match(x.modal.querySelector('[data-prefs-error]').textContent, /конфликтующее поле/i);
+  assert.match(x.modal.querySelector('[data-prefs-error]').textContent, /Вид при запуске.*изменилась на другом устройстве/i);
+  x.modal.querySelector('form').dispatchEvent(new x.dom.window.Event('submit', { bubbles: true, cancelable: true }));
+  await tick();
+  assert.equal(JSON.parse(x.ui.get('calendar_preferences_v1')).default_view, 'Неделя', 'repeating stale save cannot overwrite the remote value');
 });
 
 test('connection actions remain available after preference load failure and do not use the calendar Save', async () => {
