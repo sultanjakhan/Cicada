@@ -1,6 +1,7 @@
 import './styles.css';
 import './hanni/css/calendar-dashboard-v7.css';
 import './hanni/css/sync-conflicts.css';
+import './hanni/css/ui-actions.css';
 import { tabLoaders, invoke, listen, requestMvpSync, getPendingMvpOperations } from './hanni/js/state.js';
 import { startMvpSyncRefresh } from './hanni/js/content-sync-refresh.js';
 import { requestHealthViewRefresh } from './hanni/js/health-view-refresh.js';

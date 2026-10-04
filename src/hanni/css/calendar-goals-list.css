@@ -20,13 +20,13 @@
 .calendar-panels .cp-goal-list { display: grid; gap: 6px; }
 .calendar-panels .cp-goal-list > .cp-goal-group { margin: 12px 0 2px; font-size: 12px; line-height: 16px; font-weight: 600; color: var(--text-muted); }
 .calendar-panels .cp-goal-list > .cp-goal-group:first-child { margin-top: 0; }
-.calendar-panels .cp-goal-row { position: relative; display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; column-gap: 4px; min-width: 0; margin-left: min(calc(var(--goal-depth, 0) * 22px), 132px); padding: 8px 6px 8px 4px; border: 1px solid var(--border-default); border-radius: 12px; background: var(--bg-card); cursor: pointer; transition: background-color .12s, border-color .12s; }
-.calendar-panels .cp-goal-row.is-subgoal { padding-top: 0; padding-bottom: 0; min-height: 42px; border: 0; border-left: 1px solid var(--border-default); border-radius: 0; background: transparent; }
+.calendar-panels .cp-goal-row { position: relative; display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; column-gap: 4px; min-width: 0; margin-left: min(calc(var(--goal-depth, 0) * 22px), 132px); padding: 8px 6px 8px 4px; border: 0; border-radius: 0; background: transparent; cursor: pointer; transition: color .12s; }
+.calendar-panels .cp-goal-row.is-subgoal { padding-top: 0; padding-bottom: 0; min-height: 42px; border: 0; border-radius: 0; background: transparent; }
 .calendar-panels .cp-goal-row.is-subgoal .cp-goal-row__desc { display: none; }
-.calendar-panels .cp-goal-row.is-subgoal.is-primary { border-left: 3px solid var(--text-primary); }
-.calendar-panels .cp-goal-row:hover, .calendar-panels .cp-goal-row:has(:focus-visible) { background: var(--cg-hover); }
-.calendar-panels .cp-goal-row.is-primary { border-left: 3px solid var(--text-primary); padding-left: 2px; }
-.calendar-panels .cp-goal-row.is-achieved { background: color-mix(in srgb, var(--text-muted) 4%, var(--bg-card)); }
+.calendar-panels .cp-goal-row.is-subgoal.is-primary { border-left: 0; }
+.calendar-panels .cp-goal-row:hover, .calendar-panels .cp-goal-row:has(:focus-visible) { background: transparent; }
+.calendar-panels .cp-goal-row.is-primary { border-left: 0; padding-left: 4px; }
+.calendar-panels .cp-goal-row.is-achieved { background: transparent; }
 .calendar-panels .cp-goal-row__lead { display: flex; justify-content: center; }
 .calendar-panels button.cp-goal-row__collapse { display: grid; place-items: center; width: 26px; height: 26px; min-height: 0; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--text-muted); font-size: 14px; line-height: 1; }
 .calendar-panels button.cp-goal-row__collapse[aria-expanded="false"] span { display: inline-block; transform: rotate(-90deg); }
@@ -35,9 +35,9 @@
 .calendar-panels button.cp-goal-row__open:hover:not(:disabled) { border: 0; background: transparent; }
 .calendar-panels .cp-goal-row__line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; min-width: 0; }
 .calendar-panels .cp-goal-row__title { min-width: 0; font-size: 15px; line-height: 21px; font-weight: 600; color: var(--text-primary); overflow-wrap: anywhere; }
+.calendar-panels .cp-goal-row.is-primary .cp-goal-row__title { text-decoration-line: underline; text-decoration-thickness: 2px; text-underline-offset: 4px; }
 .calendar-panels .cp-goal-row.is-subgoal .cp-goal-row__title { font-size: 14px; line-height: 19px; font-weight: 550; }
-.calendar-panels .cp-goal-row__badge { flex: none; padding: 0 7px; border: 1px solid var(--text-primary); border-radius: 999px; font-size: 11px; line-height: 17px; font-weight: 600; color: var(--text-primary); }
-.calendar-panels .cp-goal-row__status { flex: none; padding: 0 7px; border: 1px solid var(--border-default); border-radius: 999px; font-size: 11px; line-height: 17px; font-weight: 600; color: var(--text-secondary); }
+.calendar-panels .cp-goal-row__badge, .calendar-panels .cp-goal-row__status { flex: none; padding: 0; border: 0; border-radius: 0; font-size: 11px; line-height: 17px; font-weight: 600; color: var(--text-secondary); }
 .calendar-panels .cp-goal-row__desc, .calendar-panels .cp-goal-row__meta { display: block; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .calendar-panels .cp-goal-row__desc { font-size: 13px; line-height: 18px; color: var(--text-secondary); }
 .calendar-panels .cp-goal-row__meta { font-size: 12px; line-height: 17px; color: var(--text-muted); }
