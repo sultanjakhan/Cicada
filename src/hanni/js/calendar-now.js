@@ -159,7 +159,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     let restore = true;
     const heading = document.createElement('h2'); heading.id = `${prefix}-goal-detail-title`; heading.textContent = goal.title; heading.tabIndex = -1;
     modal.setAttribute('aria-labelledby', heading.id);
-    const status = document.createElement('p'); status.className = 'calendar-goal-dialog__status'; status.textContent = 'Показана на дашборде';
+    const status = document.createElement('p'); status.className = 'calendar-goal-dialog__status'; status.textContent = goal.status === 'achieved' ? 'Цель достигнута · показана на дашборде' : 'Показана на дашборде';
     const date = document.createElement('p'); date.textContent = goalDateLabel(goal.deadline) ? `Срок: ${goalDateLabel(goal.deadline)}` : 'Срок не задан';
     const header = document.createElement('header'); header.className = 'calendar-goal-dialog__header';
     const label = document.createElement('p'); label.textContent = 'Главная цель';
@@ -222,7 +222,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     goalDialog = modal; document.body.append(modal); modal.showModal(); heading.focus();
   }
   function candidates() {
-    if (!snapshot || !selectedGoal()) return [];
+    if (!snapshot || !selectedGoal() || selectedGoal().status === 'achieved') return [];
     const goalIds = descendantGoalIds(saved.goalId);
     const linked = new Set(snapshot.links.filter(link => goalIds.has(String(link.goal_id))).map(keyOf));
     const nowMin = clock().getHours() * 60 + clock().getMinutes();
@@ -292,7 +292,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     select.value = selected;
   }
   function openGoalPicker(trigger) {
-    if (goalPicker || busy || reading || failure || !snapshot || snapshot.active || (!hideTaskCard && saved.completed)) return;
+    if (goalPicker || busy || reading || failure || !snapshot) return;
     closePicker();
     const editor = createCalendarDialog({ document, title: 'Главная цель', hint: 'Выбери то, на чём хочешь сосредоточиться.',
       isCurrent: () => !disposed && element.isConnected,
@@ -321,15 +321,17 @@ export function mountCalendarNow(element, dependencies = {}) {
     const many = snapshot.goals.length >= 8;
     query.parentElement.hidden = !many;
     const filter = many ? query.value.trim().toLocaleLowerCase('ru') : '';
-    const signature = JSON.stringify([saved.goalId, snapshot.goals.map(goal => [goal.id, goal.title, goal.deadline]), filter]);
+    const signature = JSON.stringify([saved.goalId, snapshot.goals.map(goal => [goal.id, goal.title, goal.deadline, goal.status]), filter]);
     let restoreChoice;
     if (signature !== picker.signature) {
       picker.signature = signature;
       restoreChoice = list.contains(document.activeElement) ? document.activeElement.dataset.goalChoice : undefined;
       list.replaceChildren();
-      const goals = [...snapshot.goals].sort((a, b) => Number(String(b.id) === saved.goalId) - Number(String(a.id) === saved.goalId))
-        .filter(goal => !filter || goal.title.toLocaleLowerCase('ru').includes(filter));
-      for (const [id, title, deadline] of [[null, 'Пока без цели'], ...goals.map(goal => [String(goal.id), goal.title, goal.deadline])]) {
+      const goals = [...snapshot.goals]
+        .filter(goal => goal.status !== 'achieved' || String(goal.id) === saved.goalId)
+        .sort((a, b) => Number(String(b.id) === saved.goalId) - Number(String(a.id) === saved.goalId))
+        .filter(goal => String(goal.id) === saved.goalId || !filter || goal.title.toLocaleLowerCase('ru').includes(filter));
+      for (const [id, title, deadline, status] of [[null, 'Пока без цели', null, null], ...goals.map(goal => [String(goal.id), goal.title, goal.deadline, goal.status])]) {
         const button = document.createElement('button'); button.type = 'button'; button.className = 'calendar-goal-choice'; button.dataset.goalChoice = id || '';
         const text = document.createElement('span'); text.textContent = title; button.append(text);
         const formattedDeadline = goalDateLabel(deadline);
@@ -338,14 +340,14 @@ export function mountCalendarNow(element, dependencies = {}) {
         }
         if (id === saved.goalId) {
           button.setAttribute('aria-current', 'true');
-          const badge = document.createElement('span'); badge.className = 'calendar-goal-current'; badge.textContent = id ? 'Главная' : 'Выбрано'; button.append(badge);
+          const badge = document.createElement('span'); badge.className = 'calendar-goal-current'; badge.textContent = status === 'achieved' ? 'Цель достигнута' : id ? 'Главная' : 'Выбрано'; button.append(badge);
         }
         list.append(button);
       }
       empty.hidden = goals.length > 0;
       empty.textContent = filter ? 'По этому названию целей не найдено.' : 'Сохранённых целей пока нет. Добавь цель в разделе «Цели».';
     }
-    list.querySelectorAll('button').forEach(button => { button.disabled = !!snapshot.active || (!hideTaskCard && !!saved.completed) || !!failure; });
+    list.querySelectorAll('button').forEach(button => { button.disabled = !!failure; });
     editor.setPending(picker.working || busy || reading);
     if (restoreChoice !== undefined && !editor.pending) [...list.children].find(button => button.dataset.goalChoice === restoreChoice)?.focus();
     if (!picker.working && failure && picker.reportedFailure !== failure) {
@@ -438,9 +440,8 @@ export function mountCalendarNow(element, dependencies = {}) {
     ui['goal-title'].textContent = goal?.title || (!snapshot ? 'Загружаем цель…' : saved.goalId ? 'Выбранная цель недоступна' : 'Выбери, к чему хочешь прийти');
     ui['goal-empty'].textContent = goal ? '' : ui['goal-title'].textContent;
     ui['goal-empty'].hidden = !!goal;
-    ui['goal-status'].textContent = !snapshot || goal ? '' : saved.goalId ? 'Цель недоступна' : 'Главная цель не выбрана';
-    // Without a goal the block stays one short prompt; only a missing goal gets a status label.
-    ui['goal-status'].hidden = !snapshot || !!goal || !saved.goalId;
+    ui['goal-status'].textContent = !snapshot ? '' : goal?.status === 'achieved' ? 'Цель достигнута' : goal ? '' : saved.goalId ? 'Цель недоступна' : 'Главная цель не выбрана';
+    ui['goal-status'].hidden = !snapshot || (!goal && !saved.goalId) || (!!goal && goal.status !== 'achieved');
     const linkedGoal = snapshot?.links.find(link => keyOf(link) === keyOf(task));
     const branch = [], visited = new Set();
     let node = snapshot?.goals.find(item => String(item.id) === String(linkedGoal?.goal_id));
@@ -452,7 +453,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     const isGoalBranch = goal && branch.length > 1 && String(branch[0].id) === String(goal.id);
     ui['goal-stage'].textContent = isGoalBranch ? `Текущий этап: ${branch.slice(1).map(item => item.title).join(' → ')}` : '';
     ui['goal-stage'].hidden = !isGoalBranch || !!dependencies.mountGoalSummary;
-    ui['goal-hint'].textContent = !snapshot || goal || !saved.goalId ? '' : 'Выбери другую цель или сохрани новую.';
+    ui['goal-hint'].textContent = !snapshot || !saved.goalId ? '' : goal?.status === 'achieved' ? 'Выбери другую цель, чтобы продолжить.' : goal ? '' : 'Выбери другую цель или сохрани новую.';
     ui['goal-hint'].hidden = !ui['goal-hint'].textContent;
     const next = goal && snapshot ? nextGoalTask() : null, canOpenNext = !!next && !!dependencies.openTaskDetails;
     ui['goal-next'].hidden = !goal || !snapshot;
@@ -476,8 +477,8 @@ export function mountCalendarNow(element, dependencies = {}) {
     actions['browse-goals'].parentElement.hidden = !!goal || !snapshot;
     actions['open-goal'].classList.toggle('calendar-now__primary', !goal);
     actions['open-goal'].classList.toggle('calendar-now__quiet', !!goal);
-    actions['open-goal'].disabled = !!active || busy || blockingRead || !!failure || !snapshot || (!hideTaskCard && !!saved.completed);
-    actions['open-goal'].title = active ? 'Для смены цели поставь задачу на паузу' : '';
+    actions['open-goal'].disabled = busy || blockingRead || !!failure || !snapshot;
+    actions['open-goal'].title = '';
     const status = { active: 'В работе', paused: 'На паузе', completed: 'Завершено' }[currentState];
     ui.status.textContent = status || ''; ui.status.hidden = !status;
     ui.title.textContent = task?.title || (!snapshot ? 'Загружаем текущую задачу…' : !selectedGoal() ? 'Начни задачу из списка или выбери цель.' : 'Для этой цели пока нет подходящей задачи.');
@@ -590,7 +591,7 @@ export function mountCalendarNow(element, dependencies = {}) {
       const task = await resolveTask(active, planned, state);
       // A task that keeps running beside the newest one is not something to return to.
       if(state.execution && keyOf(state.execution.task)!==keyOf(task) && !runningKeys.has(keyOf(state.execution.task)))state.returnTo=taskOf(state.execution.task);
-      state.execution = { blockId: Number(active.id), date: active.date, task }; state.completed = null;
+      state.execution = { blockId: Number(active.id), date: active.date, task };
       state.observedBlockId=Number(active.id);
     } else if (state.execution) {
       const block = blocks.find(item => Number(item.id) === state.execution.blockId);
@@ -688,8 +689,6 @@ export function mountCalendarNow(element, dependencies = {}) {
   }
   async function perform(operation) {
     if (operation.kind === 'goal') {
-      if (snapshot.active || await api('get_active_block', {})) throw new Error('active');
-      if (hideTaskCard) saved.completed = null;
       if (operation.goalId !== saved.goalId) {
         saved.goalId = operation.goalId;
         if (!saved.execution) { saved.selection = null; saved.selectionMode = 'auto'; }
@@ -906,9 +905,9 @@ export function mountCalendarNow(element, dependencies = {}) {
     await refresh();
     const goalId = value == null ? null : String(value);
     if (disposed || busy || reading || failure || !snapshot) throw new Error('Не удалось обновить текущую задачу. Повтори выбор.');
-    if (snapshot.active) throw new Error('Для смены цели поставь текущую задачу на паузу.');
-    if (saved.completed && !hideTaskCard) throw new Error('Нажми «Следующая задача» перед сменой цели.');
-    if (goalId && !snapshot.goals.some(goal => String(goal.id) === goalId)) throw new Error('Эта цель больше недоступна.');
+    const goal = goalId ? snapshot.goals.find(item => String(item.id) === goalId) : null;
+    if (goalId && !goal) throw new Error('Эта цель больше недоступна.');
+    if (goal?.status === 'achieved' && goalId !== saved.goalId) throw new Error('Достигнутую цель нельзя выбрать главной.');
     if (goalId === saved.goalId) return;
     await run({ kind: 'goal', goalId });
     if (failure) throw new Error(failure.message);
