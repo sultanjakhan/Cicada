@@ -1,7 +1,9 @@
 .calendar-routine-editor{display:grid;gap:16px;min-width:0;color:var(--text-primary,#252525)}
 .calendar-routine-editor label{display:grid;gap:6px;min-width:0}
-.calendar-routine-editor input:not([type=checkbox]),.calendar-routine-editor select{box-sizing:border-box;width:100%;min-height:44px;padding:8px 10px;border:1px solid var(--border-default,#dedede);border-radius:8px;background:var(--bg-card,#fff);color:inherit;font:inherit}
+.calendar-routine-editor input:not([type=checkbox]):not([type=radio]),.calendar-routine-editor select{box-sizing:border-box;width:100%;min-height:44px;padding:8px 10px;border:1px solid var(--border-default,#dedede);border-radius:8px;background:var(--bg-card,#fff);color:inherit;font:inherit}
 .calendar-routine-editor input[type=checkbox]{width:20px;height:20px;flex:0 0 auto;accent-color:var(--accent-fill,#252525)}
+.calendar-routine-editor input[type=radio]{width:20px;height:20px;flex:0 0 auto;margin:0;accent-color:var(--accent-fill,#252525)}
+.calendar-routine-editor details:not([open])>:not(summary){display:none}
 .calendar-routine-editor button{box-sizing:border-box;min-height:44px;padding:8px 12px;border:1px solid var(--border-default,#dedede);border-radius:8px;background:var(--bg-card,#fff);color:inherit;font:inherit;cursor:pointer}
 .calendar-routine-editor button:disabled{opacity:.48;cursor:default}
 .calendar-routine-editor :focus-visible{outline:3px solid color-mix(in srgb,var(--accent-fill,#252525) 70%,transparent);outline-offset:2px}
