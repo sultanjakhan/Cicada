@@ -84,7 +84,7 @@ export function openCalendarTaskDetails(record, dependencies) {
   fields.append(sharedControlsHost);
   sharedControlsStop = mountSharedTaskControls(sharedControlsHost, { record: current, invoke, onShared: () => onChanged?.() });
   let confirmedWorkflow=null,workflowReadError=false;
-  workflowStop = mountTaskWorkflow(fields, { record: current, invoke, review:dependencies.review||null, onState:(state,failed)=>{confirmedWorkflow=state;workflowReadError=failed;syncSummary();}, onClean: () => {
+  workflowStop = mountTaskWorkflow(fields, { record: current, invoke, review:dependencies.review||null, onSaved: () => onChanged?.(), onState:(state,failed)=>{confirmedWorkflow=state;workflowReadError=failed;syncSummary();}, onClean: () => {
     if (['Сохрани шаг или результат перед закрытием.', 'Дождись сохранения шагов.', 'Save the step or result before closing.', 'Wait for the steps to finish saving.'].includes(api.error.textContent)) api.showError('');
   } });
   if (dependencies.review) {

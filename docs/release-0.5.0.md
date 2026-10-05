@@ -31,15 +31,20 @@ Windows x64 and Android ARM64 retain the same application and signing identities
   every row. Service CI adds tests and dependency audits for both services.
 - The portable local task plugin is packaged as 0.5.0 with the larger envelope
   limit, a guarded upgrade from 0.4.8 and preservation of the previous cache.
+- Seven accepted Windows QA fixes are included: saved manual task steps refresh
+  progress immediately; ordinary unbound tasks can be completed; editor errors
+  stay visible and corrected event intervals clear their validation; shared note
+  drafts survive reopening; event drafts follow category renames and deletions
+  without losing their title or time range. Category read failures preserve the
+  draft and block saving until a successful retry.
 
 The selected-task focus and compact Windows window from 0.4.8 remain available.
 Background updates check and prepare signed packages automatically. Installation,
 restart and system confirmation still require the user's action; unsaved drafts
 and pending mutations block installation.
 
-An Android home-screen widget, general Undo and Windows patches whose exact
-source was unavailable are not included. Audit reports and unfinished Agent City
-work are not shipped as Cicada features.
+An Android home-screen widget and general Undo are not included. Audit reports
+and unfinished Agent City work are not shipped as Cicada features.
 
 CI builds, signature checks, browser fixtures and installed-device acceptance
 are separate evidence levels. Physical Windows/Android acceptance and a real
