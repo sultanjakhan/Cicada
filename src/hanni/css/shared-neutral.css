@@ -6,7 +6,7 @@
   --ui-text:#252525; --ui-secondary:#606060; --ui-muted:#707070;
   --ui-line:#dedede; --ui-line-subtle:#ebebeb; --ui-focus:#707070;
   --ui-primary:#252525; --ui-on-primary:#fff;
-  --ui-radius-control:6px; --ui-radius-surface:8px;
+  --ui-radius-control:5px; --ui-radius-surface:6px;
   --ui-space-1:4px; --ui-space-2:8px; --ui-space-3:12px;
   --ui-space-4:16px; --ui-space-6:24px;
   --ui-control-height:44px; --ui-body-size:14px; --ui-body-leading:1.45;

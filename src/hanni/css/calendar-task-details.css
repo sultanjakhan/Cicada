@@ -14,7 +14,7 @@
 .task-details-icon { display: inline-flex; flex: 0 0 16px; width: 16px; height: 16px; color: currentColor; }
 .task-details-icon svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .task-details-goal:not([hidden]) { color: var(--text-secondary); font-size: 13px; }
-.task-details-route { display: grid; gap: 4px; padding: 10px 12px; border-left: 3px solid var(--border-default); background: var(--bg-card); color: var(--text-secondary); font-size: 13px; }
+.task-details-route { display: grid; gap: 4px; padding: 10px 0; border-top: 1px solid var(--border-default); border-bottom: 1px solid var(--border-default); background: transparent; color: var(--text-secondary); font-size: 13px; }
 .task-details-route[hidden] { display: none; }
 .task-details-route-title { color: var(--text-primary); }
 .task-details-route p { margin: 0; overflow-wrap: anywhere; }
@@ -57,7 +57,7 @@
 .calendar-task-details .task-workflow input, .calendar-task-details .task-workflow textarea, .calendar-task-details .task-workflow select { box-sizing: border-box; width: 100%; min-width: 0; min-height: 44px; padding: 8px 10px; border: 1px solid var(--border-default); border-radius: 8px; color: var(--text-primary); background: var(--bg-page); font: inherit; font-family: system-ui, sans-serif; }
 .task-workflow textarea { resize: vertical; }
 .task-workflow button { justify-self: start; }
-.task-result-review { display: grid; gap: 10px; min-width: 0; margin-top: 16px; padding: 14px; border: 1px solid var(--border-default); border-radius: 10px; background: var(--bg-card); overflow-wrap: anywhere; }
+.task-result-review { display: grid; gap: 10px; min-width: 0; margin-top: 16px; padding: 14px 0; border: 0; border-top: 1px solid var(--border-default); border-bottom: 1px solid var(--border-default); border-radius: 0; background: transparent; overflow-wrap: anywhere; }
 .task-result-review p { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
 .task-result-review h3 { margin: 0; font-size: 17px; }
 .task-result-review-actions { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -66,7 +66,7 @@
 .task-result-review textarea { box-sizing: border-box; width: 100%; min-width: 0; min-height: 88px; padding: 8px 10px; border: 1px solid var(--border-default); border-radius: 8px; color: var(--text-primary); background: var(--bg-page); font: inherit; resize: vertical; }
 .task-result-review button { justify-self: start; min-height: 36px; }
 .task-result-review button:focus-visible, .task-result-review textarea:focus-visible { outline: 2px solid var(--ui-focus, var(--text-primary)); outline-offset: 2px; }
-.work-registry-section { margin: 16px 0; padding: 14px; border: 1px solid var(--border-default); border-radius: 10px; overflow-wrap: anywhere; }
+.work-registry-section { margin: 16px 0; padding: 14px 0; border: 0; border-top: 1px solid var(--border-default); border-bottom: 1px solid var(--border-default); border-radius: 0; overflow-wrap: anywhere; }
 .work-registry-section[hidden] { display: none; }
 .work-registry-section h3, .work-registry-section h4 { margin: 0 0 10px; }
 .work-registry-section p { margin: 8px 0; font-size: 13px; color: var(--text-secondary); }
