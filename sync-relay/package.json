@@ -13,7 +13,7 @@
     "test:native:checkpoint": "node tools/test-native.mjs --checkpoint"
   },
   "devDependencies": {
-    "miniflare": "5.20260926.0-alpha",
-    "wrangler": "4.142.0"
+    "miniflare": "5.20261001.0-alpha",
+    "wrangler": "4.147.0"
   }
 }
