@@ -676,7 +676,7 @@ pub fn run() {
     let test_profile = isolated_test::initialize(options.test_root()).unwrap_or_else(|_| desktop_launch::fail_and_exit());
     let isolated = test_profile.root.is_some();
     #[cfg(target_os = "macos")]
-    update_macos::relaunch_from_legacy_bundle();
+    update_macos::relaunch_from_installed_alias();
     let mut context = tauri::generate_context!();
     let test_window = if isolated { context.config().app.windows.first().cloned() } else { None };
     options.apply_context(&mut context);

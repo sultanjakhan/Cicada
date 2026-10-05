@@ -120,7 +120,22 @@ fn relocate_legacy_bundle(home: &Path, executable: &Path) -> Result<Option<PathB
     Ok(Some(current.join(EXECUTABLE)))
 }
 
-pub(crate) fn relaunch_from_legacy_bundle() {
+fn relaunch_path(home: &Path, executable: &Path) -> Result<Option<PathBuf>, String> {
+    let standard = bundle_in(home).join(EXECUTABLE);
+    if executable == standard || executable == legacy_bundle_in(home).join(EXECUTABLE) {
+        if let Some(bundle) = installed_bundle_in(home, &standard) {
+            let physical = bundle.join(EXECUTABLE);
+            if executable != physical
+                && executable.canonicalize().ok().as_deref() == Some(physical.as_path())
+            {
+                return Ok(Some(physical));
+            }
+        }
+    }
+    relocate_legacy_bundle(home, executable)
+}
+
+pub(crate) fn relaunch_from_installed_alias() {
     if cfg!(debug_assertions) {
         return;
     }
@@ -130,7 +145,9 @@ pub(crate) fn relaunch_from_legacy_bundle() {
     let Ok(home) = PathBuf::from(home).canonicalize() else {
         return;
     };
-    let Ok(Some(replacement)) = relocate_legacy_bundle(&home, &executable) else {
+    // Tauri caches the starting executable before main and rejects Mac symlink
+    // ancestors during restart. Exec the verified physical bundle first.
+    let Ok(Some(replacement)) = relaunch_path(&home, &executable) else {
         return;
     };
     let error = Command::new(&replacement)
@@ -332,7 +349,18 @@ mod tests {
         );
         assert_eq!(
             installed_bundle_in(&home, &standard_alias.join(EXECUTABLE)),
-            Some(bundle)
+            Some(bundle.clone())
+        );
+        assert_eq!(
+            relaunch_path(&home, &standard_alias.join(EXECUTABLE)).unwrap(),
+            Some(bundle.join(EXECUTABLE))
+        );
+        assert_eq!(relaunch_path(&home, &executable).unwrap(), None);
+        let legacy_alias = legacy_bundle_in(&home);
+        symlink(&standard_alias, &legacy_alias).unwrap();
+        assert_eq!(
+            relaunch_path(&home, &legacy_alias.join(EXECUTABLE)).unwrap(),
+            Some(bundle.join(EXECUTABLE))
         );
     }
 

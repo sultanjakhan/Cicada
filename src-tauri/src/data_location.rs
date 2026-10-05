@@ -147,19 +147,29 @@ fn overlaps(a: &Path, b: &Path) -> bool {
     }
 }
 
+fn overlaps_legacy(standard: &Path, target: &Path, home: Option<PathBuf>) -> Result<bool, String> {
+    let mut roots = vec![standard.parent().unwrap_or(standard).join("Hanni")];
+    if let Some(home) = home {
+        roots.push(home.join("Documents/Hanni"));
+    }
+    for root in roots {
+        if overlaps(target, &canonical_or_absolute(&root)?) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 pub fn validate_target(standard: &Path, source: &Path, target: &Path) -> Result<PathBuf, String> {
     validate_raw_local(target)?;
     validate_raw_local(source)?;
     let target = canonical_or_absolute(target)?;
     let source = canonical_or_absolute(source)?;
+    let legacy_home =
+        std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from);
+    let legacy_overlap = overlaps_legacy(standard, &target, legacy_home)?;
     let standard = canonical_or_absolute(standard)?;
-    let legacy = std::env::var_os("USERPROFILE")
-        .map(PathBuf::from)
-        .map(|p| p.join("Documents").join("Hanni"));
-    if overlaps(&target, &source)
-        || overlaps(&target, &standard)
-        || legacy.as_deref().is_some_and(|p| overlaps(&target, p))
-    {
+    if overlaps(&target, &source) || overlaps(&target, &standard) || legacy_overlap {
         return Err("Папка пересекается с системной или legacy Hanni директорией.".into());
     }
     if target.exists() {
@@ -405,6 +415,25 @@ pub fn apply_pending(standard: &Path, source: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+    #[test]
+    fn migration_target_cannot_enter_either_legacy_data_root() {
+        let root = tempdir().unwrap();
+        let home = root.path().canonicalize().unwrap();
+        let standard = home.join("ApplicationSupport/app.hanni.mvp");
+        assert!(overlaps_legacy(
+            &standard,
+            &home.join("Documents/Hanni/new"),
+            Some(home.clone())
+        )
+        .unwrap());
+        assert!(overlaps_legacy(
+            &standard,
+            &home.join("ApplicationSupport/Hanni/new"),
+            Some(home.clone())
+        )
+        .unwrap());
+        assert!(!overlaps_legacy(&standard, &home.join("cicada-new"), Some(home)).unwrap());
+    }
     #[cfg(unix)]
     #[test]
     fn standard_alias_keeps_pointer_and_endpoint_while_user_targets_reject_links() {
