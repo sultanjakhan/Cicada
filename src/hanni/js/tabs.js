@@ -1,3 +1,4 @@
+import { createUiCopy } from './ui-copy.js';
 import { S, TAB_ICONS, TAB_REGISTRY, getTabIcon, IS_MOBILE, tabLoaders } from './state.js';
 import { showCalendarSettings } from './calendar-settings.js';
 
@@ -63,7 +64,7 @@ export function renderTabBar() {
   const gear = document.createElement('button');
   gear.type = 'button'; gear.dataset.calendarSettings = '';
   gear.className = 'tab-item';
-  gear.title = 'Настройки';
+  gear.title = createUiCopy(document)('Настройки');
   gear.setAttribute('aria-label', gear.title);
   gear.setAttribute('aria-haspopup', 'dialog');
   gear.innerHTML = `<span class="tab-item-icon">${TAB_ICONS.settings}</span>${IS_MOBILE ? `<span class="tab-item-label">${gear.title}</span>` : ''}`;

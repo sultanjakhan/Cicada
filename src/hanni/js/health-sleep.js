@@ -1,14 +1,16 @@
-export function sleepStatusText(status) {
-  if (!status) return 'Не удалось проверить импорт сна. Повтори попытку.';
-  if (status.status === 'unsupported') return 'Сон импортируется из Health Connect на телефоне Android и приходит сюда через синхронизацию.';
-  if (status.status === 'provider_unavailable') return 'Health Connect недоступен. Установи или обнови его на телефоне.';
-  if (status.status === 'permission_required') return 'Разреши Cicada читать сон в Health Connect. Импортированные ранее записи сохранены.';
-  if (status.status === 'permission_requested') return 'Заверши системный запрос Health Connect, затем проверь сон. Разрешение ещё не подтверждено.';
-  if (status.status === 'foreground_required') return 'Для чтения сна открой Cicada на телефоне.';
-  if (status.status !== 'ready' || status.lastError) return 'Последний импорт сна не завершён. Сохранённые записи не потеряны; повтори попытку.';
-  if (!status.lastSuccess) return 'Доступ разрешён. Первый импорт сна ещё не подтверждён.';
-  if (!status.records) return 'В Health Connect не найдено записей сна. Проверь, что Samsung Health или другое приложение передаёт туда сон.';
-  return `Импортировано записей сна: ${status.records}.`;
+import { createUiCopy, copyForLanguage } from './ui-copy.js';
+export function sleepStatusText(status, language = 'ru') {
+  const copy=copyForLanguage(language);
+  if (!status) return copy("Не удалось проверить импорт сна. Повтори попытку.");
+  if (status.status === 'unsupported') return copy("Сон импортируется из Health Connect на телефоне Android и приходит сюда через синхронизацию.");
+  if (status.status === 'provider_unavailable') return copy("Health Connect недоступен. Установи или обнови его на телефоне.");
+  if (status.status === 'permission_required') return copy("Разреши Cicada читать сон в Health Connect. Импортированные ранее записи сохранены.");
+  if (status.status === 'permission_requested') return copy("Заверши системный запрос Health Connect, затем проверь сон. Разрешение ещё не подтверждено.");
+  if (status.status === 'foreground_required') return copy("Для чтения сна открой Cicada на телефоне.");
+  if (status.status !== 'ready' || status.lastError) return copy("Последний импорт сна не завершён. Сохранённые записи не потеряны; повтори попытку.");
+  if (!status.lastSuccess) return copy("Доступ разрешён. Первый импорт сна ещё не подтверждён.");
+  if (!status.records) return copy("В Health Connect не найдено записей сна. Проверь, что Samsung Health или другое приложение передаёт туда сон.");
+  return `${copy("Импортировано записей сна: ")}${status.records}.`;
 }
 
 function announce(window, status) {
@@ -18,29 +20,30 @@ function announce(window, status) {
 
 export function mountSleepSettings(element, { invoke, setPending = () => {} }) {
   const window = element.ownerDocument.defaultView;
+  const copy=createUiCopy(element.ownerDocument);
   let disposed = false, busy = false, status = null;
   element.className = 'calendar-setting';
-  element.innerHTML = `<h3>Сон</h3><p data-sleep-status role="status">Проверяем Health Connect…</p>
+  element.innerHTML = `<h3>${copy("Сон")}</h3><p data-sleep-status role="status">${copy("Проверяем Health Connect…")}</p>
     <p data-sleep-background></p><p data-sleep-success></p><p data-sleep-history hidden></p>
-    <div class="calendar-sync-actions"><button type="button" data-sleep-connect hidden>Разрешить чтение сна</button>
-    <button type="button" data-sleep-import hidden>Проверить сон сейчас</button><button type="button" data-sleep-retry hidden>Повторить проверку</button></div>`;
+    <div class="calendar-sync-actions"><button type="button" data-sleep-connect hidden>${copy("Разрешить чтение сна")}</button>
+    <button type="button" data-sleep-import hidden>${copy("Проверить сон сейчас")}</button><button type="button" data-sleep-retry hidden>${copy("Повторить проверку")}</button></div>`;
   const q = key => element.querySelector(`[data-sleep-${key}]`);
   function render() {
     if (disposed) return;
-    q('status').textContent = busy ? 'Проверяем записи сна…' : sleepStatusText(status);
+    q('status').textContent = busy ? copy("Проверяем записи сна…") : sleepStatusText(status, copy.locale);
     const ready = status?.status === 'ready', permission = status?.status === 'permission_required';
     q('connect').hidden = !permission && !(ready && status.backgroundAvailable && !status.backgroundGranted);
-    q('connect').textContent = ready ? 'Разрешить чтение в фоне' : 'Разрешить чтение сна';
+    q('connect').textContent = ready ? copy("Разрешить чтение в фоне") : copy("Разрешить чтение сна");
     q('import').hidden = !ready && !['error', 'foreground_required', 'permission_requested'].includes(status?.status);
     q('retry').hidden = !!status && !['provider_unavailable', 'error'].includes(status.status);
     q('background').textContent = !ready ? '' : status.backgroundGranted
-      ? 'Фоновое чтение разрешено. Android определяет время запуска; обновление может задерживаться.'
-      : status.backgroundAvailable ? 'Фоновое чтение не разрешено. Пока сон проверяется при открытом приложении.'
-      : 'На этом телефоне Health Connect не поддерживает чтение в фоне. Сон проверяется при открытом Cicada.';
+      ? copy("Фоновое чтение разрешено. Android определяет время запуска; обновление может задерживаться.")
+      : status.backgroundAvailable ? copy("Фоновое чтение не разрешено. Пока сон проверяется при открытом приложении.")
+      : copy("На этом телефоне Health Connect не поддерживает чтение в фоне. Сон проверяется при открытом Cicada.");
     const date = status?.lastSuccess ? new Date(status.lastSuccess) : null;
-    q('success').textContent = date && Number.isFinite(date.getTime()) ? `Последняя проверка сна: ${date.toLocaleString('ru-RU')}` : '';
+    q('success').textContent = date && Number.isFinite(date.getTime()) ? `${copy("Последняя проверка сна: ")}${date.toLocaleString(copy.locale)}` : '';
     q('history').hidden = !status?.historyLimited;
-    q('history').textContent = 'После перерыва повторно проверены последние 30 дней. Более ранние записи сохранены, но изменения в них пока не подтверждены источником.';
+    q('history').textContent = copy("После перерыва повторно проверены последние 30 дней. Более ранние записи сохранены, но изменения в них пока не подтверждены источником.");
     element.querySelectorAll('button').forEach(button => { button.disabled = busy; });
   }
   async function perform(command) {
