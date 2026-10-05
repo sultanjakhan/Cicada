@@ -19,8 +19,16 @@ fn legacy_bundle_in(home: &Path) -> PathBuf {
     home.join("Applications/Hanni MVP.app")
 }
 
+fn project_bundle_in(home: &Path) -> PathBuf {
+    home.join("Projects/Cicada/application/Cicada.app")
+}
+
 fn writable_bundle(home: &Path, bundle: &Path, executable: &Path) -> bool {
-    if executable != bundle.join(EXECUTABLE)
+    if bundle.canonicalize().ok().as_deref() != Some(bundle)
+        || executable != bundle.join(EXECUTABLE)
+        || !executable
+            .symlink_metadata()
+            .is_ok_and(|metadata| metadata.file_type().is_file())
         || executable.canonicalize().ok().as_deref() != Some(executable)
     {
         return false;
@@ -32,6 +40,42 @@ fn writable_bundle(home: &Path, bundle: &Path, executable: &Path) -> bool {
         path.metadata()
             .is_ok_and(|m| m.is_dir() && m.uid() == owner && m.mode() & 0o300 == 0o300)
     })
+}
+
+fn executable_matches_bundle(
+    bundle: &Path,
+    standard_alias: &Path,
+    executable: &Path,
+    resolved_executable: &Path,
+) -> bool {
+    let physical_executable = bundle.join(EXECUTABLE);
+    (executable == physical_executable || executable == standard_alias.join(EXECUTABLE))
+        && resolved_executable == physical_executable
+}
+
+fn installed_bundle_in(home: &Path, executable: &Path) -> Option<PathBuf> {
+    let physical_home = home.canonicalize().ok()?;
+    let standard_alias = bundle_in(home);
+    let standard = bundle_in(&physical_home);
+    let project = project_bundle_in(&physical_home);
+    let resolved_executable = executable.canonicalize().ok()?;
+
+    if standard_alias.canonicalize().ok().as_deref() == Some(standard.as_path())
+        && writable_bundle(&physical_home, &standard, &standard.join(EXECUTABLE))
+        && executable_matches_bundle(&standard, &standard_alias, executable, &resolved_executable)
+    {
+        return Some(standard);
+    }
+
+    if project.canonicalize().ok().as_deref() == Some(project.as_path())
+        && standard_alias.canonicalize().ok().as_deref() == Some(project.as_path())
+        && writable_bundle(&physical_home, &project, &project.join(EXECUTABLE))
+        && executable_matches_bundle(&project, &standard_alias, executable, &resolved_executable)
+    {
+        return Some(project);
+    }
+
+    None
 }
 
 fn relocate_legacy_bundle(home: &Path, executable: &Path) -> Result<Option<PathBuf>, String> {
@@ -101,17 +145,12 @@ pub(crate) fn installed_bundle(app: &AppHandle) -> Result<PathBuf, String> {
         .home_dir()
         .map_err(|_| "Не удалось проверить папку приложения.")?;
     let executable = std::env::current_exe().map_err(|_| "Не удалось проверить приложение.")?;
-    let standard = app
-        .path()
-        .app_data_dir()
-        .map_err(|_| "Не удалось проверить профиль.")?;
-    if cfg!(debug_assertions)
-        || crate::app_data_dir(app)? != standard
-        || !writable_bundle(&home, &bundle_in(&home), &executable)
-    {
+    if !crate::is_production_profile(app)? {
         return Err("Обновления Mac доступны для установленной Cicada в ~/Applications. DEV и отдельные копии не обновляются.".into());
     }
-    Ok(bundle_in(&home))
+    installed_bundle_in(&home, &executable).ok_or_else(|| {
+        "Обновления Mac доступны для установленной Cicada в ~/Applications. DEV и отдельные копии не обновляются.".into()
+    })
 }
 
 fn launch_agent(executable: &Path) -> String {
@@ -136,6 +175,33 @@ fn launch_agent(executable: &Path) -> String {
     )
 }
 
+fn known_launch_agent(contents: &[u8], home: &Path) -> bool {
+    let canonical_home = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
+    [
+        legacy_bundle_in(home),
+        bundle_in(home),
+        project_bundle_in(home),
+        legacy_bundle_in(&canonical_home),
+        bundle_in(&canonical_home),
+        project_bundle_in(&canonical_home),
+    ]
+    .iter()
+    .any(|bundle| contents == launch_agent(&bundle.join(EXECUTABLE)).as_bytes())
+}
+
+fn read_launch_agent(path: &Path) -> Result<Option<Vec<u8>>, String> {
+    match path.symlink_metadata() {
+        Ok(metadata) if metadata.file_type().is_file() => std::fs::read(path)
+            .map(Some)
+            .map_err(|_| "Настройки фонового обновления Mac недоступны.".into()),
+        Ok(_) => {
+            Err("Настройки фонового обновления Mac отличаются. Проверь LaunchAgent Cicada.".into())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err("Настройки фонового обновления Mac недоступны.".into()),
+    }
+}
+
 pub(crate) fn enroll(app: &AppHandle) -> Result<(), String> {
     let bundle = installed_bundle(app)?;
     let home = app
@@ -151,15 +217,16 @@ pub(crate) fn enroll(app: &AppHandle) -> Result<(), String> {
         .join("Library/LaunchAgents")
         .join(format!("{LABEL}.plist"));
     let contents = launch_agent(&bundle.join(EXECUTABLE));
-    if path.exists() {
-        let old = launch_agent(&legacy_bundle_in(&home).join(EXECUTABLE));
-        let existing = std::fs::read(&path).ok();
-        if existing.as_deref() == Some(old.as_bytes()) {
-            crate::update_journal::atomic_write(&path, contents.as_bytes())?;
-        } else if existing.as_deref() != Some(contents.as_bytes()) {
-            return Err(
-                "Настройки фонового обновления Mac отличаются. Проверь LaunchAgent Cicada.".into(),
-            );
+    if let Some(existing) = read_launch_agent(&path)? {
+        if existing.as_slice() != contents.as_bytes() {
+            if known_launch_agent(&existing, &home) {
+                crate::update_journal::atomic_write(&path, contents.as_bytes())?;
+            } else {
+                return Err(
+                    "Настройки фонового обновления Mac отличаются. Проверь LaunchAgent Cicada."
+                        .into(),
+                );
+            }
         }
     } else {
         crate::update_journal::atomic_write(&path, contents.as_bytes())?;
@@ -213,7 +280,9 @@ mod tests {
         let profile = tempfile::tempdir().unwrap();
         let lock = crate::acquire_instance_lock(profile.path()).unwrap();
         assert!(crate::acquire_instance_lock(profile.path()).is_err());
-        lock.0.unlock().unwrap();
+        for file in lock.0 {
+            file.unlock().unwrap();
+        }
         assert!(crate::acquire_instance_lock(profile.path()).is_ok());
     }
 
@@ -227,6 +296,10 @@ mod tests {
         std::fs::write(&executable, b"synthetic").unwrap();
         let executable = executable.canonicalize().unwrap();
         assert!(writable_bundle(&home, &bundle, &executable));
+        assert_eq!(
+            installed_bundle_in(&home, &executable),
+            Some(bundle.clone())
+        );
         assert!(!writable_bundle(
             &home,
             &bundle,
@@ -239,6 +312,105 @@ mod tests {
         std::fs::rename(&executable, &real).unwrap();
         symlink(&real, &executable).unwrap();
         assert!(!writable_bundle(&home, &bundle, &executable));
+    }
+
+    #[test]
+    fn installed_bundle_accepts_the_exact_owned_projects_alias_and_returns_its_physical_path() {
+        let temporary_home = tempfile::tempdir().unwrap();
+        let home = temporary_home.path().canonicalize().unwrap();
+        let bundle = project_bundle_in(&home);
+        let executable = bundle.join(EXECUTABLE);
+        std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        std::fs::write(&executable, b"synthetic").unwrap();
+        let standard_alias = bundle_in(&home);
+        std::fs::create_dir_all(standard_alias.parent().unwrap()).unwrap();
+        symlink(&bundle, &standard_alias).unwrap();
+
+        assert_eq!(
+            installed_bundle_in(&home, &executable),
+            Some(bundle.clone())
+        );
+        assert_eq!(
+            installed_bundle_in(&home, &standard_alias.join(EXECUTABLE)),
+            Some(bundle)
+        );
+    }
+
+    #[test]
+    fn installed_bundle_rejects_a_foreign_alias_target_and_executable_symlink() {
+        let temporary_home = tempfile::tempdir().unwrap();
+        let home = temporary_home.path().canonicalize().unwrap();
+        let foreign = home.join("Downloads/Cicada.app");
+        let foreign_executable = foreign.join(EXECUTABLE);
+        std::fs::create_dir_all(foreign_executable.parent().unwrap()).unwrap();
+        std::fs::write(&foreign_executable, b"synthetic").unwrap();
+        let standard_alias = bundle_in(&home);
+        std::fs::create_dir_all(standard_alias.parent().unwrap()).unwrap();
+        symlink(&foreign, &standard_alias).unwrap();
+        assert_eq!(
+            installed_bundle_in(&home, &standard_alias.join(EXECUTABLE)),
+            None
+        );
+
+        std::fs::remove_file(&standard_alias).unwrap();
+        let project = project_bundle_in(&home);
+        let executable = project.join(EXECUTABLE);
+        std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        let real = executable.with_extension("real");
+        std::fs::write(&real, b"synthetic").unwrap();
+        symlink(&real, &executable).unwrap();
+        symlink(&project, &standard_alias).unwrap();
+        assert_eq!(installed_bundle_in(&home, &executable), None);
+    }
+
+    #[test]
+    fn launch_agent_updates_only_exact_generated_paths() {
+        let temporary_home = tempfile::tempdir().unwrap();
+        let home = temporary_home.path().canonicalize().unwrap();
+        for bundle in [
+            legacy_bundle_in(&home),
+            bundle_in(&home),
+            project_bundle_in(&home),
+        ] {
+            assert!(known_launch_agent(
+                launch_agent(&bundle.join(EXECUTABLE)).as_bytes(),
+                &home
+            ));
+        }
+        assert!(!known_launch_agent(
+            launch_agent(Path::new(
+                "/Users/Example/Custom.app/Contents/MacOS/hanni-mvp"
+            ))
+            .as_bytes(),
+            &home
+        ));
+    }
+
+    #[test]
+    fn launch_agent_reader_refuses_symlinks_and_preserves_custom_contents() {
+        let temporary_home = tempfile::tempdir().unwrap();
+        let home = temporary_home.path().canonicalize().unwrap();
+        let path = home.join("LaunchAgents/app.hanni.mvp.updates.plist");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"custom user configuration").unwrap();
+        assert_eq!(
+            read_launch_agent(&path).unwrap(),
+            Some(b"custom user configuration".to_vec())
+        );
+        assert!(!known_launch_agent(
+            &read_launch_agent(&path).unwrap().unwrap(),
+            &home
+        ));
+        std::fs::remove_file(&path).unwrap();
+
+        let target = home.join("custom.plist");
+        std::fs::write(&target, launch_agent(&bundle_in(&home).join(EXECUTABLE))).unwrap();
+        symlink(&target, &path).unwrap();
+        assert!(read_launch_agent(&path).is_err());
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            launch_agent(&bundle_in(&home).join(EXECUTABLE)).as_bytes()
+        );
     }
 
     #[test]
