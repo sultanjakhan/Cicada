@@ -1,0 +1,27 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "cicada-local-tasks",
+  "version": "0.5.0",
+  "description": "Local Cicada task authority for explicit AI execution, stages, results, and human review.",
+  "author": {
+    "name": "Cicada"
+  },
+  "keywords": ["tasks", "cicada", "local", "review"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Cicada local tasks",
+        "shortDescription": "Read and report work against native Cicada tasks",
+        "longDescription": "Connects to an explicitly configured local Cicada profile through the existing authenticated Windows pipe client. Reuses authorized task UUIDs, preserves process stages and revisions, reports observed runs, submits immutable results, and leaves acceptance to human review.",
+        "developerName": "Cicada",
+        "category": "Productivity",
+        "capabilities": ["Read", "Write"],
+        "defaultPrompt": [
+          "For authorized work, read and reuse the exact task UUID and current revision; keep configured process stage IDs separate from execution status.",
+          "Report observed runs and submit immutable results; never invent tasks, fake reports, or accept a result without the user's review."
+        ],
+        "brandColor": "#3B6E8F"
+      }
+    }
+  }
+}

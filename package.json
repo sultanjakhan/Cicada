@@ -1,7 +1,7 @@
 {
   "name": "cicada",
-  "version": "0.4.8",
-  "cicadaBuildId": "20261004-agent-durable.1",
+  "version": "0.5.0",
+  "cicadaBuildId": "20261005-release.1",
   "private": true,
   "type": "module",
   "scripts": {

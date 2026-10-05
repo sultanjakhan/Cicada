@@ -106,11 +106,13 @@ jobs:
           shared-key: cicada-tauri
       - run: python -m pip install pywin32==311 psutil==7.1.3
       - name: Check portable Cicada task plugin instructions
-        run: python -B plugins/cicada-tasks/cicada-local-tasks-0.4.8/tests/test_package.py
+        run: python -B plugins/cicada-tasks/cicada-local-tasks-0.5.0/tests/test_package.py
       - name: Check preservation during local plugin upgrade
         run: python -B plugins/cicada-tasks/test_upgrade_048.py
+      - name: Check plugin upgrade to 0.5.0
+        run: python -B plugins/cicada-tasks/test_upgrade_050.py
       - name: Check new local plugin installation
-        run: python -B plugins/cicada-tasks/cicada-local-tasks-0.4.8/tests/test_installer.py
+        run: python -B plugins/cicada-tasks/cicada-local-tasks-0.5.0/tests/test_installer.py
       - run: npm.cmd ci
       - run: npm.cmd run check:vendor
       - run: npm.cmd audit --audit-level=low

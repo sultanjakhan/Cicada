@@ -18,7 +18,7 @@ from typing import Any
 
 
 PLUGIN = "cicada-local-tasks"
-VERSION = "0.4.8"
+SUPPORTED_VERSIONS = ("0.4.8", "0.5.0")
 SERVER = "cicada-local-task-command"
 
 
@@ -45,8 +45,8 @@ def json_bytes(value: Any) -> bytes:
 
 def validate_package(package: Path) -> tuple[dict, dict, dict]:
     manifest = read_json(package / "plugin.json")
-    if manifest.get("name") != PLUGIN or manifest.get("version") != VERSION:
-        raise ValueError("package identity/version is not Cicada " + VERSION)
+    if manifest.get("name") != PLUGIN or manifest.get("version") not in SUPPORTED_VERSIONS:
+        raise ValueError("package identity/version is not a supported Cicada package")
     if (package / "hooks").exists() or (package / "hooks.json").exists():
         raise ValueError("automatic hooks are not allowed in this package")
     mcp = read_json(package / "mcp.json")
@@ -105,6 +105,7 @@ def plan(args: argparse.Namespace) -> dict[str, Any]:
     if not package.is_dir():
         raise ValueError("--package must be a directory")
     manifest, _, _ = validate_package(package)
+    version = manifest["version"]
     user_root = Path(args.user_home).resolve() if args.user_home else Path.home().resolve()
     marketplace_root = Path(args.marketplace_root).resolve() if args.marketplace_root else user_root
     # Codex CLI registers the marketplace source at the user-home root and
@@ -138,7 +139,7 @@ def plan(args: argparse.Namespace) -> dict[str, Any]:
     marketplace_data = json_bytes(current)
     manual = args.manual_cicada if args.manual_cicada is not None else manual_cicada_present(codex_home)
     source_dest = marketplace_root / "plugins" / PLUGIN
-    cache_dest = codex_home / "plugins" / "cache" / marketplace_name / PLUGIN / VERSION
+    cache_dest = codex_home / "plugins" / "cache" / marketplace_name / PLUGIN / version
     helper_path = codex_home / "plugins" / "data" / PLUGIN / "cicada-local.json"
     if args.apply and (not args.cicada_profile or not args.pipe_client):
         raise ValueError("--apply requires --cicada-profile and --pipe-client")
@@ -177,7 +178,7 @@ def plan(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "package": str(package),
         "plugin": PLUGIN,
-        "version": VERSION,
+        "version": version,
         "marketplace": str(marketplace_path),
         "marketplaceName": marketplace_name,
         "source": str(source_dest),

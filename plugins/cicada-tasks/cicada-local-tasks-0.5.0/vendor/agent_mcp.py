@@ -18,7 +18,7 @@ class NativeTaskError(RuntimeError):
         self.value=value
         super().__init__(value.get('code',value.get('error','task_command_failed')))
 
-MAX_FRAME = 16000
+MAX_FRAME = 64 * 1024
 
 
 def unique(pairs):
