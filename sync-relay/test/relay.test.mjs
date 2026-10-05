@@ -49,10 +49,29 @@ async function error(response, status, code) {
 test('MVP isolates content routes and requires capability for checkpoints', async () => {
   const mf = runtime();
   try {
+    const worker = await mf.getWorker();
     for (const path of ['/v1/batches', '/v1/device-state', '/v1/stream',
       '/content/v1/budget-status', '/another/v1/batches']) {
-      await error(await request(mf, path), 404, 'not_found');
-      await error(await request(mf, path, { method: 'POST', body: batch() }), 404, 'not_found');
+      for (const method of ['GET', 'POST']) {
+        try {
+          await error(await request(mf, path, { method }), 404, 'not_found');
+        } catch (cause) {
+          throw new Error(`Route rejection failed: ${method} ${path}`, { cause });
+        }
+      }
+      // Exercise the same unmodified Worker with a POST body through its service
+      // proxy. Miniflare's HTTP bridge can reset early responses to unread bodies:
+      // https://github.com/cloudflare/workers-sdk/issues/15819
+      // GET and empty POST above still cover that HTTP boundary for every path.
+      try {
+        await error(await worker.fetch(new Request(`https://relay.test${path}`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${devices.windows}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(batch()),
+        })), 404, 'not_found');
+      } catch (cause) {
+        throw new Error(`Route rejection failed through worker proxy: POST ${path}`, { cause });
+      }
     }
     const value = batch();
     assert.equal((await append(mf, value)).status, 201);

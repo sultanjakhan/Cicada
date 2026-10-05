@@ -10,6 +10,14 @@ const stableJson = value => JSON.stringify(value, (_key, item) => {
   if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
   return Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]]));
 });
+const firstIndex = (items, keyOf) => {
+  const index = new Map();
+  for (const item of items) {
+    const key = keyOf(item);
+    if (!index.has(key)) index.set(key, item);
+  }
+  return index;
+};
 const closed = row => row._review ? row._review.reviewState==='accepted' : row.completed || ['done', 'skipped', 'missed'].includes(row.status_extra);
 const dayOf = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const shiftDay = (day, delta) => { const date = new Date(`${day}T12:00:00`); date.setDate(date.getDate() + delta); return dayOf(date); };
@@ -61,7 +69,7 @@ export function mountCalendarTasks(host, dependencies) {
   if(state.filter==='review'&&!dependencies.readTaskReview)state.filter='active';
   const prefix = `calendar-tasks-${++sequence}`;
   let observationState={contexts:new Map(),unboundCount:0,available:false};
-  let rows = [], goals = [], links = [], processes = [], stageBlocks = new Map(), readSignature = null, ready = false, disposed = false, revision = 0, busy = false, queued = false, feedback = '';
+  let rows = [], goals = [], goalById = new Map(), linkByTask = new Map(), processes = [], stageBlocks = new Map(), readSignature = null, ready = false, disposed = false, revision = 0, busy = false, queued = false, feedback = '';
   let bulk = null, confirming = null, overdue = [], shown = new Set();
   let today = dayOf(new Date());
   const expandedRows = new Set();
@@ -99,15 +107,15 @@ export function mountCalendarTasks(host, dependencies) {
   const findButton = (id, action='open') => [...host.querySelectorAll('[data-task-control]')].find(el => el.dataset.taskId === id && el.dataset.taskControl === action);
   const restore = (id, action='open') => { if(!disposed && host.isConnected){const target=findButton(id,action)||heading;const details=target.closest('details');if(details)details.open=true;target.focus({preventScroll:true});} };
   const say = (text, alert=false) => { feedback=text; message.textContent=text; message.setAttribute('role',alert?'alert':'status'); };
-  const goalFor = row => links.find(link=>taskKey(link)===taskKey(row))?.goal_id;
-  const goalChain = id => { const chain=[], seen=new Set();let goal=goals.find(g=>String(g.id)===String(id));while(goal&&!seen.has(String(goal.id))){seen.add(String(goal.id));chain.unshift(goal);goal=goals.find(g=>String(g.id)===String(goal.parent_goal_id));}return chain; };
+  const goalFor = row => linkByTask.get(taskKey(row))?.goal_id;
+  const goalChain = id => { const chain=[], seen=new Set();let goal=goalById.get(String(id));while(goal&&!seen.has(String(goal.id))){seen.add(String(goal.id));chain.unshift(goal);goal=goalById.get(String(goal.parent_goal_id));}return chain; };
   const goalParts = id => goalChain(id).map(goal=>goal.title);
   const goalPath = id => goalParts(id).join(' / ');
   const contextFor=row=>observationState.contexts.get(nativeTaskKey(row))||{sources:[],projects:[],tags:[],observations:[],reports:[],review:null};
   function matchesGoal(row) {
     const id=goalFor(row); if(!state.goal)return true;if(state.goal==='none')return id==null;
     const seen=new Set();let value=id;
-    while(value!=null&&!seen.has(String(value))){if(String(value)===state.goal)return true;seen.add(String(value));value=goals.find(g=>String(g.id)===String(value))?.parent_goal_id;}
+    while(value!=null&&!seen.has(String(value))){if(String(value)===state.goal)return true;seen.add(String(value));value=goalById.get(String(value))?.parent_goal_id;}
     return false;
   }
   const matchesSphere = row => !state.sphere || bucketOf(row) === state.sphere && (state.sphere !== 'personal' || !state.personal || personalOf(row) === state.personal);
@@ -299,7 +307,7 @@ export function mountCalendarTasks(host, dependencies) {
       observationState=nextObservations;
       rows=nextRows.map(row=>{const review=observationState.contexts.get(nativeTaskKey(row))?.review;const reviewReadError=observationState.contexts.get(nativeTaskKey(row))?.reviewReadError;return review||reviewReadError?{...row,_review:review,_reviewReadError:!!reviewReadError}:row;});
       for(const key of ['source','project','tag']){const options=new Map();for(const ctx of observationState.contexts.values())for(const item of ctx[key==='source'?'sources':key==='project'?'projects':'tags'])options.set(typeof item==='string'?item:item.id,typeof item==='string'?item:item.label);const select=observationSelects[key];select.replaceChildren(new win.Option('Все',''),...Array.from(options,([id,label])=>new win.Option(label,id)));if(state[key]&&!options.has(state[key]))state[key]='';select.value=state[key]||'';}
-      goals=result[1];links=result[2];processes=result[3];stageBlocks=blocks;today=nextToday;
+      goals=result[1];goalById=firstIndex(goals,goal=>String(goal.id));linkByTask=firstIndex(result[2],link=>taskKey(link));processes=result[3];stageBlocks=blocks;today=nextToday;
       goalFilter.replaceChildren(new win.Option('Любая цель',''),new win.Option('Без цели','none'),...goals.map(goal=>new win.Option(goalPath(goal.id),String(goal.id))));
       if(state.goal&&!['none',...goals.map(goal=>String(goal.id))].includes(state.goal))state.goal='';goalFilter.value=state.goal;
       message.textContent=feedback;q('retry').hidden=true;render();readSignature=nextSignature;
