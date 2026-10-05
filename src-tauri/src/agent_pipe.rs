@@ -45,9 +45,9 @@ fn create(name:&str)->Result<tokio::net::windows::named_pipe::NamedPipeServer,St
     unsafe{ServerOptions::new().first_pipe_instance(true).max_instances(1).reject_remote_clients(true)
         .create_with_security_attributes_raw(name,(&attributes as *const Security).cast_mut().cast())}.map_err(|_|"agent_pipe_unavailable".into())
 }
-pub(crate) fn start(app:tauri::AppHandle,root:&Path)->Result<(),String>{
+pub(crate) fn start(app:tauri::AppHandle,_root:&Path,endpoint_root:&Path)->Result<(),String>{
     let (account,_)=security()?;
-    let canonical=root.canonicalize().map_err(|_|"agent_pipe_profile")?;
+    let canonical=crate::data_location::stable_endpoint_dir(endpoint_root).map_err(|_|"agent_pipe_profile")?;
     let text=canonical.to_string_lossy();
     let normal=text.strip_prefix(r"\\?\").unwrap_or(&text);
     let identity=format!("{account}\n{}",normal.to_uppercase());

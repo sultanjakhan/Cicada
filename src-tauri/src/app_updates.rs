@@ -498,15 +498,7 @@ pub fn enroll_desktop_task(app: AppHandle) {
         if config().is_err() {
             return;
         }
-        // A production launcher may explicitly pass the standard data path;
-        // compare the resolved target instead of treating that as a QA marker.
-        let Ok(standard_data) = app.path().app_data_dir() else {
-            return;
-        };
-        #[cfg(debug_assertions)]
-        if std::env::var_os("HANNI_MVP_DATA_DIR")
-            .is_some_and(|value| std::path::PathBuf::from(value) != standard_data)
-        {
+        if !crate::is_production_profile(&app).unwrap_or(false) {
             return;
         }
         let Some(expected) = installed_windows_binary() else {
@@ -634,11 +626,7 @@ fn auto_install_allowed(app: &AppHandle, state: &UpdateState) -> Result<(), Stri
     {
         // A signed production EXE can also be opened with an isolated QA data
         // profile. That instance must not replace the owner's installed app.
-        let standard = app
-            .path()
-            .app_data_dir()
-            .map_err(|_| "Не удалось проверить профиль.")?;
-        if crate::app_data_dir(app)? != standard || installed_windows_binary().is_none() {
+        if !crate::is_production_profile(app)? || installed_windows_binary().is_none() {
             return Err(
                 "Автообновление отложено: используется отдельная копия или профиль проверки."
                     .into(),

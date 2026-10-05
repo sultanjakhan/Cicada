@@ -160,7 +160,7 @@ impl Options {
             // Tauri starts the replacement before process exit and retains managed
             // state. Release the file lock only at the final, non-cancellable exit.
             if let Some(lock) = app.try_state::<crate::AppInstanceLock>() {
-                let _ = lock.0.unlock();
+                for file in &lock.0 { let _ = file.unlock(); }
             }
         }
         #[cfg(target_os = "macos")]

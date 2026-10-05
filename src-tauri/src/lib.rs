@@ -26,6 +26,7 @@ mod shared_tasks;
 #[cfg(windows)]
 mod agent_pipe;
 mod data_sources;
+mod data_location;
 mod isolated_test;
 mod task_attributes;
 mod native_result_review;
@@ -43,14 +44,14 @@ mod workspace_ipc_tests;
 const SCHEMA_VERSION: i64 = 5;
 
 pub struct AppState(Mutex<Connection>);
-pub struct AppInstanceLock(std::fs::File);
+pub struct AppInstanceLock(Vec<std::fs::File>);
 
 fn acquire_instance_lock(data_dir: &std::path::Path) -> Result<AppInstanceLock, String> {
     let file = std::fs::OpenOptions::new().read(true).write(true).create(true)
         .open(data_dir.join("hanni-mvp.instance.lock"))
         .map_err(|_| fail("open application instance lock"))?;
     file.try_lock().map_err(|_| fail("Cicada is already open for this profile"))?;
-    Ok(AppInstanceLock(file))
+    Ok(AppInstanceLock(vec![file]))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -473,19 +474,45 @@ fn dirs_like_legacy_documents_path() -> PathBuf {
         .join("Hanni")
 }
 
+fn standard_app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path().app_data_dir().map_err(|e| fail(format!("resolve app data directory: {e}")))
+}
+
 fn app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     if let Some(root) = isolated_test::root(app) { return Ok(root); }
-    let standard = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| fail(format!("resolve app data directory: {e}")))?;
+    let standard = standard_app_data_dir(app)?;
     #[cfg(debug_assertions)]
-    let directory = debug_data_dir(std::env::var_os("HANNI_MVP_DATA_DIR"), standard)?;
+    let directory = match std::env::var_os("HANNI_MVP_DATA_DIR") {
+        Some(raw) => debug_data_dir(Some(raw), standard)?,
+        None => data_location::resolve(&standard)?,
+    };
     #[cfg(not(debug_assertions))]
-    let directory = standard;
+    let directory = data_location::resolve(&standard)?;
     std::fs::create_dir_all(&directory)
         .map_err(|e| fail(format!("create app data directory: {e}")))?;
     Ok(directory)
+}
+
+fn is_production_profile(app: &tauri::AppHandle) -> Result<bool, String> {
+    if cfg!(debug_assertions) || isolated_test::root(app).is_some() { return Ok(false); }
+    let standard = standard_app_data_dir(app)?;
+    Ok(app_data_dir(app)? == data_location::resolve(&standard)?)
+}
+
+#[tauri::command]
+fn get_data_location(app: tauri::AppHandle) -> Result<data_location::DataLocation, String> {
+    if cfg!(debug_assertions) || isolated_test::root(&app).is_some() {
+        return Ok(data_location::DataLocation { path: app_data_dir(&app)?.to_string_lossy().into_owned(), is_default: false, restart_required: false, migration_error: None, can_move: false });
+    }
+    data_location::current(&standard_app_data_dir(&app)?)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn prepare_data_location(app: tauri::AppHandle, path: String) -> Result<data_location::DataLocation, String> {
+    if cfg!(target_os = "android") || !is_production_profile(&app)? {
+        return Err(fail("Изменение папки данных доступно только в установленной настольной Cicada."));
+    }
+    data_location::prepare(&standard_app_data_dir(&app)?, Path::new(path.trim()))
 }
 
 #[tauri::command]
@@ -665,8 +692,27 @@ pub fn run() {
         .manage(compact_window::CompactWindow::default())
         .setup(move |app| {
             let initialized = (|| -> Result<(), Box<dyn std::error::Error>> {
+                let source_dir = app_data_dir(app.handle())?;
+                let production_profile = !isolated && !cfg!(debug_assertions);
+                // DEV and isolated startup must not consume a production migration.
+                let standard_dir = if production_profile { standard_app_data_dir(app.handle())? } else { source_dir.clone() };
+                std::fs::create_dir_all(&standard_dir)?;
+                let standard_instance_lock = acquire_instance_lock(&standard_dir)?;
+                let same_directory = standard_dir.canonicalize()? == source_dir.canonicalize()?;
+                let source_instance_lock = if same_directory { None } else { Some(acquire_instance_lock(&source_dir)?) };
+                if production_profile && data_location::apply_pending(&standard_dir, &source_dir).is_err() {
+                    data_location::record_failure(&standard_dir)?;
+                }
                 let data_dir = app_data_dir(app.handle())?;
-                let instance_lock = acquire_instance_lock(&data_dir)?;
+                let instance_lock = if data_dir != source_dir {
+                    let target_instance_lock = acquire_instance_lock(&data_dir)?;
+                    drop(source_instance_lock);
+                    AppInstanceLock(standard_instance_lock.0.into_iter().chain(target_instance_lock.0).collect())
+                } else {
+                    AppInstanceLock(standard_instance_lock.0.into_iter().chain(source_instance_lock.into_iter().flat_map(|l| l.0)).collect())
+                };
+                #[cfg(windows)]
+                let endpoint_root = data_location::endpoint_source(&standard_dir, &data_dir, isolated, cfg!(debug_assertions));
                 let database_was_present = data_dir.join("calendar.db").try_exists()?;
                 let connection = Connection::open(data_dir.join("calendar.db"))
                     .map_err(|e| fail(format!("open calendar database: {e}")))?;
@@ -678,7 +724,7 @@ pub fn run() {
                 app.manage(instance_lock);
                 #[cfg(windows)]
                 if !startup_options.is_one_shot() {
-                    if agent_pipe::start(app.handle().clone(), &data_dir).is_err() {
+                    if agent_pipe::start(app.handle().clone(), &data_dir, endpoint_root).is_err() {
                         eprintln!("Cicada local agent access unavailable");
                     }
                 }
@@ -735,6 +781,8 @@ pub fn run() {
             set_completed,
             delete_item,
             create_backup,
+            get_data_location,
+            prepare_data_location,
             save_personal_import_recovery,
             app_updates::mvp_update_status,
             app_updates::mvp_update_check,
