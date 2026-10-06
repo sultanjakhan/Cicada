@@ -4,7 +4,7 @@ use sha2::{Digest,Sha256};
 use tokio::{io::{AsyncReadExt,AsyncWriteExt},net::windows::named_pipe::ServerOptions};
 use tauri::{Manager,Emitter};
 use serde_json::json;
-const LIMIT:usize=16000;
+const LIMIT:usize=64*1024;
 #[repr(C)]struct Security {len:u32,descriptor:*mut c_void,inherit:i32}
 #[link(name="advapi32")]unsafe extern "system" {
     fn OpenProcessToken(process:*mut c_void,access:u32,token:*mut *mut c_void)->i32;
@@ -45,9 +45,9 @@ fn create(name:&str)->Result<tokio::net::windows::named_pipe::NamedPipeServer,St
     unsafe{ServerOptions::new().first_pipe_instance(true).max_instances(1).reject_remote_clients(true)
         .create_with_security_attributes_raw(name,(&attributes as *const Security).cast_mut().cast())}.map_err(|_|"agent_pipe_unavailable".into())
 }
-pub(crate) fn start(app:tauri::AppHandle,root:&Path)->Result<(),String>{
+pub(crate) fn start(app:tauri::AppHandle,_root:&Path,endpoint_root:&Path)->Result<(),String>{
     let (account,_)=security()?;
-    let canonical=root.canonicalize().map_err(|_|"agent_pipe_profile")?;
+    let canonical=crate::data_location::stable_endpoint_dir(endpoint_root).map_err(|_|"agent_pipe_profile")?;
     let text=canonical.to_string_lossy();
     let normal=text.strip_prefix(r"\\?\").unwrap_or(&text);
     let identity=format!("{account}\n{}",normal.to_uppercase());

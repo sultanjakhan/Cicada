@@ -28,6 +28,24 @@ mod transport;
 mod background;
 
 const PROFILE: &str = "hanni-mvp-content-v1";
+pub(crate) fn relocate_credentials(source: &std::path::Path, target: &std::path::Path) -> Result<(), String> {
+    if let Some(raw) = secrets::read(source)? {
+        secrets::write(target, &raw)?;
+        if secrets::read(target)?.as_deref() != Some(raw.as_str()) {
+            return Err("mvp_sync_credentials_verify_failed".into());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(all(test, windows))]
+pub(crate) fn seed_migration_credentials(path: &std::path::Path, raw: &str) -> Result<(), String> {
+    secrets::write(path, raw)
+}
+#[cfg(all(test, windows))]
+pub(crate) fn read_migration_credentials(path: &std::path::Path) -> Result<Option<String>, String> {
+    secrets::read(path)
+}
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RelayConfig {

@@ -85,47 +85,48 @@ export function startAppUpdates({ window, invoke, listen, getPendingOperations, 
 
 export function mountAppUpdates(element, { invoke }) {
   const window = element.ownerDocument.defaultView;
+  const text = (ru, en) => element.ownerDocument.documentElement.lang.toLowerCase().startsWith('en') ? en : ru;
   let status, busy = false, disposed = false;
   element.className = 'calendar-setting calendar-app-updates';
-  element.innerHTML = `<h3>Обновления приложения</h3>
-    <p data-update-status role="status">Проверяем версию приложения…</p>
+  element.innerHTML = `<h3>${text('Обновления приложения', 'App updates')}</h3>
+    <p data-update-status role="status">${text('Проверяем версию приложения…', 'Checking the app version…')}</p>
     <p data-update-notes></p><p data-update-error role="alert" hidden></p>
-    <progress data-update-progress hidden aria-label="Загрузка обновления"></progress>
-    <div class="calendar-sync-actions"><button type="button" data-update-check>Проверить обновления</button>
+    <progress data-update-progress hidden aria-label="${text('Загрузка обновления', 'Update download')}"></progress>
+    <div class="calendar-sync-actions"><button type="button" data-update-check>${text('Проверить обновления', 'Check for updates')}</button>
     <button type="button" data-update-install hidden></button>
-    <button type="button" data-update-permission hidden>Разрешить установку</button></div>
+    <button type="button" data-update-permission hidden>${text('Разрешить установку', 'Allow installation')}</button></div>
     <p class="calendar-sync-hint" data-update-hint></p>`;
   const q = name => element.querySelector(`[data-update-${name}]`);
   function render() {
     if (disposed) return;
     const phase = status?.phase, android = status?.platform === 'android-aarch64';
     const messages = {
-      checking:'Проверяем обновления…', current:'Установлена последняя версия.',
-      available:`Доступна версия ${status?.version}. Установка начнётся, когда ты выберешь обновление.`, downloading:'Загружаем и проверяем обновление…',
-      prepared:'Обновление загружено. Можно установить его сейчас или позже.',
-      deferred:'Обновление доступно. Сначала сохрани изменения.',
-      installing:'Устанавливаем обновление…',
-      permission_required:'Разреши Cicada устанавливать обновления в настройках Android.',
-      confirmation_required:'Android просит подтвердить установку обновления.',
-      manual_required:'Эта версия Android требует подтверждения установки.',
-      installer_opened:android ? 'Подтверди обновление в системном окне Android. Если закрыл его, можно повторить.' : 'Установщик запущен. Приложение будет перезапущено.',
-      error:'Проверка или установка не завершена. Повторим позже.', idle:'Фоновые проверки обновлений включены.',
+      checking:text('Проверяем обновления…', 'Checking for updates…'), current:text('Установлена последняя версия.', 'The latest version is installed.'),
+      available:text(`Доступна версия ${status?.version}. Установка начнётся, когда ты выберешь обновление.`, `Version ${status?.version} is available. Installation starts when you choose to update.`), downloading:text('Загружаем и проверяем обновление…', 'Downloading and verifying the update…'),
+      prepared:text('Обновление загружено. Можно установить его сейчас или позже.', 'Update downloaded. You can install it now or later.'),
+      deferred:text('Обновление доступно. Сначала сохрани изменения.', 'An update is available. Save your changes first.'),
+      installing:text('Устанавливаем обновление…', 'Installing the update…'),
+      permission_required:text('Разреши Cicada устанавливать обновления в настройках Android.', 'Allow Cicada to install updates in Android settings.'),
+      confirmation_required:text('Android просит подтвердить установку обновления.', 'Android asks you to confirm the update installation.'),
+      manual_required:text('Эта версия Android требует подтверждения установки.', 'This Android version requires installation confirmation.'),
+      installer_opened:android ? text('Подтверди обновление в системном окне Android. Если закрыл его, можно повторить.', 'Confirm the update in the Android system dialog. If you closed it, you can try again.') : text('Установщик запущен. Приложение будет перезапущено.', 'The installer has started. The app will restart.'),
+      error:text('Проверка или установка не завершена. Повторим позже.', 'The check or installation did not finish. We will try again later.'), idle:text('Фоновые проверки обновлений включены.', 'Background update checks are enabled.'),
     };
     const installedVersion = typeof status?.installed_version === 'string' ? status.installed_version.trim() : '';
-    const appLabel = installedVersion ? `Cicada ${installedVersion}.` : 'Cicada. Версия не сообщена.';
-    q('status').textContent = status ? `${appLabel} ${!status.configured ? 'Канал обновлений недоступен в этой сборке.' : messages[phase] || ''}` : 'Не удалось прочитать состояние обновлений.';
+    const appLabel = installedVersion ? `Cicada ${installedVersion}.` : text('Cicada. Версия не сообщена.', 'Cicada. Version not reported.');
+    q('status').textContent = status ? `${appLabel} ${!status.configured ? text('Канал обновлений недоступен в этой сборке.', 'The update channel is unavailable in this build.') : messages[phase] || ''}` : text('Не удалось прочитать состояние обновлений.', 'Could not read the update status.');
     q('notes').textContent = status?.notes || '';
     q('error').textContent = [status?.error, status?.background_error].filter(Boolean).join(' ');
     q('error').hidden = !q('error').textContent;
-    q('hint').textContent = android ? 'Cicada проверяет обновления в фоне и предлагает установить при открытии. Системное подтверждение появится только после твоего действия. Данные сохраняются.' : 'Cicada проверяет обновления в фоне и предлагает установить при открытии. Установка и перезапуск — только по твоему действию. Данные сохраняются.';
+    q('hint').textContent = android ? text('Cicada проверяет обновления в фоне и предлагает установить при открытии. Системное подтверждение появится только после твоего действия. Данные сохраняются.', 'Cicada checks for updates in the background and offers installation when you open it. System confirmation appears after your action. Your data is preserved.') : text('Cicada проверяет обновления в фоне и предлагает установить при открытии. Установка и перезапуск — только по твоему действию. Данные сохраняются.', 'Cicada checks for updates in the background and offers installation when you open it. Installation and restart require your action. Your data is preserved.');
     if (!status?.configured) q('hint').textContent = status
-      ? 'Канал обновлений недоступен в этой сборке. Фоновые проверки недоступны.'
-      : 'Состояние канала обновлений не получено.';
+      ? text('Канал обновлений недоступен в этой сборке. Фоновые проверки недоступны.', 'The update channel is unavailable in this build. Background checks are unavailable.')
+      : text('Состояние канала обновлений не получено.', 'The update channel status has not been received.');
     const blocked = busy || busyPhases.has(phase);
     q('check').disabled = blocked || (status && !status.configured);
     q('install').hidden = !status?.version || !['available', 'prepared', 'deferred', 'permission_required', 'confirmation_required', 'manual_required', 'installer_opened'].includes(phase);
     q('install').disabled = blocked;
-    q('install').textContent = phase === 'confirmation_required' ? 'Подтвердить установку' : android ? 'Обновить сейчас' : 'Обновить и перезапустить';
+    q('install').textContent = phase === 'confirmation_required' ? text('Подтвердить установку', 'Confirm installation') : android ? text('Обновить сейчас', 'Update now') : text('Обновить и перезапустить', 'Update and restart');
     q('permission').hidden = phase !== 'permission_required'; q('permission').disabled = busy;
     q('progress').hidden = phase !== 'downloading'; q('progress').max = status?.size || 1;
     q('progress').value = status?.downloaded || 0;

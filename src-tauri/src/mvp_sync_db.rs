@@ -824,7 +824,11 @@ pub(crate) fn set_ui_in_transaction(
             return Err("mvp_sync_stale_ui_state".into());
         }
     }
-    if key == DAY_KEY {
+    if key == "calendar_task_run_exchange_v1" {
+        let value = parse(value)?;
+        crate::agent_access::validate_exchange(&value)?;
+        crate::agent_history::save(tx, &value)?;
+    } else if key == DAY_KEY {
         merge_day_ledger(&tx, value)?;
     } else {
         if UI_KEYS.contains(&key) {

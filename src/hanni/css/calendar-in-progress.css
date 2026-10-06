@@ -12,7 +12,7 @@
 .calendar-in-progress button { font: inherit; color: var(--text-primary); }
 .calendar-in-progress :focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
 
-.cip-card { min-width: 0; padding: 10px 8px 6px; border: 1px solid var(--border-default); border-radius: 14px; background: var(--bg-card); }
+.cip-card { min-width: 0; padding: 6px 0 0; border: 0; border-top: 1px solid var(--border-default); border-radius: 0; background: transparent; }
 .cip-heading { display: flex; align-items: baseline; gap: 10px; min-width: 0; padding: 0 8px 0 12px; margin-bottom: 4px; }
 .cip-heading h2 { flex: none; margin: 0; font-size: 15px; line-height: 24px; font-weight: 650; }
 .cip-heading h2:focus-visible { outline-offset: 4px; border-radius: 4px; }
@@ -118,7 +118,7 @@
 
 @media (max-width: 680px) {
   .calendar-in-progress { margin-bottom: 14px; }
-  .cip-card { padding: 8px 4px 4px; }
+  .cip-card { padding: 8px 0 4px; }
   .cip-heading { padding-left: 10px; }
   .cip-row { grid-template-columns: 40px minmax(0, 1fr) auto; grid-template-rows: auto auto; column-gap: 8px; row-gap: 6px; min-height: 64px; padding: 8px 4px; }
   .cip-content { grid-column: 2 / -1; grid-row: 1; row-gap: 3px; }

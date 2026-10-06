@@ -11,7 +11,7 @@
 }
 
 /* The first layer keeps task/state/action; native disclosures retain controls. */
-.ct-filter-details { margin: 8px 0; border: 1px solid var(--ui-line); border-radius: var(--ui-radius-surface); background: var(--ui-surface); }
+.ct-filter-details { margin: 8px 0; border: 0; border-top: 1px solid var(--ui-line); border-bottom: 1px solid var(--ui-line); border-radius: 0; background: transparent; }
 .ct-filter-details > summary { padding: 10px 12px; min-height: var(--ui-control-height); box-sizing: border-box; cursor: pointer; color: var(--ui-secondary); font-size: 13px; }
 .ct-filter-body { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 0 12px 12px; }
 .ct-applied-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--ui-secondary); font-size: 13px; overflow-wrap: anywhere; }
@@ -33,16 +33,16 @@
 .ct-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; margin: 0 0 14px; }
 .ct-heading h2 { display: flex; align-items: center; gap: 10px; min-width: 0; margin: 0; font-size: 20px; line-height: 28px; font-weight: 650; }
 .ct-heading h2:focus-visible { outline-offset: 4px; border-radius: 4px; }
-.ct-heading h2 span { min-width: 24px; padding: 1px 8px; border-radius: 999px; background: var(--ct-segment); font-size: 12px; line-height: 18px; font-weight: 500; color: var(--text-secondary); text-align: center; font-variant-numeric: tabular-nums; }
+.ct-heading h2 span { min-width: 0; padding: 0; border-radius: 0; background: transparent; font-size: 13px; line-height: 18px; font-weight: 500; color: var(--text-secondary); text-align: left; font-variant-numeric: tabular-nums; }
 .ct-heading h2 span:empty { display: none; }
 
 /* Segmented controls share one look; the grouping toggle is the smallest. */
-.ct-filters, .ct-grouping { display: inline-flex; flex: none; gap: 2px; padding: 3px; border-radius: 10px; background: var(--ct-segment); }
-.ct-filters button, .ct-grouping button { height: 30px; padding: 0 12px; border: 0; border-radius: 7px; background: transparent; color: var(--text-secondary); font-size: 13px; font-weight: 500; white-space: nowrap; cursor: pointer; transition: background-color .12s, color .12s; }
-.ct-grouping { padding: 2px; border-radius: 8px; }
-.ct-grouping button { height: 26px; padding: 0 10px; border-radius: 6px; font-size: 12.5px; }
+.ct-filters, .ct-grouping { display: inline-flex; flex: none; gap: 8px; padding: 0; border-bottom: 1px solid var(--border-default); border-radius: 0; background: transparent; }
+.ct-filters button, .ct-grouping button { min-height: 36px; padding: 0 8px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--text-secondary); font-size: 13px; font-weight: 500; white-space: nowrap; cursor: pointer; transition: color .12s; }
+.ct-grouping { gap: 6px; }
+.ct-grouping button { min-height: 32px; padding: 0 6px; font-size: 12.5px; }
 .ct-filters button:hover, .ct-grouping button:hover { color: var(--text-primary); }
-.ct-filters button[aria-pressed="true"], .ct-grouping button[aria-pressed="true"] { background: var(--ct-segment-active); color: var(--text-primary); box-shadow: 0 1px 2px rgb(0 0 0 / 8%); }
+.ct-filters button[aria-pressed="true"], .ct-grouping button[aria-pressed="true"] { border-bottom-color: var(--text-primary); background: transparent; color: var(--text-primary); box-shadow: none; }
 .ct-filters button:focus-visible, .ct-grouping button:focus-visible { outline-offset: 0; }
 
 .ct-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
@@ -61,9 +61,9 @@
 /* Work / Home switch: quiet pills; the chosen one is filled. */
 .ct-spheres { display: flex; gap: 4px; min-width: 0; margin: 12px 0 0; overflow-x: auto; scrollbar-width: none; }
 .ct-spheres::-webkit-scrollbar { display: none; }
-.ct-spheres button { display: inline-flex; flex: none; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border: 0; border-radius: 999px; background: transparent; color: var(--text-secondary); font-size: 13px; font-weight: 500; white-space: nowrap; cursor: pointer; transition: background-color .12s, color .12s; }
+.ct-spheres button { display: inline-flex; flex: none; align-items: center; gap: 6px; min-height: 40px; padding: 0 8px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--text-secondary); font-size: 13px; font-weight: 500; white-space: nowrap; cursor: pointer; transition: color .12s; }
 .ct-spheres button:hover { background: var(--ct-hover); color: var(--text-primary); }
-.ct-spheres button[aria-pressed="true"] { background: var(--ct-segment); color: var(--text-primary); }
+.ct-spheres button[aria-pressed="true"] { border-bottom-color: var(--text-primary); background: transparent; color: var(--text-primary); }
 .ct-spheres button:focus-visible { outline-offset: -2px; }
 .ct-sphere-count { color: var(--text-faint); font-weight: 500; font-variant-numeric: tabular-nums; }
 .ct-spheres button[aria-pressed="true"] .ct-sphere-count { color: var(--text-muted); }
@@ -144,7 +144,7 @@
 .ct-stage { display: inline-flex; align-items: center; gap: 5px; }
 .ct-stage.is-deleted .ct-stage-label { font-style: italic; }
 .ct-stage-label { color: var(--text-secondary); }
-.ct-stage-next { display: inline-grid; place-items: center; flex: none; width: 26px; height: 22px; padding: 0; border: 1px solid var(--border-default); border-radius: 11px; background: transparent; color: var(--text-secondary); cursor: pointer; }
+.ct-stage-next { display: inline-grid; place-items: center; flex: none; width: 30px; height: 28px; padding: 0; border: 1px solid var(--border-default); border-radius: 4px; background: transparent; color: var(--text-secondary); cursor: pointer; }
 .ct-stage-next svg { display: block; }
 .ct-stage-next:hover:not(:disabled) { background: var(--ct-hover-strong); border-color: var(--border-hover); }
 .ct-stage-next:disabled { opacity: .5; cursor: default; }
@@ -205,6 +205,11 @@
   .ct-actions { gap: 0; }
   .ct-icon-button { width: 36px; height: 36px; }
   .ct-goal { flex: 1 1 0; min-width: 56px; max-width: 100%; }
+}
+@media (max-width: 680px) {
+  .ct-filters button, .ct-grouping button, .ct-spheres button { min-height: 48px; }
+  .ct-search input, .ct-select select { height: 48px; }
+  .ct-stage-next { width: 44px; height: 44px; }
 }
 /* Shared controls on the compact Tasks surface, including keyboard focus. */
 .calendar-tasks .ct-run { display: inline-flex; width: auto; min-height: 44px; height: auto; gap: 6px; padding: 0 10px; opacity: 1; border: 1px solid var(--ui-line); border-radius: var(--ui-radius-control); color: var(--ui-text) !important; font-size: 13px; }

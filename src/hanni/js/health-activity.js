@@ -1,25 +1,27 @@
-function kindStatus(status, kind) {
-  if (!status) return 'Не удалось проверить импорт. Повтори попытку.';
-  if (status.status === 'unsupported') return 'Прогулки и шаги импортируются из Health Connect на телефоне Android и приходят сюда через синхронизацию.';
-  if (status.status === 'provider_unavailable') return 'Health Connect недоступен. Установи или обнови его на телефоне.';
-  if (status.status === 'permission_requested') return 'Заверши системный запрос Health Connect, затем проверь импорт. Разрешение ещё не подтверждено.';
-  if (status.status === 'foreground_required') return `Для чтения ${kind === 'walking' ? 'прогулок' : 'шагов'} открой Cicada на телефоне.`;
-  if (status.status === 'error' || status.lastError) return `Последний импорт ${kind === 'walking' ? 'прогулок' : 'шагов'} не завершён. Сохранённые записи не потеряны; повтори попытку.`;
+import { createUiCopy, copyForLanguage } from './ui-copy.js';
+function kindStatus(status, kind, language = 'ru') {
+  const copy=copyForLanguage(language);
+  if (!status) return copy("Не удалось проверить импорт. Повтори попытку.");
+  if (status.status === 'unsupported') return copy("Прогулки и шаги импортируются из Health Connect на телефоне Android и приходят сюда через синхронизацию.");
+  if (status.status === 'provider_unavailable') return copy("Health Connect недоступен. Установи или обнови его на телефоне.");
+  if (status.status === 'permission_requested') return copy("Заверши системный запрос Health Connect, затем проверь импорт. Разрешение ещё не подтверждено.");
+  if (status.status === 'foreground_required') return `${copy("Для чтения ")}${kind === 'walking' ? copy("прогулок") : copy("шагов")}${copy(" открой Cicada на телефоне.")}`;
+  if (status.status === 'error' || status.lastError) return `${copy("Последний импорт ")}${kind === 'walking' ? copy("прогулок") : copy("шагов")}${copy(" не завершён. Сохранённые записи не потеряны; повтори попытку.")}`;
   const granted = kind === 'walking' ? status.walkingPermissionGranted : status.stepsPermissionGranted;
-  const label = kind === 'walking' ? 'прогулки' : 'шаги';
-  if (!granted) return `Разреши Cicada читать ${label} в Health Connect. Ранее импортированные записи сохранены.`;
-  if (status.status !== 'ready') return `Последний импорт ${label} не завершён. Сохранённые записи не потеряны; повтори попытку.`;
+  const label = kind === 'walking' ? copy("прогулки") : copy("шаги");
+  if (!granted) return `${copy("Разреши Cicada читать ")}${label}${copy(" в Health Connect. Ранее импортированные записи сохранены.")}`;
+  if (status.status !== 'ready') return `${copy("Последний импорт ")}${label}${copy(" не завершён. Сохранённые записи не потеряны; повтори попытку.")}`;
   const count = kind === 'walking' ? status.walkingRecords : status.stepsRecords;
   const lastSuccess = kind === 'walking' ? status.walkingLastSuccess : status.stepsLastSuccess;
-  if (!lastSuccess) return `Доступ к ${label} разрешён. Первый импорт ещё не подтверждён.`;
+  if (!lastSuccess) return `${copy("Доступ к ")}${label}${copy(" разрешён. Первый импорт ещё не подтверждён.")}`;
   if (!count) return kind === 'walking'
-    ? 'В Health Connect не найдено прогулок с типом walking. Cicada не выводит прогулки из одних шагов.'
-    : 'В Health Connect не найдено дневных итогов шагов. Пустой день не считается нулевым итогом.';
-  return kind === 'walking' ? `Импортировано прогулок: ${count}.` : `Импортировано дневных итогов шагов: ${count}.`;
+    ? copy("В Health Connect не найдено прогулок с типом walking. Cicada не выводит прогулки из одних шагов.")
+    : copy("В Health Connect не найдено дневных итогов шагов. Пустой день не считается нулевым итогом.");
+  return kind === 'walking' ? `${copy("Импортировано прогулок: ")}${count}.` : `${copy("Импортировано дневных итогов шагов: ")}${count}.`;
 }
 
-export function walkingStatusText(status) { return kindStatus(status, 'walking'); }
-export function stepsStatusText(status) { return kindStatus(status, 'steps'); }
+export function walkingStatusText(status, language = 'ru') { return kindStatus(status, 'walking', language); }
+export function stepsStatusText(status, language = 'ru') { return kindStatus(status, 'steps', language); }
 
 function announce(window, status) {
   window.dispatchEvent(new window.CustomEvent('hanni:health-activity-status', { detail: status }));
@@ -28,38 +30,39 @@ function announce(window, status) {
 
 export function mountHealthActivitySettings(element, { invoke, setPending = () => {} }) {
   const window = element.ownerDocument.defaultView;
+  const copy=createUiCopy(element.ownerDocument);
   let disposed = false, busy = false, status = null;
   element.className = 'calendar-setting';
-  element.innerHTML = `<h3>Прогулки и шаги</h3>
+  element.innerHTML = `<h3>${copy("Прогулки и шаги")}</h3>
     <p data-activity-remote role="status" hidden></p>
-    <section data-activity-walking><h4>Прогулки</h4><p data-activity-walking-status role="status">Проверяем Health Connect…</p></section>
-    <section data-activity-steps><h4>Шаги</h4><p data-activity-steps-status role="status">Проверяем Health Connect…</p></section>
+    <section data-activity-walking><h4>${copy("Прогулки")}</h4><p data-activity-walking-status role="status">${copy("Проверяем Health Connect…")}</p></section>
+    <section data-activity-steps><h4>${copy("Шаги")}</h4><p data-activity-steps-status role="status">${copy("Проверяем Health Connect…")}</p></section>
     <p data-activity-background></p><p data-activity-success></p><p data-activity-history hidden></p>
-    <div class="calendar-sync-actions"><button type="button" data-activity-connect hidden>Разрешить чтение прогулок и шагов</button>
-    <button type="button" data-activity-import hidden>Проверить прогулки и шаги сейчас</button><button type="button" data-activity-retry hidden>Повторить проверку</button></div>`;
+    <div class="calendar-sync-actions"><button type="button" data-activity-connect hidden>${copy("Разрешить чтение прогулок и шагов")}</button>
+    <button type="button" data-activity-import hidden>${copy("Проверить прогулки и шаги сейчас")}</button><button type="button" data-activity-retry hidden>${copy("Повторить проверку")}</button></div>`;
   const q = key => element.querySelector(`[data-activity-${key}]`);
   function render() {
     if (disposed) return;
     const remote = status?.status === 'unsupported';
     q('remote').hidden = !remote;
-    q('remote').textContent = remote ? walkingStatusText(status) : '';
+    q('remote').textContent = remote ? walkingStatusText(status, copy.locale) : '';
     q('walking').hidden = remote; q('steps').hidden = remote;
-    q('walking-status').textContent = busy ? 'Проверяем прогулки…' : walkingStatusText(status);
-    q('steps-status').textContent = busy ? 'Проверяем шаги…' : stepsStatusText(status);
+    q('walking-status').textContent = busy ? copy("Проверяем прогулки…") : walkingStatusText(status, copy.locale);
+    q('steps-status').textContent = busy ? copy("Проверяем шаги…") : stepsStatusText(status, copy.locale);
     const ready = status?.status === 'ready', permission = status?.status === 'permission_required';
     const partial = ready && (!status.walkingPermissionGranted || !status.stepsPermissionGranted);
     q('connect').hidden = !permission && !partial && !(ready && status.backgroundAvailable && !status.backgroundGranted);
-    q('connect').textContent = ready ? 'Разрешить недостающий доступ' : 'Разрешить чтение прогулок и шагов';
+    q('connect').textContent = ready ? copy("Разрешить недостающий доступ") : copy("Разрешить чтение прогулок и шагов");
     q('import').hidden = !ready && !['error', 'foreground_required', 'permission_requested'].includes(status?.status);
     q('retry').hidden = !!status && !['provider_unavailable', 'error'].includes(status.status);
     q('background').textContent = !ready ? '' : status.backgroundGranted
-      ? 'Фоновое чтение разрешено. Android определяет время запуска; обновление может задерживаться.'
-      : status.backgroundAvailable ? 'Фоновое чтение не разрешено. Пока данные проверяются при открытом приложении.'
-      : 'На этом телефоне Health Connect не поддерживает чтение в фоне. Данные проверяются при открытом Cicada.';
+      ? copy("Фоновое чтение разрешено. Android определяет время запуска; обновление может задерживаться.")
+      : status.backgroundAvailable ? copy("Фоновое чтение не разрешено. Пока данные проверяются при открытом приложении.")
+      : copy("На этом телефоне Health Connect не поддерживает чтение в фоне. Данные проверяются при открытом Cicada.");
     const date = status?.lastSuccess ? new Date(status.lastSuccess) : null;
-    q('success').textContent = date && Number.isFinite(date.getTime()) ? `Последняя проверка прогулок и шагов: ${date.toLocaleString('ru-RU')}` : '';
+    q('success').textContent = date && Number.isFinite(date.getTime()) ? `${copy("Последняя проверка прогулок и шагов: ")}${date.toLocaleString(copy.locale)}` : '';
     q('history').hidden = !status?.historyLimited;
-    q('history').textContent = 'После перерыва повторно проверены последние 30 дней. Более ранние записи сохранены, но изменения в них пока не подтверждены источником.';
+    q('history').textContent = copy("После перерыва повторно проверены последние 30 дней. Более ранние записи сохранены, но изменения в них пока не подтверждены источником.");
     element.querySelectorAll('button').forEach(button => { button.disabled = busy; });
   }
   async function perform(command) {

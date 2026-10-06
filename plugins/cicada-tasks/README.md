@@ -1,8 +1,9 @@
-# Cicada local tasks plugin 0.4.8
+# Cicada local tasks plugin 0.5.0
 
 Portable publication bundle for the local Cicada task MCP package.
 
-- `cicada-local-tasks-0.4.8/` — current self-contained plugin source;
+- `cicada-local-tasks-0.5.0/` — current self-contained plugin source;
+- `cicada-local-tasks-0.4.8/` — preserved source of the previous package;
 - `cicada-local-tasks-0.4.7/` — preserved source of the published package;
 - `install.py` — plan/apply installer for a user-selected marketplace and
   Codex home;
@@ -12,7 +13,7 @@ Portable publication bundle for the local Cicada task MCP package.
 Run the installer with explicit paths, for example:
 
 ```powershell
-python .\install.py --package .\cicada-local-tasks-0.4.8 `
+python .\install.py --package .\cicada-local-tasks-0.5.0 `
   --user-home $env:USERPROFILE --codex-home "$env:USERPROFILE\.codex" `
   --marketplace-root $env:USERPROFILE --manual-cicada
 ```
@@ -59,3 +60,9 @@ Check the plugin's installed/enabled version, MCP initialization and a real task
 read separately. Refresh the plugin in a new Codex run after an update; a running
 conversation may retain its previous tool/skill metadata. If an application is
 unavailable, state that no write was confirmed and continue independent work.
+
+For a registered 0.4.8 source, `upgrade_050.py` offers the same guarded
+preview/apply path to 0.5.0 while preserving the 0.4.8 cache and a source backup.
+The 0.5.0 package supports 64 KiB wire envelopes; result text retains the native
+8000-byte limit. Keep the configured original endpoint profile after an
+application data-folder move: the native pipe namespace remains stable.

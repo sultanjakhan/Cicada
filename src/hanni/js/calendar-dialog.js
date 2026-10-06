@@ -2,16 +2,17 @@ let nextDialog = 0;
 
 /** Native transport and shared presentation only. Callers own data and save/retry state. */
 export function createCalendarDialog({ document, title, hint = '', submitLabel = null, returnFocus, isCurrent = () => true, onClose, beforeClose, onPendingChange }) {
+  const text = (ru, en) => document.documentElement.lang.toLowerCase().startsWith('en') ? en : ru;
   const id = `calendar-editor-${++nextDialog}`;
   const previousFocus = document.activeElement;
   const modal = document.createElement('dialog');
   modal.className = 'calendar-editor-shell calendar-native-dialog';
   modal.setAttribute('aria-labelledby', `${id}-title`);
   modal.setAttribute('aria-describedby', `${id}-hint`);
-  modal.innerHTML = `<header class="calendar-editor-header"><div><h2 id="${id}-title"></h2><p id="${id}-hint"></p></div><button type="button" class="calendar-editor-close" data-dialog-close aria-label="Закрыть">×</button></header>
+  modal.innerHTML = `<header class="calendar-editor-header"><div><h2 id="${id}-title"></h2><p id="${id}-hint"></p></div><button type="button" class="calendar-editor-close" data-dialog-close aria-label="${text('Закрыть', 'Close')}">×</button></header>
     <form class="calendar-editor-form" novalidate><div class="calendar-editor-body"><fieldset class="calendar-editor-fields"></fieldset></div>
-      <div class="calendar-editor-feedback"><p class="calendar-editor-error" data-dialog-error role="alert" hidden></p><button type="button" data-dialog-retry hidden>Повторить</button></div>
-      <footer class="calendar-editor-actions"><button type="button" data-dialog-close>Отмена</button>${submitLabel ? '<button type="submit" class="calendar-editor-primary"></button>' : ''}</footer></form>`;
+      <div class="calendar-editor-feedback"><p class="calendar-editor-error" data-dialog-error role="alert" hidden></p><button type="button" data-dialog-retry hidden>${text('Повторить', 'Retry')}</button></div>
+      <footer class="calendar-editor-actions"><button type="button" data-dialog-close>${text('Отмена', 'Cancel')}</button>${submitLabel ? '<button type="submit" class="calendar-editor-primary"></button>' : ''}</footer></form>`;
   modal.querySelector('h2').textContent = title;
   modal.querySelector(`#${id}-hint`).textContent = hint;
   const form = modal.querySelector('form'), body = modal.querySelector('fieldset'), error = modal.querySelector('[data-dialog-error]'), retry = modal.querySelector('[data-dialog-retry]');
@@ -23,7 +24,7 @@ export function createCalendarDialog({ document, title, hint = '', submitLabel =
     setPending(value) {
       pending = value; body.disabled = value; body.toggleAttribute('inert', value); form.setAttribute('aria-busy', String(value));
       modal.querySelectorAll('[data-dialog-close], [data-dialog-retry], [type="submit"]').forEach(button => { button.disabled = value; });
-      if (submit) submit.textContent = value ? 'Сохранение…' : submitLabel;
+      if (submit) submit.textContent = value ? text('Сохранение…', 'Saving…') : submitLabel;
       onPendingChange?.(value);
     },
     showError(message, field = null) {

@@ -1,6 +1,6 @@
 @import url('./calendar-goals-list.css');
 /* Calendar-only goals and notes. Controls intentionally do not inherit generic button rules. */
-.calendar-panels { --cp-accent: #246b4c; --cp-accent-soft: #eaf3ee; --cp-surface: var(--bg-card, #fff); --cp-line: var(--border-default, #d9e2dd); --cp-text: var(--text-primary, #23352b); --cp-muted: var(--text-secondary, #65726a); color: var(--cp-text); max-width: 1200px; margin: 0 auto; min-width: 0; }
+.calendar-panels { --cp-accent: var(--accent-fill, #252525); --cp-accent-soft: var(--bg-soft, #f7f7f7); --cp-surface: var(--bg-card, #fff); --cp-line: var(--border-default, #dedede); --cp-text: var(--text-primary, #252525); --cp-muted: var(--text-secondary, #606060); color: var(--cp-text); max-width: 1200px; margin: 0 auto; min-width: 0; }
 .calendar-panels, .calendar-panels * { box-sizing: border-box; }
 .calendar-panels [hidden] { display: none !important; }
 .calendar-panels h2, .calendar-panels h3, .calendar-panels p { margin: 0; overflow-wrap: anywhere; }
@@ -10,9 +10,9 @@
 .calendar-panels .cp-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; margin: 0 0 24px; }
 .calendar-panels .cp-heading p { color: var(--cp-muted); margin-top: 7px; max-width: 650px; }
 .calendar-panels button, .calendar-panels input, .calendar-panels textarea { font: inherit; color: inherit; }
-.calendar-panels button { min-height: 44px; padding: 10px 15px; background: var(--cp-surface); border: 1px solid var(--cp-line); border-radius: 9px; cursor: pointer; line-height: 1.35; white-space: normal; }
+.calendar-panels button { min-height: 44px; padding: 10px 15px; background: var(--cp-surface); border: 1px solid var(--cp-line); border-radius: 5px; cursor: pointer; line-height: 1.35; white-space: normal; }
 .calendar-panels button:hover:not(:disabled) { border-color: var(--cp-accent); background: var(--cp-accent-soft); }
-.calendar-panels button.cp-primary { color: #fff; background: var(--cp-accent); border-color: var(--cp-accent); }
+.calendar-panels button.cp-primary { color: var(--accent-contrast, #fff); background: var(--cp-accent); border-color: var(--cp-accent); }
 .calendar-panels button.cp-primary:hover:not(:disabled) { filter: brightness(.95); background: var(--cp-accent); }
 .calendar-panels button:disabled { opacity: .55; cursor: default; }
 .calendar-panels :focus-visible { outline: 3px solid var(--cp-accent); outline-offset: 3px; }
@@ -23,12 +23,12 @@
 .calendar-panels .cp-message:empty { display: none; }
 .calendar-panels .cp-error { color: #b42318; margin-top: 12px; }
 .calendar-panels.calendar-goals { max-width: none; width: 100%; }
-.calendar-panels .cp-empty { grid-column: 1 / -1; border: 1px dashed var(--cp-line); border-radius: 14px; padding: 32px; }
+.calendar-panels .cp-empty { grid-column: 1 / -1; border: 0; border-top: 1px solid var(--cp-line); border-bottom: 1px solid var(--cp-line); border-radius: 0; padding: 24px 0; }
 .calendar-panels .cp-empty p { margin-top: 8px; color: var(--cp-muted); }
-.calendar-panels .cp-editor { border: 1px solid var(--cp-line); border-radius: 14px; padding: 24px; background: var(--cp-surface); min-width: 0; }
+.calendar-panels .cp-editor { border: 0; border-top: 1px solid var(--cp-line); border-radius: 0; padding: 18px 0; background: transparent; min-width: 0; }
 .calendar-panels .cp-goal-editor { margin-bottom: 24px; max-width: 720px; }
 .calendar-panels .cp-editor label { display: flex; flex-direction: column; gap: 8px; font-size: 13px; font-weight: 600; margin: 18px 0; }
-.calendar-panels input, .calendar-panels textarea { display: block; width: 100%; min-width: 0; min-height: 44px; border: 1px solid var(--cp-line); border-radius: 8px; padding: 10px 12px; background: var(--cp-surface); }
+.calendar-panels input, .calendar-panels textarea { display: block; width: 100%; min-width: 0; min-height: 44px; border: 1px solid var(--cp-line); border-radius: 4px; padding: 10px 12px; background: var(--cp-surface); }
 .calendar-panels input[type=checkbox], .calendar-panels input[type=radio] { display: inline-block; width: auto; min-width: 16px; min-height: 16px; padding: 0; vertical-align: middle; }
 .calendar-panels textarea { min-height: 200px; resize: vertical; font-weight: 400; line-height: 1.6; }
 .calendar-panels .cp-date-field { max-width: 240px; }
@@ -38,9 +38,9 @@
 .calendar-panels .cp-note-tabs { display: flex; gap: 6px; }
 .calendar-panels .cp-note-tabs button { flex: 1; font-size: 13px; }
 .calendar-panels .cp-note-tabs button[aria-pressed=true] { background: var(--cp-accent-soft); color: var(--cp-accent); border-color: var(--cp-accent); }
-.calendar-panels .cp-note-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 12px; align-items: start; }
-.calendar-panels button.cp-note-card { display: block; text-align: left; width: 100%; padding: 16px; min-width: 0; }
-.calendar-panels button.cp-note-card[aria-current=true] { border-color: var(--cp-accent); box-shadow: inset 3px 0 var(--cp-accent); background: var(--cp-accent-soft); }
+.calendar-panels .cp-note-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; align-items: start; }
+.calendar-panels button.cp-note-card { display: block; text-align: left; width: 100%; padding: 12px 4px; min-width: 0; border: 0; border-bottom: 1px solid var(--cp-line); border-radius: 0; background: transparent; }
+.calendar-panels button.cp-note-card[aria-current=true] { border-color: var(--cp-line); box-shadow: inset 2px 0 var(--cp-accent); background: var(--cp-accent-soft); }
 .calendar-panels .cp-note-title { display: block; font-size: 15px; font-weight: 650; line-height: 1.4; overflow-wrap: anywhere; }
 .calendar-panels .cp-note-preview { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; font-size: 13px; line-height: 1.5; color: var(--cp-muted); margin-top: 7px; }
 .calendar-panels .cp-note-meta { display: block; font-size: 12px; line-height: 1.5; color: var(--cp-muted); margin-top: 10px; }
@@ -50,13 +50,17 @@
 .calendar-panels .cp-block-editor .ce-block__content, .calendar-panels .cp-block-editor .ce-toolbar__content { max-width: calc(100% - 32px); }
 .calendar-panels .cp-block-editor .codex-editor__redactor { padding-bottom: 40px !important; }
 .calendar-panels .cp-archive-action { margin-left: auto; }
-[data-theme=dark] .calendar-panels { --cp-accent: #82cda6; --cp-accent-soft: #203b2d; --cp-surface: var(--bg-card, #202622); --cp-line: var(--border-default, #46524a); --cp-text: var(--text-primary, #edf3ef); --cp-muted: var(--text-secondary, #bcc8c1); }
-[data-theme=dark] .calendar-panels button.cp-primary { background: #287553; border-color: #287553; color: #fff; }
+[data-theme=dark] .calendar-panels { --cp-accent: var(--accent-fill, #ededed); --cp-accent-soft: var(--bg-soft, #292929); --cp-surface: var(--bg-card, #242424); --cp-line: var(--border-default, #414141); --cp-text: var(--text-primary, #f0f0f0); --cp-muted: var(--text-secondary, #bdbdbd); }
+[data-theme=dark] .calendar-panels button.cp-primary { background: var(--cp-accent); border-color: var(--cp-accent); color: var(--accent-contrast, #202020); }
 [data-theme=dark] .calendar-panels .cp-error { color: #ffb4ab; }
 @media (max-width: 720px) {
   .calendar-panels .cp-note-list { padding: 3px; }
   .calendar-panels .cp-heading { flex-wrap: wrap; gap: 14px; }
   .calendar-panels .cp-editor { padding: 18px; }
+}
+@media (max-width: 680px) {
+  .calendar-panels button { min-height: 48px; }
+  .calendar-panels button.cp-goal-row__collapse { width: 44px; height: 44px; }
 }
 @media (max-width: 420px) {
   .calendar-panels .cp-heading > button { width: 100%; }

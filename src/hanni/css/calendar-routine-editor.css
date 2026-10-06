@@ -23,7 +23,7 @@
 .calendar-routine-editor .cre-step{display:grid;gap:8px;min-width:0;padding:8px 0;border:0;border-top:1px solid var(--border-subtle,#ebebeb);border-radius:0}
 .calendar-routine-editor .cre-step>header{display:flex;align-items:center;gap:8px;min-width:0}
 .calendar-routine-editor .cre-step>header>label{display:flex;align-items:center;gap:8px;flex:1;min-width:0}
-.calendar-routine-editor .cre-step-number{display:grid;place-items:center;width:28px;height:28px;flex:0 0 auto;border-radius:50%;background:var(--bg-hover,#f0f0f0);font-weight:600}
+.calendar-routine-editor .cre-step-number{display:grid;place-items:center;width:28px;height:28px;flex:0 0 auto;border-radius:3px;background:var(--bg-hover,#f0f0f0);font-weight:600}
 .calendar-routine-editor .cre-step-order{display:flex;gap:4px;flex:0 0 auto}
 .calendar-routine-editor .cre-step-order button{min-width:44px;padding-inline:8px}
 .calendar-routine-editor .cre-step-options{display:grid;gap:10px}

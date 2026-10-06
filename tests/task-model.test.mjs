@@ -31,6 +31,163 @@ function useWindow(t, handlers = {}) {
 }
 const modal = () => import('../src/hanni/js/calendar-event-modal.js');
 
+test('an open new event follows category rename and deletion without losing its draft', async t => {
+  for (const action of ['rename', 'delete']) await t.test(action, async t => {
+    let categories = [{ id: 'general', name: 'general', color: '#999' }, { id: 'cat-a', name: 'Category A', color: '#2383e2' }];
+    const x = useWindow(t, {
+      list_event_categories: () => categories.map(category => ({ ...category })),
+      update_event_category: ({ id, name }) => { categories = categories.map(category => category.id === id ? { ...category, name } : category); },
+      delete_event_category: ({ id }) => { categories = categories.filter(category => category.id !== id); },
+      create_event: 'event-new',
+    });
+    const oldConfirm = globalThis.confirm; globalThis.confirm = () => true;
+    t.after(() => { globalThis.confirm = oldConfirm; });
+    (await import('../src/hanni/js/calendar-categories.js')).invalidateCategoriesCache();
+    const { showCalendarCreateModal } = await modal();
+    await showCalendarCreateModal('2026-10-04', { kind: 'event', types: ['event'], initialTime: '10:00' }); await settle();
+    x.q('#evm-title').value = 'Fictional category draft'; x.q('#evm-desc').value = 'Keep this description';
+    x.q('[data-pri="3"]').click();
+    const select = x.q('#evm-cat');
+    select.value = 'Category A'; select.dispatchEvent(new x.w.Event('change'));
+    select.value = '__manage__'; select.dispatchEvent(new x.w.Event('change')); await settle();
+    const row = x.q('.evm-cat-item[data-id="cat-a"]');
+    if (action === 'rename') {
+      const input = row.querySelector('.evm-cat-name'); input.value = 'Category B'; input.dispatchEvent(new x.w.Event('change'));
+    } else row.querySelector('.evm-cat-del').click();
+    await settle();
+    x.q('#evm-mgr-close').click(); x.q('#evm-save').click(); await settle();
+    const saved = x.saved('create_event'); assert.equal(saved.length, 1);
+    assert.equal(saved[0].category, action === 'rename' ? 'Category B' : 'general');
+    assert.equal(saved[0].title, 'Fictional category draft'); assert.equal(saved[0].description, 'Keep this description');
+    assert.equal(saved[0].date, '2026-10-04'); assert.equal(saved[0].time, '10:00');
+    assert.equal(saved[0].durationMinutes, 60); assert.equal(saved[0].priority, 3);
+    assert.equal(x.saved('start_task_block').length, 0);
+  });
+});
+
+test('failed category refresh blocks saving an orphan and retries without losing the event draft', async t => {
+  let fail = false, categories = [{ id:'general', name:'general', color:'#999' }, { id:'cat-a', name:'Category A', color:'#2383e2' }];
+  const x = useWindow(t, {
+    list_event_categories: () => { if (fail) throw new Error('Temporary read failure'); return categories.map(category => ({ ...category })); },
+    update_event_category: ({ id, name }) => { categories = categories.map(category => category.id === id ? { ...category, name } : category); },
+    create_event:'event-new',
+  });
+  (await import('../src/hanni/js/calendar-categories.js')).invalidateCategoriesCache();
+  const { showCalendarCreateModal } = await modal();
+  await showCalendarCreateModal('2026-10-04', { kind:'event', types:['event'], initialTime:'10:00' }); await settle();
+  x.q('#evm-title').value = 'Keep failed-refresh draft'; x.q('#evm-desc').value = 'Keep description';
+  const select = x.q('#evm-cat'); select.value = 'Category A'; select.dispatchEvent(new x.w.Event('change'));
+  select.value = '__manage__'; select.dispatchEvent(new x.w.Event('change')); await settle();
+  fail = true;
+  const input = x.q('.evm-cat-item[data-id="cat-a"] .evm-cat-name'); input.value = 'Category B'; input.dispatchEvent(new x.w.Event('change')); await settle();
+  assert.equal(select.value, 'Category A', 'failed reads do not silently choose General');
+  x.q('#evm-mgr-close').click(); x.q('#evm-save').click(); await settle();
+  assert.equal(x.saved('create_event').length, 0, 'stale category cannot be saved');
+  assert.equal(x.q('#evm-title').value, 'Keep failed-refresh draft'); assert.equal(x.q('#evm-desc').value, 'Keep description');
+  assert.match(x.q('#evm-error').textContent, /Не удалось обновить категории/);
+  fail = false; x.q('#evm-save').click(); await settle();
+  assert.equal(x.saved('create_event').length, 1); assert.equal(x.saved('create_event')[0].category, 'Category B');
+});
+
+test('saving waits for a pending category refresh and repeated submit creates only one event', async t => {
+  let defer = false, resolveList;
+  const categories = [{ id:'general', name:'general', color:'#999' }, { id:'cat-a', name:'Category A', color:'#2383e2' }];
+  const x = useWindow(t, {
+    list_event_categories: () => defer ? new Promise(resolve => { resolveList = () => resolve(categories.map(category => ({ ...category }))); }) : categories.map(category => ({ ...category })),
+    update_event_category: ({ name }) => { categories[1].name = name; },
+    create_event:'event-new',
+  });
+  (await import('../src/hanni/js/calendar-categories.js')).invalidateCategoriesCache();
+  const { showCalendarCreateModal } = await modal();
+  await showCalendarCreateModal('2026-10-04', { kind:'event', types:['event'], initialTime:'10:00' }); await settle();
+  x.q('#evm-title').value = 'Pending category draft';
+  const select = x.q('#evm-cat'); select.value = 'Category A'; select.dispatchEvent(new x.w.Event('change'));
+  select.value = '__manage__'; select.dispatchEvent(new x.w.Event('change')); await settle();
+  defer = true; const input = x.q('.evm-cat-item[data-id="cat-a"] .evm-cat-name'); input.value = 'Category B'; input.dispatchEvent(new x.w.Event('change')); await settle();
+  x.q('#evm-mgr-close').click(); x.q('#evm-save').click();
+  x.q('#evm-form').dispatchEvent(new x.w.Event('submit', { bubbles:true, cancelable:true })); await settle();
+  assert.equal(x.saved('create_event').length, 0);
+  resolveList(); await settle();
+  assert.equal(x.saved('create_event').length, 1); assert.equal(x.saved('create_event')[0].category, 'Category B');
+});
+
+test('category refresh preserves a legacy unknown event category and custom color', async t => {
+  const event = { id:'legacy-event', version:1, title:'Fictional legacy event', description:'Legacy description', date:'2026-10-04', time:'10:00', duration_minutes:60, category:'legacy', color:'#abcdef', priority:0 };
+  const x = useWindow(t, { get_all_events:[event], update_event:null, update_event_category:null });
+  (await import('../src/hanni/js/calendar-categories.js')).invalidateCategoriesCache();
+  const { showEventModal } = await modal();
+  await showEventModal(event.id); await settle();
+  const select = x.q('#evm-cat'); assert.equal(select.value, 'legacy');
+  select.value = '__manage__'; select.dispatchEvent(new x.w.Event('change')); await settle();
+  const color = x.q('.evm-cat-color-input'); color.value = '#123456'; color.dispatchEvent(new x.w.Event('change')); await settle();
+  assert.equal(select.value, 'legacy');
+  x.q('#evm-mgr-close').click(); x.q('#evm-save').click(); await settle();
+  assert.equal(x.saved('update_event')[0].category, 'legacy');
+  assert.equal(x.saved('update_event')[0].color, '#abcdef');
+  assert.equal(x.saved('update_event')[0].expectedVersion, 1);
+});
+
+test('a late category refresh cannot undo a newer rename in the event draft', async t => {
+  let categories = [{ id:'general', name:'general', color:'#999' }, { id:'cat-a', name:'Category A', color:'#2383e2' }];
+  let delay = false, resolveOld;
+  const x = useWindow(t, {
+    list_event_categories: () => {
+      const snapshot = categories.map(category => ({ ...category }));
+      if (delay) { delay = false; return new Promise(resolve => { resolveOld = () => resolve(snapshot); }); }
+      return snapshot;
+    },
+    update_event_category: ({ id, name }) => { categories = categories.map(category => category.id === id ? { ...category, name } : category); },
+  });
+  (await import('../src/hanni/js/calendar-categories.js')).invalidateCategoriesCache();
+  const { showCalendarCreateModal } = await modal();
+  await showCalendarCreateModal('2026-10-04', { kind:'event', types:['event'], initialTime:'10:00' }); await settle();
+  const select = x.q('#evm-cat'); select.value = 'Category A'; select.dispatchEvent(new x.w.Event('change'));
+  select.value = '__manage__'; select.dispatchEvent(new x.w.Event('change')); await settle();
+  const input = x.q('.evm-cat-item[data-id="cat-a"] .evm-cat-name');
+  delay = true; input.value = 'Category B'; input.dispatchEvent(new x.w.Event('change')); await settle();
+  assert.equal(typeof resolveOld, 'function');
+  input.value = 'Category C'; input.dispatchEvent(new x.w.Event('change')); await settle();
+  assert.equal(select.value, 'Category C');
+  resolveOld(); await settle(); assert.equal(select.value, 'Category C');
+  x.q('#evm-mgr-close').click(); x.q('#evm-cancel').click();
+});
+
+test('correcting an event interval clears only its own validation after it becomes valid', async t => {
+  const x = useWindow(t);
+  const { showCalendarCreateModal } = await modal();
+  await showCalendarCreateModal('2026-10-04', { kind: 'event', types: ['event'], initialTime: '10:00' }); await settle();
+  x.q('#evm-title').value = 'Fictional meeting';
+  const end = x.q('#evm-end-time'), error = x.q('#evm-error');
+  end.value = '09:00'; end.dispatchEvent(new x.w.Event('change', { bubbles: true }));
+  x.q('#evm-save').click(); await settle();
+  assert.equal(end.getAttribute('aria-invalid'), 'true');
+  end.value = '10:00'; end.dispatchEvent(new x.w.Event('input', { bubbles: true }));
+  assert.equal(error.hidden, false, 'equal start and end remains invalid');
+  end.value = '11:00'; end.dispatchEvent(new x.w.Event('input', { bubbles: true }));
+  assert.equal(error.hidden, true);
+  assert.equal(end.hasAttribute('aria-invalid'), false);
+  assert.equal(x.saved('create_event').length, 0, 'correcting the input does not save');
+  x.q('#evm-title').value = ''; x.q('#evm-save').click(); await settle();
+  end.value = '12:00'; end.dispatchEvent(new x.w.Event('input', { bubbles: true }));
+  assert.equal(error.hidden, false, 'a valid interval does not hide an unrelated title error');
+});
+
+test('correcting an empty title clears its validation, whitespace does not', async t => {
+  const x = useWindow(t);
+  const { showCalendarCreateModal } = await modal();
+  await showCalendarCreateModal('2026-10-04', {}); await settle();
+  x.q('#evm-save').click(); await settle();
+  const title = x.q('#evm-title'), error = x.q('#evm-error');
+  assert.equal(title.getAttribute('aria-invalid'), 'true');
+  title.value = '  '; title.dispatchEvent(new x.w.Event('input', { bubbles: true }));
+  assert.equal(error.hidden, false);
+  title.value = 'Valid task'; title.dispatchEvent(new x.w.Event('input', { bubbles: true }));
+  assert.equal(error.hidden, true);
+  assert.equal(title.hasAttribute('aria-invalid'), false);
+  assert.equal(title.hasAttribute('aria-describedby'), false);
+  assert.equal(x.saved('create_calendar_task').length, 0);
+});
+
 test('task model helpers read legacy rows as normal, untimed and without sphere', () => {
   assert.deepEqual(TASK_SPHERES.map(([id, label]) => `${id}:${label}`), ['work:Работа', 'home:Дом', 'health:Здоровье', 'growth:Развитие', 'personal:Личное']);
   assert.equal(sphereLabel('home'), 'Дом'); assert.equal(sphereLabel('finance'), ''); assert.equal(sphereLabel(null), '');

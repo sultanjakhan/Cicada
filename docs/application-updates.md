@@ -51,7 +51,9 @@ backoff. The old automatic-install IPC always refuses, including old renderers.
 Windows uses the official Tauri updater and NSIS. `windows/update-hooks.nsh`
 retains the old executable beside the installed file instead of basename-wide
 process termination. Only the installed binary with the standard profile
-registers per-user logon and six-hour tasks. Their windowless
+registers per-user logon and six-hour tasks. A production folder selected through
+Cicada settings also qualifies; DEV and isolated QA profiles remain excluded.
+Their windowless
 `--update-background` process skips while the profile is already open, otherwise
 checks and prepares a verified package without launching an installer.
 
@@ -65,8 +67,11 @@ exact deadline; foreground checks remain available when background work is delay
 macOS Apple Silicon support starts with 0.3.18. The existing per-user
 `app.hanni.mvp.updates` LaunchAgent checks at login and every six hours without
 a window. The profile lock protects an open instance. Background checks leave
-the app closed; only explicit installation restarts it. DEV, relocated bundles,
-nonstandard profiles and non-writable bundles cannot replace the installed app.
+the app closed; only explicit installation restarts it. Since 0.5.0 the owned
+`~/Projects/Cicada/application/Cicada.app` installation is supported when the
+standard `~/Applications/Cicada.app` alias points to it. A production data folder
+selected in settings is supported too. DEV, arbitrary bundles, isolated profiles
+and non-writable bundles cannot replace the installed app.
 LaunchAgent errors appear in update settings; the private
 `updates/background.json` receipt records background checks. macOS may delay
 scheduled jobs during sleep or restrict background items.

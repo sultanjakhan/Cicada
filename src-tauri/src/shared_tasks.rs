@@ -45,10 +45,12 @@ fn initialize(c: &mut Connection) -> Result<()> {
       CREATE TABLE IF NOT EXISTS shared_task_comments(task_id TEXT NOT NULL,operation_id TEXT PRIMARY KEY,body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS shared_task_tombstones(task_id TEXT PRIMARY KEY,binding TEXT NOT NULL,version INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS shared_task_result_runs(task_id TEXT NOT NULL,result_version INTEGER NOT NULL,run_id TEXT NOT NULL,PRIMARY KEY(task_id,result_version),UNIQUE(task_id,run_id));
+      CREATE TABLE IF NOT EXISTS shared_task_intent_runs(intent_id TEXT PRIMARY KEY,task_id TEXT NOT NULL,run_id TEXT NOT NULL UNIQUE,acknowledge_operation_id TEXT NOT NULL UNIQUE);
       CREATE TRIGGER IF NOT EXISTS shared_result_requires_review BEFORE UPDATE OF completed,status ON items
       WHEN (NEW.completed=1 OR NEW.status='done') AND EXISTS(SELECT 1 FROM local_review_state r JOIN shared_task_result_runs s ON s.task_id=r.task_id AND s.result_version=r.result_version WHERE r.task_id=NEW.id AND r.state!='accepted')
       BEGIN SELECT RAISE(ABORT,'shared_result_requires_review'); END;"))?;
     let tx = sql(c.transaction_with_behavior(TransactionBehavior::Immediate))?;
+    migrate_intent_runs(&tx)?;
     if access::read(&tx, EXCHANGE)
         .map_err(|_| Error(409, "invalid_shared_binding"))?
         .is_none()
@@ -57,6 +59,95 @@ fn initialize(c: &mut Connection) -> Result<()> {
         save_exchange(&tx, &state)?;
     }
     sql(tx.commit())
+}
+// Older acknowledgements did not persist the run responsible for rework. Recover
+// only an unambiguous new run from immutable before/after command receipts.
+fn migrate_intent_runs(c: &Connection) -> Result<()> {
+    let mut q = sql(c.prepare("SELECT r.intent_id,r.task_id FROM local_review_state r LEFT JOIN shared_task_intent_runs b ON b.intent_id=r.intent_id WHERE r.state='running' AND r.intent_id IS NOT NULL AND b.intent_id IS NULL"))?;
+    let pending = sql(q.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))))?;
+    let pending = sql(pending.collect::<rusqlite::Result<Vec<_>>>())?;
+    for (intent, task) in pending {
+        let before: Option<String> = sql(c
+            .query_row(
+                "SELECT receipt FROM shared_task_operations WHERE operation_id=?1 AND task_id=?2",
+                params![intent, task],
+                |r| r.get(0),
+            )
+            .optional())?;
+        let Some(before) = before.and_then(|s| serde_json::from_str::<Value>(&s).ok()) else {
+            continue;
+        };
+        if before["task"]["id"] != task
+            || before["task"]["review"]["intentId"] != intent
+            || before["task"]["review"]["state"] != "awaiting_dispatch"
+        {
+            continue;
+        }
+        let Some(old) = before["task"]["reports"].as_array() else {
+            continue;
+        };
+        let old_ids: std::collections::BTreeSet<_> =
+            old.iter().filter_map(|r| r["runId"].as_str()).collect();
+        if old_ids.len() != old.len() {
+            continue;
+        }
+        let mut q = sql(c.prepare("SELECT o.operation_id,o.receipt,a.body FROM shared_task_operations o JOIN local_review_audit a ON a.operation_id=o.operation_id AND a.task_id=o.task_id WHERE o.task_id=?1"))?;
+        let rows = sql(q.query_map([&task], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        }))?;
+        let mut candidates = Vec::new();
+        for row in rows {
+            let (op, receipt, audit) = sql(row)?;
+            let (Ok(after), Ok(audit)) = (
+                serde_json::from_str::<Value>(&receipt),
+                serde_json::from_str::<Value>(&audit),
+            ) else {
+                continue;
+            };
+            if audit["action"] != "acknowledge"
+                || after["task"]["id"] != task
+                || after["task"]["review"]["intentId"] != intent
+                || after["task"]["review"]["state"] != "running"
+                || after["task"]["binding"] != before["task"]["binding"]
+            {
+                continue;
+            }
+            let Some(reports) = after["task"]["reports"].as_array() else {
+                continue;
+            };
+            let ids: std::collections::BTreeSet<_> =
+                reports.iter().filter_map(|r| r["runId"].as_str()).collect();
+            if ids.len() != reports.len()
+                || ids.len() != old_ids.len() + 1
+                || !old_ids.is_subset(&ids)
+            {
+                continue;
+            }
+            let added = reports
+                .iter()
+                .filter(|r| r["runId"].as_str().is_some_and(|id| !old_ids.contains(id)))
+                .collect::<Vec<_>>();
+            if added.len() == 1
+                && added[0]["report"]["sequence"] == 1
+                && added[0]["report"]["status"] == "running"
+                && added[0]["taskKey"] == before["task"]["binding"]["taskKey"]
+            {
+                candidates.push((op, added[0]["runId"].as_str().unwrap().to_owned()));
+            }
+        }
+        if candidates.len() == 1 {
+            let (op, run) = &candidates[0];
+            sql(c.execute(
+                "INSERT INTO shared_task_intent_runs VALUES(?1,?2,?3,?4)",
+                params![intent, task, run, op],
+            ))?;
+        }
+    }
+    Ok(())
 }
 fn native(c: &Connection, id: &str) -> Result<Value> {
     access::personal(c, id).map_err(|_| Error(404, "shared_task_not_found"))
@@ -153,9 +244,6 @@ fn add_binding(c: &Connection, id: &str) -> Result<()> {
     let mut s = exchange(c)?;
     let b = access::binding(&s, id);
     let key = b["taskKey"].as_str().unwrap().to_owned();
-    if s["bindings"].get(&key).is_none() && s["bindings"].as_object().unwrap().len() >= 500 {
-        return Err(Error(409, "shared_capacity"));
-    }
     s["bindings"][&key] = b;
     save_exchange(c, &s)
 }
@@ -454,6 +542,16 @@ fn perform(c: &mut Connection, op: &str, command: &str, args: Value) -> Result<V
                 {
                     return Err(Error(409, "result_not_expected"));
                 }
+                if let Some((_, _, Some(intent))) = &rv {
+                    let owner: Option<String> = sql(tx.query_row("SELECT run_id FROM shared_task_intent_runs WHERE intent_id=?1 AND task_id=?2", params![intent, id], |r| r.get(0)).optional())?;
+                    match owner {
+                        None => return Err(Error(409, "execution_intent_unbound")),
+                        Some(owner) if owner != run => {
+                            return Err(Error(409, "execution_run_mismatch"))
+                        }
+                        _ => {}
+                    }
+                }
                 let n = rv.as_ref().map_or(1, |(n, _, _)| n + 1);
                 sql(tx.execute(
                     "INSERT INTO local_review_results VALUES(?1,?2,?3,?4)",
@@ -558,9 +656,13 @@ fn perform(c: &mut Connection, op: &str, command: &str, args: Value) -> Result<V
                 }
                 access::record_report(&mut state, &b, args["report"].clone())
                     .map_err(|_| Error(400, "invalid_acknowledgement"))?;
-                save_exchange(&tx, &state)?;
                 access::record_received_at(&tx, run)
                     .map_err(|_| Error(409, "invalid_report_times"))?;
+                save_exchange(&tx, &state)?;
+                sql(tx.execute(
+                    "INSERT INTO shared_task_intent_runs VALUES(?1,?2,?3,?4)",
+                    params![intent, id, run, op],
+                ))?;
                 sql(tx.execute(
                     "UPDATE local_review_intents SET state='acknowledged' WHERE intent_id=?1",
                     [intent],
@@ -858,6 +960,138 @@ mod tests {
                 .unwrap(),
             0
         );
+    }
+    #[test]
+    fn rework_result_requires_acknowledged_run_and_recovers_legacy_owner() {
+        let mut c = db();
+        let first = create(&mut c);
+        let id = first["task"]["id"].as_str().unwrap();
+        observed(&mut c, id, 1, "original-run");
+        observed(&mut c, id, 1, "unrelated-run");
+        call(
+            &mut c,
+            "owner-result-one",
+            "submit_result",
+            json!({"taskId":id,"expectedVersion":1,"runId":"original-run","content":"First"}),
+        );
+        call(
+            &mut c,
+            "owner-rework-one",
+            "review",
+            json!({"taskId":id,"expectedVersion":2,"resultVersion":1,"decision":"rework","comment":"Fix"}),
+        );
+        let args = json!({"taskId":id,"expectedVersion":3,"intentId":"owner-rework-one","report":report("owner-run","running",1)});
+        let ack = call(&mut c, "owner-ack-one", "acknowledge", args.clone());
+        assert_eq!(ack["task"]["version"], 4);
+        assert_eq!(call(&mut c, "owner-ack-one", "acknowledge", args), ack);
+        finish(&mut c, id, 4, "owner-run");
+        let foreign =
+            json!({"taskId":id,"expectedVersion":4,"runId":"unrelated-run","content":"Foreign"});
+        assert_eq!(
+            call(
+                &mut c,
+                "foreign-result-one",
+                "submit_result",
+                foreign.clone()
+            )["code"],
+            "execution_run_mismatch"
+        );
+        assert_eq!(projection(&c, id).unwrap()["review"]["state"], "running");
+        // Simulate an old database: the immutable receipts already exist, but
+        // the new mapping has not been written by its former executable.
+        c.execute("DELETE FROM shared_task_intent_runs", [])
+            .unwrap();
+        assert_eq!(
+            call(&mut c, "foreign-result-two", "submit_result", foreign)["code"],
+            "execution_run_mismatch"
+        );
+        assert_eq!(
+            c.query_row("SELECT run_id FROM shared_task_intent_runs", [], |r| r
+                .get::<_, String>(
+                0
+            ))
+            .unwrap(),
+            "owner-run"
+        );
+        let result = call(
+            &mut c,
+            "owner-result-two",
+            "submit_result",
+            json!({"taskId":id,"expectedVersion":4,"runId":"owner-run","content":"Fixed"}),
+        );
+        assert_eq!(
+            result["task"]["review"]["state"], "awaiting_review",
+            "{result}"
+        );
+        assert_eq!(result["task"]["results"].as_array().unwrap().len(), 2);
+    }
+    #[test]
+    fn missing_legacy_ack_evidence_cannot_assign_an_unrelated_run() {
+        let mut c = db();
+        let first = create(&mut c);
+        let id = first["task"]["id"].as_str().unwrap();
+        observed(&mut c, id, 1, "legacy-initial");
+        call(
+            &mut c,
+            "legacy-result-one",
+            "submit_result",
+            json!({"taskId":id,"expectedVersion":1,"runId":"legacy-initial","content":"First"}),
+        );
+        call(
+            &mut c,
+            "legacy-rework-one",
+            "review",
+            json!({"taskId":id,"expectedVersion":2,"resultVersion":1,"decision":"rework","comment":"Fix"}),
+        );
+        call(
+            &mut c,
+            "legacy-ack-one",
+            "acknowledge",
+            json!({"taskId":id,"expectedVersion":3,"intentId":"legacy-rework-one","report":report("legacy-owner","running",1)}),
+        );
+        finish(&mut c, id, 4, "legacy-owner");
+        c.execute("DELETE FROM shared_task_intent_runs", [])
+            .unwrap();
+        c.execute(
+            "DELETE FROM shared_task_operations WHERE operation_id='legacy-ack-one'",
+            [],
+        )
+        .unwrap();
+        let result = call(
+            &mut c,
+            "legacy-result-two",
+            "submit_result",
+            json!({"taskId":id,"expectedVersion":4,"runId":"legacy-owner","content":"Fixed"}),
+        );
+        assert_eq!(result["code"], "execution_intent_unbound");
+        assert_eq!(projection(&c, id).unwrap()["review"]["state"], "running");
+    }
+    #[test]
+    fn result_limit_counts_utf8_bytes_without_lower_wire_truncation() {
+        let mut c = db();
+        let first = create(&mut c);
+        let id = first["task"]["id"].as_str().unwrap();
+        observed(&mut c, id, 1, "byte-limit-run");
+        let content = "Ж".repeat(4000);
+        assert_eq!(content.len(), 8000);
+        let args =
+            json!({"taskId":id,"expectedVersion":1,"runId":"byte-limit-run","content":content});
+        let payload = json!({"version":1,"operation_id":"byte-limit-result","action":"task-command","body":{"command":"submit_result","arguments":args}});
+        let escaped = serde_json::to_string(&payload)
+            .unwrap()
+            .replace('Ж', "\\u0416");
+        assert!(escaped.len() > 16000);
+        let request = access::parse(escaped.as_bytes()).unwrap();
+        let rejected = call(
+            &mut c,
+            "byte-limit-too-large",
+            "submit_result",
+            json!({"taskId":id,"expectedVersion":1,"runId":"byte-limit-run","content":format!("{}x",content)}),
+        );
+        assert_eq!(rejected["code"], "invalid_shared_text");
+        let accepted = access::execute(&mut c, request).unwrap();
+        assert_eq!(accepted["task"]["results"][0]["content"], content);
+        assert!(access::parse(&vec![b' '; 64 * 1024 + 1]).is_err());
     }
     #[test]
     fn scope_rechecked_before_receipt() {
