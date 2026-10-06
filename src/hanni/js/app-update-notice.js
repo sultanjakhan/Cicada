@@ -22,13 +22,18 @@ export function createSoftUpdateNotice(window, { invoke, safe = () => true }) {
   function render() {
     if (!host || disposed) return;
     if (!isOfferableUpdate(status)) { hide(); return; }
-    const text = status.error ||
-      (safe() ? `Доступна Cicada ${status.version}. Установить обновление?` : 'Обновление доступно. Сначала сохрани изменения.');
+    const text = status.error || (!safe() ? 'Сохрани изменения, чтобы обновиться.'
+      : status.phase === 'prepared' ? 'Загружено и готово к установке.'
+      : status.phase === 'permission_required' ? 'Разреши Android установить обновление.'
+      : status.phase === 'confirmation_required' ? 'Подтверди установку в Android.'
+      : 'Установи сейчас или вернись к этому позже.');
     const label = host.querySelector('[data-soft-update-text]');
     if (label.textContent !== text) label.textContent = text;
     const button = host.querySelector('[data-soft-update-install]');
-    const action = busy || nativeBusy ? 'Подготавливаем…' : status.phase === 'confirmation_required' ? 'Подтвердить'
-      : status.phase === 'permission_required' ? 'Разрешить установку' : 'Установить';
+    const version = host.querySelector('[data-soft-update-version]');
+    if (version.textContent !== status.version) version.textContent = status.version;
+    const action = busy || nativeBusy ? 'Подготовка…' : status.phase === 'confirmation_required' ? 'Подтвердить'
+      : status.phase === 'permission_required' ? 'Разрешить' : status.error ? 'Повторить' : 'Обновить';
     if (button.textContent !== action) button.textContent = action;
     button.disabled = busy || nativeBusy || !safe();
     host.querySelector('[data-soft-update-later]').disabled = busy;
@@ -41,7 +46,7 @@ export function createSoftUpdateNotice(window, { invoke, safe = () => true }) {
         host = window.document.createElement('section');
         host.className = 'calendar-soft-update';
         host.setAttribute('aria-label', 'Обновление Cicada');
-        host.innerHTML = '<span data-soft-update-text role="status"></span><div><button type="button" data-soft-update-install>Установить</button><button type="button" data-soft-update-later>Позже</button></div>';
+        host.innerHTML = '<div class="calendar-soft-update-heading" role="status"><span class="calendar-soft-update-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M12 4v10m-4-4 4 4 4-4M5 16v4h14v-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span><div class="calendar-soft-update-title">Обновление Cicada <span data-soft-update-version></span></div><p data-soft-update-text></p></div><div class="calendar-soft-update-actions"><button type="button" data-soft-update-install>Обновить</button><button type="button" data-soft-update-later>Позже</button></div>';
         host.querySelector('[data-soft-update-install]').onclick = () => void install();
         host.querySelector('[data-soft-update-later]').onclick = hide;
         window.document.body.appendChild(host);

@@ -12,7 +12,7 @@ test('soft offer preserves focus, uses the feed version and installs only on cli
   const notice = createSoftUpdateNotice(dom.window, { invoke: async (...args) => { calls.push(args); return { ...available, phase: 'installer_opened' }; } });
   assert.equal(notice.show(available), true);
   assert.equal(dom.window.document.activeElement.id, 'work');
-  assert.match(dom.window.document.querySelector('[data-soft-update-text]').textContent, /9\.8\.7/);
+  assert.equal(dom.window.document.querySelector('[data-soft-update-version]').textContent, '9.8.7');
   assert.equal(calls.length, 0);
   dom.window.document.querySelector('[data-soft-update-install]').click();
   dom.window.document.querySelector('[data-soft-update-install]').click();
@@ -60,7 +60,7 @@ test('background discovery waits for entry; Later is respected throughout this s
   handlers['hanni:update-status']({ payload: result });
   assert.equal(dom.window.document.querySelector('.calendar-soft-update'), null, 'A later version also waits for entry');
   dom.window.dispatchEvent(new dom.window.Event('focus')); await tick();
-  assert.match(dom.window.document.querySelector('[data-soft-update-text]').textContent, /9\.8\.8/);
+  assert.equal(dom.window.document.querySelector('[data-soft-update-version]').textContent, '9.8.8');
   assert.ok(!calls.includes('mvp_update_install') && !calls.includes('mvp_update_auto_install'));
   stop(); dom.window.close();
 });

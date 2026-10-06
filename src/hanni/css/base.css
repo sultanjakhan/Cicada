@@ -756,16 +756,26 @@ body {
 
 /* ── Empty state ── */
 .calendar-soft-update {
-  position: fixed; right: max(12px, env(safe-area-inset-right));
-  bottom: max(12px, env(safe-area-inset-bottom)); left: max(12px, env(safe-area-inset-left));
-  max-width: 440px; margin-left: auto; padding: 12px 14px;
-  background: var(--bg-primary); color: var(--text-primary);
-  border: 1px solid var(--border-color); border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg); z-index: 100; font-size: 13px;
-  overflow-wrap: anywhere; max-height: min(180px, 40vh); overflow: auto;
+  position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  box-sizing: border-box; width: min(420px, calc(100% - 32px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px))); margin: 0; padding: 20px;
+  background: var(--bg-elevated); color: var(--text-primary);
+  border: 1px solid var(--border-default); border-radius: 16px;
+  box-shadow: var(--shadow-lg); z-index: 100; font-family: inherit;
+  overflow-wrap: anywhere; max-height: min(360px, calc(100dvh - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))); overflow: auto;
 }
-.calendar-soft-update > div { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-.calendar-soft-update button { min-height: 36px; padding: 6px 12px; }
+.calendar-soft-update-heading { display: grid; grid-template-columns:24px minmax(0, 1fr); gap:8px 10px; align-items:start; }
+.calendar-soft-update-icon { display: grid; place-items: center; width:24px; height:24px; color:var(--text-secondary); }
+.calendar-soft-update-icon svg { display:block; width:20px; height:20px; }
+.calendar-soft-update-title { display: flex; flex-wrap: wrap; align-items:baseline; gap: 4px 8px; min-width:0; font-size: 15px; font-weight: 600; line-height:24px; }
+.calendar-soft-update-title [data-soft-update-version] { padding: 2px 7px; background: var(--bg-hover); border-radius: var(--radius-control,999px); font-size: 12px; font-weight: 500; line-height:20px; }
+.calendar-soft-update [data-soft-update-text] { grid-column:1 / -1; margin:0; color: var(--text-secondary); font-size:14px; line-height:20px; }
+.calendar-soft-update-actions { display: flex; align-items:center; justify-content:flex-start; flex-wrap: wrap; gap:8px; margin-top:20px; }
+.calendar-soft-update button { box-sizing: border-box; display:inline-flex; align-items:center; justify-content:center; flex: 0 0 auto; min-width: 88px; min-height: 48px; padding: 10px 20px; border-radius: var(--radius-control,999px); border: 1px solid transparent; font: inherit; font-size:14px; font-weight: 600; line-height:20px; cursor: pointer; }
+.calendar-soft-update [data-soft-update-install] { background: var(--accent-fill); color: var(--bg-page); }
+.calendar-soft-update [data-soft-update-later] { background: transparent; color: var(--text-secondary); font-weight: 500; }
+.calendar-soft-update button:not(:disabled):hover { filter: brightness(.94); }
+.calendar-soft-update [data-soft-update-later]:not(:disabled):hover { background: var(--bg-hover); }
+.calendar-soft-update button:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 3px; }
 .calendar-soft-update button:disabled { opacity: .55; }
 
 .hanni-empty {
