@@ -767,7 +767,7 @@ pub(crate) async fn install_update(
         return Err("Доступная версия изменилась. Повтори проверку.".into());
     }
     #[cfg(target_os = "macos")]
-    crate::update_macos::installed_bundle(&app)?;
+    let macos_target = crate::update_macos::capture_install_target(&app)?;
     let (_, metadata_path) = prepared_paths(&app, &candidate.version)?;
     let attempt_path = metadata_path.with_file_name("attempt.json");
     if automatic
@@ -896,6 +896,8 @@ pub(crate) async fn install_update(
                 &candidate.package.sha256,
                 crate::update_journal::now(),
             )?;
+            #[cfg(target_os = "macos")]
+            crate::update_macos::revalidate_install_target(&app, &macos_target)?;
             update
                 .install(&bytes)
                 .map_err(|_| "Не удалось запустить установку. Повтори попытку.")?;

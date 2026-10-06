@@ -8,6 +8,75 @@ use std::{
 
 const EXECUTABLE: &str = "Contents/MacOS/hanni-mvp";
 
+fn acl_has_no_write_grants(path: &Path) -> bool {
+    use std::{
+        ffi::{c_char, c_int, c_void, CString},
+        os::unix::ffi::OsStrExt,
+    };
+    // Darwin SDK sys/acl.h: extended ACLs, allow entries and permission masks.
+    unsafe extern "C" {
+        fn acl_get_file(path: *const c_char, kind: c_int) -> *mut c_void;
+        fn acl_valid(acl: *mut c_void) -> c_int;
+        fn acl_get_entry(acl: *mut c_void, index: c_int, entry: *mut *mut c_void) -> c_int;
+        fn acl_get_tag_type(entry: *mut c_void, tag: *mut c_int) -> c_int;
+        fn acl_get_permset_mask_np(entry: *mut c_void, mask: *mut u64) -> c_int;
+        fn acl_free(acl: *mut c_void) -> c_int;
+    }
+    let Ok(path) = CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // No extended ACL is ENOENT on Darwin. The caller already requires the
+    // directory to exist. Other errors fail closed.
+    let acl = unsafe { acl_get_file(path.as_ptr(), 0x100) };
+    if acl.is_null() {
+        return std::io::Error::last_os_error().raw_os_error() == Some(2);
+    }
+    struct Acl(*mut c_void);
+    impl Drop for Acl {
+        fn drop(&mut self) {
+            unsafe {
+                acl_free(self.0);
+            }
+        }
+    }
+    let acl = Acl(acl);
+    if unsafe { acl_valid(acl.0) } != 0 {
+        return false;
+    }
+    const WRITE: u64 =
+        (1 << 2) | (1 << 4) | (1 << 5) | (1 << 6) | (1 << 8) | (1 << 10) | (1 << 12) | (1 << 13);
+    for index in 0..=128 {
+        let mut entry = std::ptr::null_mut();
+        if unsafe { acl_get_entry(acl.0, index, &mut entry) } != 0 {
+            // Darwin returns EINVAL when a valid ACL has no entry at this index.
+            return std::io::Error::last_os_error().raw_os_error() == Some(22);
+        }
+        let mut tag = 0;
+        let mut mask = 0;
+        if unsafe { acl_get_tag_type(entry, &mut tag) } != 0
+            || unsafe { acl_get_permset_mask_np(entry, &mut mask) } != 0
+        {
+            return false;
+        }
+        // Conservatively refuse write grants, including user-specific grants.
+        // Deny-only/read ACLs (including the normal home deny-delete ACL) remain valid.
+        if tag == 1 && mask & WRITE != 0 {
+            return false;
+        }
+    }
+    false
+}
+
+fn trusted_ancestors(owner: u32, bundle: &Path) -> bool {
+    bundle.ancestors().all(|path| {
+        path.symlink_metadata().is_ok_and(|metadata| {
+            metadata.is_dir()
+                && (metadata.uid() == owner || metadata.uid() == 0)
+                && metadata.mode() & 0o022 == 0
+        }) && acl_has_no_write_grants(path)
+    })
+}
+
 pub(super) fn bundle_path(executable: &Path) -> Option<&Path> {
     if !executable.is_absolute()
         || executable.components().any(|component| {
@@ -36,14 +105,15 @@ pub(super) fn writable_bundle(home: &Path, bundle: &Path, executable: &Path) -> 
     let Ok(owner) = home.metadata().map(|metadata| metadata.uid()) else {
         return false;
     };
-    [bundle, bundle.parent().unwrap()].iter().all(|path| {
-        path.metadata().is_ok_and(|metadata| {
-            metadata.is_dir()
-                && metadata.uid() == owner
-                && metadata.mode() & 0o300 == 0o300
-                && metadata.mode() & 0o022 == 0
+    trusted_ancestors(owner, bundle)
+        && [bundle, bundle.parent().unwrap()].iter().all(|path| {
+            path.metadata().is_ok_and(|metadata| {
+                metadata.is_dir()
+                    && metadata.uid() == owner
+                    && metadata.mode() & 0o300 == 0o300
+                    && metadata.mode() & 0o022 == 0
+            })
         })
-    })
 }
 
 fn bundle_identity(bundle: &Path) -> bool {
@@ -88,6 +158,10 @@ fn bundle_identity(bundle: &Path) -> bool {
 }
 
 pub(super) fn installed_bundle_in(home: &Path, executable: &Path) -> Option<PathBuf> {
+    installed_bundle_with_temp(home, executable, &std::env::temp_dir())
+}
+
+fn installed_bundle_with_temp(home: &Path, executable: &Path, temporary: &Path) -> Option<PathBuf> {
     let physical_home = home.canonicalize().ok()?;
     // Resolve bundle aliases, never an executable or Contents/MacOS symlink.
     let logical_bundle = bundle_path(executable)?;
@@ -97,12 +171,48 @@ pub(super) fn installed_bundle_in(home: &Path, executable: &Path) -> Option<Path
     let bundle = logical_bundle.canonicalize().ok()?;
     let physical_executable = bundle.join(EXECUTABLE);
     if executable.canonicalize().ok()? != physical_executable
+        // Tauri 2.11 backs up/extracts under temp and uses rename. Reject
+        // cross-device targets before offering an update rather than failing
+        // halfway through installation or requesting admin authorization.
+        || bundle.metadata().ok()?.dev() != temporary.metadata().ok()?.dev()
         || !writable_bundle(&physical_home, &bundle, &physical_executable)
         || !bundle_identity(&bundle)
     {
         return None;
     }
     Some(bundle)
+}
+
+pub(crate) struct InstallTarget {
+    bundle: PathBuf,
+    identities: Vec<(PathBuf, u64, u64)>,
+}
+
+fn path_identities(bundle: &Path) -> Option<Vec<(PathBuf, u64, u64)>> {
+    bundle
+        .ancestors()
+        .map(Path::to_path_buf)
+        .chain([bundle.join(EXECUTABLE), bundle.join("Contents/Info.plist")])
+        .map(|path| {
+            let metadata = path.symlink_metadata().ok()?;
+            Some((path, metadata.dev(), metadata.ino()))
+        })
+        .collect()
+}
+
+pub(super) fn capture_install_target(home: &Path, executable: &Path) -> Option<InstallTarget> {
+    let bundle = installed_bundle_in(home, executable)?;
+    let identities = path_identities(&bundle)?;
+    Some(InstallTarget { bundle, identities })
+}
+
+pub(super) fn revalidate_install_target(
+    target: &InstallTarget,
+    home: &Path,
+    executable: &Path,
+) -> bool {
+    installed_bundle_in(home, executable).as_ref() == Some(&target.bundle)
+        && path_identities(&target.bundle).as_ref() == Some(&target.identities)
 }
 
 #[cfg(test)]
@@ -234,6 +344,66 @@ mod tests {
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
         }
         assert_eq!(installed_bundle_in(Path::new("/var/empty"), &exe), None);
+    }
+
+    #[test]
+    fn rejects_writable_ancestor_and_acl_write_grants() {
+        let fixture = Fixture::new();
+        let bundle = fixture.bundle();
+        write_signed_fixture(&bundle, "app.hanni.mvp");
+        let exe = bundle.join(EXECUTABLE);
+        std::fs::set_permissions(&fixture.0, std::fs::Permissions::from_mode(0o777)).unwrap();
+        assert_eq!(installed_bundle_in(&fixture.0, &exe), None);
+        std::fs::set_permissions(&fixture.0, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let result = Command::new("/bin/chmod")
+            .args([
+                "+a",
+                "everyone allow delete_child,add_file,add_subdirectory",
+            ])
+            .arg(&fixture.0)
+            .output()
+            .unwrap();
+        assert!(result.status.success());
+        assert_eq!(installed_bundle_in(&fixture.0, &exe), None);
+        assert!(Command::new("/bin/chmod")
+            .arg("-N")
+            .arg(&fixture.0)
+            .status()
+            .unwrap()
+            .success());
+        assert!(installed_bundle_in(&fixture.0, &exe).is_some());
+    }
+
+    #[test]
+    fn target_revalidation_refuses_replaced_bundle_and_changed_ancestor_policy() {
+        let fixture = Fixture::new();
+        let bundle = fixture.bundle();
+        write_signed_fixture(&bundle, "app.hanni.mvp");
+        let exe = bundle.join(EXECUTABLE);
+        let target = capture_install_target(&fixture.0, &exe).unwrap();
+        assert!(revalidate_install_target(&target, &fixture.0, &exe));
+        std::fs::set_permissions(&fixture.0, std::fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(!revalidate_install_target(&target, &fixture.0, &exe));
+        std::fs::set_permissions(&fixture.0, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::rename(&bundle, bundle.with_extension("previous")).unwrap();
+        write_signed_fixture(&bundle, "app.hanni.mvp");
+        assert!(installed_bundle_in(&fixture.0, &exe).is_some());
+        assert!(!revalidate_install_target(&target, &fixture.0, &exe));
+    }
+
+    #[test]
+    fn rejects_a_target_on_another_filesystem_than_updater_staging() {
+        let fixture = Fixture::new();
+        let bundle = fixture.bundle();
+        write_signed_fixture(&bundle, "app.hanni.mvp");
+        assert_ne!(
+            bundle.metadata().unwrap().dev(),
+            Path::new("/dev").metadata().unwrap().dev()
+        );
+        assert_eq!(
+            installed_bundle_with_temp(&fixture.0, &bundle.join(EXECUTABLE), Path::new("/dev")),
+            None
+        );
     }
 
     #[test]

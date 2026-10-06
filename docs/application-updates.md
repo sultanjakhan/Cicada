@@ -73,14 +73,24 @@ are not allowlisted, and no Applications alias is required. Bundle aliases resol
 to the same verified physical target before restart. The bundle must have the
 `app.hanni.mvp` identifier, `hanni-mvp` executable, valid code signature and regular
 (non-symlink) executable/Info.plist. Its directory and parent must be owned by the
-current account, writable by that owner and not writable by other accounts. A
+current account and writable by that owner. Every physical ancestor must be owned
+by the current account or root, without group/world write permissions or ACL
+write grants. Conservative ACL checks may refuse otherwise legitimate custom
+write ACLs. A
 production data folder selected in settings remains supported. DEV and isolated
 profiles, unbundled executables, invalid bundles and unsafe update targets are
-rejected. Package authenticity still requires the pinned update signature; an
+rejected. Targets on a different filesystem from the system temporary directory
+are unsupported and rejected before offering an update: the pinned Tauri installer
+uses temporary-directory staging and rename. Package authenticity still requires the pinned update signature; an
 ad-hoc bundle signature does not prove Developer ID provenance.
 The background job uses the verified physical executable. Only exact
 Cicada-generated LaunchAgent documents are migrated from previous locations;
-custom jobs and linked plist files remain untouched.
+custom jobs and linked plist files remain untouched. Enrollment compares the
+loaded executable on every attempt, so a failed reload retries even after the
+on-disk job has already been rewritten. Before installation handoff, the complete
+validation is repeated and directory/executable identities must match the target
+captured before download. This is not an OS directory pin against changes by the
+same account. Startup never moves or executes an invalid legacy bundle.
 LaunchAgent errors appear in update settings; the private
 `updates/background.json` receipt records background checks. macOS may delay
 scheduled jobs during sleep or restrict background items.
