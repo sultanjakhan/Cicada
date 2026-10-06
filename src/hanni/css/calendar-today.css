@@ -1,5 +1,5 @@
 /* One full-width workspace, one primary action. Lists retain their own pane. */
-.calendar-today { border:0; border-radius:0; padding:0; background:transparent; }
+.calendar-today { border:1px solid var(--border-default,#ddd); border-radius:8px; padding:16px; background:var(--bg-card,#fff); }
 .calendar-today [hidden] { display:none !important; }
 .calendar-today .calendar-next-action__surface { padding:4px 0 2px; border:0; border-radius:0; background:transparent; }
 .calendar-today .calendar-next-action__surface header > button { border:0; padding:5px 0; min-height:32px; font-size:12px; color:var(--text-muted,#777); }
@@ -21,9 +21,9 @@
 .today-date__settings > span { display:flex; color:var(--text-muted,#777); }
 .today-date__settings:hover { text-decoration:underline; text-underline-offset:4px; }
 .today-date__settings:focus-visible { outline:2px solid var(--text-primary,#252525); outline-offset:2px; }
-.calendar-main-goal.calendar-now { max-width:none; margin:16px 0 0; padding:0; border:0; background:transparent; }
+.calendar-main-goal.calendar-now { max-width:none; margin:16px 0 0; padding:0; border:1px solid var(--border-default,#ddd); border-radius:8px; background:var(--bg-card,#fff); }
 .calendar-main-goal [hidden] { display:none !important; }
-.calendar-main-goal.calendar-now:not(.calendar-now--compact) .calendar-now__goal { padding:14px 0 18px; border:0; border-bottom:1px solid var(--border-default,#ddd); border-radius:0; }
+.calendar-main-goal.calendar-now:not(.calendar-now--compact) .calendar-now__goal { padding:16px; border:0; border-radius:0; }
 .calendar-main-goal.calendar-now .calendar-now__goal-top { margin-bottom:6px; }
 .calendar-main-goal.calendar-now .calendar-now__eyebrow { font-size:13px; color:var(--text-primary,#252525); }
 .calendar-main-goal .calendar-now__eyebrow { display:inline-flex; align-items:center; gap:6px; padding:0; border-radius:0; background:transparent; font-weight:600; }
@@ -54,8 +54,8 @@
 .calendar-routine-choices li button { flex-shrink:0; padding:7px 10px; border:1px solid var(--border-default,#ddd); border-radius:8px; background:var(--bg-card,#fff); color:var(--text-primary,#222); }
 .calendar-setting-hint { color:var(--text-muted,#777); font-size:12px; margin:4px 0 12px; }
 @media(max-width:480px) {
-  .calendar-today { padding:0; }
-  .calendar-main-goal.calendar-now:not(.calendar-now--compact) .calendar-now__goal { padding:10px 0 14px; }
+  .calendar-today { padding:12px; }
+  .calendar-main-goal.calendar-now:not(.calendar-now--compact) .calendar-now__goal { padding:12px; }
   .calendar-main-goal.calendar-now .calendar-now__goal-top { flex-wrap:wrap; }
   .calendar-today .calendar-day-banner { flex-wrap:wrap; gap:8px; }
 }

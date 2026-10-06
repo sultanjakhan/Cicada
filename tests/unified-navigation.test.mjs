@@ -9,7 +9,7 @@ test('pane replacement retains focus on the selected Tasks/Routines button and p
   const source=fs.readFileSync(new URL('../src/hanni/js/unified-layout.js',import.meta.url),'utf8').replace(/^\uFEFF/,'').replace(/^import .*;\r?\n/gm,'').replace(/export /g,'');
   const state={theme:'light'};
   const setTheme=theme=>{state.theme=theme;dom.window.localStorage.setItem('hanni_theme',theme);dom.window.dispatchEvent(new dom.window.Event('hanni:theme-changed'));};
-  const render=new Function('S','invoke','TAB_ICONS','escapeHtml','document','window','localStorage','mountThemeControl','setTheme',source+'\nreturn renderUnifiedLayout;')(state,async()=>null,{},x=>x,d,dom.window,dom.window.localStorage,mountThemeControl,setTheme);
+  const render=new Function('S','invoke','TAB_ICONS','escapeHtml','document','window','localStorage','mountThemeControl','setTheme','IS_MOBILE',source+'\nreturn renderUnifiedLayout;')(state,async()=>null,{},x=>x,d,dom.window,dom.window.localStorage,mountThemeControl,setTheme,false);
   const panes=['dash','table','tasks','routines','notes','goals'].map(id=>({id,label:id}));
   const config={panes,editableHeader:false,renderTasks:p=>{p.textContent='tasks';},renderRoutines:p=>{p.textContent='routines';}};
   await render(host,'calendar',config);

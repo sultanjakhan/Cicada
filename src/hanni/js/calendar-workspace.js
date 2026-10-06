@@ -518,7 +518,7 @@ export async function loadCalendarWorkspace(el, { nativeReview = true } = {}) {
       const [firstDay, defaultView] = await Promise.all([loadTabSetting('calendar', 'first_day'), loadTabSetting('calendar', 'default_view')]);
       if (loadRevision !== workspaceRevision || S.activeTab !== 'calendar') return;
       view.firstDay = firstDay === 'sun' ? 'sun' : 'mon';
-      view.period = ({ 'День':'day', 'Неделя':'week', 'Месяц':'month', 'Список':'month' })[defaultView] || 'month';
+      view.period = ({ 'День':'day', 'Неделя':'week', 'Месяц':'month', 'Список':'month' })[defaultView] || 'day';
       view.mode = 'grid';
       initialViewLoaded = true;
     } catch { /* Keep the usable current view if preferences cannot be read. */ }
@@ -691,10 +691,6 @@ export async function loadCalendarWorkspace(el, { nativeReview = true } = {}) {
         },
       });
       todayTaskSelection=disposeFocus.getSelection();
-      // «● N» running tasks on the right of the shared header; it leads to the dashboard widget.
-      const header = document.createElement('div');
-      header.dataset.calendarRunning = '';
-      host.querySelector('.uni-header').append(header);
       nowHost = document.createElement('div');
       nowHost.dataset.calendarNow = '';
       nowHost.classList.add('calendar-main-goal');
@@ -702,8 +698,6 @@ export async function loadCalendarWorkspace(el, { nativeReview = true } = {}) {
       host.append(nowHost);
       // Every pane shares one execution owner; Dashboard reveals its goal summary.
       disposeNow = mountCalendarNow(nowHost, {
-        headerElement:header,
-        headerLabel:'Сегодня',
         hideTaskCard:true,
         mountGoalSummary:(host, goal) => mountGoalGlance(host, {invoke, goal}),
         openTaskLauncher:() => showAllTasks(host.querySelector('[data-calendar-launch]')),

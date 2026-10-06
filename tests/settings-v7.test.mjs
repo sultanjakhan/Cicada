@@ -1,5 +1,11 @@
 ﻿import test from 'node:test';import assert from 'node:assert/strict';
 const m=await import('../src/hanni/js/calendar-display-preferences.js');
+test('new calendar opens Day while an explicitly saved view is preserved',async()=>{
+  assert.equal((await m.loadCalendarPreferences(async()=>null)).default_view,'День');
+  for(const view of ['Месяц','Неделя']) {
+    assert.equal((await m.loadCalendarPreferences(async()=>JSON.stringify({default_view:view}))).default_view,view);
+  }
+});
 test('legacy fallback',async()=>{const calls=[];const p=await m.loadCalendarPreferences(async(c,a)=>{calls.push(c);return c==='get_ui_state'?null:(a.key.endsWith('first_day')?'sun':'Неделя')});assert.equal(p.first_day,'sun');assert.equal(p.default_view,'Неделя');assert.deepEqual(calls,['get_ui_state','get_app_setting','get_app_setting']);});
 test('legacy List preference migrates to month grid',()=>{assert.equal(m.normalizeCalendarPreferences({default_view:'Список'}).default_view,'Месяц');});
 test('invalid snapshot rejects without write',async()=>{await assert.rejects(()=>m.loadCalendarPreferences(async()=>'{bad'));});
