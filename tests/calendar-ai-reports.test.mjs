@@ -40,6 +40,7 @@ test('shows only latest reports with exact native bindings and safely renders so
   const dispose = mountCalendarAiReports(host, { invoke:data.invoke, window:dom.window });
   await tick(); await tick();
   assert.equal(host.querySelectorAll('li').length, 1, 'orphan report and unreported native task stay hidden');
+  assert.equal(host.querySelector('.calendar-ai-reports').hidden, false);
   assert.equal(host.querySelector('li').dataset.nativeTaskId, 'task-primary');
   assert.equal(host.querySelector('strong').textContent, '<img src=x onerror=alert(1)> Native title');
   assert.equal(host.querySelector('img'), null, 'untrusted source title is text, not markup');
@@ -91,5 +92,6 @@ test('renders a clear empty state when no linked report exists', async () => {
   const dispose = mountCalendarAiReports(host, { invoke:data.invoke, window:dom.window });
   await tick(); await tick();
   assert.match(host.textContent, /Нет связанных отчётов о работе ИИ/);
+  assert.equal(host.querySelector('.calendar-ai-reports').hidden, true, 'empty AI reports do not compete with the current action');
   dispose(); dom.window.close();
 });

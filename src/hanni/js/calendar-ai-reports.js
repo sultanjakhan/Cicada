@@ -14,6 +14,7 @@ export function mountCalendarAiReports(host, { invoke, listen = null, window: wi
   let disposed = false, revision = 0, unlisten = null, hasLoaded = false, renderedSignature = null;
   const section = host.ownerDocument.createElement('section');
   section.className = 'calendar-ai-reports';
+  section.hidden = true;
   section.setAttribute('aria-label', 'Работа ИИ');
   const heading = host.ownerDocument.createElement('h3');
   heading.textContent = 'Работа ИИ';
@@ -44,7 +45,8 @@ export function mountCalendarAiReports(host, { invoke, listen = null, window: wi
       if (report && STATUS_LABELS[report.status]) items.push({ nativeTaskId:String(row.source_id), title:row.title, report, order:report.receivedOrder });
     }
     items.sort((a, b) => b.order - a.order);
-    if (!items.length) { message('Нет связанных отчётов о работе ИИ.', 'empty'); return; }
+    if (!items.length) { section.hidden = true; message('Нет связанных отчётов о работе ИИ.', 'empty'); return; }
+    section.hidden = false;
     const signature = `items:${JSON.stringify(items.map(item => [item.nativeTaskId, item.title, item.report.agent, item.report.status]))}`;
     if (renderedSignature === signature && content.querySelector('ul')) return;
     const list = host.ownerDocument.createElement('ul');
@@ -80,6 +82,7 @@ export function mountCalendarAiReports(host, { invoke, listen = null, window: wi
       hasLoaded = true;
     } catch {
       if (!disposed && request === revision) {
+        section.hidden = false;
         note.textContent = 'Актуальность неизвестна: чтение отчётов завершилось ошибкой.';
         message('Не удалось прочитать отчёты. Прежние данные скрыты.', 'error');
         hasLoaded = true;
