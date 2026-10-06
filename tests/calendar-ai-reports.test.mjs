@@ -23,13 +23,16 @@ async function fixture() {
       'run-orphan-001':{ runId:'run-orphan-001', taskKey:orphan.taskKey, agent:'claude', provider:null, model:null, report:report('run-orphan-001',orphan.taskKey,'running',1,'claude'), receivedOrder:3 },
     },
   };
-  let taskReads = 0;
+  let taskReads = 0, failExchangeRead = false;
   const invoke = async (command, args) => {
     if (command === 'get_calendar_tasks') { taskReads++; return structuredClone(rows); }
-    if (command === 'get_ui_state') return args.key === TASK_RUN_KEY ? structuredClone(exchange) : args.key === REGISTRY_KEY ? null : null;
+    if (command === 'get_ui_state') {
+      if (args.key === TASK_RUN_KEY && failExchangeRead) throw Error('fixture read failure');
+      return args.key === TASK_RUN_KEY ? structuredClone(exchange) : args.key === REGISTRY_KEY ? null : null;
+    }
     throw Error(`Unexpected command: ${command}`);
   };
-  return { rows, binding, setExchange(value) { exchange = value; }, invoke, taskReads:() => taskReads };
+  return { rows, binding, setExchange(value) { exchange = value; }, setFailExchangeRead(value) { failExchangeRead = value; }, invoke, taskReads:() => taskReads };
 }
 
 test('shows only latest reports with exact native bindings and safely renders source titles', async () => {
@@ -52,6 +55,9 @@ test('refreshes from mvp-sync-updated and disposes its native listener', async (
   const dispose = mountCalendarAiReports(host, { invoke:data.invoke, window:dom.window, listen:async (name, callback) => { assert.equal(name,'mvp-sync-updated'); receive = callback; return () => unlistened++; } });
   await tick(); await tick();
   assert.match(host.textContent, /ожидает/);
+  const originalRow = host.querySelector('li');
+  receive({}); await tick(); await tick();
+  assert.equal(host.querySelector('li'), originalRow, 'same observed state preserves the existing row node');
   const updated = await data.invoke('get_ui_state',{key:TASK_RUN_KEY});
   updated.order++;
   updated.runs['run-last-0001'].report = report('run-last-0001',data.binding.taskKey,'done',2);
@@ -60,10 +66,19 @@ test('refreshes from mvp-sync-updated and disposes its native listener', async (
   receive({});
   await tick(); await tick();
   assert.match(host.textContent, /сообщил о завершении/);
+  const updatedRow = host.querySelector('li');
+  assert.notEqual(updatedRow, originalRow, 'changed status updates the rendered row');
   const readsBeforeTaskEvent = data.taskReads();
   dom.window.dispatchEvent(new dom.window.Event('task-state-changed'));
   await tick(); await tick();
   assert.ok(data.taskReads() > readsBeforeTaskEvent, 'native task changes refresh the report projection');
+  assert.equal(host.querySelector('li'), updatedRow, 'unchanged native task refresh also preserves row identity');
+  data.setFailExchangeRead(true); receive({}); await tick(); await tick();
+  assert.equal(host.querySelector('li'), null, 'failed refresh hides the last successful projection');
+  assert.match(host.textContent, /Прежние данные скрыты/);
+  assert.match(host.textContent, /Актуальность неизвестна: чтение отчётов завершилось ошибкой/);
+  data.setFailExchangeRead(false); receive({}); await tick(); await tick();
+  assert.match(host.textContent, /сообщил о завершении/, 'successful retry restores the latest observed report');
   dispose(); await tick();
   assert.equal(unlistened,1);
   dom.window.close();

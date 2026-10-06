@@ -11,23 +11,27 @@ const AGENT_LABELS = { codex: 'Codex', claude: 'Claude', other: 'другой и
 
 /** A read-only view of reports explicitly bound to native Cicada tasks. */
 export function mountCalendarAiReports(host, { invoke, listen = null, window: win = globalThis.window } = {}) {
-  let disposed = false, revision = 0, unlisten = null;
+  let disposed = false, revision = 0, unlisten = null, hasLoaded = false, renderedSignature = null;
   const section = host.ownerDocument.createElement('section');
   section.className = 'calendar-ai-reports';
   section.setAttribute('aria-label', 'Работа ИИ');
   const heading = host.ownerDocument.createElement('h3');
   heading.textContent = 'Работа ИИ';
   const note = host.ownerDocument.createElement('p');
-  note.textContent = 'По последнему отчёту. Время и актуальность неизвестны; текущее состояние не подтверждено.';
+  const unknownFreshness = 'По последнему отчёту. Время и актуальность неизвестны; текущее состояние не подтверждено.';
+  note.textContent = unknownFreshness;
   const content = host.ownerDocument.createElement('div');
   content.setAttribute('aria-live', 'polite');
   section.append(heading, note, content);
   host.replaceChildren(section);
 
-  function message(text) {
+  function message(text, key = text) {
+    const signature = `message:${key}`;
+    if (renderedSignature === signature && content.firstElementChild) return;
     const paragraph = host.ownerDocument.createElement('p');
     paragraph.textContent = text;
     content.replaceChildren(paragraph);
+    renderedSignature = signature;
   }
 
   function render(rows, contexts) {
@@ -40,7 +44,9 @@ export function mountCalendarAiReports(host, { invoke, listen = null, window: wi
       if (report && STATUS_LABELS[report.status]) items.push({ nativeTaskId:String(row.source_id), title:row.title, report, order:report.receivedOrder });
     }
     items.sort((a, b) => b.order - a.order);
-    if (!items.length) { message('Нет связанных отчётов о работе ИИ.'); return; }
+    if (!items.length) { message('Нет связанных отчётов о работе ИИ.', 'empty'); return; }
+    const signature = `items:${JSON.stringify(items.map(item => [item.nativeTaskId, item.title, item.report.agent, item.report.status]))}`;
+    if (renderedSignature === signature && content.querySelector('ul')) return;
     const list = host.ownerDocument.createElement('ul');
     for (const item of items) {
       const row = host.ownerDocument.createElement('li');
@@ -54,13 +60,14 @@ export function mountCalendarAiReports(host, { invoke, listen = null, window: wi
       list.append(row);
     }
     content.replaceChildren(list);
+    renderedSignature = signature;
   }
 
   async function refresh() {
     if (disposed) return;
     const request = ++revision;
     section.setAttribute('aria-busy', 'true');
-    message('Загружаем отчёты…');
+    if (!hasLoaded) message('Загружаем отчёты…', 'loading');
     try {
       const nativeRows = await invoke('get_calendar_tasks', {});
       if (!Array.isArray(nativeRows)) throw new Error('Invalid task response');
@@ -68,9 +75,15 @@ export function mountCalendarAiReports(host, { invoke, listen = null, window: wi
       const observed = await readNativeTaskObservations(rows, invoke);
       if (!observed.available) throw new Error('Native observation read failed');
       if (disposed || request !== revision) return;
+      note.textContent = unknownFreshness;
       render(rows, observed.contexts);
+      hasLoaded = true;
     } catch {
-      if (!disposed && request === revision) message('Не удалось прочитать отчёты.');
+      if (!disposed && request === revision) {
+        note.textContent = 'Актуальность неизвестна: чтение отчётов завершилось ошибкой.';
+        message('Не удалось прочитать отчёты. Прежние данные скрыты.', 'error');
+        hasLoaded = true;
+      }
     } finally {
       if (!disposed && request === revision) section.removeAttribute('aria-busy');
     }
