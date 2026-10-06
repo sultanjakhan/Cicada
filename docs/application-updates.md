@@ -67,11 +67,20 @@ exact deadline; foreground checks remain available when background work is delay
 macOS Apple Silicon support starts with 0.3.18. The existing per-user
 `app.hanni.mvp.updates` LaunchAgent checks at login and every six hours without
 a window. The profile lock protects an open instance. Background checks leave
-the app closed; only explicit installation restarts it. Since 0.5.0 the owned
-`~/Projects/Cicada/application/Cicada.app` installation is supported when the
-standard `~/Applications/Cicada.app` alias points to it. A production data folder
-selected in settings is supported too. DEV, arbitrary bundles, isolated profiles
-and non-writable bundles cannot replace the installed app.
+the app closed; only explicit installation restarts it. Since 0.5.3 the update target is the
+running executable's physical application bundle; its location and display name
+are not allowlisted, and no Applications alias is required. Bundle aliases resolve
+to the same verified physical target before restart. The bundle must have the
+`app.hanni.mvp` identifier, `hanni-mvp` executable, valid code signature and regular
+(non-symlink) executable/Info.plist. Its directory and parent must be owned by the
+current account, writable by that owner and not writable by other accounts. A
+production data folder selected in settings remains supported. DEV and isolated
+profiles, unbundled executables, invalid bundles and unsafe update targets are
+rejected. Package authenticity still requires the pinned update signature; an
+ad-hoc bundle signature does not prove Developer ID provenance.
+The background job uses the verified physical executable. Only exact
+Cicada-generated LaunchAgent documents are migrated from previous locations;
+custom jobs and linked plist files remain untouched.
 LaunchAgent errors appear in update settings; the private
 `updates/background.json` receipt records background checks. macOS may delay
 scheduled jobs during sleep or restrict background items.

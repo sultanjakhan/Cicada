@@ -23,60 +23,10 @@ fn project_bundle_in(home: &Path) -> PathBuf {
     home.join("Projects/Cicada/application/Cicada.app")
 }
 
-fn writable_bundle(home: &Path, bundle: &Path, executable: &Path) -> bool {
-    if bundle.canonicalize().ok().as_deref() != Some(bundle)
-        || executable != bundle.join(EXECUTABLE)
-        || !executable
-            .symlink_metadata()
-            .is_ok_and(|metadata| metadata.file_type().is_file())
-        || executable.canonicalize().ok().as_deref() != Some(executable)
-    {
-        return false;
-    }
-    let Ok(owner) = home.metadata().map(|m| m.uid()) else {
-        return false;
-    };
-    [bundle, bundle.parent().unwrap()].iter().all(|path| {
-        path.metadata()
-            .is_ok_and(|m| m.is_dir() && m.uid() == owner && m.mode() & 0o300 == 0o300)
-    })
-}
-
-fn executable_matches_bundle(
-    bundle: &Path,
-    standard_alias: &Path,
-    executable: &Path,
-    resolved_executable: &Path,
-) -> bool {
-    let physical_executable = bundle.join(EXECUTABLE);
-    (executable == physical_executable || executable == standard_alias.join(EXECUTABLE))
-        && resolved_executable == physical_executable
-}
-
-fn installed_bundle_in(home: &Path, executable: &Path) -> Option<PathBuf> {
-    let physical_home = home.canonicalize().ok()?;
-    let standard_alias = bundle_in(home);
-    let standard = bundle_in(&physical_home);
-    let project = project_bundle_in(&physical_home);
-    let resolved_executable = executable.canonicalize().ok()?;
-
-    if standard_alias.canonicalize().ok().as_deref() == Some(standard.as_path())
-        && writable_bundle(&physical_home, &standard, &standard.join(EXECUTABLE))
-        && executable_matches_bundle(&standard, &standard_alias, executable, &resolved_executable)
-    {
-        return Some(standard);
-    }
-
-    if project.canonicalize().ok().as_deref() == Some(project.as_path())
-        && standard_alias.canonicalize().ok().as_deref() == Some(project.as_path())
-        && writable_bundle(&physical_home, &project, &project.join(EXECUTABLE))
-        && executable_matches_bundle(&project, &standard_alias, executable, &resolved_executable)
-    {
-        return Some(project);
-    }
-
-    None
-}
+// Validate the actual running bundle rather than selecting a folder by name.
+#[path = "update_macos_bundle.rs"]
+mod bundle_validation;
+use bundle_validation::{installed_bundle_in, writable_bundle};
 
 fn relocate_legacy_bundle(home: &Path, executable: &Path) -> Result<Option<PathBuf>, String> {
     let legacy = legacy_bundle_in(home);
@@ -121,16 +71,10 @@ fn relocate_legacy_bundle(home: &Path, executable: &Path) -> Result<Option<PathB
 }
 
 fn relaunch_path(home: &Path, executable: &Path) -> Result<Option<PathBuf>, String> {
-    let standard = bundle_in(home).join(EXECUTABLE);
-    if executable == standard || executable == legacy_bundle_in(home).join(EXECUTABLE) {
-        if let Some(bundle) = installed_bundle_in(home, &standard) {
-            let physical = bundle.join(EXECUTABLE);
-            if executable != physical
-                && executable.canonicalize().ok().as_deref() == Some(physical.as_path())
-            {
-                return Ok(Some(physical));
-            }
-        }
+    if let Some(bundle) = installed_bundle_in(home, executable) {
+        let physical = bundle.join(EXECUTABLE);
+        // A validated physical bundle stays where the owner placed it.
+        return Ok((executable != physical).then_some(physical));
     }
     relocate_legacy_bundle(home, executable)
 }
@@ -163,10 +107,10 @@ pub(crate) fn installed_bundle(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|_| "Не удалось проверить папку приложения.")?;
     let executable = std::env::current_exe().map_err(|_| "Не удалось проверить приложение.")?;
     if !crate::is_production_profile(app)? {
-        return Err("Обновления Mac доступны для установленной Cicada в ~/Applications. DEV и отдельные копии не обновляются.".into());
+        return Err("Обновления Mac доступны для подписанной Cicada в доступной для записи папке. DEV и отдельные профили не обновляются.".into());
     }
     installed_bundle_in(&home, &executable).ok_or_else(|| {
-        "Обновления Mac доступны для установленной Cicada в ~/Applications. DEV и отдельные копии не обновляются.".into()
+        "Обновления Mac доступны для подписанной Cicada в доступной для записи папке. DEV и отдельные профили не обновляются.".into()
     })
 }
 
@@ -204,6 +148,46 @@ fn known_launch_agent(contents: &[u8], home: &Path) -> bool {
     ]
     .iter()
     .any(|bundle| contents == launch_agent(&bundle.join(EXECUTABLE)).as_bytes())
+        || generated_launch_agent(contents)
+}
+
+fn generated_launch_agent(contents: &[u8]) -> bool {
+    if contents.len() > 64 * 1024 {
+        return false;
+    }
+    let Ok(mut child) = Command::new("/usr/bin/plutil")
+        .args(["-extract", "ProgramArguments.0", "raw", "-o", "-", "-"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    use std::io::Write;
+    if child
+        .stdin
+        .take()
+        .is_none_or(|mut input| input.write_all(contents).is_err())
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+        return false;
+    }
+    let Ok(output) = child.wait_with_output() else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let Ok(raw) = String::from_utf8(output.stdout) else {
+        return false;
+    };
+    let executable = Path::new(raw.trim_end_matches('\n'));
+    // Old target is only a migration receipt. It is never launched. Match the
+    // whole generated document so custom jobs, extra arguments and shells stay intact.
+    bundle_validation::bundle_path(executable).is_some()
+        && contents == launch_agent(executable).as_bytes()
 }
 
 fn read_launch_agent(path: &Path) -> Result<Option<Vec<u8>>, String> {
@@ -217,6 +201,34 @@ fn read_launch_agent(path: &Path) -> Result<Option<Vec<u8>>, String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(_) => Err("Настройки фонового обновления Mac недоступны.".into()),
     }
+}
+
+fn register_launch_agent(launchctl: &Path, domain: &str, path: &Path, changed: bool) -> bool {
+    let service = format!("{domain}/{LABEL}");
+    let loaded = Command::new(launchctl)
+        .args(["print", &service])
+        .output()
+        .is_ok_and(|output| output.status.success());
+    if loaded && !changed {
+        return true;
+    }
+    // Enrollment runs only in the foreground instance holding the profile
+    // lock, never in --update-background. Reload the job without kickstarting
+    // it so launchd does not keep the previous bundle location until login.
+    if loaded
+        && !Command::new(launchctl)
+            .args(["bootout", &service])
+            .output()
+            .is_ok_and(|output| output.status.success())
+    {
+        return false;
+    }
+    Command::new(launchctl)
+        .arg("bootstrap")
+        .arg(domain)
+        .arg(path)
+        .output()
+        .is_ok_and(|output| output.status.success())
 }
 
 pub(crate) fn enroll(app: &AppHandle) -> Result<(), String> {
@@ -234,10 +246,12 @@ pub(crate) fn enroll(app: &AppHandle) -> Result<(), String> {
         .join("Library/LaunchAgents")
         .join(format!("{LABEL}.plist"));
     let contents = launch_agent(&bundle.join(EXECUTABLE));
+    let mut changed = false;
     if let Some(existing) = read_launch_agent(&path)? {
         if existing.as_slice() != contents.as_bytes() {
             if known_launch_agent(&existing, &home) {
                 crate::update_journal::atomic_write(&path, contents.as_bytes())?;
+                changed = true;
             } else {
                 return Err(
                     "Настройки фонового обновления Mac отличаются. Проверь LaunchAgent Cicada."
@@ -248,18 +262,7 @@ pub(crate) fn enroll(app: &AppHandle) -> Result<(), String> {
     } else {
         crate::update_journal::atomic_write(&path, contents.as_bytes())?;
     }
-    let loaded = Command::new("/bin/launchctl")
-        .args(["print", &format!("{domain}/{LABEL}")])
-        .output()
-        .is_ok_and(|r| r.status.success());
-    if loaded
-        || Command::new("/bin/launchctl")
-            .arg("bootstrap")
-            .arg(domain)
-            .arg(path)
-            .output()
-            .is_ok_and(|r| r.status.success())
-    {
+    if register_launch_agent(Path::new("/bin/launchctl"), &domain, &path, changed) {
         Ok(())
     } else {
         Err("macOS не разрешила включить проверки при закрытом приложении.".into())
@@ -310,7 +313,7 @@ mod tests {
         let bundle = bundle_in(&home);
         let executable = bundle.join(EXECUTABLE);
         std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
-        std::fs::write(&executable, b"synthetic").unwrap();
+        bundle_validation::write_signed_fixture(&bundle, "app.hanni.mvp");
         let executable = executable.canonicalize().unwrap();
         assert!(writable_bundle(&home, &bundle, &executable));
         assert_eq!(
@@ -338,7 +341,7 @@ mod tests {
         let bundle = project_bundle_in(&home);
         let executable = bundle.join(EXECUTABLE);
         std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
-        std::fs::write(&executable, b"synthetic").unwrap();
+        bundle_validation::write_signed_fixture(&bundle, "app.hanni.mvp");
         let standard_alias = bundle_in(&home);
         std::fs::create_dir_all(standard_alias.parent().unwrap()).unwrap();
         symlink(&bundle, &standard_alias).unwrap();
@@ -365,7 +368,7 @@ mod tests {
     }
 
     #[test]
-    fn installed_bundle_rejects_a_foreign_alias_target_and_executable_symlink() {
+    fn installed_bundle_rejects_an_unsigned_alias_target_and_executable_symlink() {
         let temporary_home = tempfile::tempdir().unwrap();
         let home = temporary_home.path().canonicalize().unwrap();
         let foreign = home.join("Downloads/Cicada.app");
@@ -405,13 +408,98 @@ mod tests {
                 &home
             ));
         }
-        assert!(!known_launch_agent(
+        assert!(known_launch_agent(
             launch_agent(Path::new(
                 "/Users/Example/Custom.app/Contents/MacOS/hanni-mvp"
             ))
             .as_bytes(),
             &home
         ));
+    }
+
+    #[test]
+    fn arbitrary_alias_relaunches_only_the_verified_physical_bundle() {
+        let temporary_home = tempfile::tempdir().unwrap();
+        let home = temporary_home.path().canonicalize().unwrap();
+        let bundle = home.join("Different folder/Renamed app.app");
+        bundle_validation::write_signed_fixture(&bundle, "app.hanni.mvp");
+        let alias = home.join("Another alias.app");
+        symlink(&bundle, &alias).unwrap();
+        assert_eq!(
+            relaunch_path(&home, &alias.join(EXECUTABLE)).unwrap(),
+            Some(bundle.join(EXECUTABLE))
+        );
+        assert_eq!(
+            relaunch_path(&home, &bundle.join(EXECUTABLE)).unwrap(),
+            None
+        );
+        assert!(bundle.exists());
+        assert!(alias.symlink_metadata().unwrap().file_type().is_symlink());
+    }
+
+    #[test]
+    fn validated_legacy_bundle_is_not_moved() {
+        let temporary_home = tempfile::tempdir().unwrap();
+        let home = temporary_home.path().canonicalize().unwrap();
+        let bundle = legacy_bundle_in(&home);
+        bundle_validation::write_signed_fixture(&bundle, "app.hanni.mvp");
+        assert_eq!(
+            relaunch_path(&home, &bundle.join(EXECUTABLE)).unwrap(),
+            None
+        );
+        assert!(bundle.exists());
+        assert!(!bundle_in(&home).exists());
+    }
+
+    #[test]
+    fn changed_loaded_job_is_reloaded_without_kickstart_or_app_restart() {
+        let fixture = tempfile::tempdir().unwrap();
+        let launchctl = fixture.path().join("launchctl");
+        std::fs::write(
+            &launchctl,
+            "#!/bin/sh\necho \"$1\" >> \"$0.calls\"\nexit 0\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&launchctl, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let path = fixture.path().join("updates.plist");
+        assert!(register_launch_agent(&launchctl, "gui/999", &path, false));
+        assert_eq!(
+            std::fs::read_to_string(launchctl.with_extension("calls")).unwrap(),
+            "print\n"
+        );
+        std::fs::remove_file(launchctl.with_extension("calls")).unwrap();
+        assert!(register_launch_agent(&launchctl, "gui/999", &path, true));
+        assert_eq!(
+            std::fs::read_to_string(launchctl.with_extension("calls")).unwrap(),
+            "print\nbootout\nbootstrap\n"
+        );
+    }
+
+    #[test]
+    fn arbitrary_generated_jobs_migrate_but_custom_arguments_and_shells_do_not() {
+        let temporary_home = tempfile::tempdir().unwrap();
+        let home = temporary_home.path().canonicalize().unwrap();
+        let job = launch_agent(&home.join("Any folder & space/Renamed.app").join(EXECUTABLE));
+        assert!(known_launch_agent(job.as_bytes(), &home));
+        // The old bundle may no longer exist after the owner moved it.
+        assert!(!known_launch_agent(
+            job.replace("--update-background", "--background")
+                .as_bytes(),
+            &home
+        ));
+        assert!(!known_launch_agent(
+            job.replace(
+                "<key>RunAtLoad</key><true/>",
+                "<key>RunAtLoad</key><false/>"
+            )
+            .as_bytes(),
+            &home
+        ));
+        assert!(!known_launch_agent(
+            launch_agent(Path::new("/bin/sh")).as_bytes(),
+            &home
+        ));
+        assert!(!known_launch_agent(b"malformed plist", &home));
     }
 
     #[test]
