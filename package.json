@@ -1,7 +1,7 @@
 {
   "name": "cicada",
-  "version": "0.5.2",
-  "cicadaBuildId": "20261006-release.1",
+  "version": "0.5.3",
+  "cicadaBuildId": "20261006-updater-location.1",
   "private": true,
   "type": "module",
   "scripts": {
