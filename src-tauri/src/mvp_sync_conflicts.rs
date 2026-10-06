@@ -576,10 +576,10 @@ fn resolve(
             value.record.v == 2
                 && next.v == 1
                 && next.kind == "ui"
-                && recurring_identity(&next.key)
+                && (recurring_identity(&next.key) || goal_metadata_identity(&next.key))
         }) {
             // A deliberate conflict choice may replace the content, but the
-            // recurring identity remains on the graph-capable record version.
+            // identity retains the upgraded version understood by new clients.
             next.v = 2;
         }
         next.parent = current.as_ref().map(|v| v.stamp.clone());

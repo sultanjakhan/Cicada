@@ -417,9 +417,46 @@ test('header presentation preserves goal details and allows goal selection after
   assert.equal(x.action('open-goal').disabled, false);
   await x.cleanup.selectGoal('goal-b');
   assert.equal(x.ui('goal-title').textContent, 'Гардероб');
-  assert.equal(JSON.parse(data.stored).completed, null);
+  assert.equal(JSON.parse(data.stored).completed.source_id, 'event-a');
   assert.equal(x.dom.window.document.activeElement, x.action('open-goal'));
   assert.equal(data.count('start_task_block'), 0);
+});
+
+test('changing the goal during a running task keeps execution and makes no timer mutation', async t => {
+  const data = backend();
+  const x = await mount(t, data);
+  await x.click('start');
+  const beforeBlocks = clone(data.blocks), beforeExecution = clone(JSON.parse(data.stored).execution);
+  const starts = data.count('start_task_block'), pauses = data.count('pause_task_block'), finishes = data.count('finish_task_block');
+  await x.cleanup.selectGoal('goal-b');
+  const saved = JSON.parse(data.stored);
+  assert.equal(saved.goalId, 'goal-b');
+  assert.deepEqual(saved.execution, beforeExecution, 'the running task remains the current execution');
+  assert.deepEqual(data.blocks, beforeBlocks, 'goal selection does not touch timer blocks');
+  assert.equal(data.count('start_task_block'), starts);
+  assert.equal(data.count('pause_task_block'), pauses);
+  assert.equal(data.count('finish_task_block'), finishes);
+  assert.equal(x.host.dataset.state, 'active');
+  assert.equal(x.ui('title').textContent, 'Вопросы к интервью');
+});
+
+test('achieved goals stay visible as the selected goal but are excluded from chooser and candidates', async t => {
+  const data = backend();
+  data.goals[0].status = 'achieved';
+  const x = await mount(t, data);
+  assert.equal(x.ui('goal-title').textContent, 'Карьера');
+  assert.equal(x.ui('goal-status').textContent, 'Цель достигнута');
+  assert.equal(x.ui('goal-status').hidden, false);
+  assert.equal(x.ui('goal-hint').textContent, 'Выбери другую цель, чтобы продолжить.');
+  assert.equal(x.ui('goal-next-text').textContent, 'Задач по цели пока нет');
+  await x.click('open-goal');
+  const picker = x.dom.window.document.querySelector('.calendar-goal-picker');
+  assert.equal(picker.querySelector('[data-goal-choice="goal-a"]').textContent.includes('Цель достигнута'), true);
+  assert.ok(picker.querySelector('[data-goal-choice="goal-b"]'), 'active goals remain available as alternatives');
+  assert.equal(picker.querySelector('[data-goal-choice=""]')?.isConnected, true);
+  picker.querySelector('[data-goal-choice="goal-a"]').click();
+  await x.settle();
+  assert.equal(JSON.parse(data.stored).goalId, 'goal-a');
 });
 
 test('read-only current-task notifications track recommendation, active, paused and completed identity', async t =>{
@@ -568,7 +605,7 @@ test('double start and an external refresh while start is pending remain one ope
    await x.settle();
    assert.equal(x.host.dataset.state, 'active');
    assert.equal(data.blocks.length, 1);
-   assert.equal(x.action('open-goal').disabled, true);
+   assert.equal(x.action('open-goal').disabled, false);
 
   });
 test('failed pause keeps the task and retries the same block after a refresh', async t =>{
@@ -695,7 +732,7 @@ test('a return-note read failure other than not-found remains visible', async t 
   assert.equal(JSON.parse(data.stored).returnTo.source_id, 'task-a');
 });
 
-test('global active task on another date blocks goal switching and a different task starts beside it without stopping it', async t =>{
+test('global active task on another date still permits goal switching and a different task starts beside it', async t =>{
    const data = backend();
    data.blocks.push({
      id: 90, date: '2026-09-04', start_time: '23:58', source_type: 'note', source_id: 'task-a', is_active: true, duration_minutes: 0
@@ -703,7 +740,7 @@ test('global active task on another date blocks goal switching and a different t
    const x = await mount(t, data);
    assert.equal(x.host.dataset.state, 'active');
    assert.equal(x.host.dataset.taskKey, 'note:task-a');
-   assert.equal(x.action('open-goal').disabled, true);
+   assert.equal(x.action('open-goal').disabled, false);
    assert.ok(data.calls.some(call => call.command === 'get_timeline_blocks' && call.args.date === '2026-09-04'));
    const other = await mount(t);
    other.data.blocks.push({
@@ -1091,7 +1128,7 @@ test('external read failure is retried inside the open picker without selecting 
    assert.equal(x.data.count('set_ui_state'), writes);
 
   });
-test('a task started after opening the goal picker blocks selection in the popup and leaves its identity intact', async t =>{
+test('a task started after opening the goal picker does not block goal selection or change its timer', async t =>{
    const x = await mount(t);
    await x.click('open-goal');
    const modal = x.dom.window.document.querySelector('.calendar-goal-picker');
@@ -1100,9 +1137,8 @@ test('a task started after opening the goal picker blocks selection in the popup
       });
    modal.querySelector('[data-goal-choice="goal-b"]').click();
    await x.settle();
-   assert.equal(JSON.parse(x.data.stored).goalId, 'goal-a');
-   assert.match(modal.querySelector('[data-dialog-error]').textContent, /паузу/);
-   assert.equal(x.dom.window.document.activeElement, modal.querySelector('[data-dialog-error]'));
+    assert.equal(JSON.parse(x.data.stored).goalId, 'goal-b');
+    assert.equal(modal.isConnected, false);
    assert.equal(x.data.blocks[0].is_active, true);
    assert.equal(x.data.count('pause_task_block') + x.data.count('finish_task_block'), 0);
 
@@ -1505,20 +1541,19 @@ test('no goal and unavailable goal keep selection upstairs and an empty saved go
    assert.equal(JSON.parse(data.stored).goalId, 'goal-b');
 
   });
-test('active work permits reading the goal while goal changes remain guarded and paused task identity survives selection', async t =>{
+test('active work permits reading and changing the goal while the running task survives selection', async t =>{
    const x = await mount(t);
    await x.click('start');
-   assert.equal(x.action('open-goal').disabled, true);
+    assert.equal(x.action('open-goal').disabled, false);
    assert.equal(x.action('goal-details').disabled, false);
    const writes = x.data.count('set_ui_state');
    await x.click('goal-details');
    x.dom.window.document.querySelector('[data-goal-close]').click();
    assert.equal(x.data.count('set_ui_state'), writes);
    assert.equal(x.data.count('pause_task_block'), 0);
-   await x.click('pause');
    await x.choose('goal', 'goal-b');
    assert.equal(x.ui('goal-title').textContent, 'Гардероб');
-   assert.equal(x.host.dataset.state, 'paused');
+    assert.equal(x.host.dataset.state, 'active');
    assert.equal(x.host.dataset.taskKey, 'event:event-a');
    assert.equal(x.data.count('start_task_block'), 1);
 

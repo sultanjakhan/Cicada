@@ -88,6 +88,7 @@ fn fixture_with_connection(
             crate::delete_item,
             api::get_goals,
             api::save_calendar_goal,
+            crate::calendar_goal_lifecycle::set_calendar_goal_status,
             api::delete_goal,
             api::get_calendar_task_goals,
             api::set_calendar_task_goal,
@@ -172,6 +173,63 @@ fn goal(webview: &tauri::WebviewWindow<MockRuntime>, title: &str, parent: Value)
         "parentGoalId":parent,"clearParent":false,"currentValue":null}),
     )
     .unwrap()
+}
+
+#[test]
+fn goal_lifecycle_preserves_children_tasks_timer_and_evidence() {
+    let (app, view) = fixture();
+    { let state = app.state::<AppState>(); let conn = state.0.lock().unwrap(); mutation_fixture_sql(&conn); }
+    let child = goal(&view, "Synthetic child", json!("goal-a"));
+    let raw = json!({"version":1,"goals":{"goal-a":{"skills":[{"id":"s","title":"Skill","topic":"Topic","evidence":"Kept"}],"stages":[],"activeStageId":null,"focusId":"s"}}}).to_string();
+    call(&view,"set_ui_state",json!({"key":"calendar_development_v1","value":raw,"expectedValue":""})).unwrap();
+    let block = call(&view,"start_task_block",json!({"sourceType":"note","sourceId":"task-a","completionDate":"2026-10-04"})).unwrap();
+    let action = json!({"id":"goal-a","status":"achieved","expectedStatus":"active","achievement":"Result checked"});
+    call(&view,"set_calendar_goal_status",action.clone()).unwrap();
+    let goals = call(&view,"get_goals",json!({"tabName":null})).unwrap();
+    let achieved = goals.as_array().unwrap().iter().find(|row|row["id"] == "goal-a").unwrap();
+    assert_eq!(achieved["status"],"achieved"); assert_eq!(achieved["achievement"],"Result checked"); assert!(achieved["achieved_at"].is_string());
+    assert_eq!(goals.as_array().unwrap().iter().find(|row|row["id"] == child).unwrap()["parent_goal_id"],"goal-a");
+    assert_eq!(call(&view,"get_active_block",json!({})).unwrap()["id"],block);
+    assert_eq!(call(&view,"get_calendar_task_goals",json!({})).unwrap().as_array().unwrap().len(),2);
+    let saved = call(&view,"get_ui_state",json!({"key":"calendar_development_v1"})).unwrap();
+    let saved_value: Value = serde_json::from_str(saved.as_str().unwrap()).unwrap();
+    assert_eq!(saved_value["goals"]["goal-a"]["skills"][0]["evidence"],"Kept");
+    call(&view,"set_calendar_goal_status",action).unwrap();
+    assert_eq!(call(&view,"get_ui_state",json!({"key":"calendar_development_v1"})).unwrap(),saved,"retry must keep the original timestamp");
+    call(&view,"set_calendar_goal_status",json!({"id":"goal-a","status":"active","expectedStatus":"achieved"})).unwrap();
+    let reopened = call(&view,"get_goals",json!({"tabName":null})).unwrap();
+    assert_eq!(reopened.as_array().unwrap().iter().find(|row|row["id"] == "goal-a").unwrap()["achievement"],"Result checked");
+    assert!(call(&view,"set_calendar_goal_status",json!({"id":"goal-a","status":"achieved","expectedStatus":"achieved"})).is_err());
+    call(&view,"delete_goal",json!({"id":"goal-a"})).unwrap();
+    assert!(call(&view,"set_calendar_goal_status",json!({"id":"goal-a","status":"achieved","expectedStatus":"active"})).is_err());
+}
+
+#[test]
+fn goal_lifecycle_numeric_mode_and_stale_result_are_explicit() {
+    let (_app,view) = fixture();
+    let id = call(&view,"save_calendar_goal",json!({"id":null,"title":"Synthetic measurable goal","targetValue":1,"currentValue":0,"unit":"","deadline":null,"goalKind":"goal","description":"","criteria":"Checked","parentGoalId":null,"clearParent":false,"numericProgress":true})).unwrap();
+    let before = call(&view,"get_goals",json!({"tabName":null})).unwrap();
+    assert_eq!(before[0]["numeric_progress"],true);
+    assert!(call(&view,"set_calendar_goal_status",json!({"id":id,"status":"achieved","expectedStatus":"active","expectedUpdatedAt":"old"})).is_err());
+    call(&view,"set_calendar_goal_status",json!({"id":id,"status":"achieved","expectedStatus":"active","expectedUpdatedAt":before[0]["updated_at"]})).unwrap();
+    call(&view,"save_calendar_goal",json!({"id":id,"title":"Renamed","targetValue":1,"currentValue":0,"unit":"","deadline":null,"goalKind":"goal","description":"","criteria":"Checked","parentGoalId":null,"clearParent":false,"numericProgress":false})).unwrap();
+    let after = call(&view,"get_goals",json!({"tabName":null})).unwrap();
+    assert_eq!(after[0]["status"],"achieved"); assert_eq!(after[0]["numeric_progress"],false);
+}
+
+#[test]
+fn goal_lifecycle_bad_metadata_keeps_catalog_and_blocks_writes_atomically() {
+    let (app, view) = fixture();
+    let id = goal(&view,"Synthetic goal",Value::Null);
+    for raw in ["not-json", "{\"version\":2,\"goals\":{}}", "{\"version\":1,\"goals\":{\"g\":{\"numericProgress\":\"bad\"}}}"] {
+        { let state=app.state::<AppState>(); let conn=state.0.lock().unwrap(); conn.execute("INSERT INTO ui_state(key,value,updated_at) VALUES('calendar_development_v1',?1,'test') ON CONFLICT(key) DO UPDATE SET value=excluded.value",[raw]).unwrap(); }
+        let listed=call(&view,"get_goals",json!({"tabName":null})).unwrap();
+        assert_eq!(listed[0]["id"],id); assert_eq!(listed[0]["status"],"unknown"); assert_eq!(listed[0]["goal_metadata_error"],true);
+        assert!(call(&view,"set_calendar_goal_status",json!({"id":id,"status":"achieved","expectedStatus":"active"})).is_err());
+        assert!(call(&view,"save_calendar_goal",json!({"id":id,"title":"Must roll back","targetValue":1,"currentValue":0,"unit":"","deadline":null,"goalKind":"goal","description":"","criteria":"","parentGoalId":null,"clearParent":false,"numericProgress":false})).is_err());
+        assert_eq!(call(&view,"get_goals",json!({"tabName":null})).unwrap()[0]["title"],"Synthetic goal");
+        assert_eq!(call(&view,"get_ui_state",json!({"key":"calendar_development_v1"})).unwrap(),raw);
+    }
 }
 
 fn mutation_fixture_sql(conn: &Connection) {

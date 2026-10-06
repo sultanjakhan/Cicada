@@ -112,6 +112,55 @@ fn recurring_version(conn: &Connection, record_id: &str) -> u8 {
 }
 
 #[test]
+fn goal_lifecycle_roundtrips_and_legacy_metadata_cannot_strip_it() {
+    let (a, ac) = replica("goal-source");
+    let (mut b, bc) = replica("goal-receiver");
+    let key = "calendar_development_v1";
+    let id = json!(["ui",[key,"g","meta"]]).to_string();
+    let state = json!({"version":1,"goals":{"g":{"goalStatus":"achieved","achievedAt":"2026-10-04T12:00:00Z","achievement":"Checked result","numericProgress":true,"skills":[{"id":"s","title":"Skill","topic":"Topic","evidence":"Kept"}],"stages":[],"focusId":null,"activeStageId":null}}});
+    crate::mvp_sync_db::set_ui(&a,key,&state.to_string(),None).unwrap();
+    assert_eq!(recurring_version(&a,&id),2);
+    apply(&mut b,&bc,stored(&ac,ui_rows(&a),1,1)).unwrap();
+    let read = || serde_json::from_str::<Value>(&crate::mvp_sync_db::read_ui(&b,key).unwrap().unwrap()).unwrap();
+    assert_eq!(read(),state);
+    // Simulate a queued v1 write from before upgrade, newer even by timestamp.
+    let mut legacy = row(&a,&id);
+    let mut record: Value = serde_json::from_str(legacy.f["data"].as_str().unwrap()).unwrap();
+    record["v"] = json!(1);
+    record["value"] = json!({"focusId":null,"activeStageId":null});
+    legacy.f["data"] = json!(record.to_string());
+    legacy.f["updated_at"] = json!("2030-01-01T00:00:00.000Z");
+    legacy.f["_updated_at"] = legacy.f["updated_at"].clone();
+    legacy.f["_device_id"] = json!("legacy-device");
+    apply(&mut b,&bc,stored(&ac,vec![legacy],2,2)).unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&crate::mvp_sync_db::read_ui(&b,key).unwrap().unwrap()).unwrap(),state);
+    assert_eq!(recurring_version(&b,&id),2);
+    assert_eq!(scalar(&b,"SELECT count(*) FROM mvp_sync_conflicts").unwrap(),1);
+    crate::mvp_sync_db::set_ui(&a,key,"{\"version\":1,\"goals\":{}}",None).unwrap();
+    assert_eq!(recurring_version(&a,&id),2,"deletion retains the upgrade gate");
+}
+
+#[test]
+fn unknown_goal_meta_version_preserves_receive_cursor_and_page() {
+    let (a, ac) = replica("goal-source");
+    let (mut b, bc) = replica("goal-receiver");
+    task(&a,"t","Synthetic task");
+    crate::mvp_sync_db::set_ui(&a,"calendar_development_v1",&json!({"version":1,"goals":{"g":{"goalStatus":"achieved","skills":[],"stages":[]}}}).to_string(),None).unwrap();
+    let mut meta = ui_rows(&a).remove(0);
+    let mut record: Value = serde_json::from_str(meta.f["data"].as_str().unwrap()).unwrap();
+    assert_eq!(record["v"],2);
+    // A pre-upgrade decoder accepts v1 and recurrence v2 only. This exact new
+    // metadata identity fails that predicate; simulate its unknown-version path.
+    assert!(!(record["v"] == 1 || (record["v"] == 2 && record["key"][0] == "calendar_recurring_v1")));
+    record["v"] = json!(3);
+    meta.f["data"] = json!(record.to_string());
+    assert_eq!(apply(&mut b,&bc,stored(&ac,vec![row(&a,&json!(["items",["t"]]).to_string()),meta],1,1)).unwrap_err(),"content_sync_unknown_schema");
+    assert_eq!(scalar(&b,"SELECT receive_seq FROM content_sync_state").unwrap(),0);
+    assert_eq!(scalar(&b,"SELECT count(*) FROM items WHERE id='t'").unwrap(),0);
+    assert!(crate::mvp_sync_db::read_ui(&b,"calendar_development_v1").unwrap().is_none());
+}
+
+#[test]
 fn graph_records_are_v2_and_that_identity_stays_v2_after_graph_is_edited_away() {
     let (conn, _) = replica("graph-version");
     crate::mvp_sync_db::set_ui(
