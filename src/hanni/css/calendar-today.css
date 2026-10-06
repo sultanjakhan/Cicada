@@ -42,6 +42,12 @@
 .calendar-today .calendar-next-action[data-running="true"] .calendar-next-action__reason { display:none; }
 .calendar-today-links { display:flex; gap:18px; padding-top:14px; }
 .calendar-today-links button, .calendar-routine-choices__heading button { border:0; padding:4px 0; background:transparent; color:var(--text-secondary,#626262); font-size:12px; text-decoration:underline; text-underline-offset:3px; cursor:pointer; }
+.calendar-ai-reports { margin-top:16px; }
+.calendar-ai-reports h3 { margin:0; font-size:14px; }
+.calendar-ai-reports > p, .calendar-ai-reports li p { margin:4px 0; color:var(--text-secondary,#626262); font-size:12px; }
+.calendar-ai-reports ul { margin:8px 0 0; padding:0; list-style:none; }
+.calendar-ai-reports li { overflow-wrap:anywhere; }
+.calendar-ai-reports li + li { margin-top:12px; }
 .calendar-task-history { margin-top:20px; border-top:1px solid var(--border-default,#ddd); padding-top:12px; }
 .calendar-task-history > summary { cursor:pointer; font-size:13px; padding:8px 0; }
 .calendar-routine-choices { margin-top:20px; padding-top:16px; border-top:1px solid var(--border-default,#ddd); }
