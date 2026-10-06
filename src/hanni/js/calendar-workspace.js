@@ -1,6 +1,6 @@
 import { createSharedResultReviewAdapter, prepareSharedResultReview } from './shared-result-review-adapter.js';
 import { canRefreshHealthView, mayCommitHealthView, retryHealthViewRefresh, startHealthViewRefresh } from './health-view-refresh.js';
-import { S, invoke, tabLoaders, TAB_ICONS, loadTabSetting, IS_MOBILE } from './state.js';
+import { S, invoke, listen, tabLoaders, TAB_ICONS, loadTabSetting, IS_MOBILE } from './state.js';
 import { ICONS } from './icons.js';
 import { escapeHtml } from './utils.js';
 import { renderUnifiedLayout, savePaneState } from './unified-layout.js';
@@ -31,11 +31,12 @@ import { mountCalendarTodayAction } from './calendar-today-action.js';
 import { mountCalendarRoutineChoices } from './calendar-routine-choices.js';
 import { showCalendarSettings } from './calendar-settings.js';
 import { openCalendarCreateMenu } from './calendar-create-menu.js';
+import { mountCalendarAiReports } from './calendar-ai-reports.js';
 
 let disposeNow = null, disposeTable = null, disposePanel = null, disposeTasks = null;
 let disposeSourceOnboarding = null;
 let disposeRecurring = null, goalPopup = null, tasksDialog = null;
-let disposeDayBanner = null, disposeInProgress = null, todayTaskSelection = null;
+let disposeDayBanner = null, disposeInProgress = null, disposeAiReports = null, todayTaskSelection = null;
 let disposeFocus = null;
 let disposeNextAction = null, disposeTaskDetails = null, disposeRoutineChoices = null;
 let routinesRouteHandler = null;
@@ -46,7 +47,7 @@ const tasksPaneState = { filter:'active', search:'', goal:'', sphere:'', page:0 
 // The Goals/Wishes choice survives pane switches within a session; it is not a stored preference.
 const goalsPaneState = { view:'goals' };
 let closeCreateMenu = null;
-function cleanupWorkspace() { disposeFocus?.(); disposeFocus=null; disposeSourceOnboarding?.(); disposeSourceOnboarding=null; workspaceRevision++; disposeNextAction?.(); disposeTaskDetails?.(); disposeRoutineChoices?.(); disposeNextAction = disposeTaskDetails = disposeRoutineChoices = null; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeRecurring?.(); disposeDayBanner?.(); disposeInProgress?.(); goalPopup?.dispose(); tasksDialog?.dispose(); disposeInProgress = null; disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; disposeRecurring = null; disposeDayBanner = null; goalPopup = null; tasksDialog = null; }
+function cleanupWorkspace() { disposeFocus?.(); disposeFocus=null; disposeSourceOnboarding?.(); disposeSourceOnboarding=null; workspaceRevision++; disposeNextAction?.(); disposeTaskDetails?.(); disposeRoutineChoices?.(); disposeNextAction = disposeTaskDetails = disposeRoutineChoices = null; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeRecurring?.(); disposeDayBanner?.(); disposeInProgress?.(); disposeAiReports?.(); goalPopup?.dispose(); tasksDialog?.dispose(); disposeInProgress = null; disposeAiReports = null; disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; disposeRecurring = null; disposeDayBanner = null; goalPopup = null; tasksDialog = null; }
 const nextActionPreferences = () => ({ enabled:preferences.recommendationsEnabled, includeTasks:preferences.recommendTasks, includeRoutines:preferences.recommendRoutines });
 const view = { period: 'day', mode: 'grid', date: views.iso(new Date()), firstDay:'mon' };
 let initialViewLoaded = false;
@@ -728,7 +729,7 @@ export async function loadCalendarWorkspace(el, { nativeReview = true } = {}) {
     renderDash: (pane) => {
       pane.innerHTML = `<section class="calendar-today" aria-label="Сегодня">
         <div data-calendar-day-banner></div><div data-calendar-next-action></div>
-        <div data-calendar-in-progress></div>
+        <div data-calendar-in-progress></div><div data-calendar-ai-reports></div>
       </section><div data-calendar-now-slot></div>`;
       pane.querySelector('[data-calendar-now-slot]').replaceWith(nowHost);
       nowHost.hidden = false;
@@ -768,6 +769,7 @@ export async function loadCalendarWorkspace(el, { nativeReview = true } = {}) {
         },
       });
       disposeInProgress.setSelectedTask(todayTaskSelection);
+      disposeAiReports = mountCalendarAiReports(pane.querySelector('[data-calendar-ai-reports]'), { invoke, listen });
     },
     renderTable: pane => mountCalendarTable(pane),
     renderTasks: pane => {
