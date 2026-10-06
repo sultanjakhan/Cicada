@@ -171,6 +171,12 @@ body:has(#tab-bar.drawer-open) #chat-overlay { display: none !important; }
   background: var(--bg-hover);
 }
 
+.mobile #mobile-header .calendar-theme-control {
+  flex:0 0 48px; width:48px; min-height:48px; margin:0;
+  border:0; border-radius:8px; background:transparent;
+}
+.mobile #mobile-header .calendar-theme-control:hover { background:var(--bg-hover); }
+
 .mobile #mobile-title {
   font-size: 17px;
   font-weight: 650;
