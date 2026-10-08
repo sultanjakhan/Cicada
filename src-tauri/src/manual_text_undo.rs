@@ -245,6 +245,9 @@ fn task(conn: &Connection, id: &str) -> Result<Task> {
 
 fn lineage(conn: &Connection, id: &str) -> Result<String> {
     let key = json!(["items", [id]]).to_string();
+    lineage_for_key(conn, &key)
+}
+fn lineage_for_key(conn: &Connection, key: &str) -> Result<String> {
     let envelope: Option<(String, String)> = sql(conn
         .query_row(
             "SELECT data,updated_at FROM mvp_records WHERE id=?1",
@@ -347,18 +350,21 @@ fn undo(conn: &mut Connection, input: UndoInput) -> Result<Ack> {
         return Err("undo_revision_conflict".into());
     }
     let inverse: Value = serde_json::from_str(&inverse).map_err(|_| "undo_receipt_invalid")?;
-    if inverse["kind"] != "text" {
-        return Err("undo_receipt_invalid".into());
+    match inverse["kind"].as_str() {
+        Some("text") => {
+            let title = inverse["title"].as_str().ok_or("undo_receipt_invalid")?;
+            let notes = inverse["notes"].as_str().ok_or("undo_receipt_invalid")?;
+            let blocks = if inverse["blocks"].is_null() {
+                None
+            } else {
+                Some(inverse["blocks"].as_str().ok_or("undo_receipt_invalid")?)
+            };
+            if sql(tx.execute("UPDATE items SET title=?1,notes=?2,content_blocks=?3,version=version+1,updated_at=?4 WHERE id=?5 AND version=?6",
+                params![title,notes,blocks,Utc::now().to_rfc3339(),id,input.expected_version]))? != 1 { return Err("undo_revision_conflict".into()); }
+        }
+        Some("stage") => stage::restore(&tx, &id, input.expected_version, &inverse)?,
+        _ => return Err("undo_receipt_invalid".into()),
     }
-    let title = inverse["title"].as_str().ok_or("undo_receipt_invalid")?;
-    let notes = inverse["notes"].as_str().ok_or("undo_receipt_invalid")?;
-    let blocks = if inverse["blocks"].is_null() {
-        None
-    } else {
-        Some(inverse["blocks"].as_str().ok_or("undo_receipt_invalid")?)
-    };
-    if sql(tx.execute("UPDATE items SET title=?1,notes=?2,content_blocks=?3,version=version+1,updated_at=?4 WHERE id=?5 AND version=?6",
-        params![title,notes,blocks,Utc::now().to_rfc3339(),id,input.expected_version]))? != 1 { return Err("undo_revision_conflict".into()); }
     if sql(tx.execute(
         "UPDATE manual_task_undo_receipts SET consumed=1 WHERE id=?1 AND consumed=0",
         [&input.receipt_id],
@@ -386,6 +392,9 @@ pub fn undo_calendar_task_manual_edit(input: UndoInput, state: State<'_, AppStat
     let mut conn = state.0.lock().map_err(|_| "undo_storage_failed")?;
     undo(&mut conn, input)
 }
+
+#[path = "manual_stage_undo_engine.rs"]
+pub(crate) mod stage;
 
 #[cfg(test)]
 #[path = "manual_text_undo_tests.rs"]
