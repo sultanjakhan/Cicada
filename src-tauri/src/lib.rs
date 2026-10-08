@@ -32,6 +32,7 @@ mod data_location;
 mod isolated_test;
 mod task_attributes;
 mod native_result_review;
+mod manual_text_undo;
 mod external_url;
 mod desktop_launch;
 mod compact_window;
@@ -824,6 +825,8 @@ pub fn run() {
             native_result_review::recover_task_result_review,
             calendar_compat::get_calendar_task,
             calendar_compat::save_calendar_task,
+            manual_text_undo::save_calendar_task_manual_edit,
+            manual_text_undo::undo_calendar_task_manual_edit,
             calendar_compat::complete_calendar_task,
             calendar_compat::set_calendar_task_stage,
             calendar_compat::get_calendar_records,
