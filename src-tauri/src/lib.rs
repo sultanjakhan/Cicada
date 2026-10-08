@@ -826,6 +826,7 @@ pub fn run() {
             calendar_compat::get_calendar_task,
             calendar_compat::save_calendar_task,
             manual_text_undo::save_calendar_task_manual_edit,
+            manual_text_undo::stage::save_calendar_task_manual_stage,
             manual_text_undo::undo_calendar_task_manual_edit,
             calendar_compat::complete_calendar_task,
             calendar_compat::set_calendar_task_stage,

@@ -25,9 +25,11 @@ fn fixture(conn: Connection) -> Fixture {
         .invoke_handler(move |invoke| {
             let handler: fn(tauri::ipc::Invoke<MockRuntime>) -> bool = tauri::generate_handler![
                 save_calendar_task_manual_edit,
+                stage::save_calendar_task_manual_stage,
                 undo_calendar_task_manual_edit,
                 api::get_calendar_task,
                 api::save_calendar_task,
+                api::set_ui_state,
                 api::get_active_blocks
             ];
             crate::isolated_test::dispatch(true, invoke, handler)
