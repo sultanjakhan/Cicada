@@ -228,22 +228,20 @@ pub fn current(standard: &Path) -> Result<DataLocation, String> {
 }
 
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let tmp = path.with_file_name(format!(
-        ".{}.tmp-{}",
-        path.file_name().unwrap_or_default().to_string_lossy(),
-        Uuid::new_v4()
-    ));
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&tmp)
+    let mut file = tempfile::Builder::new()
+        .prefix(&format!(
+            ".{}.tmp-",
+            path.file_name().unwrap_or_default().to_string_lossy()
+        ))
+        .tempfile_in(path.parent().unwrap_or(Path::new(".")))
         .map_err(|_| "Не удалось подготовить расположение данных.")?;
     use std::io::Write;
     file.write_all(bytes)
         .map_err(|_| "Не удалось сохранить расположение данных.")?;
-    file.sync_all()
+    file.as_file()
+        .sync_all()
         .map_err(|_| "Не удалось сохранить расположение данных.")?;
-    drop(file);
+    let tmp = file.into_temp_path();
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
@@ -346,15 +344,24 @@ pub fn apply_pending(standard: &Path, source: &Path) -> Result<(), String> {
     let expected = canonical_or_absolute(Path::new(&pending.source))?;
     let actual = canonical_or_absolute(source)?;
     if expected != actual {
+        // A published pointer is the commit point. A leftover marker after a
+        // crash must not turn an already activated profile into a failed move.
+        validate_raw_local(Path::new(&pending.target))?;
+        let activated = canonical_or_absolute(Path::new(&pending.target))?;
+        if actual == activated && resolve(standard)? == activated {
+            let _ = fs::remove_file(&path);
+            return Ok(());
+        }
         return Err("Отложенное перемещение относится к другому профилю.".into());
     }
     let target = validate_target(standard, source, Path::new(&pending.target))?;
-    let temp = target
-        .parent()
-        .unwrap_or(Path::new("."))
-        .join(format!(".cicada-migration-{}", Uuid::new_v4()));
-    fs::create_dir(&temp).map_err(|_| "Не удалось создать уникальную staging-папку.")?;
-    copy_tree(source, &temp)?;
+    // The guard owns only this new staging directory, never source or target.
+    let staging = tempfile::Builder::new()
+        .prefix(".cicada-migration-")
+        .tempdir_in(target.parent().unwrap_or(Path::new(".")))
+        .map_err(|_| "Не удалось создать уникальную staging-папку.")?;
+    let temp = staging.path();
+    copy_tree(source, temp)?;
     let source_db = source.join("calendar.db");
     let target_db = temp.join("calendar.db");
     let src = rusqlite::Connection::open_with_flags(
@@ -392,7 +399,7 @@ pub fn apply_pending(standard: &Path, source: &Path) -> Result<(), String> {
         }
         fs::remove_dir(&target).map_err(|_| "Не удалось подготовить пустую целевую папку.")?;
     }
-    fs::rename(&temp, &target).map_err(|_| "Не удалось включить новое расположение данных.")?;
+    fs::rename(temp, &target).map_err(|_| "Не удалось включить новое расположение данных.")?;
     crate::mvp_sync::relocate_credentials(&source_db, &target.join("calendar.db")).map_err(
         |_| "Не удалось перенести защищённый профиль синхронизации. Исходная папка сохранена.",
     )?;
@@ -626,5 +633,233 @@ mod tests {
             fs::read(target.join("sync-key.bin")).unwrap(),
             b"stable-sync-key"
         );
+    }
+}
+
+#[cfg(test)]
+mod recovery_acceptance_tests {
+    use super::*;
+    use rusqlite::{Connection, OpenFlags};
+
+    fn fixture() -> (tempfile::TempDir, PathBuf) {
+        let root = tempfile::tempdir().unwrap();
+        let standard = root.path().canonicalize().unwrap().join("profile");
+        fs::create_dir(&standard).unwrap();
+        (root, standard)
+    }
+    fn seed(path: &Path) -> Connection {
+        let c = Connection::open(path.join("calendar.db")).unwrap();
+        c.execute_batch(
+            "PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;
+            CREATE TABLE items(id TEXT PRIMARY KEY, version INTEGER NOT NULL);
+            CREATE TABLE agent_history_meta(id INTEGER PRIMARY KEY, schema_version INTEGER NOT NULL,
+                namespace TEXT NOT NULL, received_order INTEGER NOT NULL);
+            INSERT INTO items VALUES('synthetic-task-stable',7);
+            INSERT INTO agent_history_meta VALUES(1,2,'synthetic-canonical-namespace',42);",
+        )
+        .unwrap();
+        c
+    }
+    fn identity(path: &Path) -> (String, i64, String) {
+        let c =
+            Connection::open_with_flags(path.join("calendar.db"), OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .unwrap();
+        assert_eq!(
+            c.query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0))
+                .unwrap(),
+            "ok"
+        );
+        assert_eq!(
+            c.query_row("SELECT COUNT(*) FROM items", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        c.query_row("SELECT items.id,items.version,agent_history_meta.namespace FROM items CROSS JOIN agent_history_meta WHERE agent_history_meta.id=1",
+            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap()
+    }
+    fn staging_count(root: &Path) -> usize {
+        fs::read_dir(root)
+            .unwrap()
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".cicada-migration-")
+            })
+            .count()
+    }
+    #[test]
+    fn wal_backup_restore_and_relocation_keep_committed_identity() {
+        let (root, standard) = fixture();
+        let root = root.path().canonicalize().unwrap();
+        let writer = seed(&standard);
+        assert!(
+            fs::metadata(standard.join("calendar.db-wal"))
+                .unwrap()
+                .len()
+                > 32
+        );
+        let original_database = fs::read(standard.join("calendar.db")).unwrap();
+        let expected = identity(&standard);
+        writer
+            .execute_batch("BEGIN IMMEDIATE; INSERT INTO items VALUES('synthetic-uncommitted',8);")
+            .unwrap();
+        let reader = Connection::open_with_flags(
+            standard.join("calendar.db"),
+            OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        let backup = PathBuf::from(crate::backup(&reader, &standard).unwrap());
+        assert!(backup.starts_with(&root));
+        let restored = root.join("restored-profile");
+        fs::create_dir(&restored).unwrap();
+        fs::copy(&backup, restored.join("calendar.db")).unwrap();
+        assert_eq!(identity(&restored), expected);
+        assert_eq!(resolve(&restored).unwrap(), restored);
+        let endpoint = stable_endpoint_dir(&standard).unwrap();
+        let target = root.join("selected-profile");
+        prepare(&standard, &target).unwrap();
+        apply_pending(&standard, &standard).unwrap();
+        assert_eq!(identity(&target), expected);
+        assert_eq!(identity(&standard), expected);
+        assert_eq!(
+            fs::read(standard.join("calendar.db")).unwrap(),
+            original_database
+        );
+        assert_eq!(resolve(&standard).unwrap(), target);
+        assert_eq!(stable_endpoint_dir(&standard).unwrap(), endpoint);
+        assert_eq!(staging_count(&root), 0);
+        writer.execute_batch("ROLLBACK").unwrap();
+    }
+    #[test]
+    fn corrupt_database_discards_partial_staging_without_switching_profile() {
+        let (root, standard) = fixture();
+        fs::write(
+            standard.join("calendar.db"),
+            b"synthetic invalid SQLite database",
+        )
+        .unwrap();
+        fs::write(
+            standard.join("attachment.txt"),
+            b"synthetic retained attachment",
+        )
+        .unwrap();
+        let target = root.path().canonicalize().unwrap().join("selected-profile");
+        prepare(&standard, &target).unwrap();
+        assert!(apply_pending(&standard, &standard).is_err());
+        assert_eq!(resolve(&standard).unwrap(), standard);
+        assert!(!target.exists());
+        assert!(pending_path(&standard).is_file());
+        assert_eq!(
+            fs::read(standard.join("attachment.txt")).unwrap(),
+            b"synthetic retained attachment"
+        );
+        assert_eq!(
+            staging_count(root.path()),
+            0,
+            "failed copy must not leave partial user data in staging"
+        );
+    }
+    #[cfg(windows)]
+    #[test]
+    fn denied_attachment_read_discards_partial_staging_and_keeps_source() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let (root, standard) = fixture();
+        drop(seed(&standard));
+        let attachment = standard.join("attachment.txt");
+        fs::write(&attachment, b"synthetic retained attachment").unwrap();
+        let target = root.path().canonicalize().unwrap().join("selected-profile");
+        let expected = identity(&standard);
+        prepare(&standard, &target).unwrap();
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&attachment)
+            .unwrap();
+        assert!(apply_pending(&standard, &standard).is_err());
+        assert_eq!(resolve(&standard).unwrap(), standard);
+        assert_eq!(identity(&standard), expected);
+        assert!(!target.exists());
+        assert_eq!(
+            staging_count(root.path()),
+            0,
+            "failed copy must not leave partial user data in staging"
+        );
+        drop(lock);
+        assert_eq!(
+            fs::read(&attachment).unwrap(),
+            b"synthetic retained attachment"
+        );
+    }
+    #[cfg(windows)]
+    #[test]
+    fn denied_pointer_replace_keeps_canonical_source_and_recoverable_copy() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let (root, standard) = fixture();
+        let source = root.path().canonicalize().unwrap().join("custom-source");
+        fs::create_dir(&source).unwrap();
+        drop(seed(&source));
+        let expected = identity(&source);
+        let pointer = serde_json::to_vec(&Pointer {
+            path: source.to_string_lossy().into_owned(),
+        })
+        .unwrap();
+        fs::write(pointer_path(&standard), &pointer).unwrap();
+        let target = root.path().canonicalize().unwrap().join("selected-profile");
+        prepare(&standard, &target).unwrap();
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(pointer_path(&standard))
+            .unwrap();
+        assert!(apply_pending(&standard, &source).is_err());
+        assert_eq!(resolve(&standard).unwrap(), source);
+        assert_eq!(fs::read(pointer_path(&standard)).unwrap(), pointer);
+        assert_eq!(identity(&source), expected);
+        assert_eq!(identity(&target), expected);
+        assert_eq!(staging_count(root.path()), 0);
+        assert!(!fs::read_dir(root.path()).unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".Cicada.data-location.json.tmp-")));
+        drop(lock);
+        record_failure(&standard).unwrap();
+        assert!(!current(&standard).unwrap().restart_required);
+        assert!(current(&standard).unwrap().migration_error.is_some());
+        assert_eq!(resolve(&standard).unwrap(), source);
+    }
+    #[test]
+    fn published_pointer_with_pending_marker_finishes_without_false_failure() {
+        let (root, standard) = fixture();
+        drop(seed(&standard));
+        let target = root.path().canonicalize().unwrap().join("selected-profile");
+        prepare(&standard, &target).unwrap();
+        let pending = fs::read(pending_path(&standard)).unwrap();
+        apply_pending(&standard, &standard).unwrap();
+        // Reproduce interruption after pointer publication and before marker removal.
+        fs::write(pending_path(&standard), pending).unwrap();
+        let activated = resolve(&standard).unwrap();
+        assert_eq!(activated, target);
+        assert!(apply_pending(&standard, &activated).is_ok());
+        assert!(!pending_path(&standard).exists());
+        assert!(current(&standard).unwrap().migration_error.is_none());
+        assert_eq!(identity(&standard), identity(&target));
+    }
+    #[test]
+    fn foreign_pending_source_fails_without_writes() {
+        let (root, standard) = fixture();
+        drop(seed(&standard));
+        let target = root.path().canonicalize().unwrap().join("selected-profile");
+        prepare(&standard, &target).unwrap();
+        let pending = fs::read(pending_path(&standard)).unwrap();
+        let foreign = root.path().canonicalize().unwrap().join("other-profile");
+        fs::create_dir(&foreign).unwrap();
+        assert!(apply_pending(&standard, &foreign).is_err());
+        assert_eq!(fs::read(pending_path(&standard)).unwrap(), pending);
+        assert!(!target.exists());
+        assert_eq!(staging_count(root.path()), 0);
     }
 }
