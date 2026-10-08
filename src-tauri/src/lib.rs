@@ -20,6 +20,7 @@ mod update_background;
 mod update_macos;
 mod update_journal;
 mod calendar_compat;
+mod calendar_day_lifecycle;
 mod calendar_goal_lifecycle;
 mod agent_access;
 mod agent_history;
@@ -799,6 +800,9 @@ pub fn run() {
             mvp_sync::mvp_sync_now,
             mvp_sync_db::conflicts::mvp_sync_conflicts_list,
             mvp_sync_db::conflicts::mvp_sync_conflict_resolve,
+            crate::calendar_day_lifecycle::read_calendar_day,
+            crate::calendar_day_lifecycle::commit_calendar_day_action,
+            crate::calendar_day_lifecycle::read_calendar_day_operation,
             calendar_compat::start_calendar_day,
             calendar_compat::get_events,
             calendar_compat::get_all_events,

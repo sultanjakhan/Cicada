@@ -1,4 +1,5 @@
 import { createUiCopy } from './ui-copy.js';
+const uiCopy = value => createUiCopy(globalThis.document)(value);
 import { S, TAB_ICONS, TAB_REGISTRY, getTabIcon, IS_MOBILE, tabLoaders } from './state.js';
 import { showCalendarSettings } from './calendar-settings.js';
 
@@ -52,10 +53,10 @@ export function renderTabBar() {
   item.type = 'button';
   item.className = 'tab-item active';
   item.dataset.tabId = 'calendar';
-  item.title = TAB_REGISTRY.calendar.label;
-  item.setAttribute('aria-label', TAB_REGISTRY.calendar.label);
+  item.title = uiCopy(TAB_REGISTRY.calendar.label);
+  item.setAttribute('aria-label', uiCopy(TAB_REGISTRY.calendar.label));
   item.setAttribute('aria-current', 'page');
-  item.innerHTML = `<span class="tab-item-icon">${getTabIcon('calendar')}</span>${IS_MOBILE ? `<span class="tab-item-label">${TAB_REGISTRY.calendar.label}</span>` : ''}`;
+  item.innerHTML = `<span class="tab-item-icon">${getTabIcon('calendar')}</span>${IS_MOBILE ? `<span class="tab-item-label">${uiCopy(TAB_REGISTRY.calendar.label)}</span>` : ''}`;
   const select = () => { closeDrawer(); switchTab('calendar'); };
   item.addEventListener('click', select);
   tabList.append(item);

@@ -94,3 +94,54 @@ test('permission and confirmation system UI require distinct explicit clicks', a
     assert.deepEqual(calls, [command]); notice.dispose(); dom.window.close();
   }
 });
+
+test('offer stays mounted across checking, idle and failed background status', () => {
+  const dom = new JSDOM('', { pretendToBeVisual:true });
+  const notice = createSoftUpdateNotice(dom.window, {invoke:async()=>available});
+  notice.show(available);
+  const host = dom.window.document.querySelector('.calendar-soft-update');
+  for (const phase of ['checking','idle','error']) {
+    notice.update({configured:true,phase,version:null});
+    assert.equal(dom.window.document.querySelector('.calendar-soft-update'),host);
+    assert.equal(host.querySelector('[data-soft-update-version]').textContent,available.version);
+  }
+  notice.update({...available,phase:'current',version:null});
+  assert.equal(dom.window.document.querySelector('.calendar-soft-update'),null);
+  notice.dispose(); dom.window.close();
+});
+
+test('Later survives notice restart for exactly the dismissed version', () => {
+  const dom = new JSDOM('', {pretendToBeVisual:true,url:'https://synthetic.test'});
+  let notice = createSoftUpdateNotice(dom.window,{invoke:async()=>available});
+  notice.show(available); dom.window.document.querySelector('[data-soft-update-later]').click(); notice.dispose();
+  notice = createSoftUpdateNotice(dom.window,{invoke:async()=>available});
+  assert.equal(notice.show(available),false);
+  assert.equal(notice.show({...available,version:'9.8.8'}),true);
+  notice.dispose(); dom.window.close();
+});
+
+test('a late installation reply cannot overwrite a newer offered version or disable Later forever', async () => {
+  const dom = new JSDOM('', {pretendToBeVisual:true}); let resolve;
+  const notice = createSoftUpdateNotice(dom.window,{invoke:()=>new Promise(r=>resolve=r)});
+  notice.show(available); dom.window.document.querySelector('[data-soft-update-install]').click();
+  notice.update({...available,version:'9.8.8'});
+  resolve({...available,phase:'installer_opened'}); await tick();
+  assert.equal(dom.window.document.querySelector('[data-soft-update-version]').textContent,'9.8.8');
+  assert.equal(dom.window.document.querySelector('[data-soft-update-later]').disabled,false);
+  dom.window.document.querySelector('[data-soft-update-later]').click();
+  assert.equal(notice.show({...available,version:'9.8.8'}),false);
+  notice.dispose(); dom.window.close();
+});
+
+test('returning from hidden restores an undismissed offer', async () => {
+  const dom = new JSDOM('',{pretendToBeVisual:true});
+  const stop = startAppUpdates({window:dom.window,invoke:async()=>available,listen:async()=>()=>{}});
+  await tick(); assert.ok(dom.window.document.querySelector('.calendar-soft-update'));
+  Object.defineProperty(dom.window.document,'visibilityState',{configurable:true,value:'hidden'});
+  dom.window.document.dispatchEvent(new dom.window.Event('visibilitychange'));
+  assert.equal(dom.window.document.querySelector('.calendar-soft-update'),null);
+  Object.defineProperty(dom.window.document,'visibilityState',{configurable:true,value:'visible'});
+  dom.window.document.dispatchEvent(new dom.window.Event('visibilitychange')); await tick();
+  assert.ok(dom.window.document.querySelector('.calendar-soft-update'));
+  stop(); dom.window.close();
+});

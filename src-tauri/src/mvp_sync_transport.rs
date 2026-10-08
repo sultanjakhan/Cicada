@@ -994,7 +994,17 @@ pub(crate) fn database_status(conn: &Connection) -> Result<Value, String> {
         "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='content_sync_state'",
     )?;
     if exists == 0 {
-        return Ok(json!({"enabled":enabled,"initializing":true,"revision":"0","pending_keys":0}));
+        // The record adapter can queue local changes before transport initializes.
+        let dirty_exists = scalar(
+            conn,
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='content_sync_dirty'",
+        )?;
+        let pending = if dirty_exists == 0 {
+            0
+        } else {
+            scalar(conn, "SELECT COUNT(*) FROM content_sync_dirty")?
+        };
+        return Ok(json!({"enabled":enabled,"initializing":true,"revision":"0","pending_keys":pending}));
     };
     let (revision, error): (i64, Option<String>) = sql(conn.query_row(
         "SELECT receive_seq,last_error FROM content_sync_state WHERE id=1",

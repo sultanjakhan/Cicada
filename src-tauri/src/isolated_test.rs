@@ -225,6 +225,7 @@ pub(crate) fn allowed(command: &str) -> bool {
             | "delete_item"
             | "create_backup"
             | "save_personal_import_recovery"
+            | "read_calendar_day" | "commit_calendar_day_action" | "read_calendar_day_operation"
             | "start_calendar_day"
             | "get_events"
             | "get_all_events"

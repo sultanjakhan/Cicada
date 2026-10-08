@@ -1,4 +1,6 @@
-﻿import { S, invoke, TAB_ICONS, setTheme } from './state.js';
+import { createUiCopy } from './ui-copy.js';
+const uiCopy = value => createUiCopy(globalThis.document)(value);
+import { S, invoke, TAB_ICONS, setTheme } from './state.js';
 import { escapeHtml } from './utils.js';
 import { IS_MOBILE } from './state.js';
 

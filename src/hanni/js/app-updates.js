@@ -14,14 +14,11 @@ export function updateActivity(window, { getPendingOperations = () => 0, hasUnsa
 export function startAppUpdates({ window, invoke, listen, getPendingOperations, hasUnsavedDrafts }) {
   let disposed = false, polling = false, checkingEntry = false, reporting = false, reportAgain = false, latest;
   let entryPending = window.document.visibilityState !== 'hidden';
-  const offered = new Set();
   const notice = createSoftUpdateNotice(window, { invoke,
     safe: () => updateActivity(window, { getPendingOperations, hasUnsavedDrafts }).safeToInstall });
   const offer = () => {
     if (!entryPending || window.document.visibilityState === 'hidden' || !isOfferableUpdate(latest)) return;
-    if (!offered.has(latest.version) && notice.show(latest)) {
-      offered.add(latest.version);
-    }
+    notice.show(latest);
     entryPending = false;
   };
   const subscriptions = [];

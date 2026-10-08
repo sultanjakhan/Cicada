@@ -224,3 +224,25 @@
   .calendar-tasks .ct-filter-body > * { max-width: 100%; }
   .calendar-tasks .ct-filter-body .ct-select { flex: 1 1 100%; }
 }
+/* Local saved task-filter tabs. */
+.ct-view-tabs { display: grid; gap: 8px; margin: 0 0 14px; }
+.ct-view-tabs-list { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; border-bottom: 1px solid var(--border-default); }
+.ct-view-tabs-list button { min-height: 36px; padding: 4px 10px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--text-secondary); font-size: 13px; cursor: pointer; }
+.ct-view-tabs-list button[aria-pressed="true"] { border-bottom-color: var(--text-primary); color: var(--text-primary); font-weight: 600; }
+.ct-view-tabs-list button:hover:not(:disabled), .ct-view-tabs-list button:focus-visible { color: var(--text-primary); }
+.ct-view-tabs-actions, .ct-view-editor { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ct-view-tabs-actions button, .ct-view-editor button { min-height: 32px; padding: 4px 9px; border: 0; border-radius: 0; background: transparent; color: var(--text-secondary); font-size: 12.5px; cursor: pointer; }
+.ct-view-tabs-actions button:first-child, .ct-view-editor [data-task-view-save], .ct-view-editor [data-task-view-confirm-remove] { color: var(--text-primary); text-decoration: underline; text-underline-offset: 3px; }
+.ct-view-tabs-actions button:hover:not(:disabled), .ct-view-tabs-actions button:focus-visible, .ct-view-editor button:hover:not(:disabled), .ct-view-editor button:focus-visible { color: var(--text-primary); text-decoration: underline; text-underline-offset: 3px; }
+.ct-view-tabs button:disabled { opacity: .5; cursor: default; }
+.ct-view-editor { padding: 10px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-card); }
+.ct-view-editor label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+.ct-view-editor input { min-height: 32px; min-width: min(220px, 100%); padding: 4px 8px; border: 1px solid var(--border-default); border-radius: 6px; background: var(--bg-card); color: var(--text-primary); }
+.ct-view-editor-note { flex-basis: 100%; color: var(--text-muted); font-size: 12px; }
+.ct-view-delete-confirmation { flex-basis: 100%; color: var(--text-primary); font-size: 13px; }
+.ct-view-tabs-status { margin: 0; color: var(--text-secondary); font-size: 12.5px; }
+.ct-view-tabs-status:empty { display: none; }
+.ct-view-tabs button:focus-visible, .ct-view-editor input:focus-visible { outline: 2px solid var(--ct-focus); outline-offset: 2px; }
+@media (max-width: 680px) {
+  .ct-view-tabs-list button, .ct-view-tabs-actions button, .ct-view-editor button, .ct-view-editor input { min-height: 44px; }
+}

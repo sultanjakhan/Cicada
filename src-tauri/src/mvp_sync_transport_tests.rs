@@ -1061,3 +1061,171 @@ fn capacity_error_and_outbox_survive_independent_pull_backoff() {
         None
     );
 }
+
+#[test]
+fn diagnosis_database_status_is_select_only_and_exposes_no_payload() {
+    let (conn, _) = replica("synthetic-status");
+    task(&conn, "synthetic-status-task", "Private synthetic title");
+    conn.execute("UPDATE content_sync_state SET upload_error='content_sync_http_507',last_error='content_sync_http_507'", []).unwrap();
+    let before = conn.total_changes();
+    conn.pragma_update(None, "query_only", true).unwrap();
+    let state = database_status(&conn).unwrap();
+    assert_eq!(state["pending_keys"], scalar(&conn, "SELECT COUNT(*) FROM content_sync_dirty").unwrap());
+    assert_eq!(state["error_code"], "content_sync_http_507");
+    assert_eq!(conn.total_changes(), before);
+    let raw = state.to_string();
+    assert!(!raw.contains("Private synthetic title"));
+    assert!(!raw.contains("synthetic-status-task"));
+    assert!(!raw.contains("token"));
+    assert!(!raw.contains("endpoint"));
+}
+
+fn initializing_status_fixture() -> Connection {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch("CREATE TABLE app_settings(key TEXT PRIMARY KEY,value TEXT,updated_at TEXT); INSERT INTO app_settings VALUES('content_sync_enabled','true','synthetic');").unwrap();
+    conn
+}
+
+#[test]
+fn initializing_status_counts_existing_dirty_records_without_writes() {
+    let conn = initializing_status_fixture();
+    conn.execute_batch("CREATE TABLE content_sync_dirty(seq INTEGER PRIMARY KEY,table_name TEXT,row_id TEXT); INSERT INTO content_sync_dirty VALUES(1,'mvp_records','synthetic-first'),(2,'mvp_records','synthetic-second');").unwrap();
+    let before = conn.total_changes();
+    conn.pragma_update(None, "query_only", true).unwrap();
+    let state = database_status(&conn).unwrap();
+    assert_eq!(state["initializing"], true);
+    assert_eq!(state["pending_keys"], 2);
+    assert_eq!(conn.total_changes(), before);
+    assert_eq!(scalar(&conn, "SELECT COUNT(*) FROM sqlite_master WHERE name='content_sync_state'").unwrap(), 0);
+}
+
+#[test]
+fn initializing_status_missing_dirty_table_returns_zero_without_creating_it() {
+    let conn = initializing_status_fixture();
+    let before = conn.total_changes();
+    conn.pragma_update(None, "query_only", true).unwrap();
+    let state = database_status(&conn).unwrap();
+    assert_eq!(state["enabled"], true);
+    assert_eq!(state["initializing"], true);
+    assert_eq!(state["pending_keys"], 0);
+    assert_eq!(conn.total_changes(), before);
+    assert_eq!(scalar(&conn, "SELECT COUNT(*) FROM sqlite_master WHERE name IN ('content_sync_dirty','content_sync_state')").unwrap(), 0);
+}
+
+#[test]
+fn initializing_status_empty_dirty_table_returns_zero() {
+    let conn = initializing_status_fixture();
+    conn.execute_batch("CREATE TABLE content_sync_dirty(seq INTEGER PRIMARY KEY,table_name TEXT,row_id TEXT);").unwrap();
+    conn.pragma_update(None, "query_only", true).unwrap();
+    assert_eq!(database_status(&conn).unwrap()["pending_keys"], 0);
+}
+
+#[test]
+fn database_status_sql_errors_are_not_reported_as_empty_queues() {
+    let missing_settings = Connection::open_in_memory().unwrap();
+    missing_settings.pragma_update(None, "query_only", true).unwrap();
+    assert_eq!(database_status(&missing_settings).unwrap_err(), "mvp_sync_database_failed");
+    let malformed_state = initializing_status_fixture();
+    malformed_state.execute_batch("CREATE TABLE content_sync_state(id INTEGER PRIMARY KEY);").unwrap();
+    malformed_state.pragma_update(None, "query_only", true).unwrap();
+    assert_eq!(database_status(&malformed_state).unwrap_err(), "content_sync_database_failed");
+    let failed_dirty_count = initializing_status_fixture();
+    failed_dirty_count.execute_batch("CREATE TABLE content_sync_dirty(seq INTEGER PRIMARY KEY); CREATE TEMP VIEW content_sync_dirty AS SELECT * FROM missing_synthetic_table;").unwrap();
+    failed_dirty_count.pragma_update(None, "query_only", true).unwrap();
+    assert_eq!(database_status(&failed_dirty_count).unwrap_err(), "content_sync_database_failed");
+}
+
+fn task_filter_view_filters() -> Value {
+    json!({
+        "filter":"active","search":"","goal":"","sphere":"","personal":"",
+        "groupBy":"date","source":"","project":"","tag":""
+    })
+}
+
+#[test]
+fn task_filter_views_remain_local_and_use_durable_compare_and_swap() {
+    const KEY: &str = "calendar_task_filter_views_v1";
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("filter-views.db");
+    let mut conn = Connection::open(&path).unwrap();
+    crate::init_schema(&conn).unwrap();
+    let cfg = derive_config(&config("filter-view-device")).unwrap();
+    initialize(&mut conn, &cfg).unwrap();
+    task(&conn, "existing-task", "Fictional task");
+    let task_before: (String, i64, String) = conn
+        .query_row(
+            "SELECT title,version,updated_at FROM items WHERE id='existing-task'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    let records_before = scalar(&conn, "SELECT count(*) FROM mvp_records").unwrap();
+    let active_filters = task_filter_view_filters();
+    let mut personal_filters = active_filters.clone();
+    personal_filters["sphere"] = json!("personal");
+    let first = json!({"version":1,"views":[
+        {"id":"work","title":"Work","filters":active_filters.clone()},
+        {"id":"personal","title":"Personal","filters":personal_filters.clone()}
+    ]})
+    .to_string();
+    crate::mvp_sync_db::set_ui(&conn, KEY, &first, Some("")).unwrap();
+    assert!(ui_rows(&conn).is_empty(), "local view definitions must not enter sync");
+    drop(conn);
+
+    let conn = Connection::open(&path).unwrap();
+    assert_eq!(crate::mvp_sync_db::read_ui(&conn, KEY).unwrap().as_deref(), Some(first.as_str()));
+    let edited = json!({"version":1,"views":[
+        {"id":"work","title":"Current work","filters":active_filters.clone()},
+        {"id":"personal","title":"Personal","filters":personal_filters.clone()}
+    ]})
+    .to_string();
+    crate::mvp_sync_db::set_ui(&conn, KEY, &edited, Some(&first)).unwrap();
+    assert_eq!(
+        crate::mvp_sync_db::set_ui(&conn, KEY, &first, Some(&first)).unwrap_err(),
+        "mvp_sync_stale_ui_state",
+        "a stale save cannot replace the edited definition"
+    );
+    let deleted = json!({"version":1,"views":[
+        {"id":"personal","title":"Personal","filters":personal_filters.clone()}
+    ]})
+    .to_string();
+    assert_eq!(
+        crate::mvp_sync_db::set_ui(&conn, KEY, &deleted, Some(&first)).unwrap_err(),
+        "mvp_sync_stale_ui_state",
+        "a stale deletion cannot remove a definition"
+    );
+    assert_eq!(crate::mvp_sync_db::read_ui(&conn, KEY).unwrap().as_deref(), Some(edited.as_str()));
+    crate::mvp_sync_db::set_ui(&conn, KEY, &deleted, Some(&edited)).unwrap();
+    assert_eq!(crate::mvp_sync_db::read_ui(&conn, KEY).unwrap().as_deref(), Some(deleted.as_str()));
+    let task_after: (String, i64, String) = conn
+        .query_row(
+            "SELECT title,version,updated_at FROM items WHERE id='existing-task'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(task_after, task_before, "deleting a view must not edit task rows");
+    assert_eq!(scalar(&conn, "SELECT count(*) FROM mvp_records").unwrap(), records_before);
+    assert!(ui_rows(&conn).is_empty(), "view edits must not create sync records");
+}
+
+#[test]
+fn task_filter_view_sqlite_write_failure_preserves_the_saved_snapshot() {
+    const KEY: &str = "calendar_task_filter_views_v1";
+    let (conn, _) = replica("filter-view-device");
+    let original = json!({"version":1,"views":[{"id":"work","title":"Work","filters":task_filter_view_filters()}]}).to_string();
+    crate::mvp_sync_db::set_ui(&conn, KEY, &original, Some("")).unwrap();
+    conn.execute_batch(
+        "CREATE TRIGGER reject_filter_view_update BEFORE UPDATE ON ui_state
+         WHEN NEW.key='calendar_task_filter_views_v1'
+         BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END;",
+    )
+    .unwrap();
+    let changed = json!({"version":1,"views":[]}).to_string();
+    assert_eq!(
+        crate::mvp_sync_db::set_ui(&conn, KEY, &changed, Some(&original)).unwrap_err(),
+        "mvp_sync_database_failed"
+    );
+    assert_eq!(crate::mvp_sync_db::read_ui(&conn, KEY).unwrap().as_deref(), Some(original.as_str()));
+    assert!(ui_rows(&conn).is_empty());
+}

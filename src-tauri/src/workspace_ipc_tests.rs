@@ -123,6 +123,9 @@ fn fixture_with_connection(
             api::get_calendar_task_seconds,
             api::get_ui_state,
             api::get_schedules,
+            crate::calendar_day_lifecycle::read_calendar_day,
+            crate::calendar_day_lifecycle::commit_calendar_day_action,
+            crate::calendar_day_lifecycle::read_calendar_day_operation,
             api::start_calendar_day,
             api::set_ui_state,
             api::list_event_categories,
@@ -2710,4 +2713,25 @@ fn personal_import_atomic_receipt_replay_preserves_workflow_and_conflicts_safely
     assert!(call(&view,"get_active_blocks",json!({})).unwrap().as_array().unwrap().is_empty());
     assert!(call(&view,"create_note",json!({"title":"Synthetic invalid receipt","content":"","tags":"calendar","status":"note","personalImportReceipt":true})).is_err());
     let normal = call(&view,"create_note",json!({"title":"Synthetic legacy note","content":"","tags":"calendar","status":"note"})).unwrap(); assert!(normal.is_string(),"legacy response stays a string");
+}
+
+#[test]
+fn day_lifecycle_uses_real_ipc_and_preserves_task_deadline() {
+ let (_app,view)=fixture();
+ let id=call(&view,"save_calendar_task",json!({"id":null,"title":"Synthetic Day IPC","dueDate":"2026-12-01","estimateMinutes":30,"goalId":null})).unwrap();
+ let task=call(&view,"get_calendar_task",json!({"id":id})).unwrap();
+ call(&view,"start_task_block",json!({"sourceType":"note","sourceId":id})).unwrap();
+ let p=call(&view,"read_calendar_day",json!({"date":null})).unwrap();
+ assert_eq!(p["active_blocks"].as_array().unwrap().len(),1);
+ let mut req=json!({"operation_id":uuid::Uuid::new_v4().to_string(),"action":"close","date":p["date"],"local_date":p["local_date"],"offset_minutes":p["offset_minutes"],"token":p["token"],"task_ids":[]});
+ let result=call(&view,"commit_calendar_day_action",json!({"input":req})).unwrap();
+ assert_eq!(call(&view,"commit_calendar_day_action",json!({"input":req})).unwrap(),result);
+ assert_eq!(call(&view,"read_calendar_day_operation",json!({"input":req})).unwrap(),result);
+ assert!(call(&view,"get_active_blocks",json!({})).unwrap().as_array().unwrap().is_empty());
+ let after=call(&view,"get_calendar_task",json!({"id":id})).unwrap();
+ for field in ["id","date","due_date","version","status","completed"] {assert_eq!(task[field],after[field],"{field}");}
+ let p=call(&view,"read_calendar_day",json!({"date":null})).unwrap();
+ req=json!({"operation_id":uuid::Uuid::new_v4().to_string(),"action":"plan","date":p["date"],"local_date":p["local_date"],"offset_minutes":p["offset_minutes"],"token":p["token"],"task_ids":[id]});
+ let planned=call(&view,"commit_calendar_day_action",json!({"input":req})).unwrap();assert_eq!(planned["day"]["plan_ids"],json!([id]));
+ assert_eq!(call(&view,"set_ui_state",json!({"key":crate::calendar_day_lifecycle::KEY,"value":"{}"})).unwrap_err(),json!("calendar_day_managed_key"));
 }

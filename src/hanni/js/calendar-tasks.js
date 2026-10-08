@@ -1,3 +1,9 @@
+import { mountTaskFilterTabs } from './task-filter-tabs.js';
+import { VIEW_LIMITS, taskFilters } from './task-filter-views.js';
+import { createUiCopy } from './ui-copy.js';
+const uiCopy = value => createUiCopy(globalThis.document)(value);
+uiCopy.format = (...args) => createUiCopy(globalThis.document).format(...args);
+const uiLocale = () => createUiCopy(globalThis.document).locale;
 import {taskProgress} from './task-progress.js';
 import { readNativeTaskObservations, nativeTaskKey, observationMatches } from './native-task-observations.js';
 import { renderTaskImportance } from './task-importance.js';
@@ -37,12 +43,13 @@ const WAIT_ICON = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" s
 const ARROW_ICON = '<svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 7h8.5M7.5 3.5 11 7l-3.5 3.5"/></svg>';
 const plural = (count, forms) => { const n = Math.abs(count) % 100, d = n % 10; return forms[n > 10 && n < 20 ? 2 : d === 1 ? 0 : d >= 2 && d <= 4 ? 1 : 2]; };
 const EMPTY = { search:'Ничего не нашлось. Измени поиск, цель или сферу.', sphere:'В этой сфере задач нет. Выбери другую сферу или создай задачу через «+ Создать».', completed:'Завершённых задач пока нет.', undated:'Все задачи распределены по дням.', today:'На сегодня задач нет.', active:'Задач пока нет. Создай первую через «+ Создать».' };
+EMPTY.all = 'Задач пока нет.';
 // Overdue cleanup acts on every task of the group through the task save path.
 const BULK = {
-  today: { label:'Перенести на сегодня', ask:n => `Перенести ${n} ${plural(n,['задачу','задачи','задач'])}?`, confirm:'Перенести', pending:'Переносим…', verb:'перенести',
-    done:n => `Перенесено на сегодня: ${n}.`, partial:(ok,total) => `Перенесено на сегодня: ${ok} из ${total}.` },
-  clear: { label:'Убрать дату', ask:n => `Убрать дату у ${n} ${plural(n,['задачи','задач','задач'])}?`, confirm:'Убрать', pending:'Убираем даты…', verb:'убрать дату',
-    done:n => `Дата убрана у ${n} ${plural(n,['задачи','задач','задач'])}.`, partial:(ok,total) => `Дата убрана: ${ok} из ${total}.` },
+  today: { label:'Перенести на сегодня', ask:(n,copy=uiCopy) => copy.format("Перенести {0} {1}?", n, copy.locale==='en'?(n===1?'task':'tasks'):plural(n,['задачу','задачи','задач'])), confirm:'Перенести', pending:'Переносим…', verb:'перенести',
+    done:(n,copy=uiCopy) => copy.format("Перенесено на сегодня: {0}.", n), partial:(ok,total,copy=uiCopy) => copy.format("Перенесено на сегодня: {0} из {1}.", ok, total) },
+  clear: { label:'Убрать дату', ask:(n,copy=uiCopy) => copy.format("Убрать дату у {0} {1}?", n, copy.locale==='en'?(n===1?'task':'tasks'):plural(n,['задачи','задач','задач'])), confirm:'Убрать', pending:'Убираем даты…', verb:'убрать дату',
+    done:(n,copy=uiCopy) => copy.format("Дата убрана у {0} {1}.", n, copy.locale==='en'?(n===1?'task':'tasks'):plural(n,['задачи','задач','задач'])), partial:(ok,total,copy=uiCopy) => copy.format("Дата убрана: {0} из {1}.", ok, total) },
 };
 const MORE_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></svg>';
 const SEARCH_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>';
@@ -59,6 +66,7 @@ async function saveTaskDate(invoke, row, dueDate) {
 export function mountCalendarTasks(host, dependencies) {
   const { invoke, openTask, editDate, mountMenu, executeAction, notifyChange } = dependencies;
   const doc = host.ownerDocument, win = doc.defaultView;
+  const uiCopy = createUiCopy(doc);
   const state = dependencies.state || { filter:'active', search:'', goal:'', sphere:'', page:0 };
   // A sphere chosen before the Work/Personal split falls into «Личное»; «Дом» keeps its sphere inside it.
   if (state.sphere === 'home') { state.sphere = 'personal'; state.personal = 'home'; }
@@ -66,45 +74,56 @@ export function mountCalendarTasks(host, dependencies) {
   if (!SPHERE_TABS.some(([id]) => id === state.sphere)) state.sphere = '';
   if (state.sphere !== 'personal' || !PERSONAL_TABS.some(([id]) => id === state.personal)) state.personal = '';
   if (state.groupBy !== 'goal') state.groupBy = 'date';
-  if(state.filter==='review'&&!dependencies.readTaskReview)state.filter='active';
+  // A legacy transient Review filter falls back to Active without a review reader.
+  // A selected saved view keeps its exact choice until review access returns.
+  if(state.filter==='review'&&!dependencies.readTaskReview&&(!state.taskViewId||['all','active'].includes(state.taskViewId))) {
+    state.filter='active';
+    state.taskViewId='active';
+  }
   const prefix = `calendar-tasks-${++sequence}`;
+  let taskFilterTabs = null;
   let observationState={contexts:new Map(),unboundCount:0,available:false};
-  let rows = [], goals = [], goalById = new Map(), linkByTask = new Map(), processes = [], stageBlocks = new Map(), readSignature = null, ready = false, disposed = false, revision = 0, busy = false, queued = false, feedback = '';
+  let rows = [], goals = [], goalById = new Map(), linkByTask = new Map(), processes = [], stageBlocks = new Map(), readSignature = null, ready = false, executionStale = false, disposed = false, revision = 0, busy = false, queued = false, feedback = '';
   let bulk = null, confirming = null, overdue = [], shown = new Set();
   let today = dayOf(new Date());
   const expandedRows = new Set();
   host.classList.add('calendar-tasks');
-  host.innerHTML = `<section aria-labelledby="${prefix}-title"><div class="ct-heading"><h2 id="${prefix}-title" tabindex="-1">Задачи <span data-tasks-count></span></h2>
-    <div class="ct-grouping" role="group" aria-label="Группировать задачи" data-tasks-grouping>${[['date','По дате'],['goal','По цели']].map(([id,label])=>`<button type="button" data-tasks-group-by="${id}" aria-pressed="false">${label}</button>`).join('')}</div></div>
-    <div class="ct-toolbar"><div class="ct-filters" role="group" aria-label="Какие задачи показать">${[['active','Активные'],['today','Сегодня'],['undated','Без даты'],['completed','Завершённые'],['review','На приёмке'],['ai-running','ИИ: running по отчётам']].map(([id,label])=>`<button type="button" data-tasks-filter="${id}" aria-pressed="false">${label}</button>`).join('')}</div>
-    <div class="ct-search-row"><label class="ct-search"><span class="ct-search-icon">${SEARCH_ICON}</span><input type="search" data-tasks-search placeholder="Найти задачу" aria-label="Найти задачу"></label><span class="ct-select"><select data-tasks-goal aria-label="Фильтр по цели"><option value="">Любая цель</option></select></span></div></div>
-    <div class="ct-spheres" role="group" aria-label="Рабочие или личные задачи">${SPHERE_TABS.map(([id,label])=>`<button type="button" data-tasks-sphere="${id}" aria-pressed="false"><span>${label}</span><span class="ct-sphere-count" data-tasks-sphere-count></span></button>`).join('')}</div>
-    <div class="ct-subspheres" role="group" aria-label="Сфера личных задач" data-tasks-personal hidden></div>
-    <p data-tasks-message role="status" aria-live="polite"></p><p class="ct-visually-hidden" data-tasks-stage-announcement role="status" aria-live="polite"></p><button type="button" data-tasks-retry hidden>Повторить загрузку</button>
-    <div data-tasks-list></div><div class="ct-pages" data-tasks-pages hidden><button type="button" data-tasks-prev>Назад</button><span data-tasks-page></span><button type="button" data-tasks-next>Далее</button></div></section>`;
+  host.innerHTML = `<section aria-labelledby="${prefix}-title"><div class="ct-heading"><h2 id="${prefix}-title" tabindex="-1">${uiCopy("Задачи")} <span data-tasks-count></span></h2>
+    <div class="ct-grouping" role="group" aria-label="${uiCopy("Группировать задачи")}" data-tasks-grouping>${[['date',uiCopy("По дате")],['goal',uiCopy("По цели")]].map(([id,label])=>`<button type="button" data-tasks-group-by="${id}" aria-pressed="false">${uiCopy(label)}</button>`).join('')}</div></div>
+    <div class="ct-toolbar"><div class="ct-filters" role="group" aria-label="${uiCopy("Какие задачи показать")}">${[['all',uiCopy("Все")],['active',uiCopy("Активные")],['today',uiCopy("Сегодня")],['undated',uiCopy("Без даты")],['completed',uiCopy("Завершённые")],['review',uiCopy("На приёмке")],['ai-running',uiCopy("ИИ: running по отчётам")]].map(([id,label])=>`<button type="button" data-tasks-filter="${id}" aria-pressed="false">${uiCopy(label)}</button>`).join('')}</div>
+    <div class="ct-search-row"><label class="ct-search"><span class="ct-search-icon">${SEARCH_ICON}</span><input type="search" data-tasks-search placeholder="${uiCopy("Найти задачу")}" aria-label="${uiCopy("Найти задачу")}"></label><span class="ct-select"><select data-tasks-goal aria-label="${uiCopy("Фильтр по цели")}"><option value="">${uiCopy("Любая цель")}</option></select></span></div></div>
+    <div class="ct-spheres" role="group" aria-label="${uiCopy("Рабочие или личные задачи")}">${SPHERE_TABS.map(([id,label])=>`<button type="button" data-tasks-sphere="${id}" aria-pressed="false"><span>${uiCopy(label)}</span><span class="ct-sphere-count" data-tasks-sphere-count></span></button>`).join('')}</div>
+    <div class="ct-subspheres" role="group" aria-label="${uiCopy("Сфера личных задач")}" data-tasks-personal hidden></div>
+    <p data-tasks-message role="status" aria-live="polite"></p><p class="ct-visually-hidden" data-tasks-stage-announcement role="status" aria-live="polite"></p><button type="button" data-tasks-retry hidden>${uiCopy("Повторить загрузку")}</button>
+    <div data-tasks-list></div><div class="ct-pages" data-tasks-pages hidden><button type="button" data-tasks-prev>${uiCopy("Назад")}</button><span data-tasks-page></span><button type="button" data-tasks-next>${uiCopy("Далее")}</button></div></section>`;
   host.querySelector('[data-tasks-filter="review"]').hidden=!dependencies.readTaskReview;
   const q = name => host.querySelector(`[data-tasks-${name}]`);
   const heading = host.querySelector('h2'), message = q('message'), list = q('list'), search = q('search'), goalFilter = q('goal');
   const grouping = q('grouping');
   const filterDetails = doc.createElement('details'); filterDetails.className = 'ct-filter-details';
-  const filterSummary = doc.createElement('summary'); filterSummary.textContent = 'Фильтры и группировка';
+  const filterSummary = doc.createElement('summary'); filterSummary.textContent = uiCopy("Фильтры и группировка");
   const filterBody = doc.createElement('div'); filterBody.className = 'ct-filter-body';
   filterDetails.append(filterSummary, filterBody);
   const observationFilters=doc.createElement('div');
   const observationSelects={};
-  for(const [key,label]of [['source','Источник задачи'],['project','Проект'],['tag','Тег']]){const caption=doc.createElement('label');caption.textContent=label;const select=doc.createElement('select');select.dataset.tasksObservation=key;caption.append(select);observationFilters.append(caption);observationSelects[key]=select;select.addEventListener('change',()=>{state[key]=select.value;state.page=0;render();});}
+  for(const [key,label]of [['source',uiCopy("Источник задачи")],['project',uiCopy("Проект")],['tag',uiCopy("Тег")]]){const caption=doc.createElement('label');caption.textContent=uiCopy(label);const select=doc.createElement('select');select.dataset.tasksObservation=key;caption.append(select);observationFilters.append(caption);observationSelects[key]=select;select.addEventListener('change',()=>{state[key]=select.value;state.page=0;render();});}
   const observationNote=doc.createElement('p');observationNote.dataset.tasksObservationNote='';observationNote.setAttribute('role','status');filterBody.append(observationFilters);
   const toolbar = host.querySelector('.ct-toolbar'), filters = host.querySelector('.ct-filters');
   toolbar.after(filterDetails); filterBody.append(filters, goalFilter.parentElement, grouping);
   const applied = doc.createElement('div'); applied.className = 'ct-applied-filters';
   const appliedLabel = doc.createElement('span'); appliedLabel.dataset.tasksApplied = '';
-  const reset = doc.createElement('button'); reset.type = 'button'; reset.textContent = 'Сбросить фильтры'; reset.dataset.tasksReset = '';
+  const reset = doc.createElement('button'); reset.type = 'button'; reset.textContent = uiCopy("Сбросить фильтры"); reset.dataset.tasksReset = '';
   applied.append(appliedLabel, reset); filterDetails.after(applied);applied.after(observationNote);
   reset.addEventListener('click', () => { Object.assign(state, {filter:'active',search:'',goal:'',sphere:'',personal:'',groupBy:'date',source:'',project:'',tag:'',page:0}); search.value=''; goalFilter.value=''; render(); search.focus(); });
+  search.maxLength = VIEW_LIMITS.search;
   search.value = state.search || '';
   const node = (tag, cls, text) => { const el = doc.createElement(tag); if(cls)el.className=cls; if(text!=null)el.textContent=text; return el; };
   const control = (cls,text,action) => { const el=node('button',cls,text);el.type='button';el.addEventListener('click',action);return el; };
   const findButton = (id, action='open') => [...host.querySelectorAll('[data-task-control]')].find(el => el.dataset.taskId === id && el.dataset.taskControl === action);
+  const syncExecutionControls = () => host.querySelectorAll('[data-task-timer]').forEach(button => {
+    const row=rows.find(item=>taskKey(item)===button.dataset.taskId);
+    button.disabled=busy||executionStale||!row||!!row.readonly;
+  });
   const restore = (id, action='open') => { if(!disposed && host.isConnected){const target=findButton(id,action)||heading;const details=target.closest('details');if(details)details.open=true;target.focus({preventScroll:true});} };
   const say = (text, alert=false) => { feedback=text; message.textContent=text; message.setAttribute('role',alert?'alert':'status'); };
   const goalFor = row => linkByTask.get(taskKey(row))?.goal_id;
@@ -114,6 +133,7 @@ export function mountCalendarTasks(host, dependencies) {
   const contextFor=row=>observationState.contexts.get(nativeTaskKey(row))||{sources:[],projects:[],tags:[],observations:[],reports:[],review:null};
   function matchesGoal(row) {
     const id=goalFor(row); if(!state.goal)return true;if(state.goal==='none')return id==null;
+    if(!goalById.has(String(state.goal)))return false;
     const seen=new Set();let value=id;
     while(value!=null&&!seen.has(String(value))){if(String(value)===state.goal)return true;seen.add(String(value));value=goalById.get(String(value))?.parent_goal_id;}
     return false;
@@ -121,89 +141,89 @@ export function mountCalendarTasks(host, dependencies) {
   const matchesSphere = row => !state.sphere || bucketOf(row) === state.sphere && (state.sphere !== 'personal' || !state.personal || personalOf(row) === state.personal);
   // Timer work of the task inside each stage period, for the stage tooltip.
   const stageTitleOf = (row, stage) => stageTimeTitle(stage, stageSeconds({ blocks: stageBlocks.get(String(row.source_id)) || [], log: row.stage_log, stage: stage.stage, now: new Date() }));
-  const formatDate = (date, options) => new Intl.DateTimeFormat('ru',{...options,...(date.slice(0,4)!==today.slice(0,4)?{year:'numeric'}:{})}).format(new Date(`${date}T12:00:00`));
-  const dateLabel = date => date===today?'Сегодня':date===shiftDay(today,1)?'Завтра':date===shiftDay(today,-1)?'Вчера':formatDate(date,{day:'numeric',month:'short'});
+  const formatDate = (date, options) => new Intl.DateTimeFormat(uiLocale(),{...options,...(date.slice(0,4)!==today.slice(0,4)?{year:'numeric'}:{})}).format(new Date(`${date}T12:00:00`));
+  const dateLabel = date => date===today?uiCopy("Сегодня"):date===shiftDay(today,1)?uiCopy("Завтра"):date===shiftDay(today,-1)?uiCopy("Вчера"):formatDate(date,{day:'numeric',month:'short'});
   function effort(row) {
     const planned=!isInstantTask(row)&&Number(row.duration_minutes)>0?Number(row.duration_minutes):0, actual=Number(row.actual_minutes)>0?Number(row.actual_minutes):0;
-    return { text: planned&&actual?`${planned} мин · факт ${actual}`:planned?`${planned} мин`:actual?`факт ${actual} мин`:'', hint:[planned&&`Оценка: ${planned} мин`,actual&&`Учтено: ${actual} мин`].filter(Boolean).join(', ') };
+    return { text: planned&&actual?uiCopy.format("{0} мин · факт {1}", planned, actual):planned?uiCopy.format("{0} мин", planned):actual?uiCopy.format("факт {0} мин", actual):'', hint:[planned&&uiCopy.format("Оценка: {0} мин", planned),actual&&uiCopy.format("Учтено: {0} мин", actual)].filter(Boolean).join(', ') };
   }
   // Group of a visible row: urgency of the day, or the top-level goal (2026-09-24).
   function sectionOf(row, byGoal) {
-    if(!byGoal){const id=groupOf(row,today),rank=GROUPS.findIndex(([group])=>group===id);return {id,label:GROUPS[rank][1],rank,name:''};}
-    if(row.is_active)return {id:'running',label:'В работе',rank:0,name:''};
+    if(!byGoal){const id=groupOf(row,today),rank=GROUPS.findIndex(([group])=>group===id);return {id,label:uiCopy(GROUPS[rank][1]),rank,name:''};}
+    if(row.is_active)return {id:'running',label:uiCopy('В работе'),rank:0,name:''};
     const root=goalChain(goalFor(row))[0];
-    return root?{id:`goal:${root.id}`,label:root.title,rank:1,name:root.title}:{id:'no-goal',label:'Без цели',rank:2,name:''};
+    return root?{id:`goal:${root.id}`,label:root.title,rank:1,name:root.title}:{id:'no-goal',label:uiCopy('Без цели'),rank:2,name:''};
   }
   function renderRow(row, section, byGoal) {
     const id=taskKey(row), done=closed(row), overdue=!done&&!!row.date&&row.date<today, running=!done&&!!row.is_active;
     const item=node('li','ct-row');item.dataset.contextRecord=id;item.classList.toggle('is-running',running);item.classList.toggle('is-overdue',overdue);item.classList.toggle('is-done',done);
-    const complete=control('ct-complete',done?'✓':'',()=>void finish(row));complete.disabled=busy||done||!!row.readonly;complete.setAttribute('aria-label',`${done?'Завершена':'Завершить'}: ${row.title}`);if(!done)complete.title='Завершить';
+    const complete=control('ct-complete',done?'✓':'',()=>void finish(row));complete.disabled=busy||done||!!row.readonly;complete.setAttribute('aria-label',`${done?uiCopy("Завершена"):uiCopy("Завершить")}: ${row.title}`);if(!done)complete.title=uiCopy("Завершить");
     const title=control('ct-title',row.title,()=>openTask(row,()=>restore(id)));title.title=row.title;
     const meta=node('span','ct-meta');
     // The running accent says «В работе»; a paused task keeps a small mark.
     const primaryMeta=node('span','ct-primary-meta');
-    const progress=taskProgress({...contextFor(row),completed:done,waiting:!!row.waiting});
-    primaryMeta.append(node('span','ct-status',done?'Завершена':running?'Таймер идёт':row.has_work||row.actual_minutes>0?'На паузе':'Не начата'));
+    const progress=taskProgress({...contextFor(row),completed:done,waiting:!!row.waiting,language:doc.documentElement.lang});
+    primaryMeta.append(node('span','ct-status',done?uiCopy("Завершена"):running?uiCopy("Таймер идёт"):row.has_work||row.actual_minutes>0?uiCopy("На паузе"):uiCopy("Не начата")));
     if(progress)primaryMeta.firstChild.textContent=progress.label;
-    if(!done)primaryMeta.append(node('span','ct-timer-status',running?'Таймер идёт':row.has_work||row.actual_minutes>0?'Таймер на паузе':'Таймер не запущен'));
-    const instant=isInstantTask(row), time=taskTime(row), sphere=sphereLabel(row.sphere);
-    if(instant){const kind=node('span','ct-kind','Моментальная');kind.title='Отмечается одним нажатием, без таймера';meta.append(kind);}
+    if(!done)primaryMeta.append(node('span','ct-timer-status',running?uiCopy("Таймер идёт"):row.has_work||row.actual_minutes>0?uiCopy("Таймер на паузе"):uiCopy("Таймер не запущен")));
+    const instant=isInstantTask(row), time=taskTime(row), sphere=uiCopy(sphereLabel(row.sphere));
+    if(instant){const kind=node('span','ct-kind',uiCopy("Моментальная"));kind.title=uiCopy("Отмечается одним нажатием, без таймера");meta.append(kind);}
     // A day the group or filter already names is not repeated; «Без даты» is never printed.
     const sameDay=row.date===today&&(section==='today'||section==='running'||state.filter==='today');
     const day=row.date&&!sameDay?dateLabel(row.date):'', when=[day,time].filter(Boolean).join(', ');
     let date=null;
     if(when){
       date=control('ct-date',when,()=>editDate(row,()=>restore(id,'date')));date.disabled=busy||!!row.readonly;date.classList.toggle('is-overdue',overdue);
-      date.title=`${formatDate(row.date,{day:'numeric',month:'long',weekday:'short'})}${time?`, ${time}`:''}${overdue?' · просрочено':''} — изменить дату`;
-      if(overdue)date.setAttribute('aria-label',`${when}, просрочено. Изменить дату`);
+      date.title=uiCopy.format("{0}{1}{2} — изменить дату", formatDate(row.date,{day:'numeric',month:'long',weekday:'short'}), time?`, ${time}`:'', overdue?uiCopy(" · просрочено"):'');
+      if(overdue)date.setAttribute('aria-label',uiCopy.format("{0}, просрочено. Изменить дату", when));
       meta.append(date);
     }
     // Stages belong to a task with a process (2026-09-25); instant and closed tasks show none.
     const stage=!done&&!instant?taskStage(row,processes):null;
     if(stage){
-      if(stage.waiting){if(!running)primaryMeta.firstChild.textContent='Жду ответа';else primaryMeta.append(node('span','ct-status','Жду ответа'));}
+      if(stage.waiting){if(!running)primaryMeta.firstChild.textContent=uiCopy("Жду ответа");else primaryMeta.append(node('span','ct-status',uiCopy('Жду ответа')));}
       const group=node('span','ct-stage-group');
       const chip=node('span','ct-stage');chip.dataset.taskId=id;chip.title=stageTitleOf(row,stage);
-      chip.append(node('span','ct-stage-prefix','Этап:'),node('span','ct-stage-label',stage.label||(stage.waiting?'Жду ответа':'Не выбран')));
+      chip.append(node('span','ct-stage-prefix',uiCopy("Этап:")),node('span','ct-stage-label',(stage.deleted?uiCopy(stage.label):stage.label)||(stage.waiting?uiCopy('Жду ответа'):uiCopy('Не выбран'))));
       // «Жду ответа»: a small hourglass after the stage name.
-      if(stage.waiting){const mark=node('span','ct-waiting');mark.innerHTML=WAIT_ICON;mark.append(node('span','ct-visually-hidden','жду ответа'));chip.append(mark);}
+      if(stage.waiting){const mark=node('span','ct-waiting');mark.innerHTML=WAIT_ICON;mark.append(node('span','ct-visually-hidden',uiCopy("жду ответа")));chip.append(mark);}
       chip.classList.toggle('is-deleted',stage.deleted);
       group.append(chip);
       if(stage.next){
         const next=control('ct-stage-next',null,()=>void advance(id));next.innerHTML=ARROW_ICON;
-        next.title=`${stage.stage?'Дальше':'Начать'}: ${stage.next.title}`;next.setAttribute('aria-label',`Следующая стадия «${stage.next.title}»: ${row.title}`);
+        next.title=`${stage.stage?uiCopy("Дальше"):uiCopy("Начать")}: ${stage.next.title}`;next.setAttribute('aria-label',uiCopy.format("Следующая стадия «{0}»: {1}", stage.next.title, row.title));
         next.disabled=busy||!!row.readonly;next.dataset.taskId=id;next.dataset.taskControl='stage-next';group.append(next);
       }
       primaryMeta.append(group);
     }
     const work=effort(row);if(work.text){const estimate=node('span','ct-estimate',work.text);estimate.title=work.hint;primaryMeta.append(estimate);}
     // A row names its sphere unless the switch already does.
-    if(sphere&&state.sphere!=='work'&&!state.personal&&!(state.sphere==='personal'&&row.sphere==='personal')){const label=node('span','ct-sphere',sphere);label.title=`Сфера: ${sphere}`;meta.append(label);}
+    if(sphere&&state.sphere!=='work'&&!state.personal&&!(state.sphere==='personal'&&row.sphere==='personal')){const label=node('span','ct-sphere',sphere);label.title=uiCopy.format("Сфера: {0}", sphere);meta.append(label);}
     // A goal group already names the top-level goal; the row keeps the sub-goal.
     const goalId=goalFor(row), chain=goalParts(goalId), parts=byGoal&&section.startsWith('goal:')?chain.slice(1):chain;
     if(parts.length&&!(state.goal&&String(goalId)===state.goal)){const goal=node('span','ct-goal',parts.at(-1));goal.title=chain.join(' / ');meta.append(goal);}
     renderTaskImportance(doc,meta,row,item);
     const ctx=contextFor(row);
-    if(ctx.review)primaryMeta.append(node('span','ct-status',ctx.review.reviewState==='awaiting_review'?`На приёмке · результат v${ctx.review.resultVersion}`:ctx.review.reviewState==='awaiting_dispatch'?'Ожидает передачи исполнителю':`Принято · результат v${ctx.review.resultVersion}`));
-    if(ctx.reports.length){const reported=ctx.reports.at(-1);meta.append(node('span',null,`По отчёту: ${reported.agent} / ${reported.model||'модель не сообщена'} · ${reported.status}. Live feed отсутствует.`));}
-    for(const observation of ctx.observations)meta.append(node('span',null,`Источник ${observation.snapshot.source.publisherId}: ${observation.task.status} · ${observation.freshness}${observation.task.result?` · результат источника: ${observation.task.result}`:''}`));
+    if(ctx.review)primaryMeta.append(node('span','ct-status',ctx.review.reviewState==='awaiting_review'?uiCopy.format("На приёмке · результат v{0}", ctx.review.resultVersion):ctx.review.reviewState==='awaiting_dispatch'?uiCopy("Ожидает передачи исполнителю"):uiCopy.format("Принято · результат v{0}", ctx.review.resultVersion)));
+    if(ctx.reports.length){const reported=ctx.reports.at(-1);meta.append(node('span',null,uiCopy.format("По отчёту: {0} / {1} · {2}. Live feed отсутствует.", reported.agent, reported.model||uiCopy("модель не сообщена"), reported.status)));}
+    for(const observation of ctx.observations)meta.append(node('span',null,uiCopy.format("Источник {0}: {1} · {2}{3}", observation.snapshot.source.publisherId, observation.task.status, observation.freshness, observation.task.result?uiCopy.format(" · результат источника: {0}", observation.task.result):'')));
     if(ctx.reviewReadError||(ctx.review&&ctx.review.reviewState!=='accepted'))complete.disabled=true;
-    if(ctx.reviewReadError)primaryMeta.append(node('span','ct-status','Состояние приёмки не обновлено. Повтори чтение.'));
+    if(ctx.reviewReadError)primaryMeta.append(node('span','ct-status',uiCopy("Состояние приёмки не обновлено. Повтори чтение.")));
     const content=node('div','ct-content');content.append(title,primaryMeta);
-    if(meta.childNodes.length){const details=node('details','ct-row-details'),summary=node('summary',null,'Детали');details.open=expandedRows.has(id);summary.setAttribute('aria-label',`Детали: ${row.title}`);details.append(summary,meta);content.append(details);}
+    if(meta.childNodes.length){const details=node('details','ct-row-details'),summary=node('summary',null,uiCopy("Детали"));details.open=expandedRows.has(id);summary.setAttribute('aria-label',uiCopy.format("Детали: {0}", row.title));details.append(summary,meta);content.append(details);}
     else content.append(meta);
-    if(running)content.append(node('span','ct-visually-hidden','В работе'));
+    if(running)content.append(node('span','ct-visually-hidden',uiCopy("В работе")));
     const actions=node('div','ct-actions');
     if(!done&&(!instant||row.is_active)){
       const review=stage?.waiting&&!running;
-      const label=review?'Открыть ожидание':row.is_active?'Пауза':row.has_work||row.actual_minutes>0?'Продолжить':'Начать';
+      const label=uiCopy(review?uiCopy("Открыть ожидание"):row.is_active?uiCopy("Пауза"):row.has_work||row.actual_minutes>0?uiCopy("Продолжить"):uiCopy("Начать"));
       const run=control('ct-run ct-icon-button',null,()=>review?openTask(row,()=>restore(id,'execute')):void finish(row,row.is_active?'pause':'start'));
       const glyph=node('span','ct-glyph');glyph.setAttribute('aria-hidden','true');glyph.innerHTML=ICONS[row.is_active?'pause':'play'];
       if(review)glyph.innerHTML=WAIT_ICON;
       run.append(glyph,node('span','ct-action-label',label));run.classList.toggle('is-running',running);
-      run.disabled=busy||!!row.readonly;run.dataset.taskId=id;run.dataset.taskControl='execute';run.title=label;run.setAttribute('aria-label',`${label}: ${row.title}`);actions.append(run);
+      run.disabled=busy||(!review&&executionStale)||!!row.readonly;if(!review)run.dataset.taskTimer='';run.dataset.taskId=id;run.dataset.taskControl='execute';run.title=label;run.setAttribute('aria-label',`${uiCopy(label)}: ${row.title}`);actions.append(run);
     }
-    const more=control('ct-more ct-icon-button',null,()=>{});more.innerHTML=MORE_ICON;more.dataset.recordMenu='';more.title='Действия';more.setAttribute('aria-label',`Действия: ${row.title}`);more.setAttribute('aria-haspopup','menu');more.setAttribute('aria-expanded','false');more.disabled=busy||!!row.readonly;
+    const more=control('ct-more ct-icon-button',null,()=>{});more.innerHTML=MORE_ICON;more.dataset.recordMenu='';more.title=uiCopy("Действия");more.setAttribute('aria-label',uiCopy.format("Действия: {0}", row.title));more.setAttribute('aria-haspopup','menu');more.setAttribute('aria-expanded','false');more.disabled=busy||!!row.readonly;
     actions.append(more);
     for(const [button,action] of [[title,'open'],[date,'date'],[more,'menu'],[complete,'finish']])if(button){button.dataset.taskId=id;button.dataset.taskControl=action;}
     item.append(complete,content,actions);
@@ -218,15 +238,15 @@ export function mountCalendarTasks(host, dependencies) {
   }
   function overdueActions(total) {
     const box=node('div','ct-group-actions');
-    if(bulk){box.append(node('span','ct-confirm-text',BULK[bulk].pending));return box;}
+    if(bulk){box.append(node('span','ct-confirm-text',uiCopy(BULK[bulk].pending)));return box;}
     if(confirming){
-      const kind=confirming;box.classList.add('is-confirming');box.append(node('span','ct-confirm-text',BULK[kind].ask(total)));
-      const yes=control('ct-group-action is-primary',BULK[kind].confirm,()=>void moveOverdue(kind));yes.dataset.tasksBulk='confirm';
-      const no=control('ct-group-action','Отмена',()=>{confirming=null;render();focusBulk(kind);});no.dataset.tasksBulk='cancel';
+      const kind=confirming;box.classList.add('is-confirming');box.append(node('span','ct-confirm-text',BULK[kind].ask(total,uiCopy)));
+      const yes=control('ct-group-action is-primary',uiCopy(BULK[kind].confirm),()=>void moveOverdue(kind));yes.dataset.tasksBulk='confirm';
+      const no=control('ct-group-action',uiCopy("Отмена"),()=>{confirming=null;render();focusBulk(kind);});no.dataset.tasksBulk='cancel';
       box.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();confirming=null;render();focusBulk(kind);}});
       box.append(yes,no);return box;
     }
-    for(const kind of ['today','clear']){const button=control('ct-group-action',BULK[kind].label,()=>{confirming=kind;render();focusBulk('confirm');});button.dataset.tasksBulk=kind;button.disabled=busy;box.append(button);}
+    for(const kind of ['today','clear']){const button=control('ct-group-action',uiCopy(BULK[kind].label),()=>{confirming=kind;render();focusBulk('confirm');});button.dataset.tasksBulk=kind;button.disabled=busy;box.append(button);}
     return box;
   }
   const focusBulk = kind => { if(!disposed)(host.querySelector(`[data-tasks-bulk="${kind}"]`)||heading).focus({preventScroll:true}); };
@@ -240,19 +260,20 @@ export function mountCalendarTasks(host, dependencies) {
     const focused=box.contains(doc.activeElement)?doc.activeElement.dataset.tasksPersonalOption:null;
     box.replaceChildren(...PERSONAL_TABS.filter(([id])=>!id||counts.get(id)>0||id===state.personal).map(([id,label])=>{
       const button=node('button');button.type='button';button.dataset.tasksPersonalOption=id;button.setAttribute('aria-pressed',String(id===state.personal));
-      button.append(node('span',null,label),node('span','ct-sphere-count',String(counts.get(id))));button.setAttribute('aria-label',`${label}: ${counts.get(id)}`);
+      button.append(node('span',null,uiCopy(label)),node('span','ct-sphere-count',String(counts.get(id))));button.setAttribute('aria-label',`${uiCopy(label)}: ${counts.get(id)}`);
       return button;
     }));
     if(focused!=null)box.querySelector(`[data-tasks-personal-option="${focused}"]`)?.focus({preventScroll:true});
   }
   function render() {
     if(disposed||!ready)return;
+    taskFilterTabs?.update();
     for(const details of host.querySelectorAll('.ct-row-details')){const id=details.closest('[data-context-record]').dataset.contextRecord;if(details.open)expandedRows.add(id);else expandedRows.delete(id);}
     const focused=doc.activeElement, focusId=focused?.dataset.taskId, focusAction=focused?.dataset.taskControl, focusedBulk=focused?.dataset.tasksBulk;
-    observationNote.textContent=[observationState.available?'':'Не удалось прочитать наблюдения источников.',observationState.unboundCount?`Наблюдения без связи с задачами: ${observationState.unboundCount}. Данные источников сохранены.`:'',state.filter==='ai-running'?'Здесь показаны отчёты исполнителей; текущие обновления не подключены.':''].filter(Boolean).join(' ');
+    observationNote.textContent=[observationState.available?'':uiCopy("Не удалось прочитать наблюдения источников."),observationState.unboundCount?uiCopy.format("Наблюдения без связи с задачами: {0}. Данные источников сохранены.", observationState.unboundCount):'',state.filter==='review'&&!dependencies.readTaskReview?uiCopy("Приёмка недоступна: подборка сохранена, задачи не показаны."):'',state.filter==='ai-running'?uiCopy("Здесь показаны отчёты исполнителей; текущие обновления не подключены."):''].filter(Boolean).join(' ');
     observationNote.hidden=!observationNote.textContent;
     const query=state.search.trim().toLocaleLowerCase('ru');
-    const eligible=rows.filter(row=>(state.filter==='completed'?closed(row):!closed(row))&&(state.filter!=='today'||row.date===today)&&(state.filter!=='undated'||!row.date)&&(state.filter!=='review'||contextFor(row).review?.reviewState==='awaiting_review')&&(state.filter!=='ai-running'||contextFor(row).reports.some(r=>r.status==='running'))&&observationMatches(contextFor(row),state));
+    const eligible=rows.filter(row=>(state.filter==='completed'?closed(row):state.filter==='all'?true:!closed(row))&&(state.filter!=='today'||row.date===today)&&(state.filter!=='undated'||!row.date)&&(state.filter!=='review'||!!dependencies.readTaskReview&&contextFor(row).review?.reviewState==='awaiting_review')&&(state.filter!=='ai-running'||contextFor(row).reports.some(r=>r.status==='running'))&&observationMatches(contextFor(row),state));
     const matching=eligible.filter(row=>matchesGoal(row)&&`${row.title} ${goalPath(goalFor(row))}`.toLocaleLowerCase('ru').includes(query));
     const counts=new Map(SPHERE_TABS.map(([id])=>[id,0]));
     for(const row of matching){counts.set('',counts.get('')+1);counts.set(bucketOf(row),counts.get(bucketOf(row))+1);}
@@ -262,17 +283,17 @@ export function mountCalendarTasks(host, dependencies) {
       ||(byGoal?groupIndex(a.row,today)-groupIndex(b.row,today):0)||(Number(b.row.priority)||0)-(Number(a.row.priority)||0)||(a.row.date||'9999').localeCompare(b.row.date||'9999')||compareTaskTime(a.row,b.row)||a.row.title.localeCompare(b.row.title,'ru')||taskKey(a.row).localeCompare(taskKey(b.row)));
     shown=new Set(visible.map(({row})=>taskKey(row)));
     q('count').textContent=String(visible.length);
-    appliedLabel.textContent=[{active:'Активные',today:'Сегодня',undated:'Без даты',completed:'Завершённые',review:'На приёмке','ai-running':'ИИ: running по отчётам'}[state.filter],state.groupBy==='goal'?'По цели':null,state.goal?(state.goal==='none'?'Без цели':`Цель: ${goalPath(state.goal)}`):null,state.sphere?SPHERE_TABS.find(([id])=>id===state.sphere)?.[1]:null,state.personal?PERSONAL_TABS.find(([id])=>id===state.personal)?.[1]:null,state.search?`Поиск: ${state.search}`:null,...['source','project','tag'].map(k=>state[k]?observationSelects[k].selectedOptions[0]?.textContent:null)].filter(Boolean).join(' · ');
+    appliedLabel.textContent=[{all:uiCopy("Все"),active:uiCopy("Активные"),today:uiCopy("Сегодня"),undated:uiCopy("Без даты"),completed:uiCopy("Завершённые"),review:uiCopy("На приёмке"),'ai-running':uiCopy("ИИ: running по отчётам")}[state.filter],state.groupBy==='goal'?uiCopy("По цели"):null,state.goal?(state.goal==='none'?uiCopy("Без цели"):uiCopy.format("Цель: {0}", goalPath(state.goal)||uiCopy.format("Недоступная цель ({0})", state.goal))):null,state.sphere?SPHERE_TABS.find(([id])=>id===state.sphere)?.[1]:null,state.personal?PERSONAL_TABS.find(([id])=>id===state.personal)?.[1]:null,state.search?uiCopy.format("Поиск: {0}", state.search):null,...['source','project','tag'].map(k=>state[k]?observationSelects[k].selectedOptions[0]?.textContent:null)].filter(Boolean).join(' · ');
     reset.hidden=state.filter==='active'&&!state.search&&!state.goal&&!state.sphere&&!state.personal&&state.groupBy==='date'&&!state.source&&!state.project&&!state.tag;
     host.querySelectorAll('[data-tasks-filter]').forEach(el=>el.setAttribute('aria-pressed',String(el.dataset.tasksFilter===state.filter)));
-    host.querySelectorAll('[data-tasks-sphere]').forEach(el=>{const id=el.dataset.tasksSphere,count=String(counts.get(id));el.setAttribute('aria-pressed',String(id===state.sphere));el.querySelector('[data-tasks-sphere-count]').textContent=count;el.setAttribute('aria-label',`${SPHERE_TABS.find(([tab])=>tab===id)[1]}: ${count}`);});
+    host.querySelectorAll('[data-tasks-sphere]').forEach(el=>{const id=el.dataset.tasksSphere,count=String(counts.get(id));el.setAttribute('aria-pressed',String(id===state.sphere));el.querySelector('[data-tasks-sphere-count]').textContent=count;el.setAttribute('aria-label',`${uiCopy(SPHERE_TABS.find(([tab])=>tab===id)[1])}: ${count}`);});
     host.querySelectorAll('[data-tasks-group-by]').forEach(el=>el.setAttribute('aria-pressed',String(el.dataset.tasksGroupBy===state.groupBy)));
     grouping.hidden=state.filter==='completed';
     state.page=Math.max(0,Math.min(state.page||0,Math.ceil(visible.length/50)-1));
     const totals=new Map();for(const {section} of visible)totals.set(section.id,(totals.get(section.id)||0)+1);
     overdue=visible.filter(({section})=>section.id==='overdue').map(({row})=>row);if(!overdue.length&&!bulk)confirming=null;
     // Active mixes several groups; the other filters name their single group unless grouped by goal.
-    const grouped=state.filter==='active'||byGoal;
+    const grouped=state.filter==='active'||state.filter==='all'||byGoal;
     list.replaceChildren();let lastGroup=null, ul;
     for(const {row,section} of visible.slice(state.page*50,(state.page+1)*50)) {
       if(section.id!==lastGroup){
@@ -281,15 +302,15 @@ export function mountCalendarTasks(host, dependencies) {
       }
       ul.append(renderRow(row,section.id,byGoal));
     }
-    if(!visible.length)list.append(node('p','ct-empty',query||state.goal?EMPTY.search:state.sphere&&counts.get('')?EMPTY.sphere:EMPTY[state.filter]||EMPTY.active));
+    if(!visible.length)list.append(node('p','ct-empty',uiCopy(query||state.goal?EMPTY.search:state.sphere&&counts.get('')?EMPTY.sphere:EMPTY[state.filter]||EMPTY.active)));
     q('pages').hidden=visible.length<=50;q('prev').disabled=state.page===0;q('next').disabled=(state.page+1)*50>=visible.length;
-    q('page').textContent=`${state.page*50+1}–${Math.min((state.page+1)*50,visible.length)} из ${visible.length}`;
+    q('page').textContent=uiCopy.format("{0}–{1} из {2}", state.page*50+1, Math.min((state.page+1)*50,visible.length), visible.length);
     if(focusId&&!focused.isConnected)restore(focusId,focusAction);
     if(focusedBulk&&!focused.isConnected)focusBulk(focusedBulk);
   }
   async function refresh(canCommit=null) {
     if(disposed||busy||canCommit&&!canCommit())return;
-    const request=++revision;host.setAttribute('aria-busy','true');if(!ready)message.textContent='Загружаем задачи…';
+    const request=++revision;host.setAttribute('aria-busy','true');if(!ready)message.textContent=uiCopy("Загружаем задачи…");
     try{
       const result=await Promise.all([invoke('get_calendar_tasks',{includeCompleted:true}),invoke('get_goals',{tabName:null}),invoke('get_calendar_task_goals'),loadProcesses(invoke)]);
       if(disposed||request!==revision||canCommit&&!canCommit())return;
@@ -302,23 +323,38 @@ export function mountCalendarTasks(host, dependencies) {
       const nextObservations=await (dependencies.readTaskObservations||readNativeTaskObservations)(nextRows,invoke,{readReview:dependencies.readTaskReview||null,previousContexts:observationState.contexts});
       if(disposed||request!==revision||canCommit&&!canCommit())return;
       const nextSignature=stableJson([nextToday,nextRows,result[1],result[2],result[3],[...blocks].sort(([a],[b])=>String(a).localeCompare(String(b))),[...nextObservations.contexts],nextObservations.available,nextObservations.unboundCount]);
-      ready=true;
-      if(nextSignature===readSignature){message.textContent=feedback;q('retry').hidden=true;return;}
+      const recovered=executionStale;
+      if(recovered){feedback='';message.setAttribute('role','status');}
+      ready=true;executionStale=false;
+      if(nextSignature===readSignature){message.textContent=feedback;q('retry').hidden=true;if(recovered)syncExecutionControls();return true;}
       observationState=nextObservations;
       rows=nextRows.map(row=>{const review=observationState.contexts.get(nativeTaskKey(row))?.review;const reviewReadError=observationState.contexts.get(nativeTaskKey(row))?.reviewReadError;return review||reviewReadError?{...row,_review:review,_reviewReadError:!!reviewReadError}:row;});
-      for(const key of ['source','project','tag']){const options=new Map();for(const ctx of observationState.contexts.values())for(const item of ctx[key==='source'?'sources':key==='project'?'projects':'tags'])options.set(typeof item==='string'?item:item.id,typeof item==='string'?item:item.label);const select=observationSelects[key];select.replaceChildren(new win.Option('Все',''),...Array.from(options,([id,label])=>new win.Option(label,id)));if(state[key]&&!options.has(state[key]))state[key]='';select.value=state[key]||'';}
+      for(const key of ['source','project','tag']){const options=new Map();for(const ctx of observationState.contexts.values())for(const item of ctx[key==='source'?'sources':key==='project'?'projects':'tags'])options.set(typeof item==='string'?item:item.id,typeof item==='string'?item:item.label);const select=observationSelects[key];select.replaceChildren(new win.Option(uiCopy("Все"),''),...Array.from(options,([id,label])=>new win.Option(label,id)));if(state[key]&&!options.has(state[key]))select.add(new win.Option(uiCopy.format("Недоступно: {0}",state[key]),state[key]));select.value=state[key]||'';}
       goals=result[1];goalById=firstIndex(goals,goal=>String(goal.id));linkByTask=firstIndex(result[2],link=>taskKey(link));processes=result[3];stageBlocks=blocks;today=nextToday;
-      goalFilter.replaceChildren(new win.Option('Любая цель',''),new win.Option('Без цели','none'),...goals.map(goal=>new win.Option(goalPath(goal.id),String(goal.id))));
-      if(state.goal&&!['none',...goals.map(goal=>String(goal.id))].includes(state.goal))state.goal='';goalFilter.value=state.goal;
-      message.textContent=feedback;q('retry').hidden=true;render();readSignature=nextSignature;
-    }catch{if(!disposed&&request===revision){message.textContent=ready?'Не удалось обновить задачи. Показан предыдущий список.':'Не удалось загрузить задачи. Это не означает, что список пуст.';q('retry').hidden=false;}}
+      goalFilter.replaceChildren(new win.Option(uiCopy("Любая цель"),''),new win.Option(uiCopy("Без цели"),'none'),...goals.map(goal=>new win.Option(goalPath(goal.id),String(goal.id))));
+      if(state.goal&&!['none',...goals.map(goal=>String(goal.id))].includes(state.goal))goalFilter.add(new win.Option(uiCopy.format("Недоступная цель: {0}",state.goal),state.goal));goalFilter.value=state.goal;
+      message.textContent=feedback;q('retry').hidden=true;render();readSignature=nextSignature;return true;
+    }catch{if(!disposed&&request===revision){executionStale=true;message.textContent=ready?uiCopy("Не удалось обновить задачи. Показан предыдущий список."):uiCopy("Не удалось загрузить задачи. Это не означает, что список пуст.");message.setAttribute('role','alert');q('retry').hidden=false;syncExecutionControls();return false;}}
     finally{if(!disposed&&request===revision)host.removeAttribute('aria-busy');}
   }
   async function finish(row,action='finish'){
-    if(busy||disposed||row.readonly||(action==='finish'&&(contextFor(row).reviewReadError||(contextFor(row).review&&contextFor(row).review.reviewState!=='accepted'))))return;busy=true;revision++;feedback='';message.textContent='';render();
-    try{const result=await executeAction(row,action);if(result===false)return;notifyChange();busy=false;await refresh();if(!disposed){say({start:'Задача в работе.',pause:'Задача на паузе.',finish:'Задача завершена.'}[action]);restore(taskKey(row),action==='finish'?'open':'execute');}}
-    catch(error){if(error?.refreshRequired)notifyChange();busy=false;await refresh();if(!disposed)say(error?.message||'Не удалось выполнить действие.',true);}
-    finally{busy=false;render();}
+    if(busy||disposed||row.readonly||(executionStale&&(action==='start'||action==='pause'))||(action==='finish'&&(contextFor(row).reviewReadError||(contextFor(row).review&&contextFor(row).review.reviewState!=='accepted'))))return;busy=true;revision++;feedback='';message.textContent='';render();
+    let ownsBusy=true;
+    const releaseBusy=()=>{if(ownsBusy){busy=false;ownsBusy=false;}};
+    try{
+      const result=await executeAction(row,action);if(result===false)return;
+      // A queued change-event refresh may supersede this action's read.
+      // Only an authoritative committed read can unlock the old timer controls.
+      executionStale=true;notifyChange();releaseBusy();
+      const refreshed=await refresh();
+      if(!disposed){
+        if(refreshed===true){say({start:uiCopy("Задача в работе."),pause:uiCopy("Задача на паузе."),finish:uiCopy("Задача завершена.")}[action]);restore(taskKey(row),action==='finish'?'open':'execute');}
+        else if(refreshed===false)q('retry').focus({preventScroll:true});
+      }
+    }
+    catch(error){executionStale=true;if(error?.refreshRequired)notifyChange();releaseBusy();await refresh();if(!disposed)say(error?.message||uiCopy("Не удалось выполнить действие."),true);}
+    // A superseded read can finish while a later action owns the busy state.
+    finally{releaseBusy();render();}
   }
   async function moveOverdue(kind) {
     const targets=overdue.filter(row=>!row.readonly);
@@ -330,10 +366,10 @@ export function mountCalendarTasks(host, dependencies) {
     if(failed.length<targets.length)notifyChange();
     busy=false;bulk=null;await refresh();if(disposed)return;
     const spec=BULK[kind], ok=targets.length-failed.length;
-    if(!failed.length)say(spec.done(ok));
+    if(!failed.length)say(spec.done(ok,uiCopy));
     else{
-      const names=failed.slice(0,3).map(row=>`«${row.title}»`).join(', ')+(failed.length>3?` и ещё ${failed.length-3}`:'');
-      say(`${ok?`${spec.partial(ok,targets.length)} `:''}Не удалось ${spec.verb}: ${names}. ${failed.length===1?'Задача могла измениться':'Задачи могли измениться'} — обнови список и повтори.`,true);
+      const names=failed.slice(0,3).map(row=>`«${row.title}»`).join(', ')+(failed.length>3?uiCopy.format(" и ещё {0}", failed.length-3):'');
+      say(uiCopy.format("{0}Не удалось {1}: {2}. {3} — обнови список и повтори.", ok?`${spec.partial(ok,targets.length,uiCopy)} `:'', uiCopy(spec.verb), names, failed.length===1?uiCopy("Задача могла измениться"):uiCopy("Задачи могли измениться")),true);
     }
     render();focusBulk(failed.length?kind:'none');
   }
@@ -351,13 +387,36 @@ export function mountCalendarTasks(host, dependencies) {
     finally{
       if(!disposed){
         busy=false;render();
-        if(succeeded){host.querySelector('[data-tasks-stage-announcement]').textContent=`Этап: ${taskStage(rows.find(item=>taskKey(item)===id),processes)?.label||next.title}.`;notifyChange();}
-        else say('Не удалось перейти к следующему этапу. Повтори.',true);
+        if(succeeded){host.querySelector('[data-tasks-stage-announcement]').textContent=uiCopy.format("Этап: {0}.", taskStage(rows.find(item=>taskKey(item)===id),processes)?.label||next.title);notifyChange();}
+        else say(uiCopy("Не удалось перейти к следующему этапу. Повтори."),true);
         restore(id,findButton(id,'stage-next')?'stage-next':'open');
       }
     }
   }
   const disposeMenu=mountMenu?.(host,{getRecord:item=>rows.find(row=>taskKey(row)===item.dataset.contextRecord),restoreFocus:(item,trigger)=>restore(item.dataset.contextRecord,'recordMenu' in trigger.dataset?'menu':'open')});
+  const viewHost = doc.createElement('div');
+  viewHost.dataset.tasksViews = '';
+  host.querySelector('.ct-heading').after(viewHost);
+  taskFilterTabs = mountTaskFilterTabs(viewHost, {
+    invoke, state,
+    onApply: filters => {
+      Object.assign(state, taskFilters(filters), { page:0 });
+      confirming = null;
+      search.value = state.search;
+      for (const key of ['source','project','tag']) {
+        const select = observationSelects[key];
+        if (state[key] && ![...select.options].some(option => option.value === state[key])) {
+          select.add(new win.Option(uiCopy.format("Недоступно: {0}", state[key]), state[key]));
+        }
+        select.value = state[key];
+      }
+      if (state.goal && ![...goalFilter.options].some(option => option.value === state.goal)) {
+        goalFilter.add(new win.Option(uiCopy.format("Недоступная цель: {0}", state.goal), state.goal));
+      }
+      goalFilter.value = state.goal;
+      render();
+    },
+  });
   const choose=(key,value)=>{state[key]=value;state.page=0;confirming=null;render();};
   host.querySelectorAll('[data-tasks-filter]').forEach(el=>el.addEventListener('click',()=>choose('filter',el.dataset.tasksFilter)));
   host.querySelectorAll('[data-tasks-sphere]').forEach(el=>el.addEventListener('click',()=>{state.personal='';choose('sphere',el.dataset.tasksSphere);}));
@@ -371,5 +430,5 @@ export function mountCalendarTasks(host, dependencies) {
   const updateStageTitles=()=>host.querySelectorAll('.ct-stage[data-task-id]').forEach(chip=>{const row=rows.find(item=>taskKey(item)===chip.dataset.taskId),stage=row?.is_active&&taskStage(row,processes);if(stage)chip.title=stageTitleOf(row,stage);});
   const timer=win.setInterval(()=>{if(dayOf(new Date())!==today)void refresh();else updateStageTitles();},30000);
   void refresh();
-  return ()=>{disposed=true;revision++;disposeMenu?.();win.clearInterval(timer);win.removeEventListener('task-state-changed',onChange);win.removeEventListener('hanni:calendar-refresh',onChange);win.removeEventListener('hanni:processes-changed',onChange);win.removeEventListener('focus',onChange);win.removeEventListener('hanni:work-registry-changed',onChange);};
+  return ()=>{disposed=true;revision++;taskFilterTabs?.dispose();disposeMenu?.();win.clearInterval(timer);win.removeEventListener('task-state-changed',onChange);win.removeEventListener('hanni:calendar-refresh',onChange);win.removeEventListener('hanni:processes-changed',onChange);win.removeEventListener('focus',onChange);win.removeEventListener('hanni:work-registry-changed',onChange);};
 }

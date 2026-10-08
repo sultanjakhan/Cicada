@@ -94,6 +94,7 @@ fn graph_dependencies(steps: &[Value]) -> Result<Vec<Vec<usize>>, String> {
     Ok(dependencies)
 }
 
+pub(crate) fn day_timer_title(conn:&Connection,source_id:&str)->Option<String>{schedule_context(conn,source_id).ok().map(|(_,_,_,_,title)|title)}
 fn schedule_context(
     conn: &Connection,
     source_id: &str,
@@ -1184,6 +1185,7 @@ pub fn set_ui_state(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let conn = lock(&state)?;
+    if key == crate::calendar_day_lifecycle::KEY { return Err("calendar_day_managed_key".into()); }
     crate::mvp_sync_db::set_ui(&conn, &key, &value, expected_value.as_deref())
 }
 #[tauri::command]

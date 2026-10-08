@@ -1,3 +1,6 @@
+import { createUiCopy } from './ui-copy.js';
+const uiCopy = value => createUiCopy(globalThis.document)(value);
+uiCopy.format = (...args) => createUiCopy(globalThis.document).format(...args);
 import { createSharedResultReviewAdapter, prepareSharedResultReview } from './shared-result-review-adapter.js';
 import { canRefreshHealthView, mayCommitHealthView, retryHealthViewRefresh, startHealthViewRefresh } from './health-view-refresh.js';
 import { S, invoke, listen, tabLoaders, TAB_ICONS, loadTabSetting, IS_MOBILE } from './state.js';
@@ -12,7 +15,6 @@ import { mountCalendarGoals } from './calendar-goals.js';
 import { mountCalendarNotes } from './calendar-notes.js';
 import { mountCalendarDashboardTasks } from './calendar-dashboard-tasks.js';
 import { mountCalendarTasks } from './calendar-tasks.js';
-import { mountSourceOnboarding } from './data-sources.js';
 import { mountCalendarContextMenu } from './calendar-context-menu.js';
 import { createCalendarDialog } from './calendar-dialog.js';
 import { mountCalendarRecurring } from './calendar-recurring.js';
@@ -34,7 +36,6 @@ import { openCalendarCreateMenu } from './calendar-create-menu.js';
 import { mountCalendarAiReports } from './calendar-ai-reports.js';
 
 let disposeNow = null, disposeTable = null, disposePanel = null, disposeTasks = null;
-let disposeSourceOnboarding = null;
 let disposeRecurring = null, goalPopup = null, tasksDialog = null;
 let disposeDayBanner = null, disposeInProgress = null, disposeAiReports = null, todayTaskSelection = null;
 let disposeFocus = null;
@@ -47,7 +48,7 @@ const tasksPaneState = { filter:'active', search:'', goal:'', sphere:'', page:0 
 // The Goals/Wishes choice survives pane switches within a session; it is not a stored preference.
 const goalsPaneState = { view:'goals' };
 let closeCreateMenu = null;
-function cleanupWorkspace() { disposeFocus?.(); disposeFocus=null; disposeSourceOnboarding?.(); disposeSourceOnboarding=null; workspaceRevision++; disposeNextAction?.(); disposeTaskDetails?.(); disposeRoutineChoices?.(); disposeNextAction = disposeTaskDetails = disposeRoutineChoices = null; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeRecurring?.(); disposeDayBanner?.(); disposeInProgress?.(); disposeAiReports?.(); goalPopup?.dispose(); tasksDialog?.dispose(); disposeInProgress = null; disposeAiReports = null; disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; disposeRecurring = null; disposeDayBanner = null; goalPopup = null; tasksDialog = null; }
+function cleanupWorkspace() { disposeFocus?.(); disposeFocus=null; workspaceRevision++; disposeNextAction?.(); disposeTaskDetails?.(); disposeRoutineChoices?.(); disposeNextAction = disposeTaskDetails = disposeRoutineChoices = null; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeRecurring?.(); disposeDayBanner?.(); disposeInProgress?.(); disposeAiReports?.(); goalPopup?.dispose(); tasksDialog?.dispose(); disposeInProgress = null; disposeAiReports = null; disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; disposeRecurring = null; disposeDayBanner = null; goalPopup = null; tasksDialog = null; }
 const nextActionPreferences = () => ({ enabled:preferences.recommendationsEnabled, includeTasks:preferences.recommendTasks, includeRoutines:preferences.recommendRoutines });
 const view = { period: 'day', mode: 'grid', date: views.iso(new Date()), firstDay:'mon' };
 let initialViewLoaded = false;
@@ -88,14 +89,14 @@ const changed = () => { window.dispatchEvent(new Event('task-state-changed')); w
 
 // Several tasks may run at once: starting one never pauses another (2026-09-24).
 export async function executeCalendarTaskAction(record, action) {
-  if (record.source_type !== 'note' || record.readonly || record.completed || record.archived || ['done', 'skipped', 'missed'].includes(record.status_extra)) throw new Error('Эта задача уже недоступна для выполнения. Обнови календарь.');
+  if (record.source_type !== 'note' || record.readonly || record.completed || record.archived || ['done', 'skipped', 'missed'].includes(record.status_extra)) throw new Error(uiCopy("Эта задача уже недоступна для выполнения. Обнови календарь."));
   const active = (await readActiveBlocks(invoke)).find(block => block.source_type === 'note' && String(block.source_id) === String(record.source_id));
   const sameTask = !!active;
   if (action === 'start') {
     if (sameTask) return;
     await startCalendarExecution(invoke, { ...record, completion_date: record.date || views.iso(new Date()) });
   } else if (action === 'pause') {
-    if (!sameTask) throw new Error('Состояние задачи изменилось. Обнови календарь перед паузой.');
+    if (!sameTask) throw new Error(uiCopy("Состояние задачи изменилось. Обнови календарь перед паузой."));
     await invoke('pause_task_block', { blockId: Number(active.id) });
   } else if (action === 'finish') {
     // Closing an old block must never finish a concurrently restarted session.
@@ -103,10 +104,10 @@ export async function executeCalendarTaskAction(record, action) {
     if (sameTask) await invoke('pause_task_block', { blockId: Number(active.id) });
     try { await invoke('complete_calendar_task', { id: String(record.source_id) }); }
     catch (error) {
-      if (sameTask) throw Object.assign(new Error('Не удалось завершить задачу после паузы. Её текущий статус обновлён. ' + (error?.message || 'Попробуй ещё раз.')), { refreshRequired: true });
+      if (sameTask) throw Object.assign(new Error(uiCopy("Не удалось завершить задачу после паузы. Её текущий статус обновлён. ") + (error?.message || uiCopy("Попробуй ещё раз."))), { refreshRequired: true });
       throw error;
     }
-  } else throw new Error('Неизвестное действие.');
+  } else throw new Error(uiCopy("Неизвестное действие."));
 }
 
 export function calendarRecord(row) {
@@ -120,7 +121,7 @@ function dialog(title, returnFocus = null) {
   const modal = document.createElement('dialog'); modal.className = 'calendar-mvp-dialog';
   const headingId = `calendar-dialog-title-${++dialogSequence}`;
   modal.setAttribute('aria-labelledby', headingId);
-  modal.innerHTML = `<header class="cm-dialog-header"><h2 id="${headingId}">${escapeHtml(title)}</h2><button type="button" class="cm-dialog-close" data-close aria-label="Закрыть">×</button></header><form><div class="cm-dialog-body"><div class="cm-fields"></div><p class="cm-error" role="alert" hidden></p></div><div class="cm-actions"><button type="button" data-close>Закрыть</button><button type="submit" class="cm-primary">Сохранить</button></div></form>`;
+  modal.innerHTML = `<header class="cm-dialog-header"><h2 id="${headingId}">${escapeHtml(title)}</h2><button type="button" class="cm-dialog-close" data-close aria-label="${uiCopy("Закрыть")}">×</button></header><form><div class="cm-dialog-body"><div class="cm-fields"></div><p class="cm-error" role="alert" hidden></p></div><div class="cm-actions"><button type="button" data-close>${uiCopy("Закрыть")}</button><button type="submit" class="cm-primary">${uiCopy("Сохранить")}</button></div></form>`;
   document.body.append(modal);
   const focus = document.activeElement;
   let restoreOnClose = true, pending = false;
@@ -142,7 +143,7 @@ function submit(modal, action, validate = null) {
     if (button.disabled || validate?.() === false) return; modal.setPending(true);
     const error = modal.querySelector('.cm-error'); error.hidden = true;
     try { await action(); modal.close(); changed(); }
-    catch { error.textContent = 'Не удалось сохранить. Проверь данные и повтори — изменения формы сохранены.'; error.hidden = false; error.tabIndex = -1; error.focus(); }
+    catch { error.textContent = uiCopy("Не удалось сохранить. Проверь данные и повтори — изменения формы сохранены."); error.hidden = false; error.tabIndex = -1; error.focus(); }
     finally { modal.setPending(false); }
   });
 }
@@ -157,18 +158,18 @@ function canChangeOccurrence(record) {
 
 function occurrenceDialog(record, returnFocus = null) {
   const restore = record.status_extra === 'skipped';
-  const modal = dialog(restore ? 'Восстановить повторение' : 'Отменить повторение', returnFocus);
+  const modal = dialog(restore ? uiCopy("Восстановить повторение") : uiCopy("Отменить повторение"), returnFocus);
   const fields = modal.querySelector('.cm-fields');
-  fields.innerHTML = `<p>${escapeHtml(record.title)} · ${escapeHtml(views.label(record.date))}</p>${restore ? '' : '<label>Какие повторения<select name="scope"><option value="one">Только в этот день</option><option value="future">С этого дня и дальше</option></select></label>'}<p data-occurrence-effect></p>`;
+  fields.innerHTML = `<p>${escapeHtml(record.title)} · ${escapeHtml(views.label(record.date))}</p>${restore ? '' : `<label>${uiCopy("Какие повторения")}<select name="scope"><option value="one">${uiCopy("Только в этот день")}</option><option value="future">${uiCopy("С этого дня и дальше")}</option></select></label>`}<p data-occurrence-effect></p>`;
   const scope = fields.querySelector('[name=scope]');
   const save = modal.querySelector('[type=submit]');
   const describe = () => {
     const future = scope?.value === 'future';
-    save.textContent = restore ? 'Восстановить в этот день' : future ? 'Отменить с этого дня' : 'Отменить в этот день';
+    save.textContent = restore ? uiCopy("Восстановить в этот день") : future ? uiCopy("Отменить с этого дня") : uiCopy("Отменить в этот день");
     fields.querySelector('[data-occurrence-effect]').textContent = restore
-      ? 'Повторение снова будет запланировано только на этот день.'
-      : future ? 'Повторения с выбранного дня перестанут появляться. Предыдущие дни и история сохранятся.'
-        : 'Остальные дни не изменятся. Это повторение можно будет восстановить из его карточки.';
+      ? uiCopy("Повторение снова будет запланировано только на этот день.")
+      : future ? uiCopy("Повторения с выбранного дня перестанут появляться. Предыдущие дни и история сохранятся.")
+        : uiCopy("Остальные дни не изменятся. Это повторение можно будет восстановить из его карточки.");
   };
   scope?.addEventListener('change', describe); describe();
   modal.querySelector('form').addEventListener('submit', async event => {
@@ -180,7 +181,7 @@ function occurrenceDialog(record, returnFocus = null) {
       await invoke('cancel_calendar_occurrence', args);
       modal.close(); changed();
     } catch (cause) {
-      error.textContent = (typeof cause === 'string' ? cause : cause?.message) || 'Не удалось изменить повторение. Попробуй ещё раз.';
+      error.textContent = (typeof cause === 'string' ? cause : cause?.message) || uiCopy("Не удалось изменить повторение. Попробуй ещё раз.");
       error.hidden = false; error.tabIndex = -1; error.focus();
     } finally { modal.setPending(false); if (scope) scope.disabled = false; }
   });
@@ -199,53 +200,53 @@ async function showRecord(record, returnFocus = null, initialFocus = null) {
     return;
   }
   const modal = dialog(record.title, returnFocus);
-  const summary = [record.kind, isInstantTask(record) && 'Моментальная', sphereLabel(record.sphere), record.status].filter(Boolean).join(' · ');
-  modal.querySelector('.cm-fields').innerHTML = `<p>${escapeHtml(summary)}</p><p>${escapeHtml(record.date ? views.label(record.date) : 'Без даты')} · ${escapeHtml(record.time || 'Без времени')}</p><p role="status">Загружаем цель…</p>`;
+  const summary = [uiCopy(record.kind), isInstantTask(record) && uiCopy("Моментальная"), uiCopy(sphereLabel(record.sphere)), uiCopy(record.status)].filter(Boolean).join(' · ');
+  modal.querySelector('.cm-fields').innerHTML = `<p>${escapeHtml(summary)}</p><p>${escapeHtml(record.date ? views.label(record.date) : uiCopy("Без даты"))} · ${escapeHtml(record.time || uiCopy("Без времени"))}</p><p role="status">${uiCopy("Загружаем цель…")}</p>`;
   modal.showModal(); modal.querySelector('[type=submit]').disabled = true;
-  if (record.readonly) { modal.querySelector('[type=submit]').hidden = true; modal.querySelector('[role=status]').textContent = 'Изменения и удаление — в приложении-источнике. Начало дня отмечается отдельно.';
+  if (record.readonly) { modal.querySelector('[type=submit]').hidden = true; modal.querySelector('[role=status]').textContent = uiCopy('Изменения и удаление — в приложении-источнике. Начало дня отмечается отдельно.');
     if (record.health_kind === 'sleep') {
       const details = document.createElement('p');
       const origin = record.health_origin === 'com.sec.android.app.shealth' ? 'Samsung Health' : record.health_origin || 'Health Connect';
-      details.textContent = `Источник: ${origin}. Период сна: ${record.durationMinutes} мин. Во сне: ${record.sleep_minutes == null ? 'нет данных о стадиях' : `${record.sleep_minutes} мин`}.`;
+      details.textContent = uiCopy.format("Источник: {0}. Период сна: {1} мин. Во сне: {2}.", origin, record.durationMinutes, record.sleep_minutes == null ? uiCopy("нет данных о стадиях") : uiCopy.format("{0} мин", record.sleep_minutes));
       modal.querySelector('.cm-fields').append(details);
     }
     if (record.health_kind === 'walking') {
       const details = document.createElement('p');
       const origin = record.health_origin === 'com.sec.android.app.shealth' ? 'Samsung Health' : record.health_origin || 'Health Connect';
-      details.textContent = `Источник: ${origin}. Период прогулки: ${record.durationMinutes || 0} мин.`;
+      details.textContent = uiCopy.format("Источник: {0}. Период прогулки: {1} мин.", origin, record.durationMinutes || 0);
       modal.querySelector('.cm-fields').append(details);
     }
     if (record.health_kind === 'steps') {
       const details = document.createElement('p');
-      details.textContent = `Источник: Health Connect (все доступные источники). Шагов за день: ${record.steps_count == null ? 'нет данных' : record.steps_count}. Итог не имеет времени начала.`;
+      details.textContent = uiCopy.format("Источник: Health Connect (все доступные источники). Шагов за день: {0}. Итог не имеет времени начала.", record.steps_count == null ? uiCopy("нет данных") : record.steps_count);
       modal.querySelector('.cm-fields').append(details);
     }
     return; }
   if (canChangeOccurrence(record)) {
     const cancel = document.createElement('button'); cancel.type = 'button'; cancel.dataset.occurrenceAction = '';
-    cancel.textContent = record.status_extra === 'skipped' ? 'Восстановить повторение' : 'Отменить повторение';
+    cancel.textContent = record.status_extra === 'skipped' ? uiCopy('Восстановить повторение') : uiCopy('Отменить повторение');
     cancel.addEventListener('click', () => { modal.closeForReplacement(); occurrenceDialog(record, modal.restoreFocus); });
     modal.querySelector('.cm-actions').prepend(cancel);
   }
   const workTime = document.createElement('p');
-  workTime.dataset.recordWorkTime = ''; workTime.textContent = 'Загружаем учтённое время…';
+  workTime.dataset.recordWorkTime = ''; workTime.textContent = uiCopy("Загружаем учтённое время…");
   modal.querySelector('.cm-fields').append(workTime);
   void invoke('get_calendar_task_minutes', { sourceType: record.source_type, sourceId: String(record.source_id), completionDate: record.completion_date || record.date || null })
-    .then(minutes => { if (modal.isConnected) workTime.textContent = `Учтено времени: ${minutes} мин`; })
-    .catch(() => { if (modal.isConnected) workTime.textContent = 'Учтённое время сейчас недоступно.'; });
+    .then(minutes => { if (modal.isConnected) workTime.textContent = uiCopy.format("Учтено времени: {0} мин", minutes); })
+    .catch(() => { if (modal.isConnected) workTime.textContent = uiCopy("Учтённое время сейчас недоступно."); });
   // A task with a process (2026-09-25): its stage and the time spent in each stage.
   if (record.source_type === 'note') void showStageDetails(modal, record);
   try {
     const [goals, links] = await Promise.all([invoke('get_goals', { tabName: null }), invoke('get_calendar_task_goals')]);
     if (!modal.isConnected) return;
     const current = links.find((link) => key(link) === key(record))?.goal_id;
-    const label = document.createElement('label'); label.textContent = 'Цель';
+    const label = document.createElement('label'); label.textContent = uiCopy("Цель");
     const select = document.createElement('select'); select.name = 'goal';
-    select.append(new Option('Без цели', ''));
+    select.append(new Option(uiCopy("Без цели"), ''));
     goals.forEach((goal) => select.append(new Option(goal.title, String(goal.id), false, String(goal.id) === String(current))));
     label.append(select); modal.querySelector('[role=status]').replaceWith(label);
     if (record.source_type !== 'schedule') {
-      const edit = document.createElement('button'); edit.type = 'button'; edit.textContent = 'Изменить';
+      const edit = document.createElement('button'); edit.type = 'button'; edit.textContent = uiCopy("Изменить");
       edit.addEventListener('click', () => {
         if (record.source_type === 'note') { modal.closeForReplacement(); taskEditor(record, modal.restoreFocus); }
         else { modal.closeForReplacement(); showEventModal(String(record.source_id), null, { returnFocus: modal.restoreFocus }); }
@@ -255,7 +256,7 @@ async function showRecord(record, returnFocus = null, initialFocus = null) {
     modal.querySelector('[type=submit]').disabled = false;
     submit(modal, () => invoke('set_calendar_task_goal', { sourceType: record.source_type, sourceId: String(record.source_id), goalId: select.value ? String(select.value) : null }));
     if (initialFocus === 'goal') select.focus();
-  } catch { modal.querySelector('[role=status]').textContent = 'Не удалось загрузить цель. Закрой и открой запись повторно.'; }
+  } catch { modal.querySelector('[role=status]').textContent = uiCopy("Не удалось загрузить цель. Закрой и открой запись повторно."); }
 }
 
 async function showStageDetails(modal, record) {
@@ -266,7 +267,7 @@ async function showStageDetails(modal, record) {
   const stage = taskStage(row, processes);
   if (!stage) return;
   const line = document.createElement('p'); line.dataset.recordStage = '';
-  line.textContent = [stage.processTitle, stage.label || 'Стадия не выбрана', stage.waiting && 'жду ответа'].filter(Boolean).join(' · ');
+  line.textContent = [stage.processTitle, stage.label || uiCopy("Стадия не выбрана"), stage.waiting && uiCopy("жду ответа")].filter(Boolean).join(' · ');
   const time = document.createElement('p'); time.dataset.recordStageTime = '';
   modal.querySelector('[data-record-work-time]').after(line, time);
   const stop = mountStageTime(time, { invoke, row, processes });
@@ -276,18 +277,18 @@ async function showStageDetails(modal, record) {
 function mountRecordMenu(element, options) {
   return mountCalendarContextMenu(element, { ...options, getActions: row => {
     const record = calendarRecord(row);
-    const actions = [{ id: 'open', label: 'Открыть', dialog: true, run: restore => showRecord(record, restore) }];
+    const actions = [{ id: 'open', label: uiCopy("Открыть"), dialog: true, run: restore => showRecord(record, restore) }];
     if (record.readonly) return actions;
     if (record.source_type === 'note' || record.source_type === 'event') {
       const edit = (restore, field, isCurrent) => record.source_type === 'note' ? taskEditor(record, restore, field, isCurrent) : showEventModal(String(record.source_id), null, { returnFocus: restore, initialFocus: field, isCurrent });
-      actions.push({ id: 'edit', label: 'Изменить', dialog: true, run: (restore, isCurrent) => edit(restore, 'title', isCurrent) });
-      actions.push({ id: 'date', label: record.date ? 'Изменить дату' : 'Назначить дату', dialog: true, run: (restore, isCurrent) => edit(restore, 'date', isCurrent) });
+      actions.push({ id: 'edit', label: uiCopy("Изменить"), dialog: true, run: (restore, isCurrent) => edit(restore, 'title', isCurrent) });
+      actions.push({ id: 'date', label: record.date ? uiCopy('Изменить дату') : uiCopy('Назначить дату'), dialog: true, run: (restore, isCurrent) => edit(restore, 'date', isCurrent) });
     }
-    if (['note', 'event', 'schedule'].includes(record.source_type)) actions.push({ id: 'goal', label: 'Связать с целью', dialog: true, run: restore => showRecord(record, restore, 'goal') });
-    if (canChangeOccurrence(record)) actions.push({ id: 'occurrence', label: record.status_extra === 'skipped' ? 'Восстановить повторение' : 'Отменить повторение', dialog: true, run: restore => occurrenceDialog(record, restore) });
+    if (['note', 'event', 'schedule'].includes(record.source_type)) actions.push({ id: 'goal', label: uiCopy("Связать с целью"), dialog: true, run: restore => showRecord(record, restore, 'goal') });
+    if (canChangeOccurrence(record)) actions.push({ id: 'occurrence', label: record.status_extra === 'skipped' ? uiCopy('Восстановить повторение') : uiCopy('Отменить повторение'), dialog: true, run: restore => occurrenceDialog(record, restore) });
     // The command checks live timer state atomically. Never call update_note_status here.
     if (record.source_type === 'note' && row.status_extra === 'task' && !record.completed && !record.is_active && !record.archived)
-      actions.push({ id: 'complete', label: 'Завершить задачу', run: async restore => { await invoke('complete_calendar_task', { id: String(record.source_id) }); restore(); changed(); } });
+      actions.push({ id: 'complete', label: uiCopy("Завершить задачу"), run: async restore => { await invoke('complete_calendar_task', { id: String(record.source_id) }); restore(); changed(); } });
     return actions;
   } });
 }
@@ -297,9 +298,9 @@ export async function mountCalendarTable(el) {
   let revision = 0, disposed = false, menuRecords = [], actionBusy = false;
   el.classList.add('calendar-mvp');
   el.innerHTML = `<div class="cm-calendar-toolbar"><div class="cm-date-roller" data-date-roller><h2 data-range></h2></div>
-    <div class="cm-date"><button data-prev aria-label="Предыдущий период"><span class="cm-icon" aria-hidden="true">${ICONS.chevronLeft}</span></button><button data-next aria-label="Следующий период"><span class="cm-icon" aria-hidden="true">${ICONS.chevronRight}</span></button><button data-today>Сегодня</button></div>
-    <div class="cm-toolbar"><div class="cm-segment" role="group" aria-label="Период календаря">${[['day','День'],['week','Неделя'],['month','Месяц']].map(([id,title]) => `<button data-period="${id}" aria-pressed="${view.period === id}">${title}</button>`).join('')}</div></div>
-    </div><p data-notice role="status"></p><button data-retry hidden>Повторить загрузку</button><div data-calendar-records></div>`;
+    <div class="cm-date"><button data-prev aria-label="${uiCopy("Предыдущий период")}"><span class="cm-icon" aria-hidden="true">${ICONS.chevronLeft}</span></button><button data-next aria-label="${uiCopy("Следующий период")}"><span class="cm-icon" aria-hidden="true">${ICONS.chevronRight}</span></button><button data-today>${uiCopy("Сегодня")}</button></div>
+    <div class="cm-toolbar"><div class="cm-segment" role="group" aria-label="${uiCopy("Период календаря")}">${[['day',uiCopy("День")],['week',uiCopy("Неделя")],['month',uiCopy("Месяц")]].map(([id,title]) => `<button data-period="${id}" aria-pressed="${view.period === id}">${uiCopy(title)}</button>`).join('')}</div></div>
+    </div><p data-notice role="status"></p><button data-retry hidden>${uiCopy("Повторить загрузку")}</button><div data-calendar-records></div>`;
   const host = el.querySelector('[data-calendar-records]');
   host.tabIndex = -1;
   const actionStatus = document.createElement('p');
@@ -323,12 +324,12 @@ export async function mountCalendarTable(el) {
       changed();
       if (!disposed) {
         await refresh();
-        actionStatus.textContent = { start: 'Задача в работе.', pause: 'Задача на паузе.', finish: 'Задача завершена.' }[action];
+        actionStatus.textContent = { start: uiCopy("Задача в работе."), pause: uiCopy("Задача на паузе."), finish: uiCopy("Задача завершена.") }[action];
         restore();
       }
     } catch (error) {
       if (error?.refreshRequired) { changed(); if (!disposed) await refresh(); }
-      if (!disposed) { actionStatus.textContent = error?.message || 'Не удалось выполнить действие. Попробуй ещё раз.'; actionStatus.classList.add('is-error'); actionStatus.focus(); }
+      if (!disposed) { actionStatus.textContent = error?.message || uiCopy("Не удалось выполнить действие. Попробуй ещё раз."); actionStatus.classList.add('is-error'); actionStatus.focus(); }
     } finally {
       actionBusy = false;
       if (!disposed) host.querySelectorAll('[data-record-action]').forEach(button => { button.disabled = false; });
@@ -355,7 +356,7 @@ export async function mountCalendarTable(el) {
     el.querySelector('[data-range]').textContent = period === 'month' ? views.label(day,{month:'long',year:'numeric'}) : period === 'week' ? `${views.label(visibleRange[0])} — ${views.label(visibleRange.at(-1))}` : views.label(day,{weekday:'long',day:'numeric',month:'long'});
     updateDateRoller(period, day);
     el.querySelectorAll('[data-period]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.period === period)));
-    el.querySelector('[data-notice]').textContent = 'Загружаем расписание…';
+    el.querySelector('[data-notice]').textContent = uiCopy("Загружаем расписание…");
     el.querySelector('[data-retry]').hidden = true; host.setAttribute('aria-busy','true');
     }
     try {
@@ -396,12 +397,12 @@ export async function mountCalendarTable(el) {
         const row = candidates.find(value => value.dataset.recordDate === focusDate) || candidates[0];
         (row?.querySelector('recordMenu' in focused.dataset ? '[data-record-menu]' : '.calv-record') || scope?.querySelector('h3') || host).focus({ preventScroll: true });
       }
-      el.querySelector('[data-notice]').textContent = dayStartError ? 'Не удалось загрузить отметку начала дня.' : '';
+      el.querySelector('[data-notice]').textContent = dayStartError ? uiCopy("Не удалось загрузить отметку начала дня.") : '';
       return true;
     } catch {
       if (disposed || rev !== revision) return;
       if (quiet) { retryHealthViewRefresh(); return; }
-      host.replaceChildren(); el.querySelector('[data-notice]').textContent = 'Не удалось загрузить расписание. Это не означает, что календарь пуст.';
+      host.replaceChildren(); el.querySelector('[data-notice]').textContent = uiCopy("Не удалось загрузить расписание. Это не означает, что календарь пуст.");
       el.querySelector('[data-retry]').hidden = false;
     } finally { if (!disposed && rev === revision) host.removeAttribute('aria-busy'); }
   }
@@ -419,10 +420,10 @@ export async function mountCalendarTable(el) {
     roller.dataset.enabled = String(enabled);
     roller.tabIndex = enabled ? 0 : -1;
     if (enabled) {
-      roller.setAttribute('role', 'spinbutton'); roller.setAttribute('aria-label', 'Дата календаря');
+      roller.setAttribute('role', 'spinbutton'); roller.setAttribute('aria-label', uiCopy("Дата календаря"));
       roller.setAttribute('aria-valuenow', String(Date.parse(`${day}T00:00:00Z`) / 86400000));
       roller.setAttribute('aria-valuetext', views.label(day, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }));
-      roller.title = 'Колёсико или клавиши ↑ ↓ — соседний день';
+      roller.title = uiCopy("Колёсико или клавиши ↑ ↓ — соседний день");
     } else {
       ['role', 'aria-label', 'aria-valuenow', 'aria-valuetext', 'title'].forEach(name => roller.removeAttribute(name));
     }
@@ -571,18 +572,18 @@ export async function loadCalendarWorkspace(el, { nativeReview = true } = {}) {
   const showAllTasks = (button = null, initialScope = null) => {
     if(tasksDialog)return;
     const revision = workspaceRevision;
-    const dialog=createCalendarDialog({document,title:'Что начнём?',hint:'Учёт времени задачи или рутины. Исполнитель агента автоматически не запускается.',
+    const dialog=createCalendarDialog({document,title:uiCopy("Что начнём?"),hint:uiCopy("Учёт времени задачи или рутины. Исполнитель агента автоматически не запускается."),
       isCurrent:()=>revision===workspaceRevision&&S.activeTab==='calendar',
       returnFocus:button?()=>{if(button.isConnected)button.focus({preventScroll:true});}:undefined,
       onClose:()=>{disposeTasks?.();disposeRoutineChoices?.();disposeTasks=null;disposeRoutineChoices=null;tasksDialog=null;renderLauncherState=null;},
     });
     tasksDialog=dialog;
     if (button) dialog.modal.dataset.taskLauncher = '';
-    dialog.modal.querySelector('footer [data-dialog-close]').textContent='Закрыть';
+    dialog.modal.querySelector('footer [data-dialog-close]').textContent=uiCopy("Закрыть");
     const list = document.createElement('div'); list.dataset.launchSection = 'tasks';
     const scopes = document.createElement('div'); scopes.dataset.launchScopes = '';
-    scopes.setAttribute('role','group'); scopes.setAttribute('aria-label','Что начать');
-    scopes.innerHTML = '<button type="button" data-launch-scope="all">Всё</button><button type="button" data-launch-scope="tasks">Задачи</button><button type="button" data-launch-scope="routines">Рутины</button>';
+    scopes.setAttribute('role','group'); scopes.setAttribute('aria-label',uiCopy("Что начать"));
+    scopes.innerHTML = `<button type="button" data-launch-scope="all">${uiCopy("Всё")}</button><button type="button" data-launch-scope="tasks">${uiCopy("Задачи")}</button><button type="button" data-launch-scope="routines">${uiCopy("Рутины")}</button>`;
     dialog.body.append(scopes);
     if (button) {
       const controller = disposeNow;
@@ -590,7 +591,7 @@ export async function loadCalendarWorkspace(el, { nativeReview = true } = {}) {
       dialog.body.append(previous);
       renderLauncherState = state => {
         previous.hidden = !state.returnTask;
-        previous.textContent = state.returnTask ? `Вернуться: ${state.returnTask.title}` : '';
+        previous.textContent = state.returnTask ? uiCopy.format("Вернуться: {0}", state.returnTask.title) : '';
         previous.disabled = dialog.pending || state.busy || !!state.error;
         dialog.error.textContent=state.error;dialog.error.hidden=!state.error;
         dialog.retry.hidden=!state.error;dialog.retry.disabled=dialog.pending||state.busy;
@@ -600,7 +601,7 @@ export async function loadCalendarWorkspace(el, { nativeReview = true } = {}) {
         const focused = document.activeElement;
         dialog.setPending(true);
         try { await action(); }
-        catch (error) { dialog.showError(error?.message || 'Не удалось выполнить действие.'); }
+        catch (error) { dialog.showError(error?.message || uiCopy("Не удалось выполнить действие.")); }
         finally {
           dialog.setPending(false);
           if (tasksDialog===dialog) {
@@ -648,9 +649,9 @@ export async function loadCalendarWorkspace(el, { nativeReview = true } = {}) {
       notice.className = 'calendar-now__error'; notice.dataset.goalSelectionError = '';
       notice.setAttribute('role', 'alert'); notice.tabIndex = -1;
       const message = document.createElement('p');
-      message.textContent = error?.message || 'Не удалось сменить главную цель. Повтори выбор в целях.';
+      message.textContent = error?.message || uiCopy("Не удалось сменить главную цель. Повтори выбор в целях.");
       const back = document.createElement('button');
-      back.type = 'button'; back.className = 'calendar-now__secondary'; back.textContent = 'Вернуться к целям';
+      back.type = 'button'; back.className = 'calendar-now__secondary'; back.textContent = uiCopy("Вернуться к целям");
       back.onclick = () => el.querySelector('.uni-tab[data-pane="goals"]')?.click();
       const dismiss = event => {
         const action = event.target.closest('[data-action]');
@@ -663,16 +664,15 @@ export async function loadCalendarWorkspace(el, { nativeReview = true } = {}) {
   };
   goalPopupActions.selectGoal = goalId => { void selectMainGoal(goalId); };
   let nowHost = null;
-  const config = { title:'Календарь', headerIcon:TAB_ICONS.calendar, editableHeader:false, subtitle:'События и расписание', hideDescription:true, hideMemory:true, accessibleTabs:true, beforeRender:cleanupWorkspace, isCurrent:() => S.activeTab === 'calendar',
+  const config = { title:uiCopy("Календарь"), headerIcon:TAB_ICONS.calendar, editableHeader:false, subtitle:uiCopy("События и расписание"), hideDescription:true, hideMemory:true, accessibleTabs:true, beforeRender:cleanupWorkspace, isCurrent:() => S.activeTab === 'calendar',
     toolbarActions: [
-      { label:'Создать', title:'Создать задачу, событие, цель, заметку, желание или рутину', icon:TAB_ICONS.add, onClick:button => openCalendarCreate(button, openNoteCreate) },
-      { label:'Начать', title:'Начать учёт времени задачи или рутины', icon:ICONS.play, onClick:showAllTasks },
-      ...(!IS_MOBILE ? [{label:'Компактно',title:'Задача и время поверх других окон',onClick:()=>{}}] : []),
+      { label:uiCopy("Создать"), title:uiCopy("Создать задачу, событие, цель, заметку, желание или рутину"), icon:TAB_ICONS.add, onClick:button => openCalendarCreate(button, openNoteCreate) },
+      { label:uiCopy("Начать"), title:uiCopy("Начать учёт времени задачи или рутины"), icon:ICONS.play, onClick:showAllTasks },
     ],
     renderHeaderExtra: host => {
       const create = host.querySelector('.uni-header-action');
       create.dataset.calendarCreate = '';
-      create.setAttribute('aria-label', 'Создать');
+      create.setAttribute('aria-label', uiCopy("Создать"));
       create.setAttribute('aria-haspopup', 'menu');
       create.setAttribute('aria-expanded', 'false');
       const launch = host.querySelector('[data-action-idx="1"]');
@@ -684,7 +684,7 @@ export async function loadCalendarWorkspace(el, { nativeReview = true } = {}) {
       if(compactButton)compactButton.hidden=true;
       disposeFocus=mountCalendarFocus(focusHost,{
         invoke,notifyChange:changed,compactButton,
-        onModeChange:(compact,selected)=>{focusHost.hidden=!compact && (!selected || S._unifiedPane.calendar==='dash');},
+        onModeChange:()=>{focusHost.hidden=true;},
         openLauncher:button=>showAllTasks(button),
         openTask:(row,restore)=>{
           if(row.source_type==='schedule'){const [id,date]=JSON.parse(row.source_id);openRecurringRun({document,invoke,id,date,start:false});}
@@ -725,16 +725,16 @@ export async function loadCalendarWorkspace(el, { nativeReview = true } = {}) {
         onCurrentTaskChange: value => disposeRecurring?.setCurrentTask(value),
       });
     },
-    panes: [{id:'dash',label:'Дашборд'}, {id:'table',label:'Календарь'}, {id:'tasks',label:'Задачи'}, {id:'routines',label:'Рутины'}, {id:'notes',label:'Заметки'}, {id:'goals',label:'Цели'}],
+    panes: [{id:'dash',label:uiCopy("Дашборд")}, {id:'table',label:uiCopy("Календарь")}, {id:'tasks',label:uiCopy("Задачи")}, {id:'routines',label:uiCopy("Рутины")}, {id:'notes',label:uiCopy("Заметки")}, {id:'goals',label:uiCopy("Цели")}],
     renderDash: (pane) => {
-      pane.innerHTML = `<section class="calendar-today" aria-label="Сегодня">
+      pane.innerHTML = `<section class="calendar-today" aria-label="${uiCopy("Сегодня")}">
         <div data-calendar-day-banner></div><div data-calendar-next-action></div>
         <div data-calendar-in-progress></div><div data-calendar-ai-reports></div>
       </section><div data-calendar-now-slot></div>`;
       pane.querySelector('[data-calendar-now-slot]').replaceWith(nowHost);
       nowHost.hidden = false;
       disposeDayBanner = mountCalendarDayBanner(pane.querySelector('[data-calendar-day-banner]'), {
-        invoke,
+        invoke, lifecycle:true, onOpenTask:row=>showRecord(calendarRecord(row)),
         onOpenSettings:button => showCalendarSettings(button, {section:'next-action',recommendationsOnly:true,returnFocus:() => button.isConnected ? button.focus({preventScroll:true}) : disposeNextAction?.focus()}),
       });
       disposeNextAction = mountCalendarTodayAction(pane.querySelector('[data-calendar-next-action]'), {
@@ -755,7 +755,7 @@ export async function loadCalendarWorkspace(el, { nativeReview = true } = {}) {
         executeTask:(task,action) => executeCalendarTaskAction(calendarRecord(task),action),
       });
       disposeInProgress = mountCalendarInProgress(pane.querySelector('[data-calendar-in-progress]'), {
-        invoke, notifyChange:changed, title:'Идёт сейчас', activeOnly:true, hideWhenEmpty:true, embedded:true,
+        invoke, notifyChange:changed, title:uiCopy("Идёт сейчас"), activeOnly:true, hideWhenEmpty:true, embedded:true,
         singleSelection:true, selectedTask:todayTaskSelection,
         onSelectedTaskState:state => {
           if (!todayTaskSelection || state.key !== `${todayTaskSelection.source_type}:${String(todayTaskSelection.source_id)}`) return;
@@ -774,7 +774,7 @@ export async function loadCalendarWorkspace(el, { nativeReview = true } = {}) {
     renderTable: pane => mountCalendarTable(pane),
     renderTasks: pane => {
       const revision = workspaceRevision;
-      pane.innerHTML = `<div data-workspace-task-list></div><details class="calendar-task-history"><summary>Запущено и на паузе сегодня</summary><div data-calendar-in-progress></div></details>`;
+      pane.innerHTML = `<div data-workspace-task-list></div><details class="calendar-task-history"><summary>${uiCopy("Запущено и на паузе сегодня")}</summary><div data-calendar-in-progress></div></details>`;
       disposePanel = mountCalendarTasks(pane.querySelector('[data-workspace-task-list]'), {
         invoke, state:tasksPaneState, readTaskReview, mountMenu:mountRecordMenu, notifyChange:changed,
         openTask:(row,restore) => void openNativeTask(row,restore),
@@ -782,7 +782,7 @@ export async function loadCalendarWorkspace(el, { nativeReview = true } = {}) {
         executeAction:(row,action) => executeCalendarTaskAction(calendarRecord(row),action),
       });
       disposeInProgress = mountCalendarInProgress(pane.querySelector('[data-calendar-in-progress]'), {
-        invoke, notifyChange:changed, title:'Запущено и на паузе', openLauncher:showAllTasks,
+        invoke, notifyChange:changed, title:uiCopy("Запущено и на паузе"), openLauncher:showAllTasks,
         openTask:(row,restore) => {
           if (row.source_type === 'schedule') { const [id,date] = JSON.parse(row.source_id); openRecurringRun({document,invoke,id,date,start:false}); }
           else showRecord(calendarRecord(row),restore);
@@ -819,8 +819,6 @@ export async function loadCalendarWorkspace(el, { nativeReview = true } = {}) {
   window.addEventListener('hanni:open-recurring-settings',routinesRouteHandler);
   window.addEventListener('hanni:open-routines-pane',routinesRouteHandler);
   await renderUnifiedLayout(el, 'calendar', config);
-  disposeSourceOnboarding?.();
-  disposeSourceOnboarding=mountSourceOnboarding(el,{invoke,onSettings:()=>showCalendarSettings(null,{section:'connections'})});
   const create = document.querySelector('[data-calendar-create]');
   if (create && el.isConnected && el.querySelector('.uni-pane')) create.disabled = false;
 }

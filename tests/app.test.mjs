@@ -34,6 +34,10 @@ async function launch(t, { mobile = false, initialSettings = [], width, userAgen
   w.__TAURI__ = { core: { invoke: async (command, args = {}) => {
     calls.push({ command, args });
     if (before.has(command)) await before.get(command)(args);
+    if (command === 'read_calendar_day') {
+      const n=new Date(),date=[n.getFullYear(),String(n.getMonth()+1).padStart(2,'0'),String(n.getDate()).padStart(2,'0')].join('-');
+      return {scope:'device_local',date,local_date:date,offset_minutes:-n.getTimezoneOffset(),next_date:date,token:'synthetic-app-day',day:{closed:false,revision:0,summaries:[],plan_ids:[]},next_day:{closed:false,revision:0,summaries:[],plan_ids:[]},history:[],active_blocks:[],candidates:[]};
+    }
     if (command === 'get_calendar_task') return taskState?.tasks.find(task => task.source_id === args.id) || null;
     if (command === 'get_note') return taskState?.tasks.find(task => task.source_id === args.id) || notes.find(note => note.id === args.id) || null;
     if (command === 'get_notes') return notes;
@@ -461,7 +465,8 @@ test('modal settings save without replacing the current calendar pane and return
   await click('#tab-bar-bottom [aria-label="\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438"]');
   assert.equal(w.document.querySelector('.calendar-settings-dialog h2').textContent, 'Настройки Cicada');
   assert.equal(w.document.querySelector('.uni-pane'), pane);
-  assert.equal(w.document.querySelectorAll('.setting-pills').length, 3);
+  assert.deepEqual(Array.from(w.document.querySelectorAll('.setting-pills'), group => group.dataset.key), ['language', 'first_day', 'default_view']);
+  assert.equal(w.document.querySelector('[data-key="language"] button[aria-pressed="true"]').dataset.value, 'ru');
   assert.equal(w.document.querySelector('[data-theme-setting]').closest('[role="tabpanel"]').id, 'calendar-settings-panel-about');
   assert.equal(w.document.querySelector('#mvp-settings'), null);
   await click('#calendar-settings-tab-calendar');
@@ -633,4 +638,44 @@ test('two tasks run at once from Tasks and the launcher; Dashboard preserves bot
   assert.deepEqual(taskState.blocks.filter(block => block.is_active).map(block => block.source_id).sort(), ['first', 'second']);
   assert.equal(count(), 2);
   assert.deepEqual(errors, []);
+});
+
+test('dashboard keeps AI state visible and removes Compact and calendar focus strip', async t => {
+  const {w,click}=await launch(t);
+  assert.equal([...w.document.querySelectorAll('.uni-header-action')].some(b=>b.textContent.includes('Компактно')),false);
+  assert.equal(w.document.querySelector('.calendar-ai-reports').hidden,false);
+  assert.equal(w.document.querySelector('.calendar-focus').hidden,true);
+  await click('[data-pane="table"]');
+  assert.equal(w.document.querySelector('.calendar-focus').hidden,true);
+  assert.ok(w.document.querySelector('[data-calendar-launch]'));
+  await click('[data-pane="routines"]');
+  assert.ok(w.document.querySelector('[data-calendar-routines]'));
+});
+
+
+test('bundled first render restores native EN before mounted headings; pane controls use shared copy', async t => {
+  const snapshot=JSON.stringify({language:'en'});
+  const {w,click,errors}=await launch(t,{initialSettings:[['calendar_preferences_v1',snapshot]]});
+  assert.equal(w.document.documentElement.lang,'en');
+  assert.deepEqual([...w.document.querySelectorAll('.uni-tab')].map(node=>node.textContent.trim()),['Dashboard','Calendar','Tasks','Routines','Notes','Goals']);
+  assert.equal(w.document.querySelector('[data-start-day]').textContent,'Start day');
+  assert.equal(w.document.querySelector('.calendar-today-action__heading h2').textContent,'What to do now');
+  await click('[data-pane="table"]');assert.equal(w.document.querySelector('[data-period="day"]').textContent,'Day');
+  await click('[data-period="month"]');assert.equal(w.document.querySelector('.calv-weekday').textContent,'Mon');
+  await click('[data-pane="tasks"]');assert.equal(w.document.querySelector('[data-tasks-filter="active"]').textContent,'Active');
+  await click('[data-pane="routines"]');assert.equal(w.document.querySelector('[data-recurring-heading]').textContent,'Routines');
+  await click('[data-pane="goals"]');assert.equal(w.document.querySelector('.cp-empty h3').textContent,'Start with what matters to you');
+  assert.deepEqual(errors,[]);
+});
+
+test('bundled language Save remounts the same pane and leaves an authored Cyrillic note title unchanged',async t=>{
+  const {w,click,calls}=await launch(t,{notes:[{id:'fixture-note',tab_name:'calendar',status:'note',title:'Сегодня',content:'Синтетическая заметка',updated_at:'2026-10-07T12:00:00',version:1}]});
+  await click('[data-pane="notes"]');
+  await click('[data-calendar-settings]');await click('#calendar-settings-tab-calendar');
+  await click('[data-key="language"] [data-value="en"]');
+  await click('.calendar-settings-dialog [type="submit"]');
+  assert.equal(w.document.documentElement.lang,'en');assert.equal(w.document.querySelector('.uni-tab.active').dataset.pane,'notes');
+  assert.equal(w.document.querySelector('.cp-note-title').textContent,'Сегодня');
+  const saved=calls.find(call=>call.command==='set_ui_state'&&call.args.key==='calendar_preferences_v1');
+  assert.equal(JSON.parse(saved.args.value).language,'en');
 });

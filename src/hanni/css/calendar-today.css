@@ -68,3 +68,9 @@
 @media(max-width:680px) {
   .calendar-today-action__scopes button { min-height:48px; }
 }
+
+.calendar-day-lifecycle { flex-basis:100%; min-width:0; }
+.calendar-day-lifecycle__actions { display:flex; flex-wrap:wrap; gap:8px 16px; }
+.calendar-day-lifecycle [data-day-status]:empty { display:none; }
+.calendar-day-lifecycle [data-day-plan-today] { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; }
+.calendar-day-lifecycle [data-day-plan-today] h3 { margin:8px 0; font-size:13px; }

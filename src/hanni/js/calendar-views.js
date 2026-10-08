@@ -1,3 +1,7 @@
+import { createUiCopy } from './ui-copy.js';
+const uiCopy = value => createUiCopy(globalThis.document)(value);
+uiCopy.format = (...args) => createUiCopy(globalThis.document).format(...args);
+const uiLocale = () => createUiCopy(globalThis.document).locale;
   'use strict';
 import { renderDayStartMarker } from './calendar-day-start.js';
 import { isInstantTask } from './task-model.js';
@@ -7,11 +11,11 @@ import { isInstantTask } from './task-model.js';
   const monday = (value) => add(value, -((parse(value).getDay() + 6) % 7));
   const weekStart = (value, firstDay = 'mon') => firstDay === 'sun' ? add(value, -parse(value).getDay()) : monday(value);
   const label = (value, options = { day: 'numeric', month: 'long' }) => {
-    const text = parse(value).toLocaleDateString('ru-RU', options);
-    return text.charAt(0).toLocaleUpperCase('ru-RU') + text.slice(1);
+    const text = parse(value).toLocaleDateString(uiLocale(), options);
+    return text.charAt(0).toLocaleUpperCase(uiLocale()) + text.slice(1);
   };
   const minutes = (value) => value.split(':').map(Number).reduce((h, m) => h * 60 + m);
-  const hhmm = (value) => `${String(Math.floor(value / 60) % 24).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}${value >= 1440 ? ` (+${Math.floor(value / 1440)} д.)` : ''}`;
+  const hhmm = (value) => `${String(Math.floor(value / 60) % 24).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}${value >= 1440 ? uiCopy.format(" (+{0} д.)", Math.floor(value / 1440)) : ''}`;
   const viewStates = new WeakMap();
   let viewSequence = 0;
   const hourHeight = 76;
@@ -50,7 +54,7 @@ import { isInstantTask } from './task-model.js';
         return [{ ...record, date, time: hhmm(from - offset), durationMinutes: to - from,
           ...(isSleep ? { sleepWakeDate: wakeDate, sleepContinues: date !== wakeDate,
             sleepCountedMinutes: date === wakeDate ? sleepMinutes : 0,
-            title: date === wakeDate ? record.title : 'Шёл сон' } : {}),
+            title: date === wakeDate ? record.title : uiCopy("Шёл сон") } : {}),
           continuesBefore: start < offset, continuesAfter: end > offset + 1440,
           displayEnd: to - offset === 1440 ? '24:00' : hhmm(to - offset) }];
       });
@@ -65,14 +69,14 @@ import { isInstantTask } from './task-model.js';
     shell.dataset.recordActive = String(record.is_active === true);
     const node = button('calv-record', '', () => options.onChooseRecord?.(record.id));
     node.dataset.recordId = record.id;
-    const time = record.time ? `${record.time}${record.durationMinutes ? `–${record.displayEnd || hhmm(minutes(record.time) + record.durationMinutes)}` : ''}` : 'Без времени';
-    const continuation = [record.continuesBefore && 'Продолжение', record.continuesAfter && 'Продолжится завтра'].filter(Boolean).join(' · ');
-    node.append(el('span', 'calv-record-time', time), el('strong', '', record.title), el('span', 'calv-record-meta', `${record.kind || 'Задача'} · ${record.status || 'Запланировано'}`));
-    node.setAttribute('aria-label', `${record.title}, ${record.date ? label(record.date) : 'Без даты'}, ${time}, ${record.status || 'Запланировано'}. Открыть подробности`);
+    const time = record.time ? `${record.time}${record.durationMinutes ? `–${record.displayEnd || hhmm(minutes(record.time) + record.durationMinutes)}` : ''}` : uiCopy("Без времени");
+    const continuation = [record.continuesBefore && uiCopy("Продолжение"), record.continuesAfter && uiCopy("Продолжится завтра")].filter(Boolean).join(' · ');
+    node.append(el('span', 'calv-record-time', time), el('strong', '', record.title), el('span', 'calv-record-meta', `${uiCopy(record.kind || uiCopy("Задача"))} · ${uiCopy(record.status || uiCopy("Запланировано"))}`));
+    node.setAttribute('aria-label', uiCopy.format("{0}, {1}, {2}, {3}. Открыть подробности", record.title, record.date ? label(record.date) : uiCopy("Без даты"), time, record.status || uiCopy("Запланировано")));
     if (record.sleepWakeDate) {
-      const summary = record.sleepContinues ? `Учтён в дне пробуждения: ${label(record.sleepWakeDate)}`
-        : record.sleepCountedMinutes === null ? 'Время сна по стадиям не передано источником'
-        : `За ночь: ${Math.floor(record.sleepCountedMinutes / 60)} ч ${record.sleepCountedMinutes % 60} мин`;
+      const summary = record.sleepContinues ? uiCopy.format("Учтён в дне пробуждения: {0}", label(record.sleepWakeDate))
+        : record.sleepCountedMinutes === null ? uiCopy("Время сна по стадиям не передано источником")
+        : uiCopy.format("За ночь: {0} ч {1} мин", Math.floor(record.sleepCountedMinutes / 60), record.sleepCountedMinutes % 60);
       node.querySelector('.calv-record-meta').textContent = summary;
       node.setAttribute('aria-label', `${node.getAttribute('aria-label')}. ${summary}`);
     }
@@ -82,26 +86,27 @@ import { isInstantTask } from './task-model.js';
       node.setAttribute('aria-label', `${node.getAttribute('aria-label')}. ${continuation}`);
     }
     const more = button('calv-record-more', '⋯', () => {});
-    more.dataset.recordMenu = ''; more.setAttribute('aria-label', `Действия: ${record.title}`);
+    more.dataset.recordMenu = ''; more.setAttribute('aria-label', uiCopy.format("Действия: {0}", record.title));
     more.setAttribute('aria-haspopup', 'menu'); more.setAttribute('aria-expanded', 'false');
     shell.append(node, more);
     if (options.onTaskAction && record.source_type === 'note' && !record.readonly && !record.archived && !isClosed(record)) {
       shell.classList.add('calv-record-shell--actions');
       const actions = el('div', 'calv-record-actions');
       const addAction = (action, title) => {
+        title = uiCopy(title);
         const control = button('calv-record-action', title, () => options.onTaskAction(record, action, control));
         control.dataset.recordAction = action;
         control.disabled = !!options.actionBusy;
         control.setAttribute('aria-label', `${title}: ${record.title}`);
         actions.append(control);
       };
-      if (!record.date) addAction('date', 'Назначить дату');
+      if (!record.date) addAction('date', uiCopy("Назначить дату"));
       // An instant task is marked done with one tap and never starts a timer.
-      if (isInstantTask(record) && !record.is_active) addAction('finish', 'Готово');
+      if (isInstantTask(record) && !record.is_active) addAction('finish', uiCopy("Готово"));
       else {
-        if (record.is_active) addAction('pause', 'Пауза');
-        else addAction('start', record.has_work || record.actual_minutes > 0 ? 'Продолжить' : 'Начать');
-        if (record.is_active || record.has_work || record.actual_minutes > 0) addAction('finish', 'Завершить');
+        if (record.is_active) addAction('pause', uiCopy("Пауза"));
+        else addAction('start', record.has_work || record.actual_minutes > 0 ? uiCopy("Продолжить") : uiCopy("Начать"));
+        if (record.is_active || record.has_work || record.actual_minutes > 0) addAction('finish', uiCopy("Завершить"));
       }
       shell.append(actions);
     }
@@ -109,8 +114,8 @@ import { isInstantTask } from './task-model.js';
   }
   function agenda(parent, title, records, options, dayStarts = [], showEmpty = true) {
     const group = el('section', 'calv-agenda');
-    group.append(el('h3', '', title));
-    if (showEmpty && !records.length && !dayStarts.length) group.append(el('p', 'calv-empty', 'Запланированных пунктов нет.'));
+    group.append(el('h3', '', uiCopy(title)));
+    if (showEmpty && !records.length && !dayStarts.length) group.append(el('p', 'calv-empty', uiCopy('Запланированных пунктов нет.')));
     const items = [...records.map(record => ({ time: record.time || '99', record })),
       ...dayStarts.map(marker => ({ time: marker.time, marker }))].sort((a, b) => a.time.localeCompare(b.time));
     for (const item of items) group.append(item.marker ? renderDayStartMarker(item.marker) : recordButton(item.record, options));
@@ -118,8 +123,8 @@ import { isInstantTask } from './task-model.js';
   }
   function history(parent, records, options, state) {
     const groups = [
-      { key: 'completed', label: '✓ Завершённые', records: records.filter(isCompleted) },
-      { key: 'missed', label: '↷ Пропущенные', records: records.filter(isMissed) }
+      { key: 'completed', label: uiCopy("✓ Завершённые"), records: records.filter(isCompleted) },
+      { key: 'missed', label: uiCopy("↷ Пропущенные"), records: records.filter(isMissed) }
     ];
     if (!groups.some(group => group.records.length)) return;
     for (const group of groups) {
@@ -131,7 +136,7 @@ import { isInstantTask } from './task-model.js';
       summary.append(el('span', 'calv-history-label', group.label), el('span', 'calv-disclosure-count', String(group.records.length)));
     panel.append(summary);
       for (const date of [...new Set(group.records.map(record => record.date))])
-        agenda(panel, date ? label(date, { weekday: 'long', day: 'numeric', month: 'long' }) : 'Без даты', group.records.filter(record => record.date === date), options);
+        agenda(panel, date ? label(date, { weekday: 'long', day: 'numeric', month: 'long' }) : uiCopy("Без даты"), group.records.filter(record => record.date === date), options);
       panel.addEventListener('toggle', () => { if (panel.isConnected) state.historyOpen[group.key] = panel.open; });
     parent.append(panel);
     }
@@ -139,11 +144,11 @@ import { isInstantTask } from './task-model.js';
   function untimedBand(dates, records, options, state) {
     const untimedPreviewLimit = 0;
     const band = el('div', 'calv-untimed-band');
-    band.append(el('span', 'calv-untimed-corner', 'Без времени'));
+    band.append(el('span', 'calv-untimed-corner', uiCopy('Без времени')));
     for (const date of dates) {
       const items = records.filter(record => record.date === date);
       const column = el('section', 'calv-untimed-day'); column.dataset.untimedDate = date;
-      column.setAttribute('aria-label', `${label(date)}, без времени: ${items.length}`);
+      column.setAttribute('aria-label', uiCopy.format("{0}, без времени: {1}", label(date), items.length));
       const heading = el('h3', 'calv-untimed-count', '—'); heading.hidden = items.length > 0;
       const list = el('div', 'calv-untimed-list'); list.id = `${state.id}-untimed-${date}`;
       list.tabIndex = -1;
@@ -153,7 +158,7 @@ import { isInstantTask } from './task-model.js';
       function renderItems() {
         const expanded = state.untimedExpanded[date] === true;
         list.replaceChildren(...(expanded ? items : items.slice(0, untimedPreviewLimit)).map(record => recordButton(record, options, 'calv-untimed-record')));
-        more.textContent = expanded ? 'Свернуть' : `Показать · ${items.length}`;
+        more.textContent = expanded ? uiCopy("Свернуть") : uiCopy.format("Показать · {0}", items.length);
         more.setAttribute('aria-expanded', String(expanded)); more.hidden = items.length <= untimedPreviewLimit;
       }
       renderItems(); column.append(heading, list, more); band.append(column);
@@ -218,8 +223,8 @@ import { isInstantTask } from './task-model.js';
     if (options.period === 'month') {
       const grid = el('div', 'calv-month');
       grid.setAttribute('role', 'group'); grid.setAttribute('aria-label', label(options.date, { month: 'long', year: 'numeric' }));
-      const weekdays = options.firstDay === 'sun' ? ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'] : ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
-      for (const day of weekdays) grid.append(el('div', 'calv-weekday', day));
+      const weekdays = options.firstDay === 'sun' ? [uiCopy("Вс"), uiCopy("Пн"), uiCopy("Вт"), uiCopy("Ср"), uiCopy("Чт"), uiCopy("Пт"), uiCopy("Сб")] : [uiCopy("Пн"), uiCopy("Вт"), uiCopy("Ср"), uiCopy("Чт"), uiCopy("Пт"), uiCopy("Сб"), uiCopy("Вс")];
+      for (const day of weekdays) grid.append(el('div', 'calv-weekday', uiCopy(day)));
       const first = weekStart(`${options.date.slice(0, 7)}-01`, options.firstDay);
       const offset = (parse(`${options.date.slice(0, 7)}-01`).getDay() + (options.firstDay === 'sun' ? 0 : 6)) % 7;
       const cellCount = Math.ceil((offset + dates.length) / 7) * 7;
@@ -236,17 +241,17 @@ import { isInstantTask } from './task-model.js';
         cell.dataset.weekend = String([0, 6].includes(parse(date).getDay()));
         cell.setAttribute('aria-pressed', String(date === options.date));
         if (date === today) cell.setAttribute('aria-current', 'date');
-        const dayLabel = `${label(date, { day: 'numeric', month: 'long', year: 'numeric' })}, пунктов: ${dayRecords.length}`;
+        const dayLabel = uiCopy.format("{0}, пунктов: {1}", label(date, { day: 'numeric', month: 'long', year: 'numeric' }), dayRecords.length);
         cell.setAttribute('aria-label', dayLabel);
         cell.append(el('span', 'calv-date-number', String(parse(date).getDate())));
         for (const marker of startsOn(date)) cell.append(renderDayStartMarker(marker, { compact: true }));
-        if (startsOn(date).length) cell.setAttribute('aria-label', `${cell.getAttribute('aria-label')}. Начало дня: ${startsOn(date).map(marker => marker.time).join(', ')}`);
+        if (startsOn(date).length) cell.setAttribute('aria-label', uiCopy.format("{0}. Начало дня: {1}", cell.getAttribute('aria-label'), startsOn(date).map(marker => marker.time).join(', ')));
         const preview = dayRecords.slice(0, 2);
         for (const record of preview) {
-          const type = { note: 'Задача', event: 'Событие', schedule: 'Рутина' }[record.source_type] || record.kind || 'Запись';
+          const type = { note: uiCopy("Задача"), event: uiCopy("Событие"), schedule: uiCopy("Рутина") }[record.source_type] || record.kind || uiCopy("Запись");
           const line = el('span', 'calv-month-preview', `${record.time ? `${record.time} · ` : ''}${record.title}`);
           line.dataset.sourceType = record.source_type || 'other';
-          line.title = `${type}: ${record.title}${record.time ? `, ${record.time}` : ', без времени'}`;
+          line.title = `${type}: ${record.title}${record.time ? `, ${record.time}` : uiCopy(", без времени")}`;
           cell.append(line);
         }
         const overflow = dayRecords.length - preview.length;
@@ -262,16 +267,16 @@ import { isInstantTask } from './task-model.js';
         }
         if (preview.length) {
           const previewLabel = preview.map(record => {
-            const type = { note: 'Задача', event: 'Событие', schedule: 'Рутина' }[record.source_type] || record.kind || 'Запись';
-            return `${type}: ${record.title}${record.time ? `, ${record.time}` : ', без времени'}`;
+            const type = { note: uiCopy("Задача"), event: uiCopy("Событие"), schedule: uiCopy("Рутина") }[record.source_type] || record.kind || uiCopy("Запись");
+            return `${type}: ${record.title}${record.time ? `, ${record.time}` : uiCopy(", без времени")}`;
           }).join('; ');
-          cell.setAttribute('aria-label', `${cell.getAttribute('aria-label')}. ${previewLabel}${overflow ? `; ещё ${overflow}` : ''}`);
+          cell.setAttribute('aria-label', `${cell.getAttribute('aria-label')}. ${previewLabel}${overflow ? uiCopy.format("; ещё {0}", overflow) : ''}`);
         }
         grid.append(cell);
       }
       container.append(grid);
       const selected = records.filter(record => record.date === options.date);
-      agenda(container, `Выбранный день · ${label(options.date)}`, selected.filter(record => record.time), options, startsOn(options.date), !selected.length);
+      agenda(container, uiCopy.format("Выбранный день · {0}", label(options.date)), selected.filter(record => record.time), options, startsOn(options.date), !selected.length);
       if (selected.some(record => !record.time)) container.append(untimedBand([options.date], selected.filter(record => !record.time), options, state));
     } else {
       const timed = records.filter((record) => record.time);
@@ -284,18 +289,18 @@ import { isInstantTask } from './task-model.js';
       scroll.tabIndex = 0;
       scroll.dataset.calendarControl = 'time-grid';
       scroll.setAttribute('role', 'region');
-      scroll.setAttribute('aria-label', options.period === 'week' ? 'Недельная сетка. Можно прокручивать по горизонтали и вертикали.' : 'Сетка дня. Можно прокручивать по вертикали.');
+      scroll.setAttribute('aria-label', options.period === 'week' ? uiCopy("Недельная сетка. Можно прокручивать по горизонтали и вертикали.") : uiCopy("Сетка дня. Можно прокручивать по вертикали."));
       const board = el('div', `calv-time-board calv-time-board--${options.period}`);
       board.style.setProperty('--calv-days', String(dates.length));
-      const headings = el('div', 'calv-time-head'); headings.append(el('span', 'calv-time-corner', 'Время'));
+      const headings = el('div', 'calv-time-head'); headings.append(el('span', 'calv-time-corner', uiCopy('Время')));
       for (const date of dates) {
         const day = button('calv-day-heading', '', () => options.onChooseDate?.(date));
         day.append(el('span', 'calv-day-weekday', label(date, { weekday: 'short' })), el('span', 'calv-day-number', String(parse(date).getDate())));
         const steps = records.find(record => record.date === date && record.health_kind === 'steps');
-        if (steps && steps.steps_count !== undefined && steps.steps_count !== null) day.append(el('span', 'calv-day-health', `Шаги: ${steps.steps_count}`));
+        if (steps && steps.steps_count !== undefined && steps.steps_count !== null) day.append(el('span', 'calv-day-health', uiCopy.format("Шаги: {0}", steps.steps_count)));
         day.dataset.calendarDate = date;
         day.dataset.weekend = String([0, 6].includes(parse(date).getDay()));
-        day.setAttribute('aria-label', `${label(date, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}${steps?.steps_count != null ? `. Шагов: ${steps.steps_count}` : ''}`);
+        day.setAttribute('aria-label', `${label(date, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}${steps?.steps_count != null ? uiCopy.format(". Шагов: {0}", steps.steps_count) : ''}`);
         day.setAttribute('aria-pressed', String(date === options.date));
         if (date === today) day.setAttribute('aria-current', 'date');
         headings.append(day);
@@ -336,8 +341,8 @@ import { isInstantTask } from './task-model.js';
             const slot = button('calv-time-slot', '', () => options.onCreateEvent(date, time));
             slot.dataset.createDate = date; slot.dataset.createTime = time;
             slot.dataset.calendarControl = `slot-${date}-${time}`;
-            slot.setAttribute('aria-label', `Новое событие: ${label(date, { day: 'numeric', month: 'long', year: 'numeric' })}, ${time}`);
-            slot.title = `${time} · Новое событие`;
+            slot.setAttribute('aria-label', uiCopy.format("Новое событие: {0}, {1}", label(date, { day: 'numeric', month: 'long', year: 'numeric' }), time));
+            slot.title = uiCopy.format("{0} · Новое событие", time);
             if (isFoldedMinute(hour * 60)) continue;
             slot.style.top = `${foldPlan.map(hour * 60)}px`; slot.style.height = `${foldPlan.map((hour + 1) * 60) - foldPlan.map(hour * 60)}px`;
             slot.tabIndex = hour === selectedHour ? 0 : -1;
@@ -400,15 +405,15 @@ import { isInstantTask } from './task-model.js';
           node.dataset.timeFold = key; node.dataset.calendarControl = `time-fold-${key}`;
           node.style.top = `${foldPlan.map(fold.start)}px`; node.style.height = `${foldedHeight}px`;
           const endLabel = fold.end === 1440 ? '24:00' : hhmm(fold.end);
-          node.setAttribute('aria-label', `Сжатый интервал ${hhmm(fold.start)}–${endLabel}: ${fold.record.title}. Развернуть.`);
+          node.setAttribute('aria-label', uiCopy.format("Сжатый интервал {0}–{1}: {2}. Развернуть.", hhmm(fold.start), endLabel, fold.record.title));
           const hours = Math.round((fold.record.sleepCountedMinutes ?? (fold.end - fold.start)) / 60 * 10) / 10;
-          const durationLabel = fold.record.sleepCountedMinutes === null ? 'стадии сна не переданы' : `${String(hours).replace('.0', '')} ч`;
+          const durationLabel = fold.record.sleepCountedMinutes === null ? uiCopy("стадии сна не переданы") : uiCopy.format("{0} ч", String(hours).replace('.0', ''));
           const sleepSummary = fold.record.sleepWakeDate && !fold.record.sleepContinues
             ? (fold.record.sleepCountedMinutes === null
-              ? 'Время сна по стадиям не передано источником'
-              : `За ночь: ${Math.floor(fold.record.sleepCountedMinutes / 60)} ч ${fold.record.sleepCountedMinutes % 60} мин`)
+              ? uiCopy("Время сна по стадиям не передано источником")
+              : uiCopy.format("За ночь: {0} ч {1} мин", Math.floor(fold.record.sleepCountedMinutes / 60), fold.record.sleepCountedMinutes % 60))
             : null;
-          node.textContent = fold.record.sleepContinues ? `Шёл сон · Учтён ${label(fold.record.sleepWakeDate)} · Развернуть` : `${hhmm(fold.start)}–${endLabel} · ${fold.record.title} · ${sleepSummary || durationLabel} · Развернуть`;
+          node.textContent = fold.record.sleepContinues ? uiCopy.format("Шёл сон · Учтён {0} · Развернуть", label(fold.record.sleepWakeDate)) : uiCopy.format("{0}–{1} · {2} · {3} · Развернуть", hhmm(fold.start), endLabel, fold.record.title, sleepSummary || durationLabel);
           column.append(node);
         }
         for (const marker of startsOn(date)) {
@@ -420,8 +425,8 @@ import { isInstantTask } from './task-model.js';
         body.append(column);
       }
       board.append(body); scroll.append(board); container.append(frame || scroll);
-      if (options.onCreateEvent) container.append(el('p', 'calv-scroll-hint', 'Нажми свободную ячейку, чтобы создать событие. С клавиатуры: ↑ ↓ выбирают час, Enter открывает форму.'));
-      if (options.period === 'week' && !options.pageScroll) container.append(el('p', 'calv-scroll-hint', 'На телефоне листай сетку вбок. Полные названия доступны в списке и по нажатию на пункт.'));
+      if (options.onCreateEvent) container.append(el('p', 'calv-scroll-hint', uiCopy("Нажми свободную ячейку, чтобы создать событие. С клавиатуры: ↑ ↓ выбирают час, Enter открывает форму.")));
+      if (options.period === 'week' && !options.pageScroll) container.append(el('p', 'calv-scroll-hint', uiCopy("На телефоне листай сетку вбок. Полные названия доступны в списке и по нажатию на пункт.")));
       // A grid minute inside the pane, placed just below the stuck day header.
       const pageTop = minute => Math.max(0, Math.round(body.getBoundingClientRect().top - outer.getBoundingClientRect().top + outer.scrollTop
         + foldPlan.map(minute) - head.getBoundingClientRect().height));
@@ -435,17 +440,17 @@ import { isInstantTask } from './task-model.js';
       (frame || scroll).before(gridTools);
       const expandedFoldKeys = Object.keys(state.timeFoldsExpanded).filter(key => key.startsWith(`${options.date}:`) && state.timeFoldsExpanded[key]);
       if (expandedFoldKeys.length) {
-        const collapse = button('calv-collapse-folds', 'Сжать длинные события', () => {
+        const collapse = button('calv-collapse-folds', uiCopy("Сжать длинные события"), () => {
           expandedFoldKeys.forEach(key => { delete state.timeFoldsExpanded[key]; });
           render(root, options);
           root.querySelector('[data-time-fold]')?.focus();
         });
         collapse.dataset.collapseTimeFolds = ''; collapse.dataset.calendarControl = 'collapse-time-folds';
-        collapse.setAttribute('aria-label', 'Сжать раскрытые длинные события этого дня');
+        collapse.setAttribute('aria-label', uiCopy("Сжать раскрытые длинные события этого дня"));
         gridTools.append(collapse);
       }
       if (set.has(today)) {
-        const jump = button('calv-jump-now', 'К текущему времени', () => {
+        const jump = button('calv-jump-now', uiCopy("К текущему времени"), () => {
           const current = options.now || new Date();
           const minute = Math.max(0, current.getHours() * 60 + current.getMinutes() - 60);
           if (options.pageScroll) { if (outer) outer.scrollTop = pageTop(minute); }

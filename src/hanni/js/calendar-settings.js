@@ -1,3 +1,4 @@
+import { applySavedLanguage } from './language-preference.js';
 import { createUiCopy } from './ui-copy.js';
 import { IS_MOBILE, S, invoke, setTheme } from './state.js';
 import { createCalendarDialog } from './calendar-dialog.js';
@@ -16,9 +17,9 @@ import { mountDataLocation } from './data-location.js';
 let settingsDialog = null;
 
 const OPTIONS = {
+  language: [['ru', 'Русский'], ['en', 'English']],
   first_day: [['mon', 'Понедельник'], ['sun', 'Воскресенье']],
   default_view: [['Месяц', 'Месяц'], ['Неделя', 'Неделя'], ['День', 'День']],
-  density: [['comfortable', 'Обычная'], ['compact', 'Компактная']],
 };
 
 const SECTIONS = [
@@ -42,10 +43,15 @@ function sectionFor(section) {
 export function showCalendarSettings(trigger, { section, returnFocus, recommendationsOnly = false } = {}) {
   if (settingsDialog || document.querySelector('dialog[open]')) return;
   const copy = createUiCopy(document);
+  const preferenceErrorCopy = value => {
+    const match = /^Настройка «([^»]+)» изменилась(?: на другом устройстве)?\. Закрой и открой настройки, чтобы загрузить актуальные значения\.$/.exec(value);
+    return match ? copy.format('Настройка «{0}» изменилась. Закрой и открой настройки, чтобы загрузить актуальные значения.', copy(match[1])) : copy(value);
+  };
 
   let original = null, draft = null, closed = false, disposeSync = null;
   let disposeUpdates = null, disposeSleep = null, disposeActivity = null, disposeRegistry = null, disposeSources = null, disposePersonalImport = null, disposeDataLocation = null;
   let processSettings = null, processObserver = null, preferencesLoading = true, preferencesLoadBusy = false;
+  let savedLanguageChanged = false;
   const requestedSection = recommendationsOnly ? 'today' : sectionFor(section);
   const title = recommendationsOnly ? copy("Выбор следующего действия") : copy("Настройки Cicada");
   const window = document.defaultView;
@@ -62,10 +68,12 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
     },
     onClose: () => {
       closed = true;
+      document.removeEventListener('keydown', onSettingsEscape);
       processObserver?.disconnect();
       processSettings?.dispose();
       disposeSync?.(); disposeUpdates?.(); disposeSleep?.(); disposeActivity?.(); disposeRegistry?.(); disposeSources?.(); disposePersonalImport?.(); disposeDataLocation?.();
       settingsDialog = null;
+      if (savedLanguageChanged) window.dispatchEvent(new window.Event('hanni:language-changed'));
     },
   });
 
@@ -250,14 +258,26 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
     continueEditing.focus({ preventScroll: true });
   }
   const scheduleFooterRefresh = () => window.queueMicrotask(() => { if (!closed) refreshFooter(); });
-  // Intercept both Escape and shell close buttons so dirty drafts are never silently lost.
+  // Prevent Escape's native close request before the browser can send a
+  // noncancelable second cancel event. Listen on document because pending
+  // controls may leave focus on body; nested dialogs keep their own Escape.
+  function onSettingsEscape(event) {
+    if (closed || !api.modal.open || event.key !== 'Escape' || event.defaultPrevented) return;
+    if ([...document.querySelectorAll('dialog[open]')].some(dialog => dialog !== api.modal)) return;
+    event.preventDefault(); event.stopPropagation();
+    if (event.repeat || event.isComposing || api.pending) return;
+    if (!dismissCloseConfirmation()) requestClose();
+  }
+  document.addEventListener('keydown', onSettingsEscape);
+  // Keep cancel as a fallback for close requests that are not keyboard events.
   api.modal.addEventListener('cancel', event => {
+    if (event.target !== api.modal) return;
     event.preventDefault(); event.stopImmediatePropagation();
     if (!dismissCloseConfirmation()) requestClose();
   }, true);
   api.modal.addEventListener('click', event => {
     const close = event.target.closest('[data-dialog-close]');
-    if (!close) return;
+    if (!close || close.closest('dialog') !== api.modal) return;
     event.preventDefault(); event.stopImmediatePropagation();
     if (!dismissCloseConfirmation()) requestClose();
   }, true);
@@ -295,7 +315,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
   const calendar = hosts.calendar;
   calendar.innerHTML = `<h3>${copy("Вид календаря")}</h3>
     <p class="calendar-setting-hint">${copy("Эти изменения сохраняются кнопкой «Сохранить календарь».")}</p>
-    ${[['first_day',copy("Первый день недели")],['default_view',copy("Вид при запуске")],['density',copy("Плотность интерфейса")]].map(([key,label]) => `<fieldset class="calendar-setting"><legend>${label}</legend><div class="setting-pills" data-key="${key}">${OPTIONS[key].map(([value,text]) => `<button type="button" class="setting-pill" data-value="${value}" aria-pressed="false">${escapeHtml(copy(text))}</button>`).join('')}</div></fieldset>`).join('')}`;
+    ${[['language',copy("Язык интерфейса")],['first_day',copy("Первый день недели")],['default_view',copy("Вид при запуске")]].map(([key,label]) => `<fieldset class="calendar-setting"><legend>${label}</legend><div class="setting-pills" data-key="${key}">${OPTIONS[key].map(([value,text]) => `<button type="button" class="setting-pill" data-value="${value}" aria-pressed="false">${escapeHtml(copy(text))}</button>`).join('')}</div></fieldset>`).join('')}`;
 
   hosts.processes.classList.add('calendar-settings-processes-host');
   hosts.connections.classList.add('calendar-settings-connections');
@@ -387,6 +407,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
       const saved = await (recommendationsOnly ? saveRecommendationPreferences(changedRecommendations) : saveCalendarPreferences(draft, undefined, { base: original }));
       if (closed) return;
       original = saved; draft = { ...saved };
+      savedLanguageChanged = applySavedLanguage(document, saved) || savedLanguageChanged;
       window.dispatchEvent(new window.CustomEvent('hanni:calendar-settings-changed', { detail: { changes: saved } }));
       api.setPending(false);
       if (processSettings?.isDirty()) {
@@ -404,7 +425,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
       }
     } catch (error) {
       if (closed) return;
-      prefsError.textContent = `${error?.message || copy("Ошибка сохранения.")}${copy(" Сохранение ")}${recommendationsOnly ? copy("настроек выбора") : copy("календаря")}${copy(" не подтверждено; черновик остался в форме.")}`;
+      prefsError.textContent = `${preferenceErrorCopy(error?.message || "Ошибка сохранения.")}${copy(" Сохранение ")}${recommendationsOnly ? copy("настроек выбора") : copy("календаря")}${copy(" не подтверждено; черновик остался в форме.")}`;
       prefsError.hidden = false; setActive(lastEditedSection, true); prefsError.tabIndex = -1; prefsError.focus();
     } finally {
       if (!closed) { api.setPending(false); refreshFooter(); }
@@ -455,7 +476,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
       preferencesLoadBusy = false;
       preferencesLoading = true;
       prefsLoading.hidden = true;
-      prefsError.textContent = error?.message || copy("Не удалось загрузить настройки календаря.");
+      prefsError.textContent = copy(error?.message || "Не удалось загрузить настройки календаря.");
       prefsError.hidden = false; prefsRetry.hidden = false;
       saveButton.hidden = true; saveButton.disabled = true;
       setActive(['today', 'calendar'].includes(requestedSection) ? requestedSection : 'calendar');

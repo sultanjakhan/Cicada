@@ -1,3 +1,6 @@
+import { createUiCopy, copyForLanguage } from './ui-copy.js';
+const uiCopy = value => createUiCopy(globalThis.document)(value);
+uiCopy.format = (...args) => createUiCopy(globalThis.document).format(...args);
 import { isInstantTask, taskTime } from './task-model.js';
 import { createRecurringStore, recurringItems, unfinishedRun, dateKey, recurringSourceId } from './calendar-recurring-store.js';
 import { readActiveBlocks } from './calendar-execution.js';
@@ -50,41 +53,42 @@ function taskContext(task, links = [], goals = [], processes = []) {
   };
 }
 
-function explainTask(task, now, today) {
+function explainTask(task, now, today, uiCopy) {
   const date = typeof task.date === 'string' ? task.date : '';
   const time = taskTime(task);
   if (date === today && time && validClock(time)) {
     const planned = new Date(`${today}T${time}:00`).getTime();
     const delta = planned - now.getTime();
-    if (delta <= 0) return { score: 850, reason: `Запланировано на сегодня, ${time}.` };
-    if (delta <= 2 * 60 * 60 * 1000) return { score: 820, reason: `Запланировано на сегодня, ${time}.` };
+    if (delta <= 0) return { score: 850, reason: uiCopy.format("Запланировано на сегодня, {0}.", time) };
+    if (delta <= 2 * 60 * 60 * 1000) return { score: 820, reason: uiCopy.format("Запланировано на сегодня, {0}.", time) };
   }
-  if (Number(task.priority) >= 5) return { score: 680, reason: date && date < today ? 'Важная задача, запланированная на более ранний день.' : 'Ты отметил задачу как важную.' };
-  if (date && date < today) return { score: 360, reason: 'Задача запланирована на более ранний день.' };
-  if (date === today) return { score: 650, reason: 'Задача запланирована на сегодня.' };
-  if (date && date > today) return { score: 220, reason: `Задача запланирована на ${date}.` };
-  return { score: 300, reason: 'Задача без заданного срока.' };
+  if (Number(task.priority) >= 5) return { score: 680, reason: date && date < today ? uiCopy("Важная задача, запланированная на более ранний день.") : uiCopy("Ты отметил задачу как важную.") };
+  if (date && date < today) return { score: 360, reason: uiCopy("Задача запланирована на более ранний день.") };
+  if (date === today) return { score: 650, reason: uiCopy("Задача запланирована на сегодня.") };
+  if (date && date > today) return { score: 220, reason: uiCopy.format("Задача запланирована на {0}.", date) };
+  return { score: 300, reason: uiCopy("Задача без заданного срока.") };
 }
 
-function explainRoutine(item, now, today) {
+function explainRoutine(item, now, today, uiCopy) {
   const clock = String(item.time || '');
   if (validClock(clock)) {
     const planned = new Date(`${today}T${clock}:00`).getTime();
     const delta = planned - now.getTime();
-    if (delta <= 0) return { score: 880, reason: `Время рутины — ${clock}.` };
-    if (delta <= 2 * 60 * 60 * 1000) return { score: 810, reason: `Время рутины — ${clock}.` };
-    return { score: 180, reason: `По расписанию — ${clock}.` };
+    if (delta <= 0) return { score: 880, reason: uiCopy.format("Время рутины — {0}.", clock) };
+    if (delta <= 2 * 60 * 60 * 1000) return { score: 810, reason: uiCopy.format("Время рутины — {0}.", clock) };
+    return { score: 180, reason: uiCopy.format("По расписанию — {0}.", clock) };
   }
   const period = routinePeriod(item), hour = now.getHours();
-  if (period === 'morning' && hour >= 5 && hour < 12) return { score: 560, reason: 'Утро — рутина ещё не отмечена.' };
-  if (period === 'lunch' && hour >= 11 && hour < 16) return { score: 560, reason: 'Время обеда — рутина ещё не отмечена.' };
-  if (period === 'evening' && hour >= 17 && hour < 24) return { score: 560, reason: 'Вечер — рутина ещё не отмечена.' };
-  if (period === 'meal' && (hour >= 7 && hour < 11 || hour >= 12 && hour < 16 || hour >= 18 && hour < 22)) return { score: 560, reason: 'Можно сделать перерыв на еду — рутина ещё не отмечена.' };
-  return { score: 250, reason: item.required === false ? 'Необязательное дело на сегодня.' : 'Повторяющееся дело на сегодня.' };
+  if (period === 'morning' && hour >= 5 && hour < 12) return { score: 560, reason: uiCopy("Утро — рутина ещё не отмечена.") };
+  if (period === 'lunch' && hour >= 11 && hour < 16) return { score: 560, reason: uiCopy("Время обеда — рутина ещё не отмечена.") };
+  if (period === 'evening' && hour >= 17 && hour < 24) return { score: 560, reason: uiCopy("Вечер — рутина ещё не отмечена.") };
+  if (period === 'meal' && (hour >= 7 && hour < 11 || hour >= 12 && hour < 16 || hour >= 18 && hour < 22)) return { score: 560, reason: uiCopy("Можно сделать перерыв на еду — рутина ещё не отмечена.") };
+  return { score: 250, reason: item.required === false ? uiCopy("Необязательное дело на сегодня.") : uiCopy("Повторяющееся дело на сегодня.") };
 }
 
 /** Pure ranking function for a snapshot. It never starts work or changes routine status. */
-export function rankNextAction({ now = new Date(), tasks = [], routines = [], activeBlocks = [], deferredKeys = new Set(), links = [], goals = [], processes = [] } = {}) {
+export function rankNextAction({ now = new Date(), tasks = [], routines = [], activeBlocks = [], deferredKeys = new Set(), links = [], goals = [], processes = [], language = 'ru' } = {}) {
+  const uiCopy = copyForLanguage(language);
   const instant = now instanceof Date ? now : new Date(now);
   if (!Number.isFinite(instant.getTime())) throw new TypeError('now must be a valid date');
   const today = dateKey(instant), candidates = [], activeTasks = [], activeRoutines = [];
@@ -94,21 +98,21 @@ export function rankNextAction({ now = new Date(), tasks = [], routines = [], ac
     if (!task || task.source_type !== 'note' || task.completed || task.archived || task.readonly || task.status_extra && task.status_extra !== 'task') continue;
     const key = keyOfTask(task), active = Boolean(task.is_active || activeTaskKeys.has(key));
     const context = taskContext(task, links, goals, processes);
-    if (active) { activeTasks.push({ key, type: 'task', title: safeText(task.title) || 'Задача', reason: 'Задача уже выполняется.', action: 'open', task, context }); continue; }
+    if (active) { activeTasks.push({ key, type: 'task', title: safeText(task.title) || uiCopy("Задача"), reason: uiCopy("Задача уже выполняется."), action: 'open', task, context }); continue; }
     const progress = Boolean(task.has_work || Number(task.actual_seconds) > 0 || Number(task.actual_minutes) > 0);
-    const urgency = explainTask(task, instant, today);
-    candidates.push({ key, type: 'task', title: safeText(task.title) || 'Задача', reason: progress ? `На паузе. ${urgency.reason}` : urgency.reason, action: context.waiting ? 'review' : isInstantTask(task) ? 'finish' : 'start', task, context, score: urgency.score + (progress ? 80 : 0) });
+    const urgency = explainTask(task, instant, today, uiCopy);
+    candidates.push({ key, type: 'task', title: safeText(task.title) || uiCopy("Задача"), reason: progress ? uiCopy.format("На паузе. {0}", urgency.reason) : urgency.reason, action: context.waiting ? 'review' : isInstantTask(task) ? 'finish' : 'start', task, context, score: urgency.score + (progress ? 80 : 0) });
   }
   for (const item of routines) {
     if (!item || item.kind !== 'action' || item.status !== 'pending') continue;
     const run = item.run;
     const active = activeRoutineKeys.has(String(item.id));
     const date = item.runDate || today;
-    if (active) { activeRoutines.push({ key: keyOfRoutine(item.id, date), type: 'routine', title: safeText(item.title) || 'Повторяющееся дело', reason: 'Выполнение уже запущено.', action: 'open', routine: item, date, run }); continue; }
+    if (active) { activeRoutines.push({ key: keyOfRoutine(item.id, date), type: 'routine', title: safeText(item.title) || uiCopy("Повторяющееся дело"), reason: uiCopy("Выполнение уже запущено."), action: 'open', routine: item, date, run }); continue; }
     // Only actual routine activities can be launched; a check-only action is explicitly marked done.
     if (!['check', 'activity', 'chain', 'graph'].includes(item.mode)) continue;
-    const urgency = explainRoutine(item, instant, today);
-    candidates.push({ key: keyOfRoutine(item.id, date), type: 'routine', title: safeText(item.title) || 'Повторяющееся дело', reason: run ? `На паузе. ${urgency.reason}` : urgency.reason, action: item.mode === 'check' ? 'done' : 'start', routine: item, date, run, score: urgency.score + (run ? 90 : 0) });
+    const urgency = explainRoutine(item, instant, today, uiCopy);
+    candidates.push({ key: keyOfRoutine(item.id, date), type: 'routine', title: safeText(item.title) || uiCopy("Повторяющееся дело"), reason: run ? uiCopy.format("На паузе. {0}", urgency.reason) : urgency.reason, action: item.mode === 'check' ? 'done' : 'start', routine: item, date, run, score: urgency.score + (run ? 90 : 0) });
   }
   const available = candidates.filter(item => !deferredKeys.has(item.key));
   available.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title, 'ru') || a.key.localeCompare(b.key));
@@ -123,6 +127,7 @@ function normalizedPreferences(value = {}) {
 export function mountCalendarNextAction(element, dependencies) {
   const { invoke, openTask, executeTask, openRoutine, notifyChange, onOpenSettings } = dependencies;
   const document = element.ownerDocument, window = document.defaultView;
+  const uiCopy = createUiCopy(document);
   const clock = dependencies.clock || (() => new Date());
   const store = createRecurringStore(invoke, { now: clock });
   let preferences = normalizedPreferences(dependencies.preferences), disposed = false, revision = 0, busy = false, preferencesChangedWhileBusy = false, snapshot = null, recommendation = null, currentTaskKey = dependencies.initialTask ? keyOfTask(dependencies.initialTask) : '', focusedTaskKey = '', renderedKey = '', error = '', feedback = '', lastDay = '', focusTarget = null, refreshQueued = false;
@@ -145,10 +150,10 @@ export function mountCalendarNextAction(element, dependencies) {
       if (currentTask) {
         const active = Boolean(currentTask.is_active || data.activeBlocks.some(block => keyOfTask(block) === currentTaskKey));
         const context = taskContext(currentTask, data.links, data.goals, data.processes);
-        const urgency = explainTask(currentTask, now, data.today);
+        const urgency = explainTask(currentTask, now, data.today, uiCopy);
         const hasWork = Boolean(currentTask.has_work || Number(currentTask.actual_seconds) > 0 || Number(currentTask.actual_minutes) > 0);
-        return { key: currentTaskKey, type: 'task', title: safeText(currentTask.title) || 'Задача',
-          reason: active ? 'Задача уже выполняется.' : hasWork ? `На паузе. ${urgency.reason}` : urgency.reason,
+        return { key: currentTaskKey, type: 'task', title: safeText(currentTask.title) || uiCopy("Задача"),
+          reason: active ? uiCopy("Задача уже выполняется.") : hasWork ? uiCopy.format("На паузе. {0}", urgency.reason) : urgency.reason,
           action: active ? 'open' : context.waiting ? 'review' : isInstantTask(currentTask) ? 'finish' : 'start', task: currentTask, context };
       }
       // A confirmed successful snapshot no longer contains the selected open task.
@@ -162,7 +167,7 @@ export function mountCalendarNextAction(element, dependencies) {
         if (unfinished) routines.set(id, { ...(routines.get(id) || unfinished.record.snapshot), status: 'pending', run: unfinished.record.run, runDate: unfinished.date });
       }
     }
-    const selected = rankNextAction({ now, tasks: preferences.includeTasks ? data.tasks : [], routines: preferences.includeRoutines ? [...routines.values()] : [], activeBlocks: data.activeBlocks, deferredKeys: getDeferred(now), links: data.links, goals: data.goals, processes: data.processes });
+    const selected = rankNextAction({ now, language: document.documentElement.lang, tasks: preferences.includeTasks ? data.tasks : [], routines: preferences.includeRoutines ? [...routines.values()] : [], activeBlocks: data.activeBlocks, deferredKeys: getDeferred(now), links: data.links, goals: data.goals, processes: data.processes });
     // Once an active task is the current recommendation, keep that identity
     // through a pause. This is view state only; ranking and timer records stay untouched.
     if (selected?.type === 'task' && selected.action === 'open') currentTaskKey = selected.key;
@@ -186,13 +191,13 @@ export function mountCalendarNextAction(element, dependencies) {
     renderedKey = signature;
     const section = document.createElement('section'); section.className = 'calendar-next-action__surface';
     const header = document.createElement('header');
-    const heading = document.createElement('h2'); heading.id = 'calendar-next-action-title'; heading.tabIndex = -1; heading.textContent = compactRunning ? 'Сейчас' : 'Что сделать сейчас'; header.append(heading);
-    if (onOpenSettings) { const settings = document.createElement('button'); settings.type = 'button'; settings.dataset.nextActionSetting = 'settings'; settings.textContent = 'Настроить'; settings.disabled = busy; settings.addEventListener('click', () => onOpenSettings(settings)); header.append(settings); }
+    const heading = document.createElement('h2'); heading.id = 'calendar-next-action-title'; heading.tabIndex = -1; heading.textContent = compactRunning ? uiCopy("Сейчас") : uiCopy("Что сделать сейчас"); header.append(heading);
+    if (onOpenSettings) { const settings = document.createElement('button'); settings.type = 'button'; settings.dataset.nextActionSetting = 'settings'; settings.textContent = uiCopy("Настроить"); settings.disabled = busy; settings.addEventListener('click', () => onOpenSettings(settings)); header.append(settings); }
     if (!dependencies.hideHeading) section.append(header);
     if (!preferences.enabled) {
-      const copy = document.createElement('p'); copy.textContent = 'Рекомендации выключены.'; section.append(copy);
+      const copy = document.createElement('p'); copy.textContent = uiCopy("Рекомендации выключены."); section.append(copy);
     } else if (!snapshot && !error) {
-      const copy = document.createElement('p'); copy.textContent = 'Загружаем задачи и дела…'; section.append(copy);
+      const copy = document.createElement('p'); copy.textContent = uiCopy("Загружаем задачи и дела…"); section.append(copy);
     } else if (selected) {
       const card = document.createElement('div'); card.className = 'calendar-next-action__item'; card.dataset.nextActionKey = selected.key;
       const title = document.createElement('h3'); title.textContent = selected.title; if (!compactRunning) card.append(title);
@@ -200,37 +205,37 @@ export function mountCalendarNextAction(element, dependencies) {
       if (!compactRunning && selected.type === 'routine') {
         const context = document.createElement('p'); context.className = 'calendar-next-action__context';
         const count = selected.routine.steps?.length || 0;
-        context.textContent = selected.routine.mode === 'check' ? 'Рутина · отметка без таймера' : count > 1 ? `Рутина · шагов: ${count}` : 'Рутина · с учётом времени';
+        context.textContent = selected.routine.mode === 'check' ? uiCopy("Рутина · отметка без таймера") : count > 1 ? uiCopy.format("Рутина · шагов: {0}", count) : uiCopy("Рутина · с учётом времени");
         card.append(context);
       }
       if (!compactRunning && selected.type === 'task' && (selected.context?.goal || selected.context?.stage || selected.context?.waiting)) {
         const context = document.createElement('p'); context.className = 'calendar-next-action__context'; context.dataset.nextActionContext = '';
         const parts = [];
-        if (selected.context.goal) parts.push(`Цель: ${selected.context.goal}`);
-        if (selected.context.stage) parts.push(`Этап: ${selected.context.stage}`);
-        if (selected.context.waiting) parts.push('Жду ответа');
+        if (selected.context.goal) parts.push(uiCopy.format("Цель: {0}", selected.context.goal));
+        if (selected.context.stage) parts.push(uiCopy.format("Этап: {0}", selected.context.stage));
+        if (selected.context.waiting) parts.push(uiCopy("Жду ответа"));
         context.textContent = parts.join(' · ');
-        if (selected.context.goal) context.title = `Цель: ${selected.context.goal}`;
+        if (selected.context.goal) context.title = uiCopy.format("Цель: {0}", selected.context.goal);
         card.append(context);
       }
       const actions = document.createElement('div'); actions.className = 'calendar-next-action__actions';
       if (selected.action === 'open') {
-        const open = button('Открыть текущее', 'open', () => activate('open')); actions.append(open);
+        const open = button(uiCopy("Открыть текущее"), 'open', () => activate('open')); actions.append(open);
       } else if (selected.action === 'done' || selected.action === 'finish') {
-        actions.append(button('Отметить выполненным', 'done', () => activate('done')));
+        actions.append(button(uiCopy("Отметить выполненным"), 'done', () => activate('done')));
       } else if (selected.action === 'review') {
-        actions.append(button('Проверить задачу', 'review', () => activate('review')));
+        actions.append(button(uiCopy("Проверить задачу"), 'review', () => activate('review')));
       } else {
-        actions.append(button(selected.action === 'start' && (selected.task?.has_work || selected.task?.actual_seconds > 0 || selected.task?.actual_minutes > 0 || selected.run) ? 'Продолжить' : 'Начать', 'start', () => activate('start')));
-        if (selected.type === 'task' || selected.run) actions.append(button('Открыть', 'open', () => activate('details')));
+        actions.append(button(selected.action === 'start' && (selected.task?.has_work || selected.task?.actual_seconds > 0 || selected.task?.actual_minutes > 0 || selected.run) ? uiCopy("Продолжить") : uiCopy("Начать"), 'start', () => activate('start')));
+        if (selected.type === 'task' || selected.run) actions.append(button(uiCopy("Открыть"), 'open', () => activate('details')));
       }
-      actions.append(button('Не предлагать час', 'later', () => deferCurrent()));
+      actions.append(button(uiCopy("Не предлагать час"), 'later', () => deferCurrent()));
       if (!compactRunning) { card.append(actions); section.append(card); }
     } else if (snapshot) {
-      const copy = document.createElement('p'); copy.textContent = 'Подходящей задачи или дела сейчас нет.'; section.append(copy);
+      const copy = document.createElement('p'); copy.textContent = uiCopy("Подходящей задачи или дела сейчас нет."); section.append(copy);
     }
     if (feedback) { const status = document.createElement('p'); status.className = 'calendar-next-action__feedback'; status.setAttribute('role', 'status'); status.textContent = feedback; section.append(status); }
-    if (error) { const alert = document.createElement('p'); alert.className = 'calendar-next-action__error'; alert.setAttribute('role', 'alert'); alert.textContent = snapshot ? `Не удалось обновить рекомендации. Показан последний результат. ${error}` : `Не удалось загрузить рекомендации. ${error}`; section.append(alert); const retry = button('Повторить загрузку', 'retry', () => refresh()); retry.dataset.nextActionRetry = ''; section.append(retry); }
+    if (error) { const alert = document.createElement('p'); alert.className = 'calendar-next-action__error'; alert.setAttribute('role', 'alert'); alert.textContent = snapshot ? uiCopy.format("Не удалось обновить рекомендации. Показан последний результат. {0}", error) : uiCopy.format("Не удалось загрузить рекомендации. {0}", error); section.append(alert); const retry = button(uiCopy("Повторить загрузку"), 'retry', () => refresh()); retry.dataset.nextActionRetry = ''; section.append(retry); }
     section.setAttribute('aria-busy', String(busy || !snapshot && !error));
     element.replaceChildren(section);
     if (active) {
@@ -240,6 +245,7 @@ export function mountCalendarNextAction(element, dependencies) {
     dependencies.onSelectionChange?.(selected?.type === 'task' ? { key: selected.key, type: 'task', action: selected.action, task: selected.task } : null);
   }
   function button(label, action, handler) {
+    label = uiCopy(label);
     const node = document.createElement('button'); node.type = 'button'; node.dataset.nextActionAction = action; node.textContent = label; node.disabled = busy; node.addEventListener('click', handler); return node;
   }
 
@@ -253,7 +259,7 @@ export function mountCalendarNextAction(element, dependencies) {
       preferences.includeTasks || preferences.includeRoutines ? readActiveBlocks(invoke) : Promise.resolve([]),
       preferences.includeRoutines ? store.read() : Promise.resolve({ version: 1, plans: [], days: {} }),
     ]);
-    if (!Array.isArray(taskRows) || !Array.isArray(links) || !Array.isArray(goals) || !Array.isArray(processes) || !Array.isArray(activeBlocks)) throw new Error('Некорректный ответ сервера.');
+    if (!Array.isArray(taskRows) || !Array.isArray(links) || !Array.isArray(goals) || !Array.isArray(processes) || !Array.isArray(activeBlocks)) throw new Error(uiCopy("Некорректный ответ сервера."));
     return { now, today, tasks: taskRows.filter(task => task?.source_type === 'note' && !task.completed && !task.archived && !task.readonly && (!task.status_extra || task.status_extra === 'task')), links, goals, processes, activeBlocks, state, routines: recurringItems(state, today) };
   }
 
@@ -275,7 +281,7 @@ export function mountCalendarNextAction(element, dependencies) {
     const now = getNow(), key = recommendation.key, title = recommendation.title;
     deferred.set(key, { until: now.getTime() + 60 * 60 * 1000, day: dateKey(now) });
     if (currentTaskKey === key) currentTaskKey = '';
-    focusTarget = 'later'; recommendation = snapshot ? selection(snapshot) : null; feedback = `«${title}» не будет предлагаться в течение часа.`; render();
+    focusTarget = 'later'; recommendation = snapshot ? selection(snapshot) : null; feedback = uiCopy.format("«{0}» не будет предлагаться в течение часа.", title); render();
   }
 
   async function activate(kind) {
@@ -287,7 +293,7 @@ export function mountCalendarNextAction(element, dependencies) {
       if (disposed || own !== revision) return;
       const current = selection(fresh);
       if (!current || current.key !== expected.key || current.action !== expected.action) {
-        snapshot = fresh; recommendation = current; feedback = 'Список изменился. Проверь новую рекомендацию.'; return;
+        snapshot = fresh; recommendation = current; feedback = uiCopy("Список изменился. Проверь новую рекомендацию."); return;
       }
       if (kind === 'open' || kind === 'details' || kind === 'review') {
         if (current.type === 'task') openTask?.(current.task);
@@ -295,19 +301,19 @@ export function mountCalendarNextAction(element, dependencies) {
         return;
       }
       if (current.type === 'task' && kind === 'start' && current.action === 'start') {
-        if (!executeTask) throw new Error('Действие задачи недоступно.');
+        if (!executeTask) throw new Error(uiCopy("Действие задачи недоступно."));
         if (await executeTask(current.task, 'start') === false) return;
       } else if (current.type === 'task' && kind === 'done' && current.action === 'finish') {
-        if (!executeTask) throw new Error('Действие задачи недоступно.');
+        if (!executeTask) throw new Error(uiCopy("Действие задачи недоступно."));
         if (await executeTask(current.task, 'finish') === false) return;
       } else if (current.type === 'routine' && kind === 'start' && current.action === 'start') {
-        if (!openRoutine) throw new Error('Запуск рутины недоступен.');
+        if (!openRoutine) throw new Error(uiCopy("Запуск рутины недоступен."));
         if (openRoutine({ id: current.routine.id, date: current.date, start: true }) === false) return;
       } else if (current.type === 'routine' && kind === 'done' && current.action === 'done') {
         await store.setStatus(current.routine.id, 'done', current.date);
-      } else throw new Error('Действие больше недоступно. Обнови список.');
+      } else throw new Error(uiCopy("Действие больше недоступно. Обнови список."));
       notifyChange?.();
-      feedback = current.action === 'done' || kind === 'done' ? `«${current.title}» — выполнено.` : '';
+      feedback = current.action === 'done' || kind === 'done' ? uiCopy.format("«{0}» — выполнено.", current.title) : '';
       snapshot = await readSnapshot();
       if (disposed || own !== revision) return;
       recommendation = selection(snapshot);

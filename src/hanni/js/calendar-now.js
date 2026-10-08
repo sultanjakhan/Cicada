@@ -1,3 +1,7 @@
+import { createUiCopy } from './ui-copy.js';
+const uiCopy = value => createUiCopy(globalThis.document)(value);
+uiCopy.format = (pattern, ...values) => createUiCopy(globalThis.document).format(pattern, ...values);
+const uiLocale = () => createUiCopy(globalThis.document).locale;
 import { invoke as defaultInvoke } from './state.js';
 import { rankTasks as defaultRankTasks } from './task-picker-sort.js';
 import { loadCategoryWeights } from './task-picker-view.js';
@@ -22,7 +26,7 @@ const validDate = value => {
 const freshState = () => ({ version: 1, goalId: null, selectionMode: 'auto', selection: null, execution: null, completed: null, returnTo: null, observedBlockId:null });
 const taskOf = row => ({
   source_type: row.source_type, source_id: String(row.source_id),
-  title: row.title || 'Без названия',
+  title: row.title || uiCopy("Без названия"),
   priority: Number.isFinite(Number(row.priority)) ? Number(row.priority) : 0,
   duration_minutes: Number(row.duration_minutes || row.target_minutes) || null,
   date: validDate(row.date), completion_date: validDate(row.completion_date) || validDate(row.date),
@@ -55,6 +59,7 @@ export function mountCalendarNow(element, dependencies = {}) {
   const loadWeights = dependencies.loadWeights || loadCategoryWeights;
   const clock = dependencies.now || (() => new Date());
   const document = element.ownerDocument, window = document.defaultView;
+  const uiCopy = createUiCopy(document);
   const prefix = `calendar-now-${++nextInstance}`;
   let saved = freshState(), initialized = false, snapshot = null;
   let stateRaw = '', remotePending = false, remoteGuard = null, remoteVersion = 0;
@@ -71,10 +76,10 @@ export function mountCalendarNow(element, dependencies = {}) {
   if (header) {
     header.classList.add('calendar-running');
     header.hidden = true;
-    header.innerHTML = `<button type="button" class="calendar-running__button" data-header-action="in-progress"><span class="calendar-running__dot" aria-hidden="true" hidden></span><span data-header-label>Текущие задачи</span><span data-header-count aria-hidden="true" hidden></span></button>`;
+    header.innerHTML = `<button type="button" class="calendar-running__button" data-header-action="in-progress"><span class="calendar-running__dot" aria-hidden="true" hidden></span><span data-header-label>${uiCopy("Текущие задачи")}</span><span data-header-count aria-hidden="true" hidden></span></button>`;
   }
   const headerInProgress = header?.querySelector('[data-header-action="in-progress"]');
-  const headerLabel = dependencies.headerLabel || 'Текущие задачи';
+  const headerLabel = dependencies.headerLabel || uiCopy("Текущие задачи");
   if (header) header.querySelector('[data-header-label]').textContent = headerLabel;
   const runningCount = () => snapshot?.activeBlocks?.length || 0;
   const hideTaskCard = dependencies.hideTaskCard === true;
@@ -83,46 +88,46 @@ export function mountCalendarNow(element, dependencies = {}) {
   element.classList.toggle('calendar-now--compact', dependencies.compact === true);
   element.innerHTML = `
     <section class="calendar-now__card" data-ui="card" tabindex="-1" aria-labelledby="${prefix}-title" aria-busy="true">
-      <p class="calendar-now__eyebrow">Текущая задача</p>
+      <p class="calendar-now__eyebrow">${uiCopy("Текущая задача")}</p>
       <p data-ui="status" class="calendar-now__status" hidden></p>
       <h2 id="${prefix}-title"><button type="button" data-action="task-details" class="calendar-now__task-link" aria-haspopup="dialog" hidden><span data-ui="title"></span></button><span data-ui="title-empty"></span></h2>
       <p data-ui="meta" class="calendar-now__meta"></p>
       <p data-ui="support" class="calendar-now__support" hidden></p>
       <div class="calendar-now__actions">
-        <button type="button" data-action="start" class="calendar-now__primary" hidden>${buttonContent('play', 'Начать')}</button>
-        <button type="button" data-action="pause" class="calendar-now__primary" hidden>${buttonContent('pause', 'Пауза')}</button>
-        <button type="button" data-action="finish" class="calendar-now__secondary" hidden>${buttonContent('check', 'Завершить')}</button>
-        <button type="button" data-action="switch-task" class="calendar-now__quiet" title="Остановить выполнение и выбрать другую задачу. Учтённое время сохранится." hidden>${buttonContent('switch', 'Сменить задачу')}</button>
-        <button type="button" data-action="open-task" class="calendar-now__secondary" aria-controls="${prefix}-tasks" aria-expanded="false" hidden>${buttonContent('switch', 'Сменить задачу')}</button>
-        <button type="button" data-action="next" class="calendar-now__primary" hidden>${buttonContent('arrowRight', 'Следующая задача')}</button>
-        <button type="button" data-action="choose-goal" class="calendar-now__primary" hidden>${buttonContent('target', 'Выбрать цель')}</button>
-        <button type="button" data-action="calendar" class="calendar-now__secondary" hidden>${buttonContent('calendar', 'Открыть календарь')}</button>
+        <button type="button" data-action="start" class="calendar-now__primary" hidden>${buttonContent('play', uiCopy("Начать"))}</button>
+        <button type="button" data-action="pause" class="calendar-now__primary" hidden>${buttonContent('pause', uiCopy("Пауза"))}</button>
+        <button type="button" data-action="finish" class="calendar-now__secondary" hidden>${buttonContent('check', uiCopy("Завершить"))}</button>
+        <button type="button" data-action="switch-task" class="calendar-now__quiet" title="${uiCopy("Остановить выполнение и выбрать другую задачу. Учтённое время сохранится.")}" hidden>${buttonContent('switch', uiCopy("Сменить задачу"))}</button>
+        <button type="button" data-action="open-task" class="calendar-now__secondary" aria-controls="${prefix}-tasks" aria-expanded="false" hidden>${buttonContent('switch', uiCopy("Сменить задачу"))}</button>
+        <button type="button" data-action="next" class="calendar-now__primary" hidden>${buttonContent('arrowRight', uiCopy("Следующая задача"))}</button>
+        <button type="button" data-action="choose-goal" class="calendar-now__primary" hidden>${buttonContent('target', uiCopy("Выбрать цель"))}</button>
+        <button type="button" data-action="calendar" class="calendar-now__secondary" hidden>${buttonContent('calendar', uiCopy("Открыть календарь"))}</button>
         <button type="button" data-action="return" class="calendar-now__quiet" hidden></button>
       </div>
       <form data-ui="task-form" id="${prefix}-tasks" class="calendar-now__picker" hidden>
         <div data-ui="task-alternatives" class="calendar-now__alternatives"></div>
-        <div class="calendar-now__picker-actions"><button type="button" data-action="all-tasks" class="calendar-now__secondary" aria-controls="${prefix}-all-tasks" aria-expanded="false">Все подходящие задачи</button><button type="button" data-action="cancel-picker" class="calendar-now__quiet">Отмена</button></div>
+        <div class="calendar-now__picker-actions"><button type="button" data-action="all-tasks" class="calendar-now__secondary" aria-controls="${prefix}-all-tasks" aria-expanded="false">${uiCopy("Все подходящие задачи")}</button><button type="button" data-action="cancel-picker" class="calendar-now__quiet">${uiCopy("Отмена")}</button></div>
         <div data-ui="task-full" id="${prefix}-all-tasks" class="calendar-now__full-picker" hidden>
-          <label for="${prefix}-task-select">Задача на сейчас</label>
+          <label for="${prefix}-task-select">${uiCopy("Задача на сейчас")}</label>
           <select id="${prefix}-task-select" data-ui="task-select"></select>
-          <div class="calendar-now__picker-actions"><button type="submit" class="calendar-now__primary">Выбрать</button><button type="button" data-action="auto" class="calendar-now__quiet">По рекомендации</button></div>
+          <div class="calendar-now__picker-actions"><button type="submit" class="calendar-now__primary">${uiCopy("Выбрать")}</button><button type="button" data-action="auto" class="calendar-now__quiet">${uiCopy("По рекомендации")}</button></div>
         </div>
       </form>
     </section>
     <section class="calendar-now__goal" aria-labelledby="${prefix}-goal-label ${prefix}-goal-title">
-      <div class="calendar-now__goal-top"><p class="calendar-now__eyebrow" id="${prefix}-goal-label"><span class="calendar-now__goal-symbol" aria-hidden="true">${ICONS.flag}</span>Главная цель</p>
-        <div class="calendar-now__goal-tools"><button type="button" data-action="goal-open" class="calendar-now__secondary" aria-haspopup="dialog" hidden>Открыть</button><button type="button" data-action="open-goal" class="calendar-now__quiet" aria-label="Сменить главную цель" aria-haspopup="dialog"><span class="calendar-now__button-icon" data-ui="goal-change-icon" aria-hidden="true" hidden>${ICONS.cycle}</span><span data-action-label>Выбрать цель</span></button></div></div>
-      <h2 id="${prefix}-goal-title"><button type="button" data-action="goal-details" class="calendar-now__goal-link" title="Открыть цель" aria-haspopup="dialog" hidden><span data-ui="goal-title"></span></button><span data-ui="goal-empty"></span></h2>
+      <div class="calendar-now__goal-top"><p class="calendar-now__eyebrow" id="${prefix}-goal-label"><span class="calendar-now__goal-symbol" aria-hidden="true">${ICONS.flag}</span>${uiCopy("Главная цель")}</p>
+        <div class="calendar-now__goal-tools"><button type="button" data-action="goal-open" class="calendar-now__secondary" aria-haspopup="dialog" hidden>${uiCopy("Открыть")}</button><button type="button" data-action="open-goal" class="calendar-now__quiet" aria-label="${uiCopy("Сменить главную цель")}" aria-haspopup="dialog"><span class="calendar-now__button-icon" data-ui="goal-change-icon" aria-hidden="true" hidden>${ICONS.cycle}</span><span data-action-label>${uiCopy("Выбрать цель")}</span></button></div></div>
+      <h2 id="${prefix}-goal-title"><button type="button" data-action="goal-details" class="calendar-now__goal-link" title="${uiCopy("Открыть цель")}" aria-haspopup="dialog" hidden><span data-ui="goal-title"></span></button><span data-ui="goal-empty"></span></h2>
       <span data-ui="goal-status" class="calendar-now__goal-status" hidden></span>
       <p data-ui="goal-stage" class="calendar-now__goal-stage" hidden></p>
       <p data-ui="goal-hint" class="calendar-now__goal-hint" hidden></p>
       <div data-goal-development class="calendar-now__goal-glance" hidden></div>
-      <p data-ui="goal-next" class="calendar-now__goal-next" hidden><span class="calendar-now__goal-next-label" aria-hidden="true">Дальше</span><button type="button" data-action="goal-next-task" class="calendar-now__goal-next-link" aria-haspopup="dialog" hidden><span data-ui="goal-next-title"></span></button><span data-ui="goal-next-text" class="calendar-now__goal-next-text"></span></p>
+      <p data-ui="goal-next" class="calendar-now__goal-next" hidden><span class="calendar-now__goal-next-label" aria-hidden="true">${uiCopy("Дальше")}</span><button type="button" data-action="goal-next-task" class="calendar-now__goal-next-link" aria-haspopup="dialog" hidden><span data-ui="goal-next-title"></span></button><span data-ui="goal-next-text" class="calendar-now__goal-next-text"></span></p>
       <div class="calendar-now__goal-actions">
-        <button type="button" data-action="browse-goals" class="calendar-now__quiet" hidden>Все цели</button>
+        <button type="button" data-action="browse-goals" class="calendar-now__quiet" hidden>${uiCopy("Все цели")}</button>
       </div>
     </section>
-    <div data-ui="error" class="calendar-now__error" role="alert" hidden><p data-ui="error-text"></p><button type="button" data-action="retry" class="calendar-now__secondary">Повторить</button></div>
+    <div data-ui="error" class="calendar-now__error" role="alert" hidden><p data-ui="error-text"></p><button type="button" data-action="retry" class="calendar-now__secondary">${uiCopy("Повторить")}</button></div>
     <span data-ui="live" class="calendar-now__sr" role="status" aria-live="polite"></span>`;
   const ui = Object.fromEntries([...element.querySelectorAll('[data-ui]')].map(node => [node.dataset.ui, node]));
   ui.card.hidden = hideTaskCard;
@@ -130,7 +135,7 @@ export function mountCalendarNow(element, dependencies = {}) {
   const announce = text => { if (!disposed) ui.live.textContent = text; };
   const localDate = () => dateOf(clock());
   const selectedGoal = () => snapshot?.goals.find(goal => String(goal.id) === saved.goalId);
-  const goalDateLabel = value => validDate(value) ? new Date(`${value}T12:00:00`).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }) : '';
+  const goalDateLabel = value => validDate(value) ? new Date(`${value}T12:00:00`).toLocaleDateString(uiLocale(), { day: 'numeric', month: 'long', year: 'numeric' }) : '';
   const descendantGoalIds = goalId => {
     const ids = new Set([String(goalId)]);
     let expanded = true;
@@ -159,11 +164,11 @@ export function mountCalendarNow(element, dependencies = {}) {
     let restore = true;
     const heading = document.createElement('h2'); heading.id = `${prefix}-goal-detail-title`; heading.textContent = goal.title; heading.tabIndex = -1;
     modal.setAttribute('aria-labelledby', heading.id);
-    const status = document.createElement('p'); status.className = 'calendar-goal-dialog__status'; status.textContent = goal.status === 'achieved' ? 'Цель достигнута · показана на дашборде' : 'Показана на дашборде';
-    const date = document.createElement('p'); date.textContent = goalDateLabel(goal.deadline) ? `Срок: ${goalDateLabel(goal.deadline)}` : 'Срок не задан';
+    const status = document.createElement('p'); status.className = 'calendar-goal-dialog__status'; status.textContent = goal.status === 'achieved' ? uiCopy("Цель достигнута · показана на дашборде") : uiCopy("Показана на дашборде");
+    const date = document.createElement('p'); date.textContent = goalDateLabel(goal.deadline) ? uiCopy.format("Срок: {0}", goalDateLabel(goal.deadline)) : uiCopy("Срок не задан");
     const header = document.createElement('header'); header.className = 'calendar-goal-dialog__header';
-    const label = document.createElement('p'); label.textContent = 'Главная цель';
-    const topClose = document.createElement('button'); topClose.type = 'button'; topClose.textContent = '×'; topClose.className = 'calendar-goal-dialog__close'; topClose.dataset.goalClose = ''; topClose.setAttribute('aria-label', 'Закрыть цель'); topClose.onclick = () => modal.close();
+    const label = document.createElement('p'); label.textContent = uiCopy("Главная цель");
+    const topClose = document.createElement('button'); topClose.type = 'button'; topClose.textContent = '×'; topClose.className = 'calendar-goal-dialog__close'; topClose.dataset.goalClose = ''; topClose.setAttribute('aria-label', uiCopy("Закрыть цель")); topClose.onclick = () => modal.close();
     header.append(label, topClose);
     const body = document.createElement('div'); body.className = 'calendar-goal-dialog__body'; body.append(heading, status, date);
     modal.append(header, body);
@@ -173,38 +178,38 @@ export function mountCalendarNow(element, dependencies = {}) {
     };
     if (String(goal.description || '').trim()) {
       const description = document.createElement('p'); description.className = 'calendar-goal-dialog__description'; description.textContent = goal.description;
-      addSection('Результат', description);
+      addSection(uiCopy("Результат"), description);
     }
     const criteria = String(goal.criteria || '').split('\n').map(line => line.trim()).filter(Boolean);
     const stages = snapshot.goals.filter(item => String(item.parent_goal_id) === String(goal.id));
-    for (const [label, entries] of [['Готово, когда', criteria], ['Подцели', stages.map(item => item.title)]]) {
+    for (const [label, entries] of [[uiCopy("Готово, когда"), criteria], [uiCopy("Подцели"), stages.map(item => item.title)]]) {
       if (!entries.length) continue;
       const list = document.createElement('ul'); list.className = 'calendar-goal-dialog__list';
       for (const text of entries) { const item = document.createElement('li'); item.textContent = text; list.append(item); }
       addSection(label, list);
     }
     if (String(goal.unit || '').trim() && Number.isFinite(goal.target_value) && goal.target_value > 0 && Number.isFinite(goal.current_value)) {
-      const measure = document.createElement('p'); measure.textContent = `Учтено: ${goal.current_value} из ${goal.target_value} ${goal.unit}`; body.append(measure);
+      const measure = document.createElement('p'); measure.textContent = uiCopy.format("Учтено: {0} из {1} {2}", goal.current_value, goal.target_value, goal.unit); body.append(measure);
     }
     const goalIds = descendantGoalIds(goal.id);
     const links = snapshot.links.filter(link => goalIds.has(String(link.goal_id)));
     const counts = ['note', 'event', 'schedule'].map(kind => [kind, new Set(links.filter(link => link.source_type === kind).map(link => String(link.source_id))).size]);
     if (counts.some(([, count]) => count > 0)) {
-      const label = document.createElement('h3'); label.textContent = 'Связанные записи';
+      const label = document.createElement('h3'); label.textContent = uiCopy("Связанные записи");
       const list = document.createElement('dl');
       for (const [kind, count] of counts.filter(([, value]) => value > 0)) {
-        const term = document.createElement('dt'); term.textContent = { note: 'Задачи', event: 'События', schedule: 'Повторения' }[kind];
+        const term = document.createElement('dt'); term.textContent = { note: uiCopy("Задачи"), event: uiCopy("События"), schedule: uiCopy("Повторения") }[kind];
         const value = document.createElement('dd'); value.textContent = String(count); list.append(term, value);
       }
       body.append(label, list);
     } else {
-      const empty = document.createElement('p'); empty.textContent = 'Пока нет связанных записей. Цель можно сохранить без задач.'; body.append(empty);
+      const empty = document.createElement('p'); empty.textContent = uiCopy("Пока нет связанных записей. Цель можно сохранить без задач."); body.append(empty);
     }
-    const close = document.createElement('button'); close.type = 'button'; close.textContent = 'Закрыть'; close.dataset.goalClose = '';
+    const close = document.createElement('button'); close.type = 'button'; close.textContent = uiCopy("Закрыть"); close.dataset.goalClose = '';
     close.onclick = () => modal.close();
     const footer = document.createElement('footer'); footer.className = 'calendar-goal-dialog__actions'; footer.append(close); modal.append(footer);
     if (dependencies.openGoals) {
-      const manage = document.createElement('button'); manage.type = 'button'; manage.textContent = 'Редактировать цель'; manage.dataset.goalManage = '';
+      const manage = document.createElement('button'); manage.type = 'button'; manage.textContent = uiCopy("Редактировать цель"); manage.dataset.goalManage = '';
       manage.onclick = () => { restore = false; modal.close(); dependencies.openGoals(goal.id); };
       footer.prepend(manage);
     }
@@ -267,14 +272,14 @@ export function mountCalendarNow(element, dependencies = {}) {
     if (disposed) return;
     const task = chosenTask();
     if (['active', 'paused', 'completed'].includes(currentState)) {
-      const actual = `${elapsedMinutes()} мин`;
-      ui.meta.textContent = currentState === 'completed' ? `Учтено ${actual}` : task?.duration_minutes ? `${actual} из ${task.duration_minutes} мин` : `Учтено ${actual}`;
-    } else ui.meta.textContent = task?.duration_minutes ? `${task.duration_minutes} мин` : '';
+      const actual = uiCopy.format("{0} мин", elapsedMinutes());
+      ui.meta.textContent = currentState === 'completed' ? uiCopy.format("Учтено {0}", actual) : task?.duration_minutes ? uiCopy.format("{0} из {1} мин", actual, task.duration_minutes) : uiCopy.format("Учтено {0}", actual);
+    } else ui.meta.textContent = task?.duration_minutes ? uiCopy.format("{0} мин", task.duration_minutes) : '';
     renderHeader();
   }
   function renderHeader() {
     if (!header || disposed) return;
-    const count = runningCount(), label = `${headerLabel} · запущено: ${count}`;
+    const count = runningCount(), label = uiCopy.format("{0} · запущено: {1}", headerLabel, count);
     header.hidden = !snapshot;
     header.dataset.count = String(count);
     const dot = headerInProgress.querySelector('.calendar-running__dot');
@@ -294,14 +299,14 @@ export function mountCalendarNow(element, dependencies = {}) {
   function openGoalPicker(trigger) {
     if (goalPicker || busy || reading || failure || !snapshot) return;
     closePicker();
-    const editor = createCalendarDialog({ document, title: 'Главная цель', hint: 'Выбери то, на чём хочешь сосредоточиться.',
+    const editor = createCalendarDialog({ document, title: uiCopy("Главная цель"), hint: uiCopy("Выбери то, на чём хочешь сосредоточиться."),
       isCurrent: () => !disposed && element.isConnected,
       returnFocus: () => {
         if (trigger.isConnected && !trigger.disabled && !trigger.hidden) trigger.focus();
         else { ui['goal-title'].tabIndex = -1; ui['goal-title'].focus(); }
       }, onClose: () => { goalPicker = null; if (!disposed) render(); } });
     editor.modal.classList.add('calendar-goal-picker');
-    editor.body.innerHTML = `<label class="calendar-editor-field" data-goal-search-field for="${prefix}-search">Найти цель<input type="search" id="${prefix}-search" data-goal-search autocomplete="off" placeholder="Название цели"></label><div data-goal-choices></div><p data-goal-empty role="status" hidden></p>`;
+    editor.body.innerHTML = `<label class="calendar-editor-field" data-goal-search-field for="${prefix}-search">${uiCopy("Найти цель")}<input type="search" id="${prefix}-search" data-goal-search autocomplete="off" placeholder="${uiCopy("Название цели")}"></label><div data-goal-choices></div><p data-goal-empty role="status" hidden></p>`;
     goalPicker = { editor, query: editor.body.querySelector('[data-goal-search]'), list: editor.body.querySelector('[data-goal-choices]'), empty: editor.body.querySelector('[data-goal-empty]'), signature: '', working: false, requestedId: undefined, reportedFailure: null };
     goalPicker.query.addEventListener('input', renderGoalPicker);
     editor.body.addEventListener('click', event => {
@@ -331,21 +336,21 @@ export function mountCalendarNow(element, dependencies = {}) {
         .filter(goal => goal.status !== 'achieved' || String(goal.id) === saved.goalId)
         .sort((a, b) => Number(String(b.id) === saved.goalId) - Number(String(a.id) === saved.goalId))
         .filter(goal => String(goal.id) === saved.goalId || !filter || goal.title.toLocaleLowerCase('ru').includes(filter));
-      for (const [id, title, deadline, status] of [[null, 'Пока без цели', null, null], ...goals.map(goal => [String(goal.id), goal.title, goal.deadline, goal.status])]) {
+      for (const [id, title, deadline, status] of [[null, uiCopy("Пока без цели"), null, null], ...goals.map(goal => [String(goal.id), goal.title, goal.deadline, goal.status])]) {
         const button = document.createElement('button'); button.type = 'button'; button.className = 'calendar-goal-choice'; button.dataset.goalChoice = id || '';
         const text = document.createElement('span'); text.textContent = title; button.append(text);
         const formattedDeadline = goalDateLabel(deadline);
         if (formattedDeadline) {
-          const date = document.createElement('span'); date.className = 'calendar-goal-deadline'; date.textContent = `Срок: ${formattedDeadline}`; text.append(date);
+          const date = document.createElement('span'); date.className = 'calendar-goal-deadline'; date.textContent = uiCopy.format("Срок: {0}", formattedDeadline); text.append(date);
         }
         if (id === saved.goalId) {
           button.setAttribute('aria-current', 'true');
-          const badge = document.createElement('span'); badge.className = 'calendar-goal-current'; badge.textContent = status === 'achieved' ? 'Цель достигнута' : id ? 'Главная' : 'Выбрано'; button.append(badge);
+          const badge = document.createElement('span'); badge.className = 'calendar-goal-current'; badge.textContent = status === 'achieved' ? uiCopy("Цель достигнута") : id ? uiCopy("Главная") : uiCopy("Выбрано"); button.append(badge);
         }
         list.append(button);
       }
       empty.hidden = goals.length > 0;
-      empty.textContent = filter ? 'По этому названию целей не найдено.' : 'Сохранённых целей пока нет. Добавь цель в разделе «Цели».';
+      empty.textContent = filter ? uiCopy("По этому названию целей не найдено.") : uiCopy("Сохранённых целей пока нет. Добавь цель в разделе «Цели».");
     }
     list.querySelectorAll('button').forEach(button => { button.disabled = !!failure; });
     editor.setPending(picker.working || busy || reading);
@@ -379,7 +384,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     } catch (error) {
       if (disposed || goalPicker !== picker) return;
       picker.editor.retry.hidden = false;
-      picker.editor.showError(error?.message || 'Не удалось выбрать цель. Повтори выбор.');
+      picker.editor.showError(error?.message || uiCopy("Не удалось выбрать цель. Повтори выбор."));
     } finally {
       picker.working = false;
       if (!disposed && goalPicker === picker) renderGoalPicker();
@@ -405,7 +410,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     const available = candidates();
     if (ui['task-full'].contains(document.activeElement)) taskListExpanded = true;
     const focusedKey = ui['task-alternatives'].contains(document.activeElement) ? document.activeElement.dataset.taskKey : null;
-    const duration = task => { const minutes = taskOf(task).duration_minutes; return Number.isFinite(minutes) && minutes > 0 ? `${minutes} мин` : ''; };
+    const duration = task => { const minutes = taskOf(task).duration_minutes; return Number.isFinite(minutes) && minutes > 0 ? uiCopy.format("{0} мин", minutes) : ''; };
     options(ui['task-select'], available.map(task => [keyOf(task), `${task.title}${duration(task) ? ` · ${duration(task)}` : ''}`]), available.some(task => keyOf(task) === selected) ? selected : keyOf(chosenTask()));
     ui['task-alternatives'].replaceChildren();
     for (const task of available.filter(task => keyOf(task) !== keyOf(chosenTask())).slice(0, 2)) {
@@ -437,10 +442,10 @@ export function mountCalendarNow(element, dependencies = {}) {
       }).catch(() => { if (!disposed && own === summaryRevision) host.hidden = true; });
     } else if (goal) summary?.update?.(goal);
     element.dataset.goal = goal ? 'selected' : snapshot ? 'none' : 'loading';
-    ui['goal-title'].textContent = goal?.title || (!snapshot ? 'Загружаем цель…' : saved.goalId ? 'Выбранная цель недоступна' : 'Выбери, к чему хочешь прийти');
+    ui['goal-title'].textContent = goal?.title || (!snapshot ? uiCopy("Загружаем цель…") : saved.goalId ? uiCopy("Выбранная цель недоступна") : uiCopy("Выбери, к чему хочешь прийти"));
     ui['goal-empty'].textContent = goal ? '' : ui['goal-title'].textContent;
     ui['goal-empty'].hidden = !!goal;
-    ui['goal-status'].textContent = !snapshot ? '' : goal?.status === 'achieved' ? 'Цель достигнута' : goal ? '' : saved.goalId ? 'Цель недоступна' : 'Главная цель не выбрана';
+    ui['goal-status'].textContent = !snapshot ? '' : goal?.status === 'achieved' ? uiCopy("Цель достигнута") : goal ? '' : saved.goalId ? uiCopy("Цель недоступна") : uiCopy("Главная цель не выбрана");
     ui['goal-status'].hidden = !snapshot || (!goal && !saved.goalId) || (!!goal && goal.status !== 'achieved');
     const linkedGoal = snapshot?.links.find(link => keyOf(link) === keyOf(task));
     const branch = [], visited = new Set();
@@ -451,9 +456,9 @@ export function mountCalendarNow(element, dependencies = {}) {
       node = snapshot.goals.find(item => String(item.id) === String(node.parent_goal_id));
     }
     const isGoalBranch = goal && branch.length > 1 && String(branch[0].id) === String(goal.id);
-    ui['goal-stage'].textContent = isGoalBranch ? `Текущий этап: ${branch.slice(1).map(item => item.title).join(' → ')}` : '';
+    ui['goal-stage'].textContent = isGoalBranch ? uiCopy.format("Текущий этап: {0}", branch.slice(1).map(item => item.title).join(' → ')) : '';
     ui['goal-stage'].hidden = !isGoalBranch || !!dependencies.mountGoalSummary;
-    ui['goal-hint'].textContent = !snapshot || !saved.goalId ? '' : goal?.status === 'achieved' ? 'Выбери другую цель, чтобы продолжить.' : goal ? '' : 'Выбери другую цель или сохрани новую.';
+    ui['goal-hint'].textContent = !snapshot || !saved.goalId ? '' : goal?.status === 'achieved' ? uiCopy("Выбери другую цель, чтобы продолжить.") : goal ? '' : uiCopy("Выбери другую цель или сохрани новую.");
     ui['goal-hint'].hidden = !ui['goal-hint'].textContent;
     const next = goal && snapshot ? nextGoalTask() : null, canOpenNext = !!next && !!dependencies.openTaskDetails;
     ui['goal-next'].hidden = !goal || !snapshot || goal.status === 'achieved';
@@ -461,43 +466,43 @@ export function mountCalendarNow(element, dependencies = {}) {
     actions['goal-next-task'].hidden = !canOpenNext;
     actions['goal-next-task'].disabled = busy || blockingRead || !!failure;
     actions['goal-next-task'].dataset.taskKey = keyOf(next);
-    actions['goal-next-task'].setAttribute('aria-label', next ? `Следующая задача по цели: ${next.title}` : '');
+    actions['goal-next-task'].setAttribute('aria-label', next ? uiCopy.format("Следующая задача по цели: {0}", next.title) : '');
     actions['goal-next-task'].title = next?.title || '';
     ui['goal-next-title'].textContent = canOpenNext ? next.title : '';
-    ui['goal-next-text'].textContent = canOpenNext ? '' : next ? next.title : 'Задач по цели пока нет';
+    ui['goal-next-text'].textContent = canOpenNext ? '' : next ? next.title : uiCopy("Задач по цели пока нет");
     ui['goal-next-text'].hidden = canOpenNext;
     actions['goal-details'].hidden = !goal;
     actions['goal-details'].disabled = busy || blockingRead || !!failure;
     actions['goal-open'].hidden = !goal;
     actions['goal-open'].disabled = busy || blockingRead || !!failure;
     actions['browse-goals'].hidden = !!goal || !snapshot;
-    actions['open-goal'].querySelector('[data-action-label]').textContent = goal ? 'Сменить' : 'Выбрать цель';
+    actions['open-goal'].querySelector('[data-action-label]').textContent = goal ? uiCopy("Сменить") : uiCopy("Выбрать цель");
     ui['goal-change-icon'].hidden = !goal;
-    actions['open-goal'].setAttribute('aria-label', goal ? 'Сменить главную цель' : 'Выбрать главную цель');
+    actions['open-goal'].setAttribute('aria-label', goal ? uiCopy("Сменить главную цель") : uiCopy("Выбрать главную цель"));
     actions['browse-goals'].parentElement.hidden = !!goal || !snapshot;
     actions['open-goal'].classList.toggle('calendar-now__primary', !goal);
     actions['open-goal'].classList.toggle('calendar-now__quiet', !!goal);
     actions['open-goal'].disabled = busy || blockingRead || !!failure || !snapshot;
     actions['open-goal'].title = '';
-    const status = { active: 'В работе', paused: 'На паузе', completed: 'Завершено' }[currentState];
+    const status = { active: uiCopy("В работе"), paused: uiCopy("На паузе"), completed: uiCopy("Завершено") }[currentState];
     ui.status.textContent = status || ''; ui.status.hidden = !status;
-    ui.title.textContent = task?.title || (!snapshot ? 'Загружаем текущую задачу…' : !selectedGoal() ? 'Начни задачу из списка или выбери цель.' : 'Для этой цели пока нет подходящей задачи.');
+    ui.title.textContent = task?.title || (!snapshot ? uiCopy("Загружаем текущую задачу…") : !selectedGoal() ? uiCopy("Начни задачу из списка или выбери цель.") : uiCopy("Для этой цели пока нет подходящей задачи."));
     renderTaskImportance(document, ui.card, task);
     const canOpenTask = !!task && !!dependencies.openTaskDetails;
     actions['task-details'].hidden = !canOpenTask;
     actions['task-details'].disabled = busy || blockingRead || !!failure;
-    actions['task-details'].title = canOpenTask ? 'Открыть задачу' : '';
+    actions['task-details'].title = canOpenTask ? uiCopy("Открыть задачу") : '';
     ui['title-empty'].textContent = canOpenTask ? '' : ui.title.textContent;
     ui['title-empty'].hidden = canOpenTask;
     ui.support.hidden = currentState !== 'empty' || !selectedGoal();
-    ui.support.textContent = selectedGoal() ? 'Свяжи задачу с целью в календаре. Запуск остаётся твоим решением.' : '';
+    ui.support.textContent = selectedGoal() ? uiCopy("Свяжи задачу с целью в календаре. Запуск остаётся твоим решением.") : '';
     const visible = currentState === 'active' ? ['pause', 'finish', 'switch-task'] : currentState === 'paused' ? ['start', 'finish', 'switch-task'] : currentState === 'completed' ? ['next'] : currentState === 'recommendation' ? ['start', 'open-task'] : currentState === 'empty' && selectedGoal() ? ['calendar'] : [];
     if(saved.returnTo && keyOf(saved.returnTo)!==keyOf(task))visible.push('return');
-    actions.return.textContent=saved.returnTo?`Вернуться: ${saved.returnTo.title}`:'';
+    actions.return.textContent=saved.returnTo?uiCopy.format("Вернуться: {0}", saved.returnTo.title):'';
     for (const button of ui.card.querySelectorAll('.calendar-now__actions button')) {
       button.hidden = !visible.includes(button.dataset.action); button.disabled = busy || blockingRead || !!failure;
     }
-    actions.start.querySelector('[data-action-label]').textContent = currentState === 'paused' ? 'Продолжить' : 'Начать';
+    actions.start.querySelector('[data-action-label]').textContent = currentState === 'paused' ? uiCopy("Продолжить") : uiCopy("Начать");
     if (active || busy) closePicker();
     if (panel === 'task' && !reading && !failure) renderTaskPicker();
     ui['task-alternatives'].querySelectorAll('button').forEach(button => { button.disabled = busy || blockingRead || !!failure || !!active; });
@@ -545,7 +550,7 @@ export function mountCalendarNow(element, dependencies = {}) {
     if (block.source_type === 'event') row = (await api('get_all_events', {})).find(item => String(item.id) === String(block.source_id));
     else if (block.source_type === 'note') row = await api('get_note', { id: String(block.source_id) });
     else if (block.source_type === 'schedule') row = (await api('get_schedules', { category: null })).find(item => String(item.id) === String(block.source_id));
-    return taskOf({ ...row, source_type: block.source_type, source_id: block.source_id, title: row?.title || 'Текущая задача', completion_date: occurrence || block.date });
+    return taskOf({ ...row, source_type: block.source_type, source_id: block.source_id, title: row?.title || uiCopy("Текущая задача"), completion_date: occurrence || block.date });
   }
   function isMissingNoteError(error) {
     const message = typeof error === 'string' ? error : error?.message;
@@ -678,7 +683,7 @@ export function mountCalendarNow(element, dependencies = {}) {
       catch (error) {
         const stale = errorMessage(error) === 'mvp_sync_stale_ui_state';
         if (stale) { remotePending = true; needsSave = false; }
-        if (!failure) failure = { operation: { kind: 'refresh', phase: 'refresh' }, message: stale ? 'Выбор изменён на другом устройстве. Повтори загрузку актуального состояния.' : 'Не удалось обновить текущую задачу. Последний выбор сохранён.' };
+        if (!failure) failure = { operation: { kind: 'refresh', phase: 'refresh' }, message: stale ? uiCopy("Выбор изменён на другом устройстве. Повтори загрузку актуального состояния.") : uiCopy("Не удалось обновить текущую задачу. Последний выбор сохранён.") };
       }
       finally {
         reading = false; quietReading = false; readFlight = null; render();
@@ -736,13 +741,13 @@ export function mountCalendarNow(element, dependencies = {}) {
   function errorMessage(error) { return typeof error === 'string' ? error : error?.message; }
   function failureMessage(operation, error) {
     const message = errorMessage(error);
-    if (message === 'mvp_sync_stale_ui_state') return 'Выбор изменён на другом устройстве. Нажми «Повторить», чтобы загрузить актуальное состояние.';
-    if (message === 'active') return 'Для смены цели поставь текущую задачу на паузу.';
-    if (message === 'different-active') return 'Сейчас запущена другая задача. Обнови экран перед продолжением.';
-    if (['start','return'].includes(operation.kind) && message === 'source record not found') return 'Задача уже завершена или недоступна. Обнови экран.';
-    if (operation.phase === 'save') return 'Действие применено, но не удалось сохранить выбор. Повтор сохранит его без повторного запуска задачи.';
-    if (operation.phase === 'refresh') return 'Не удалось обновить текущую задачу. Последний выбор сохранён.';
-    return ({ start: 'Не удалось запустить задачу.', pause: 'Не удалось поставить задачу на паузу.', finish: 'Не удалось завершить задачу.', 'switch-task': 'Не удалось сменить задачу. Текущая задача сохранена.' })[operation.kind] || 'Не удалось сохранить выбор.';
+    if (message === 'mvp_sync_stale_ui_state') return uiCopy("Выбор изменён на другом устройстве. Нажми «Повторить», чтобы загрузить актуальное состояние.");
+    if (message === 'active') return uiCopy("Для смены цели поставь текущую задачу на паузу.");
+    if (message === 'different-active') return uiCopy("Сейчас запущена другая задача. Обнови экран перед продолжением.");
+    if (['start','return'].includes(operation.kind) && message === 'source record not found') return uiCopy("Задача уже завершена или недоступна. Обнови экран.");
+    if (operation.phase === 'save') return uiCopy("Действие применено, но не удалось сохранить выбор. Повтор сохранит его без повторного запуска задачи.");
+    if (operation.phase === 'refresh') return uiCopy("Не удалось обновить текущую задачу. Последний выбор сохранён.");
+    return ({ start: uiCopy("Не удалось запустить задачу."), pause: uiCopy("Не удалось поставить задачу на паузу."), finish: uiCopy("Не удалось завершить задачу."), 'switch-task': uiCopy("Не удалось сменить задачу. Текущая задача сохранена.") })[operation.kind] || uiCopy("Не удалось сохранить выбор.");
   }
   async function run(operation) {
     if (disposed || busy || reading) return;
@@ -753,7 +758,7 @@ export function mountCalendarNow(element, dependencies = {}) {
       if (disposed) return;
       if (operation.phase === 'save') { await persist(); operation.phase = 'refresh'; }
       await fetchSnapshot();
-      announce(({ start: 'Задача в работе.', pause: 'Задача приостановлена.', finish: 'Задача завершена.', 'switch-task': 'Выполнение остановлено. Учтённое время сохранено. Выбери другую задачу.', goal: 'Цель выбрана.', select: 'Задача выбрана. Нажми «Начать», когда будешь готов.' })[operation.kind] || 'Выбор обновлён.');
+      announce(({ start: uiCopy("Задача в работе."), pause: uiCopy("Задача приостановлена."), finish: uiCopy("Задача завершена."), 'switch-task': uiCopy("Выполнение остановлено. Учтённое время сохранено. Выбери другую задачу."), goal: uiCopy("Цель выбрана."), select: uiCopy("Задача выбрана. Нажми «Начать», когда будешь готов.") })[operation.kind] || uiCopy("Выбор обновлён."));
     } catch (error) {
       failure = { operation, message: failureMessage(operation, error) };
       // A different active task is never closed implicitly by this surface.
@@ -805,7 +810,7 @@ export function mountCalendarNow(element, dependencies = {}) {
       void pending.then(() => {
         if (disposed) return;
         const current = [...element.querySelectorAll('[data-action]')].find(item => item.dataset.action === action && (item.dataset.taskKey || null) === taskKey);
-        if (actionTarget(action) !== target) { announce('Состояние обновилось. Проверь задачу перед действием.'); return; }
+        if (actionTarget(action) !== target) { announce(uiCopy("Состояние обновилось. Проверь задачу перед действием.")); return; }
         if (!current || current.hidden || current.disabled) return;
         current.click();
       });
@@ -900,14 +905,14 @@ export function mountCalendarNow(element, dependencies = {}) {
   };
   // Goal cards share this mount's save queue and preserve paused execution.
   async function selectGoal(value) {
-    if (disposed || busy) throw new Error('Дождись завершения текущего действия.');
+    if (disposed || busy) throw new Error(uiCopy("Дождись завершения текущего действия."));
     if (readFlight) await readFlight;
     await refresh();
     const goalId = value == null ? null : String(value);
-    if (disposed || busy || reading || failure || !snapshot) throw new Error('Не удалось обновить текущую задачу. Повтори выбор.');
+    if (disposed || busy || reading || failure || !snapshot) throw new Error(uiCopy("Не удалось обновить текущую задачу. Повтори выбор."));
     const goal = goalId ? snapshot.goals.find(item => String(item.id) === goalId) : null;
-    if (goalId && !goal) throw new Error('Эта цель больше недоступна.');
-    if (goal?.status === 'achieved' && goalId !== saved.goalId) throw new Error('Достигнутую цель нельзя выбрать главной.');
+    if (goalId && !goal) throw new Error(uiCopy("Эта цель больше недоступна."));
+    if (goal?.status === 'achieved' && goalId !== saved.goalId) throw new Error(uiCopy("Достигнутую цель нельзя выбрать главной."));
     if (goalId === saved.goalId) return;
     await run({ kind: 'goal', goalId });
     if (failure) throw new Error(failure.message);
@@ -917,9 +922,9 @@ export function mountCalendarNow(element, dependencies = {}) {
     return { returnTask:saved.returnTo ? taskOf(saved.returnTo) : null, error:failure?.message || '', busy:busy || reading };
   }
   async function runFromLauncher(kind) {
-    if (disposed || busy || reading) throw new Error('Дождись завершения текущего действия.');
+    if (disposed || busy || reading) throw new Error(uiCopy("Дождись завершения текущего действия."));
     if (kind === 'return') {
-      if (failure || !saved.returnTo) throw new Error('Предыдущая задача сейчас недоступна. Повтори загрузку.');
+      if (failure || !saved.returnTo) throw new Error(uiCopy("Предыдущая задача сейчас недоступна. Повтори загрузку."));
       await run({ kind:'return', task:taskOf(saved.returnTo), origin:'launcher' });
     } else if (failure) await run({ ...failure.operation, origin:'launcher' });
     if (failure) throw new Error(failure.message);

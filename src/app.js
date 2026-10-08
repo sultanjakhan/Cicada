@@ -1,3 +1,5 @@
+import { restoreLanguage } from './hanni/js/language-preference.js';
+import { createUiCopy } from './hanni/js/ui-copy.js';
 import './styles.css';
 import './hanni/css/calendar-dashboard-v7.css';
 import './hanni/css/sync-conflicts.css';
@@ -21,7 +23,20 @@ window.addEventListener('unhandledrejection', event => showError(event.reason));
 window.addEventListener('error', event => showError(event.error || event.message));
 document.getElementById('mobile-hamburger').addEventListener('click', openDrawer);
 tabLoaders.calendar = () => loadCalendarWorkspace(document.getElementById('calendar-content'));
-renderTabBar();
+async function startApplication() {
+const restoredLanguage = await restoreLanguage(document, invoke);
+const copy = createUiCopy(document);
+function renderLanguageShell() {
+  renderTabBar();
+  document.getElementById('mobile-title').textContent = copy('Календарь');
+  document.getElementById('mobile-hamburger').setAttribute('aria-label', copy('Открыть меню'));
+}
+renderLanguageShell();
+window.addEventListener('hanni:language-changed', () => {
+  renderLanguageShell();
+  void tabLoaders.calendar().catch(showError);
+});
+if (restoredLanguage.error) showError(copy('Не удалось прочитать настройки языка. Используется русский.'));
 if (window.__TAURI__?.core?.invoke) {
   tabLoaders.calendar().catch(showError);
   startMvpSyncRefresh({ window, invoke, listen, requestSync: requestMvpSync, requestRefresh: requestHealthViewRefresh });
@@ -38,3 +53,5 @@ queueMicrotask(() => {
   splash.style.opacity = '0';
   setTimeout(() => splash.remove(), 200);
 });
+}
+void startApplication().catch(showError);

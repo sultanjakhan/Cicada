@@ -180,8 +180,9 @@
 }
 .calendar-settings-confirmation button:first-of-type {
   border-color: var(--text-primary);
-  color: var(--bg-card);
-  background: var(--text-primary);
+  color: var(--text-primary);
+  background: transparent;
+  font-weight: 600;
 }
 .calendar-settings-panel h3 {
   margin: 5px 0 8px;
