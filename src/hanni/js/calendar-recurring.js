@@ -59,8 +59,24 @@ export function mountCalendarRecurring(element,{invoke=defaultInvoke,showComplet
   function render(){if(disposed||!state)return;if(library){renderManager();element.setAttribute('aria-busy',String(busy));return;}tasks?.setDate?.(date);renderHeading();renderPlanList();element.setAttribute('aria-busy',String(busy));}
   function fail(err){error.textContent=uiCopy(err?.message||String(err));error.hidden=false;retry.hidden=false;}
   async function refresh(canCommit=null){if(canCommit&&!canCommit())return;const own=++revision;try{const loaded=await store.read();if(disposed||own!==revision||(canCommit&&!canCommit()))return;state=loaded;error.hidden=true;retry.hidden=true;render();}catch(err){if(!disposed&&own===revision)fail(err);}}
-  async function mark(id,status){if(busy)return;busy=true;render();try{const result=await store.setStatus(id,status,date);state=result.state;error.hidden=true;retry.hidden=true;window.dispatchEvent(new window.CustomEvent('hanni:recurring-changed'));}catch(err){fail(err);}finally{busy=false;render();}}
-  function openDetails(item,returnFocus){if(details||disposed)return;const dialog=createCalendarDialog({document,title:item.title,returnFocus,onClose:()=>{details=null;},isCurrent:()=>!disposed});details=dialog;const rule=item.kind==='rule',pending=item.status==='pending';dialog.body.innerHTML=`<p>${rule?uiCopy("Отметь, соблюдено ли правило в выбранный день."):uiCopy("Отметка выполнения для выбранного дня.")}</p><p class="calendar-recurring__dialog-meta">${item.required===false?uiCopy("По желанию"):uiCopy("Обязательное")} · ${escaped(frequency(item,uiCopy))}${rule?uiCopy(" · правило на день"):''}</p>${rule?`<div class="calendar-recurring__choice-actions">${pending?`<button type="button" data-detail-status="kept">${uiCopy("Соблюдено")}</button><button type="button" data-detail-status="broken">${uiCopy("Не соблюдено")}</button>`:`<button type="button" data-detail-status="pending">${uiCopy("Отменить отметку")}</button>`}</div>`:''}<button type="button" class="calendar-recurring__text" data-detail-edit>${uiCopy("Изменить рутину")}</button>`;dialog.body.addEventListener('click',event=>{const button=event.target.closest('button');if(button?.dataset.detailStatus){void mark(item.id,button.dataset.detailStatus).then(()=>dialog.close());}else if(button?.hasAttribute('data-detail-edit')){dialog.close();edit(item);}});dialog.open();}
+  async function mark(id,status,markDate=date){
+    if(busy)return false;
+    busy=true;render();
+    try{
+      const result=await store.setStatus(id,status,markDate);
+      state=result.state;error.hidden=true;retry.hidden=true;
+      window.dispatchEvent(new window.CustomEvent('hanni:recurring-changed'));
+      return true;
+    }catch(err){fail(err);return false;}
+    finally{busy=false;render();}
+  }
+  function openDetails(item,returnFocus){if(details||disposed)return;const markDate=date;const dialog=createCalendarDialog({document,title:item.title,returnFocus,onClose:()=>{details=null;},isCurrent:()=>!disposed});details=dialog;const rule=item.kind==='rule',pending=item.status==='pending';dialog.body.innerHTML=`<p>${rule?uiCopy("Отметь, соблюдено ли правило в выбранный день."):uiCopy("Отметка выполнения для выбранного дня.")}</p><p class="calendar-recurring__dialog-meta">${item.required===false?uiCopy("По желанию"):uiCopy("Обязательное")} · ${escaped(frequency(item,uiCopy))}${rule?uiCopy(" · правило на день"):''}</p>${rule?`<div class="calendar-recurring__choice-actions">${pending?`<button type="button" data-detail-status="kept">${uiCopy("Соблюдено")}</button><button type="button" data-detail-status="broken">${uiCopy("Не соблюдено")}</button>`:`<button type="button" data-detail-status="pending">${uiCopy("Отменить отметку")}</button>`}</div>`:''}<button type="button" class="calendar-recurring__text" data-detail-edit>${uiCopy("Изменить рутину")}</button>`;dialog.body.addEventListener('click',event=>{const button=event.target.closest('button');if(button?.dataset.detailStatus){
+      if(busy||dialog.pending)return;
+      dialog.showError('');dialog.setPending(true);
+      void mark(item.id,button.dataset.detailStatus,markDate).finally(()=>dialog.setPending(false)).then(saved=>{
+        if(saved)dialog.close();else dialog.showError(error.textContent);
+      });
+    }else if(button?.hasAttribute('data-detail-edit')){dialog.close();edit(item);}});dialog.open();}
   function run(id,start=true){return openRecurringRun({document,invoke,id,date,start});}
   function libraryRun(plan,day){
     const current=state.days[day]?.[plan.id];
