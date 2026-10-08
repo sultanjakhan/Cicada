@@ -165,15 +165,22 @@ fn parse_event(index: usize, event: &ForegroundEvent) -> Result<Interval, Summar
             reason: "duration",
         });
     }
-    let start = DateTime::parse_from_rfc3339(&event.timestamp)
-        .map_err(|_| SummaryError::InvalidEvent {
+    let start =
+        DateTime::parse_from_rfc3339(&event.timestamp).map_err(|_| SummaryError::InvalidEvent {
             index,
             reason: "timestamp",
-        })?
-        .with_timezone(&Utc);
+        })?;
+    // Chrono encodes leap seconds with nanoseconds >= 1e9. The calculation
+    // uses POSIX day bounds, so reject these before they shift to another day.
+    if start.timestamp_subsec_nanos() >= 1_000_000_000 {
+        return Err(SummaryError::InvalidEvent {
+            index,
+            reason: "timestamp_leap_second_unsupported",
+        });
+    }
     Ok(Interval {
         app: app.into(),
-        start,
+        start: start.with_timezone(&Utc),
         duration_seconds: event.duration_seconds,
     })
 }

@@ -547,3 +547,163 @@ fn invalid_bounds_apps_uuid_and_special_durations_are_rejected() {
         Err(SummaryError::InvalidDeviceId)
     ));
 }
+
+fn leap_request(events: Vec<ForegroundEvent>, dates: Vec<NaiveDate>) -> SummaryRequest {
+    SummaryRequest {
+        device_id: DEVICE.into(),
+        source: ActivitySource::Windows,
+        dates,
+        observed_at: Some("2026-10-08T12:34:56Z".into()),
+        observation_status: ObservationStatus::Available,
+        events,
+    }
+}
+
+#[test]
+fn leap_second_at_midnight_is_rejected_without_day_shift() {
+    let req = leap_request(
+        vec![event("A", "2016-12-31T23:59:60Z", 0.5)],
+        vec![date("2016-12-31"), date("2017-01-01")],
+    );
+    assert!(matches!(
+        summarize(&req, &utc()),
+        Err(SummaryError::InvalidEvent {
+            reason: "timestamp_leap_second_unsupported",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn leap_second_fraction_and_offset_are_rejected() {
+    for timestamp in ["2016-12-31T23:59:60.25Z", "2017-01-01T05:29:60.25+05:30"] {
+        let req = leap_request(
+            vec![event("A", timestamp, 0.5)],
+            vec![date("2016-12-31"), date("2017-01-01")],
+        );
+        assert!(matches!(
+            summarize(&req, &utc()),
+            Err(SummaryError::InvalidEvent {
+                reason: "timestamp_leap_second_unsupported",
+                ..
+            })
+        ));
+    }
+}
+
+#[test]
+fn leap_second_in_second_event_reports_index_without_partial_success() {
+    let req = leap_request(
+        vec![
+            event("Good", "2016-12-31T23:59:58Z", 1.0),
+            event("Leap", "2016-12-31T23:59:60Z", 0.5),
+        ],
+        vec![date("2016-12-31")],
+    );
+    assert!(matches!(
+        summarize(&req, &utc()),
+        Err(SummaryError::InvalidEvent {
+            index: 1,
+            reason: "timestamp_leap_second_unsupported"
+        })
+    ));
+}
+
+#[test]
+fn ordinary_fractional_second_crosses_midnight_normally() {
+    let req = leap_request(
+        vec![event("A", "2016-12-31T23:59:59.75Z", 0.5)],
+        vec![date("2016-12-31"), date("2017-01-01")],
+    );
+    let out = summarize(&req, &utc()).unwrap();
+    assert_eq!(
+        out.dates[0].summary.as_ref().unwrap().foreground_seconds,
+        0.25
+    );
+    assert_eq!(
+        out.dates[1].summary.as_ref().unwrap().foreground_seconds,
+        0.25
+    );
+}
+#[test]
+fn ordinary_next_midnight_and_original_start_order_remain_normal() {
+    let req = leap_request(
+        vec![
+            event("Zulu", "2016-12-31T23:59:58Z", 6.0),
+            event("Alpha", "2016-12-31T23:59:59Z", 3.0),
+            event("Next", "2017-01-01T00:00:04Z", 1.0),
+        ],
+        vec![date("2016-12-31"), date("2017-01-01")],
+    );
+    let out = summarize(&req, &utc()).unwrap();
+    assert_eq!(
+        out.dates[0].summary.as_ref().unwrap(),
+        &ActivitySummary {
+            foreground_seconds: 2.0,
+            apps: vec![
+                AppDuration {
+                    app: "Alpha".into(),
+                    seconds: 1.0
+                },
+                AppDuration {
+                    app: "Zulu".into(),
+                    seconds: 1.0
+                },
+            ],
+        }
+    );
+    assert_eq!(
+        out.dates[1].summary.as_ref().unwrap(),
+        &ActivitySummary {
+            foreground_seconds: 5.0,
+            apps: vec![
+                AppDuration {
+                    app: "Alpha".into(),
+                    seconds: 2.0
+                },
+                AppDuration {
+                    app: "Next".into(),
+                    seconds: 1.0
+                },
+                AppDuration {
+                    app: "Zulu".into(),
+                    seconds: 2.0
+                },
+            ],
+        }
+    );
+}
+#[test]
+fn leap_observed_at_is_metadata_only_and_preserved() {
+    let mut req = leap_request(
+        vec![event("A", "2016-12-31T23:59:59Z", 0.5)],
+        vec![date("2016-12-31")],
+    );
+    req.observed_at = Some("2016-12-31T23:59:60.25Z".into());
+    let out = summarize(&req, &utc()).unwrap();
+    assert_eq!(out.dates[0].metadata.observed_at, req.observed_at);
+}
+
+#[test]
+fn ordinary_fractional_midnight_uses_device_timezone_on_neighbor_dates() {
+    let zone = FixedOffset::east_opt(5 * 3600 + 30 * 60).unwrap();
+    for timestamp in ["2016-12-31T18:29:59.75Z", "2016-12-31T23:59:59.75+05:30"] {
+        let req = leap_request(
+            vec![event("A", timestamp, 0.5)],
+            vec![date("2016-12-31"), date("2017-01-01")],
+        );
+        let out = summarize(&req, &zone).unwrap();
+        for day in &out.dates {
+            assert_eq!(
+                day.summary.as_ref().unwrap(),
+                &ActivitySummary {
+                    foreground_seconds: 0.25,
+                    apps: vec![AppDuration {
+                        app: "A".into(),
+                        seconds: 0.25
+                    }],
+                }
+            );
+        }
+    }
+}
