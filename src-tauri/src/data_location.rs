@@ -242,24 +242,9 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
         .sync_all()
         .map_err(|_| "Не удалось сохранить расположение данных.")?;
     let tmp = file.into_temp_path();
-    #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStrExt;
-        use windows::core::PCWSTR;
-        use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_REPLACE_EXISTING};
-        let from: Vec<u16> = tmp.as_os_str().encode_wide().chain(Some(0)).collect();
-        let to: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-        unsafe {
-            MoveFileExW(
-                PCWSTR(from.as_ptr()),
-                PCWSTR(to.as_ptr()),
-                MOVEFILE_REPLACE_EXISTING,
-            )
-        }
+    // persist also clears Windows' temporary-file attribute before publication.
+    tmp.persist(path)
         .map_err(|_| "Не удалось атомарно заменить расположение данных.")?;
-    }
-    #[cfg(not(windows))]
-    fs::rename(&tmp, path).map_err(|_| "Не удалось атомарно заменить расположение данных.")?;
     Ok(())
 }
 
@@ -399,7 +384,13 @@ pub fn apply_pending(standard: &Path, source: &Path) -> Result<(), String> {
         }
         fs::remove_dir(&target).map_err(|_| "Не удалось подготовить пустую целевую папку.")?;
     }
+    #[cfg(test)]
+    let renamed_staging_path = temp.to_path_buf();
     fs::rename(temp, &target).map_err(|_| "Не удалось включить новое расположение данных.")?;
+    // After publication the old pathname is no longer owned by this guard.
+    let _ = staging.keep();
+    #[cfg(test)]
+    recovery_acceptance_tests::on_staging_renamed(&renamed_staging_path);
     crate::mvp_sync::relocate_credentials(&source_db, &target.join("calendar.db")).map_err(
         |_| "Не удалось перенести защищённый профиль синхронизации. Исходная папка сохранена.",
     )?;
@@ -848,6 +839,123 @@ mod recovery_acceptance_tests {
         assert!(current(&standard).unwrap().migration_error.is_none());
         assert_eq!(identity(&standard), identity(&target));
     }
+    thread_local! {
+        static RECREATE_RENAMED_STAGING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        static RECREATED_STAGING: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+    }
+
+    // Deterministic test-only intervention at the rename/cleanup boundary.
+    pub(super) fn on_staging_renamed(old_path: &Path) {
+        if RECREATE_RENAMED_STAGING.replace(false) {
+            fs::create_dir(old_path).unwrap();
+            fs::write(
+                old_path.join("foreign-after-rename.txt"),
+                b"synthetic other writer",
+            )
+            .unwrap();
+            RECREATED_STAGING.with(|slot| *slot.borrow_mut() = Some(old_path.to_path_buf()));
+        }
+    }
+
+    #[cfg(windows)]
+    fn assert_persistent_metadata(path: &Path) {
+        use std::os::windows::fs::MetadataExt;
+        assert_eq!(
+            fs::metadata(path).unwrap().file_attributes() & 0x100,
+            0,
+            "persistent metadata must not retain FILE_ATTRIBUTE_TEMPORARY: {}",
+            path.display()
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_published_metadata_is_not_temporary() {
+        let (root, standard) = fixture();
+        drop(seed(&standard));
+        let before = fs::read(standard.join("calendar.db")).unwrap();
+        let expected = identity(&standard);
+        let target = root.path().canonicalize().unwrap().join("selected-profile");
+        prepare(&standard, &target).unwrap();
+        assert_persistent_metadata(&pending_path(&standard));
+        apply_pending(&standard, &standard).unwrap();
+        assert_persistent_metadata(&pointer_path(&standard));
+        assert_eq!(resolve(&standard).unwrap(), target);
+        assert_eq!(identity(&target), expected);
+        assert_eq!(fs::read(standard.join("calendar.db")).unwrap(), before);
+        // Exercise replacement of a previously published metadata file too.
+        let pointer = fs::read(pointer_path(&standard)).unwrap();
+        atomic_write(&pointer_path(&standard), &pointer).unwrap();
+        assert_persistent_metadata(&pointer_path(&standard));
+        record_failure(&standard).unwrap();
+        assert_persistent_metadata(&failure_path(&standard));
+        record_failure(&standard).unwrap();
+        assert_persistent_metadata(&failure_path(&standard));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_published_staging_does_not_delete_recreated_old_path() {
+        let (root, standard) = fixture();
+        drop(seed(&standard));
+        let before = fs::read(standard.join("calendar.db")).unwrap();
+        let expected = identity(&standard);
+        let target = root.path().canonicalize().unwrap().join("selected-profile");
+        prepare(&standard, &target).unwrap();
+        RECREATE_RENAMED_STAGING.set(true);
+        apply_pending(&standard, &standard).unwrap();
+        let foreign = RECREATED_STAGING
+            .with(|slot| slot.borrow_mut().take())
+            .unwrap();
+        assert_eq!(
+            fs::read(foreign.join("foreign-after-rename.txt")).unwrap(),
+            b"synthetic other writer"
+        );
+        assert!(foreign.starts_with(root.path().canonicalize().unwrap()));
+        assert_eq!(resolve(&standard).unwrap(), target);
+        assert_eq!(identity(&target), expected);
+        assert_eq!(identity(&standard), expected);
+        assert_eq!(fs::read(standard.join("calendar.db")).unwrap(), before);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_failed_pointer_publish_does_not_delete_recreated_staging_path() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let (root, standard) = fixture();
+        drop(seed(&standard));
+        let before = fs::read(standard.join("calendar.db")).unwrap();
+        let expected = identity(&standard);
+        let pointer = serde_json::to_vec(&Pointer {
+            path: standard.to_string_lossy().into_owned(),
+        })
+        .unwrap();
+        fs::write(pointer_path(&standard), &pointer).unwrap();
+        let target = root.path().canonicalize().unwrap().join("selected-profile");
+        prepare(&standard, &target).unwrap();
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(pointer_path(&standard))
+            .unwrap();
+        RECREATE_RENAMED_STAGING.set(true);
+        assert!(apply_pending(&standard, &standard).is_err());
+        let foreign = RECREATED_STAGING
+            .with(|slot| slot.borrow_mut().take())
+            .unwrap();
+        assert_eq!(
+            fs::read(foreign.join("foreign-after-rename.txt")).unwrap(),
+            b"synthetic other writer"
+        );
+        assert_eq!(fs::read(pointer_path(&standard)).unwrap(), pointer);
+        assert_eq!(resolve(&standard).unwrap(), standard);
+        assert_eq!(identity(&standard), expected);
+        assert_eq!(identity(&target), expected);
+        assert_eq!(fs::read(standard.join("calendar.db")).unwrap(), before);
+        assert!(pending_path(&standard).is_file());
+        drop(lock);
+    }
+
     #[test]
     fn foreign_pending_source_fails_without_writes() {
         let (root, standard) = fixture();
