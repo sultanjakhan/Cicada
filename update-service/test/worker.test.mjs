@@ -15,6 +15,8 @@ const devVars = path.join(import.meta.dirname, ".dev.vars");
 const config = path.join(import.meta.dirname, "wrangler.jsonc");
 const wrangler = path.join(serviceDir, "node_modules", "wrangler", "bin", "wrangler.js");
 const token = "test-only-update-token";
+// Windows may keep test directories briefly busy after Wrangler exits.
+const directoryCleanupOptions = { recursive: true, force: true, maxRetries: 10, retryDelay: 100 };
 
 async function freePort() {
   const server = createServer();
@@ -54,7 +56,7 @@ async function terminate(child) {
 }
 
 test("local Miniflare route protects all update assets", async () => {
-  await rm(fixtureRoot, { recursive: true, force: true });
+  await rm(fixtureRoot, directoryCleanupOptions);
   await mkdir(path.join(assetsDir, "releases"), { recursive: true });
   await writeFile(path.join(assetsDir, "latest.json"), '{"version":"0.3.3"}\n');
   await writeFile(path.join(assetsDir, "releases", "Hanni-MVP-0.3.3.apk"), "apk-fixture");
@@ -107,8 +109,8 @@ test("local Miniflare route protects all update assets", async () => {
   } finally {
     await terminate(child);
     await rm(devVars, { force: true });
-    await rm(fixtureRoot, { recursive: true, force: true });
-    await rm(stateRoot, { recursive: true, force: true }).catch(() => {});
+    await rm(fixtureRoot, directoryCleanupOptions);
+    await rm(stateRoot, directoryCleanupOptions).catch(() => {});
   }
 });
 
