@@ -1144,6 +1144,211 @@ mod tests {
         assert_eq!(checkpoint_conflicts(&other).unwrap().len(), 1);
     }
     #[test]
+    fn review_dismissed_equivocation_does_not_quarantine_exact_known_versions() {
+        let mut c = fixture();
+        task(&c, "task", "Current");
+        let (id, original) = archive(&c, "task", "Original");
+        let stamp = "2026-09-14T01:00:00.000Z";
+        let mut changed = original.clone();
+        changed.value["title"] = json!("Changed at identical tuple");
+        assert_eq!(apply_record(&c, &fields(&id, stamp, "peer", &changed).unwrap()).unwrap_err(), "content_sync_version_conflict");
+        pending(&c, &changed, stamp);
+        c.execute("UPDATE content_sync_pending SET error_code='content_sync_version_conflict'", []).unwrap();
+        let listed = list(&c, 0, 25).unwrap();
+        let entry = listed["entries"].as_array().unwrap().iter().find(|e| e["source"] == "pending").unwrap().clone();
+        choose(&mut c, &entry, "current").unwrap();
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM content_sync_pending", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM mvp_sync_resolution_archive", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+        assert!(was_resolved(&c, &id, stamp, "peer", &changed).unwrap());
+        let original_replay = apply_record(&c, &fields(&id, stamp, "peer", &original).unwrap());
+        let dismissed_replay = apply_record(&c, &fields(&id, stamp, "peer", &changed).unwrap());
+        println!("REVIEW original_replay={original_replay:?} dismissed_replay={dismissed_replay:?}");
+        assert_eq!(original_replay, Ok(false), "Exact original remains a harmless archived replay");
+        assert_eq!(dismissed_replay, Ok(false), "Exact dismissed pending payload remains suppressed by its receipt");
+        let mut unseen = original.clone();
+        unseen.value["title"] = json!("Unseen third payload at identical tuple");
+        assert_eq!(apply_record(&c, &fields(&id, stamp, "peer", &unseen).unwrap()).unwrap_err(), "content_sync_version_conflict");
+        assert_eq!(c.query_row("SELECT title FROM items WHERE id='task'", [], |r| r.get::<_, String>(0)).unwrap(), "Current");
+    }
+    #[test]
+    fn dismissed_equivocation_known_variants_and_new_payload_survive_database_restart() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("synthetic-dismissal.db");
+        let mut c = Connection::open(&path).unwrap();
+        crate::init_schema(&c).unwrap();
+        task(&c, "task", "Current");
+        let (id, original) = archive(&c, "task", "Original");
+        let stamp = "2026-09-14T01:00:00.000Z";
+        let before = current(&c, &id).unwrap().unwrap().data;
+        let mut changed = original.clone();
+        changed.value["title"] = json!("Rejected changed payload");
+        assert_eq!(
+            apply_record(&c, &fields(&id, stamp, "peer", &changed).unwrap()).unwrap_err(),
+            "content_sync_version_conflict"
+        );
+        pending(&c, &changed, stamp);
+        c.execute(
+            "UPDATE content_sync_pending SET error_code='content_sync_version_conflict'",
+            [],
+        )
+        .unwrap();
+        let entry = list(&c, 0, 25).unwrap()["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["source"] == "pending")
+            .unwrap()
+            .clone();
+        choose(&mut c, &entry, "current").unwrap();
+        let visible = list(&c, 0, 25).unwrap();
+        for retained in checkpoint_conflicts(&c).unwrap() {
+            assert_eq!(
+                checkpoint_merge_conflict(&c, &retained).unwrap_err(),
+                "content_sync_version_conflict"
+            );
+        }
+        assert!(
+            !checkpoint_publishable(&c).unwrap(),
+            "Dismissal of pending is not prefix-completeness evidence"
+        );
+        for _ in 0..2 {
+            drop(c);
+            c = Connection::open(&path).unwrap();
+            crate::init_schema(&c).unwrap();
+            for record in [&original, &changed, &changed, &original] {
+                assert_eq!(
+                    apply_record(&c, &fields(&id, stamp, "peer", record).unwrap()),
+                    Ok(false)
+                );
+            }
+            assert!(was_resolved(&c, &id, stamp, "peer", &changed).unwrap());
+            assert_eq!(list(&c, 0, 25).unwrap(), visible);
+            assert_eq!(
+                c.query_row("SELECT count(*) FROM content_sync_pending", [], |r| r
+                    .get::<_, i64>(0))
+                    .unwrap(),
+                0
+            );
+            assert_eq!(
+                c.query_row(
+                    "SELECT count(*) FROM mvp_sync_conflict_resolutions",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+                1
+            );
+            assert_eq!(checkpoint_conflicts(&c).unwrap().len(), 2);
+            assert_eq!(current(&c, &id).unwrap().unwrap().data, before);
+        }
+        let mut unseen = original.clone();
+        unseen.value["title"] = json!("Third genuinely new payload");
+        assert_eq!(
+            apply_record(&c, &fields(&id, stamp, "peer", &unseen).unwrap()).unwrap_err(),
+            "content_sync_version_conflict"
+        );
+        assert!(!was_resolved(&c, &id, stamp, "peer", &unseen).unwrap());
+        pending(&c, &unseen, stamp);
+        c.execute(
+            "UPDATE content_sync_pending SET error_code='content_sync_version_conflict'",
+            [],
+        )
+        .unwrap();
+        drop(c);
+        c = Connection::open(&path).unwrap();
+        crate::init_schema(&c).unwrap();
+        for record in [&original, &changed] {
+            assert_eq!(
+                apply_record(&c, &fields(&id, stamp, "peer", record).unwrap()),
+                Ok(false)
+            );
+        }
+        let listed = list(&c, 0, 25).unwrap();
+        let entry = listed["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["source"] == "pending")
+            .unwrap()
+            .clone();
+        let retained: String = c
+            .query_row("SELECT payload FROM content_sync_pending", [], |r| r.get(0))
+            .unwrap();
+        let retained: Value = serde_json::from_str(&retained).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(retained["f"]["data"].as_str().unwrap()).unwrap(),
+            serde_json::to_value(&unseen).unwrap()
+        );
+        choose(&mut c, &entry, "current").unwrap();
+        // Dismiss the original alternative too; all three exact decisions remain durable.
+        let original_entry = list(&c, 0, 25).unwrap()["entries"][0].clone();
+        choose(&mut c, &original_entry, "current").unwrap();
+        drop(c);
+        c = Connection::open(&path).unwrap();
+        crate::init_schema(&c).unwrap();
+        for record in [&original, &changed, &unseen, &changed, &original] {
+            assert_eq!(
+                apply_record(&c, &fields(&id, stamp, "peer", record).unwrap()),
+                Ok(false)
+            );
+            assert!(was_resolved(&c, &id, stamp, "peer", record).unwrap());
+        }
+        assert_eq!(list(&c, 0, 25).unwrap()["total"], 0);
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM content_sync_pending", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            c.query_row(
+                "SELECT count(*) FROM mvp_sync_conflict_resolutions",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            3
+        );
+        assert_eq!(checkpoint_conflicts(&c).unwrap().len(), 3);
+        assert_eq!(current(&c, &id).unwrap().unwrap().data, before);
+        assert_eq!(
+            c.query_row("SELECT title FROM items WHERE id='task'", [], |r| r
+                .get::<_, String>(0))
+                .unwrap(),
+            "Current"
+        );
+    }
+    #[test]
+    fn known_equivocation_replay_still_checks_every_retained_archive_row() {
+        let c = fixture();
+        task(&c, "task", "Current");
+        let (id, original) = archive(&c, "task", "Original");
+        let stamp = "2026-09-14T01:00:00.000Z";
+        let before = current(&c, &id).unwrap().unwrap().data;
+        // The active known row comes before the corrupt hidden row in UNION ALL.
+        c.execute("INSERT INTO mvp_sync_resolution_archive VALUES(?1,?2,'peer','synthetic-invalid','{','pending')", params![id,stamp]).unwrap();
+        assert_eq!(
+            apply_record(&c, &fields(&id, stamp, "peer", &original).unwrap()).unwrap_err(),
+            "mvp_sync_invalid_local_record"
+        );
+        assert_eq!(current(&c, &id).unwrap().unwrap().data, before);
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM mvp_sync_conflicts", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            c.query_row(
+                "SELECT count(*) FROM mvp_sync_resolution_archive",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+    }
+    #[test]
     fn archived_version_replay_rejects_changed_payload_before_and_after_dismissal() {
         let mut c = fixture();
         task(&c, "task", "Current");

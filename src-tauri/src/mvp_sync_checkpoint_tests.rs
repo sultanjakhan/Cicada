@@ -727,3 +727,152 @@ fn checkpoint_abandoned_upload_without_successor_retires_only_transfer_cache() {
         assert!(!capture(&mut source, &cfg, 0).unwrap());
     }
 }
+
+#[test]
+fn review_checkpoint_capture_rejects_incoming_choice_equivocation() {
+    let cfg = config("incoming-choice-source");
+    let mut source = connection(&cfg);
+    task(&source, "task", "Current");
+    let id = json!(["items", ["task"]]).to_string();
+    let outgoing = snapshot_row(&source, "mvp_records", &id, &cfg.device_id).unwrap();
+    let mut original: Value = serde_json::from_str(outgoing.f["data"].as_str().unwrap()).unwrap();
+    original["value"]["title"] = json!("Original");
+    original["parent"] = Value::Null;
+    original["parent_writer"] = Value::Null;
+    let stamp = "2026-09-14T01:00:00.000Z";
+    let historical = json!({"id":id,"stamp":stamp,"writer":"peer","data":original.to_string()});
+    crate::mvp_sync_db::checkpoint_merge_conflict(&source, &historical).unwrap();
+    // Read the adapter's canonical Record encoding for an exact receipt hash.
+    let original_data: String = source
+        .query_row(
+            "SELECT data FROM mvp_sync_conflicts WHERE id=?1",
+            [&id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let changed_data = original_data.replace("\"title\":\"Original\"", "\"title\":\"Changed\"");
+    assert_ne!(changed_data, original_data);
+    let changed_hash = hash(changed_data.as_bytes());
+    // Persisted result of choosing the quarantined variant as a fresh local write.
+    source
+        .execute(
+            "UPDATE items SET title='Changed',version=version+1 WHERE id='task'",
+            [],
+        )
+        .unwrap();
+    source.execute("INSERT INTO mvp_sync_resolution_archive(id,stamp,writer,payload_hash,data,source) VALUES(?1,?2,'peer',?3,?4,'pending')", params![id, stamp, changed_hash, changed_data]).unwrap();
+    source.execute("INSERT INTO mvp_sync_conflict_resolutions VALUES(?1,?2,'peer',?3,'incoming','synthetic-human-choice')", params![id, stamp, changed_hash]).unwrap();
+    assert!(
+        crate::mvp_sync_db::checkpoint_publishable(&source).unwrap(),
+        "incoming receipts pass the existing provenance gate"
+    );
+    let mut seq = 0;
+    drain_local(&mut source, &cfg, &mut seq);
+    assert_eq!(scalar(&source, "SELECT (SELECT COUNT(*) FROM content_sync_dirty)+(SELECT COUNT(*) FROM content_sync_outbox)+(SELECT COUNT(*) FROM content_sync_pending)").unwrap(), 0);
+    assert_eq!(
+        crate::mvp_sync_db::checkpoint_conflicts(&source)
+            .unwrap()
+            .len(),
+        2
+    );
+    let before = queues(&source);
+    let retained_before = crate::mvp_sync_db::checkpoint_conflicts(&source).unwrap();
+    let title_before: String = source
+        .query_row("SELECT title FROM items WHERE id='task'", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(title_before, "Changed");
+    let captured = capture(&mut source, &cfg, 0);
+    if captured == Ok(true) {
+        let peer_cfg = config("incoming-choice-clean-peer");
+        let mut peer = connection(&peer_cfg);
+        task(&peer, "task", "Current");
+        // Make snapshot materialization win before its later archive error rolls back.
+        let earlier = "2026-09-14T00:00:00.000Z";
+        peer.execute(
+            "UPDATE mvp_records SET updated_at=?1 WHERE id=?2",
+            params![earlier, id],
+        )
+        .unwrap();
+        peer.execute("UPDATE sync_row_versions SET updated_at=?1 WHERE table_name='mvp_records' AND row_id=?2", params![earlier, id]).unwrap();
+        let peer_retained_before = crate::mvp_sync_db::checkpoint_conflicts(&peer).unwrap();
+        let peer_queues_before = queues(&peer);
+        let d = descriptor(&source, &cfg, &peer);
+        let installed = install(&mut peer, &peer_cfg, &d);
+        println!("REVIEW capture={captured:?} clean_receiver_install={installed:?}");
+        assert_eq!(installed, Err("content_sync_version_conflict".into()));
+        assert_eq!(
+            scalar(&peer, "SELECT receive_seq FROM content_sync_state").unwrap(),
+            0
+        );
+        assert_eq!(
+            crate::mvp_sync_db::checkpoint_conflicts(&peer).unwrap(),
+            peer_retained_before
+        );
+        assert_eq!(
+            peer.query_row("SELECT title FROM items WHERE id='task'", [], |r| r
+                .get::<_, String>(0))
+                .unwrap(),
+            "Current"
+        );
+        assert_eq!(queues(&peer), peer_queues_before);
+    }
+    assert_eq!(
+        crate::mvp_sync_db::checkpoint_conflicts(&source).unwrap(),
+        retained_before
+    );
+    assert_eq!(
+        source
+            .query_row("SELECT title FROM items WHERE id='task'", [], |r| r
+                .get::<_, String>(0))
+            .unwrap(),
+        title_before
+    );
+    assert_eq!(queues(&source), before);
+    assert!(matches!(&captured, Ok(false)) || matches!(&captured, Err(error) if error == "content_sync_version_conflict"), "Different retained payloads at one historical tuple must fail closed before publishing: {captured:?}");
+    assert_eq!(
+        scalar(&source, "SELECT COUNT(*) FROM mvp_sync_checkpoint_jobs").unwrap(),
+        0
+    );
+}
+
+#[test]
+fn review_checkpoint_capture_accepts_canonical_equivalent_archive_encoding() {
+    let cfg = config("canonical-archive-source");
+    let mut source = connection(&cfg);
+    task(&source, "task", "Original");
+    let id = json!(["items", ["task"]]).to_string();
+    let outgoing = snapshot_row(&source, "mvp_records", &id, &cfg.device_id).unwrap();
+    let stamp = "2026-09-14T01:00:00.000Z";
+    let historical = json!({"id":id,"stamp":stamp,"writer":"peer","data":outgoing.f["data"]});
+    crate::mvp_sync_db::checkpoint_merge_conflict(&source, &historical).unwrap();
+    let canonical: String = source
+        .query_row(
+            "SELECT data FROM mvp_sync_conflicts WHERE id=?1",
+            [&id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let mut equivalent: Value = serde_json::from_str(&canonical).unwrap();
+    for field in ["identity", "parent", "parent_writer"] {
+        assert!(equivalent[field].is_null());
+        equivalent.as_object_mut().unwrap().remove(field);
+    }
+    let alternate = serde_json::to_string_pretty(&equivalent).unwrap();
+    assert_ne!(alternate, canonical);
+    let canonical_hash = hash(canonical.as_bytes());
+    source.execute("INSERT INTO mvp_sync_resolution_archive(id,stamp,writer,payload_hash,data,source) VALUES(?1,?2,'peer',?3,?4,'pending')", params![id, stamp, canonical_hash, alternate]).unwrap();
+    source.execute("INSERT INTO mvp_sync_conflict_resolutions VALUES(?1,?2,'peer',?3,'incoming','synthetic-human-choice')", params![id, stamp, canonical_hash]).unwrap();
+    let mut seq = 0;
+    drain_local(&mut source, &cfg, &mut seq);
+    assert!(
+        capture(&mut source, &cfg, 0).unwrap(),
+        "Whitespace, field order and omitted None fields do not change a canonical Record"
+    );
+    let peer_cfg = config("canonical-archive-clean-peer");
+    let mut peer = connection(&peer_cfg);
+    let d = descriptor(&source, &cfg, &peer);
+    install(&mut peer, &peer_cfg, &d).unwrap();
+    let imported = crate::mvp_sync_db::checkpoint_conflicts(&peer).unwrap();
+    assert_eq!(imported.len(), 1);
+    assert_eq!(imported[0]["data"], canonical);
+}
