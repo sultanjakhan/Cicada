@@ -156,10 +156,16 @@ pub fn names(processes_json: Option<&str>, process: &str, stage: Option<&str>) -
         .and_then(|row| row["title"].as_str().map(str::to_owned))
         .unwrap_or_else(|| if process == DEFAULT_PROCESS { "Системный анализ".into() } else { process.into() });
     let stage_name = stage.map(|id| {
-        let mut all = state["processes"].as_array().into_iter().flatten().flat_map(|row| row["stages"].as_array().into_iter().flatten());
-        all.find(|row| row["id"] == id)
+        // Stage ids are stable only within their process. Looking through all
+        // processes lets a duplicate id borrow another process's label and
+        // makes a deleted stage look as if it still exists.
+        stored
+            .and_then(|row| row["stages"].as_array().and_then(|stages| stages.iter().find(|row| row["id"] == id)))
             .and_then(|row| row["title"].as_str().map(str::to_owned))
-            .or_else(|| Some(stage_label(id)).filter(|label| !label.is_empty()).map(str::to_owned))
+            // An absent process record can be the unsaved built-in process;
+            // preserve its legacy labels. A known process with a missing
+            // stage must keep the id so conflict review can show it as deleted.
+            .or_else(|| (stored.is_none() && process == DEFAULT_PROCESS).then(|| stage_label(id)).filter(|label| !label.is_empty()).map(str::to_owned))
             .unwrap_or_else(|| id.into())
     });
     (process_name, stage_name)
@@ -309,6 +315,7 @@ pub fn write(tags: &str, kind: Option<&str>, sphere: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::{types::Value as SqlValue, Connection};
 
     const T1: &str = "2026-09-25T09:00:00.000Z";
     const T2: &str = "2026-09-25T10:30:00.000Z";
@@ -463,6 +470,157 @@ mod tests {
         assert_eq!(names(Some(state), "p-2", Some("s-1")), ("Ремонт".into(), Some("Смета".into())));
         assert_eq!(names(None, "system-analysis", Some("analysis")), ("Системный анализ".into(), Some("Анализ и модели".into())));
         assert_eq!(names(Some("broken"), "p-9", Some("gone")), ("p-9".into(), Some("gone".into())));
+    }
+
+    #[test]
+    fn names_keep_stage_lookup_scoped_to_the_task_process() {
+        let state = r#"{"version":1,"processes":[
+            {"id":"p-a","title":"First","stages":[{"id":"shared","title":"First label"}]},
+            {"id":"p-b","title":"Second","stages":[{"id":"shared","title":"Second label"}]}
+        ]}"#;
+        assert_eq!(
+            names(Some(state), "p-b", Some("shared")),
+            ("Second".into(), Some("Second label".into())),
+            "a duplicate stage id uses the task process's title"
+        );
+        let deleted = r#"{"version":1,"processes":[
+            {"id":"p-a","title":"First","stages":[{"id":"shared","title":"First label"}]},
+            {"id":"p-b","title":"Second","stages":[{"id":"other","title":"Other label"}]}
+        ]}"#;
+        assert_eq!(
+            names(Some(deleted), "p-b", Some("shared")),
+            ("Second".into(), Some("shared".into())),
+            "a deleted stage keeps its id instead of borrowing another process"
+        );
+        assert_eq!(
+            names(Some(deleted), "p-b", Some("analysis")),
+            ("Second".into(), Some("analysis".into())),
+            "a known process does not borrow the built-in stage label after deletion"
+        );
+        assert_eq!(
+            names(Some(state), "p-unknown", Some("shared")),
+            ("p-unknown".into(), Some("shared".into())),
+            "an unknown process keeps an honest stage id"
+        );
+    }
+
+    fn sql_row(conn: &Connection, query: &str, id: &str) -> Vec<SqlValue> {
+        conn.query_row(query, [id], |row| {
+            (0..row.as_ref().column_count())
+                .map(|index| row.get(index))
+                .collect::<rusqlite::Result<Vec<SqlValue>>>()
+        })
+        .unwrap()
+    }
+
+    fn sql_rows(conn: &Connection, query: &str) -> Vec<Vec<SqlValue>> {
+        let mut statement = conn.prepare(query).unwrap();
+        statement
+            .query_map([], |row| {
+                (0..row.as_ref().column_count())
+                    .map(|index| row.get(index))
+                    .collect::<rusqlite::Result<Vec<SqlValue>>>()
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
+    }
+
+    fn task_contract_snapshot(conn: &Connection, id: &str) -> Vec<SqlValue> {
+        sql_row(
+            conn,
+            "SELECT id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,status FROM items WHERE id=?1",
+            id,
+        )
+    }
+
+    fn task_history(snapshot: &[SqlValue]) -> Vec<(String, String)> {
+        let tags = match &snapshot[15] {
+            SqlValue::Text(value) => value,
+            other => panic!("tags must be text, got {other:?}"),
+        };
+        stage_log(tags)
+            .into_iter()
+            .map(|(stage, at)| (stage.to_owned(), at.to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn stage_command_preserves_task_identity_goals_and_parallel_blocks_and_rolls_back_on_failure() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::init_schema(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO calendar_goals(id,title,created_at,updated_at) VALUES
+                ('goal-a','Goal A','2026-09-24T07:00:00Z','2026-09-24T07:00:00Z'),
+                ('goal-b','Goal B','2026-09-24T07:00:00Z','2026-09-24T07:00:00Z');
+             INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags,status) VALUES
+                ('task_a','task','Task A','notes A','2026-09-24','09:15',30,0,7,'2026-09-24T08:00:00.000Z','2026-09-24T08:00:00.000Z','task','#9B9B9B',1,0,'task-process:system-analysis,task-stage:requirements,task-stage-log:requirements@2026-09-24T08:00:00.000Z','task'),
+                ('task_b','task','Task B','notes B','2026-09-24','10:15',45,0,11,'2026-09-24T08:30:00.000Z','2026-09-24T08:30:00.000Z','task','#9B9B9B',2,0,'task-process:system-analysis,task-stage:analysis,task-stage-log:analysis@2026-09-24T08:30:00.000Z','task');
+             INSERT INTO calendar_task_goals(source_type,source_id,goal_id,created_at) VALUES
+                ('note','task_a','goal-a','2026-09-24T08:00:00Z'),
+                ('note','task_b','goal-b','2026-09-24T08:30:00Z');
+             INSERT INTO timeline_blocks(id,source_type,source_id,date,start_time,end_time,duration_minutes,duration_seconds,is_active,completion_date,created_at,updated_at) VALUES
+                (410,'note','task_a','2026-09-24','09:15:00',NULL,0,0,1,NULL,'2026-09-24T09:15:00.000Z','2026-09-24T09:15:00.000Z'),
+                (411,'note','task_b','2026-09-24','10:15:00',NULL,0,0,1,NULL,'2026-09-24T10:15:00.000Z','2026-09-24T10:15:00.000Z');",
+        )
+        .unwrap();
+        let blocks_before = sql_rows(
+            &conn,
+            "SELECT id,source_type,source_id,date,start_time,end_time,duration_minutes,duration_seconds,is_active,completion_date,created_at,updated_at FROM timeline_blocks ORDER BY id",
+        );
+        let goals_before = sql_rows(
+            &conn,
+            "SELECT source_type,source_id,goal_id,created_at FROM calendar_task_goals ORDER BY source_type,source_id",
+        );
+        let assert_unchanged_context = |conn: &Connection| {
+            assert_eq!(&sql_rows(conn, "SELECT id,source_type,source_id,date,start_time,end_time,duration_minutes,duration_seconds,is_active,completion_date,created_at,updated_at FROM timeline_blocks ORDER BY id"), &blocks_before);
+            assert_eq!(&sql_rows(conn, "SELECT source_type,source_id,goal_id,created_at FROM calendar_task_goals ORDER BY source_type,source_id"), &goals_before);
+            assert_eq!(sql_row(conn, "SELECT id,date,time FROM items WHERE id=?1", "task_a"), vec![SqlValue::Text("task_a".into()), SqlValue::Text("2026-09-24".into()), SqlValue::Text("09:15".into())]);
+            assert_eq!(sql_row(conn, "SELECT id,date,time FROM items WHERE id=?1", "task_b"), vec![SqlValue::Text("task_b".into()), SqlValue::Text("2026-09-24".into()), SqlValue::Text("10:15".into())]);
+            assert_eq!(sql_row(conn, "SELECT goal_id FROM calendar_task_goals WHERE source_id=?1", "task_a"), vec![SqlValue::Text("goal-a".into())]);
+            assert_eq!(sql_row(conn, "SELECT goal_id FROM calendar_task_goals WHERE source_id=?1", "task_b"), vec![SqlValue::Text("goal-b".into())]);
+        };
+        assert_unchanged_context(&conn);
+        let row = crate::calendar_compat::set_task_stage(&mut conn, "task_a", Some("analysis"), None).unwrap();
+        assert_eq!(row["stage"], "analysis");
+        let history = task_history(&task_contract_snapshot(&conn, "task_a"));
+        assert_eq!(history[0], ("requirements".into(), "2026-09-24T08:00:00.000Z".into()));
+        assert_eq!(history.iter().map(|(stage, _)| stage.as_str()).collect::<Vec<_>>(), vec!["requirements", "analysis"]);
+        assert_unchanged_context(&conn);
+        let no_op = task_contract_snapshot(&conn, "task_a");
+        let row = crate::calendar_compat::set_task_stage(&mut conn, "task_a", Some("analysis"), None).unwrap();
+        assert_eq!(row["stage"], "analysis");
+        assert_eq!(task_contract_snapshot(&conn, "task_a"), no_op);
+        assert_unchanged_context(&conn);
+        let row = crate::calendar_compat::set_task_stage(&mut conn, "task_a", Some("understanding"), None).unwrap();
+        assert_eq!(row["stage"], "understanding");
+        let history = task_history(&task_contract_snapshot(&conn, "task_a"));
+        assert_eq!(history[0], ("requirements".into(), "2026-09-24T08:00:00.000Z".into()));
+        assert_eq!(history.iter().map(|(stage, _)| stage.as_str()).collect::<Vec<_>>(), vec!["requirements", "analysis", "understanding"]);
+        assert_unchanged_context(&conn);
+        let row = crate::calendar_compat::set_task_stage(&mut conn, "task_b", Some("acceptance"), None).unwrap();
+        assert_eq!(row["stage"], "acceptance");
+        let history = task_history(&task_contract_snapshot(&conn, "task_b"));
+        assert_eq!(history[0], ("analysis".into(), "2026-09-24T08:30:00.000Z".into()));
+        assert_eq!(history.iter().map(|(stage, _)| stage.as_str()).collect::<Vec<_>>(), vec!["analysis", "acceptance"]);
+        assert_unchanged_context(&conn);
+        let before_failure = task_contract_snapshot(&conn, "task_a");
+        conn.execute_batch(
+            "CREATE TRIGGER synthetic_stage_write_failure BEFORE UPDATE OF tags ON items
+             WHEN NEW.id='task_a' BEGIN SELECT RAISE(ABORT,'synthetic stage write failure'); END;",
+        )
+        .unwrap();
+        let error = crate::calendar_compat::set_task_stage(&mut conn, "task_a", Some("acceptance"), None).unwrap_err();
+        assert!(error.contains("synthetic stage write failure"), "{error}");
+        assert_eq!(task_contract_snapshot(&conn, "task_a"), before_failure);
+        assert_unchanged_context(&conn);
+        conn.execute_batch("DROP TRIGGER synthetic_stage_write_failure").unwrap();
+        let row = crate::calendar_compat::set_task_stage(&mut conn, "task_a", Some("acceptance"), None).unwrap();
+        assert_eq!(row["stage"], "acceptance");
+        let history = task_history(&task_contract_snapshot(&conn, "task_a"));
+        assert_eq!(history[0], ("requirements".into(), "2026-09-24T08:00:00.000Z".into()));
+        assert_eq!(history.iter().map(|(stage, _)| stage.as_str()).collect::<Vec<_>>(), vec!["requirements", "analysis", "understanding", "acceptance"]);
+        assert_unchanged_context(&conn);
     }
 
     #[test]
