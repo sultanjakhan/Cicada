@@ -51,6 +51,8 @@ jobs:
       - run: npm run check:privacy
       - run: npm run build
       - run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+      - name: Check standalone activity summary
+        run: cargo test --manifest-path tests/activity-summary/Cargo.toml --locked
       - run: npm ci
         working-directory: sync-relay
       - run: npm test
@@ -134,6 +136,8 @@ jobs:
         working-directory: update-service
       - run: cargo test --locked
         working-directory: src-tauri
+      - name: Check standalone activity summary
+        run: cargo test --manifest-path tests/activity-summary/Cargo.toml --locked
       - if: github.event_name == 'push'
         run: .\scripts\package-windows.ps1
       - uses: actions/upload-artifact@v4
