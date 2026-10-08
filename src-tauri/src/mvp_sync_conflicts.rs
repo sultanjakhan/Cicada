@@ -1133,6 +1133,8 @@ mod tests {
         let entry = list(&c, 0, 25).unwrap()["entries"][0].clone();
         choose(&mut c, &entry, "current").unwrap();
         initialize(&c).unwrap();
+        assert_eq!(checkpoint_merge_conflict(&c, &changed).unwrap_err(), "content_sync_version_conflict");
+        assert_eq!(list(&c, 0, 25).unwrap()["total"], 0);
         checkpoint_merge_conflict(&c, &saved[0]).unwrap();
         assert_eq!(checkpoint_conflicts(&c).unwrap().len(), 1);
         assert_eq!(list(&c, 0, 25).unwrap()["total"], 0);
@@ -1140,6 +1142,72 @@ mod tests {
         let other = fixture();
         checkpoint_merge_conflict(&other, &saved[0]).unwrap();
         assert_eq!(checkpoint_conflicts(&other).unwrap().len(), 1);
+    }
+    #[test]
+    fn archived_version_replay_rejects_changed_payload_before_and_after_dismissal() {
+        let mut c = fixture();
+        task(&c, "task", "Current");
+        let (id, row) = archive(&c, "task", "Other");
+        let stamp = "2026-09-14T01:00:00.000Z";
+        let exact = fields(&id, stamp, "peer", &row).unwrap();
+        let mut changed = row.clone();
+        changed.value["title"] = json!("Changed payload at the archived version");
+        let changed = fields(&id, stamp, "peer", &changed).unwrap();
+        let before = current(&c, &id).unwrap().unwrap();
+        assert!(!apply_record(&c, &exact).unwrap());
+        assert_eq!(apply_record(&c, &changed).unwrap_err(), "content_sync_version_conflict");
+        assert_eq!(current(&c, &id).unwrap().unwrap().data, before.data);
+        assert_eq!(checkpoint_conflicts(&c).unwrap().len(), 1);
+        let entry = list(&c, 0, 25).unwrap()["entries"][0].clone();
+        choose(&mut c, &entry, "current").unwrap();
+        assert!(!apply_record(&c, &exact).unwrap());
+        assert_eq!(apply_record(&c, &changed).unwrap_err(), "content_sync_version_conflict");
+        assert_eq!(list(&c, 0, 25).unwrap()["total"], 0);
+        assert_eq!(checkpoint_conflicts(&c).unwrap().len(), 1);
+        assert_eq!(current(&c, &id).unwrap().unwrap().data, before.data);
+    }
+    #[test]
+    fn archived_exact_replay_accepts_omitted_optional_envelope_fields() {
+        let c = fixture();
+        task(&c, "task", "Current");
+        let (id, row) = archive(&c, "task", "Other");
+        let mut legacy = serde_json::to_value(&row).unwrap();
+        for field in ["identity", "parent", "parent_writer"] {
+            assert!(legacy[field].is_null());
+            legacy.as_object_mut().unwrap().remove(field);
+        }
+        c.execute("UPDATE mvp_sync_conflicts SET data=?1 WHERE id=?2", params![legacy.to_string(), id]).unwrap();
+        assert!(!apply_record(&c, &fields(&id, "2026-09-14T01:00:00.000Z", "peer", &row).unwrap()).unwrap());
+        let checkpoint = json!({"id":id,"stamp":"2026-09-14T01:00:00.000Z","writer":"peer","data":legacy.to_string()});
+        checkpoint_merge_conflict(&c, &checkpoint).unwrap();
+        assert_eq!(checkpoint_conflicts(&c).unwrap().len(), 1);
+    }
+    #[test]
+    fn archived_version_guard_covers_ancestors_and_tombstone_payloads() {
+        for tombstone in [false, true] {
+            let c = fixture();
+            task(&c, "task", "Current");
+            let id = key("items", &[json!("task")]);
+            let before = current(&c, &id).unwrap().unwrap();
+            let mut old = before.record.clone();
+            old.deleted = tombstone;
+            old.value = if tombstone { Value::Null } else { json!({}) };
+            if !tombstone {
+                old.value = before.record.value.clone();
+                old.value["title"] = json!("Other");
+            }
+            let stamp = "2026-09-14T01:00:00.000Z";
+            keep_conflict(&c, &id, stamp, "peer", &old).unwrap();
+            let mut descendant = before.record.clone();
+            descendant.parent = Some(stamp.into());
+            descendant.parent_writer = Some("peer".into());
+            store(&c, &id, &descendant, &before.stamp, &before.writer).unwrap();
+            // Both equal-current content and known ancestry previously bypassed archival checks.
+            assert!(!apply_record(&c, &fields(&id, stamp, "peer", &old).unwrap()).unwrap());
+            assert_eq!(apply_record(&c, &fields(&id, stamp, "peer", &before.record).unwrap()).unwrap_err(), "content_sync_version_conflict");
+            assert_eq!(current(&c, &id).unwrap().unwrap().data, serde_json::to_string(&descendant).unwrap());
+            assert_eq!(checkpoint_conflicts(&c).unwrap().len(), 1);
+        }
     }
     #[test]
     fn an_active_task_cannot_be_replaced_by_historical_content() {

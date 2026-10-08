@@ -209,6 +209,20 @@ fn graph_records_are_v2_and_that_identity_stays_v2_after_graph_is_edited_away() 
 }
 
 #[test]
+fn graph_version_is_decided_per_plan_and_run_snapshot() {
+    for (plan_mode, run_mode, plan_version, run_version) in [("chain", "graph", 1, 2), ("graph", "chain", 2, 1)] {
+        let (conn, _) = replica("mixed-graph-version");
+        let mut state = recurring_state(plan_mode, "Mixed versions");
+        state["days"]["2026-09-28"]["graph-plan"]["snapshot"]["mode"] = json!(run_mode);
+        crate::mvp_sync_db::set_ui(&conn, "calendar_recurring_v1", &state.to_string(), None).unwrap();
+        let plan = json!(["ui", ["calendar_recurring_v1", "plans", "graph-plan"]]).to_string();
+        let run = json!(["ui", ["calendar_recurring_v1", "days", "2026-09-28", "graph-plan"]]).to_string();
+        assert_eq!(recurring_version(&conn, &plan), plan_version);
+        assert_eq!(recurring_version(&conn, &run), run_version);
+    }
+}
+
+#[test]
 fn initialize_upgrades_historical_local_graph_envelopes_and_queues_them() {
     let (conn, _) = replica("graph-migration");
     crate::mvp_sync_db::set_ui(
@@ -695,6 +709,34 @@ fn malformed_wish_snapshots_are_rejected_before_any_record() {
 fn processes(conn: &Connection) -> Value {
     serde_json::from_str::<Value>(&crate::mvp_sync_db::read_ui(conn, "calendar_processes_v1").unwrap().unwrap()).unwrap()
 }
+#[test]
+fn archived_version_equivocation_retains_both_payloads_for_review() {
+    let (a, ac) = replica("sender");
+    let (mut b, bc) = replica("receiver");
+    task(&a, "t", "Source");
+    task(&b, "t", "Current");
+    let id = json!(["items", ["t"]]).to_string();
+    let mut old = row(&a, &id);
+    old.f["updated_at"] = json!("2026-09-14T01:00:00.000Z");
+    old.f["_updated_at"] = old.f["updated_at"].clone();
+    assert_eq!(apply(&mut b, &bc, stored(&ac, vec![old.clone()], 1, 1)).unwrap(), 0);
+    assert_eq!(scalar(&b, "SELECT count(*) FROM mvp_sync_conflicts").unwrap(), 1);
+    let archived: String = b.query_row("SELECT data FROM mvp_sync_conflicts", [], |r| r.get(0)).unwrap();
+    assert_eq!(apply(&mut b, &bc, stored(&ac, vec![old.clone()], 2, 2)).unwrap(), 0);
+    assert_eq!(scalar(&b, "SELECT count(*) FROM content_sync_pending").unwrap(), 0);
+    let mut changed: Value = serde_json::from_str(old.f["data"].as_str().unwrap()).unwrap();
+    changed["value"]["title"] = json!("Changed payload at the archived version");
+    old.f["data"] = json!(changed.to_string());
+    assert_eq!(apply(&mut b, &bc, stored(&ac, vec![old], 3, 3)).unwrap(), 0);
+    assert_eq!(scalar(&b, "SELECT receive_seq FROM content_sync_state").unwrap(), 3);
+    assert_eq!(scalar(&b, "SELECT count(*) FROM content_sync_pending").unwrap(), 1);
+    let (payload, error): (String, String) = b.query_row("SELECT payload,error_code FROM content_sync_pending", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+    assert_eq!(error, "content_sync_version_conflict");
+    let pending: Row = serde_json::from_str(&payload).unwrap();
+    assert_eq!(serde_json::from_str::<Value>(pending.f["data"].as_str().unwrap()).unwrap(), changed);
+    assert_eq!(b.query_row("SELECT data FROM mvp_sync_conflicts", [], |r| r.get::<_, String>(0)).unwrap(), archived);
+    assert_eq!(b.query_row("SELECT title FROM items WHERE id='t'", [], |r| r.get::<_, String>(0)).unwrap(), "Current");
+}
 fn process(id: &str, title: &str, stages: &[(&str, &str)]) -> Value {
     json!({"id":id,"title":title,"stages":stages.iter().map(|(id, title)| json!({"id":id,"title":title})).collect::<Vec<_>>()})
 }
@@ -763,6 +805,53 @@ fn malformed_process_snapshots_are_rejected_before_any_record() {
     }
     assert!(ui_rows(&a).is_empty());
     assert!(crate::mvp_sync_db::read_ui(&a, "calendar_processes_v1").unwrap().is_none());
+}
+#[test]
+fn additive_process_fields_survive_replay_local_edit_and_conflict_archive() {
+    let (a, ac) = replica("newer");
+    let (mut b, bc) = replica("older");
+    let mut extended = process("p", "Process", &[("s", "Stage")]);
+    extended["futureProcess"] = json!({"nested":[null, false, {"number":7}]});
+    extended["stages"][0]["futureStage"] = json!({"policy":"preserved"});
+    save_processes(&a, vec![extended.clone()]);
+    assert_eq!(apply(&mut b, &bc, stored(&ac, ui_rows(&a), 1, 1)).unwrap(), 1);
+    assert_eq!(processes(&b)["processes"][0], extended);
+    assert_eq!(apply(&mut b, &bc, stored(&ac, ui_rows(&a), 2, 2)).unwrap(), 0);
+    assert_eq!(scalar(&b, "SELECT count(*) FROM mvp_sync_conflicts").unwrap(), 0);
+    let mut edited = processes(&b)["processes"][0].clone();
+    edited["title"] = json!("Known field edited by older replica");
+    save_processes(&b, vec![edited.clone()]);
+    let id = json!(["ui", ["calendar_processes_v1", "processes", "p"]]).to_string();
+    let older_row = row(&b, &id);
+    assert_eq!(serde_json::from_str::<Value>(older_row.f["data"].as_str().unwrap()).unwrap()["value"]["row"], edited);
+    let mut competing = row(&a, &id);
+    competing.f["updated_at"] = json!("2030-01-01T00:00:00.000Z");
+    competing.f["_updated_at"] = competing.f["updated_at"].clone();
+    let mut data: Value = serde_json::from_str(competing.f["data"].as_str().unwrap()).unwrap();
+    data["value"]["row"]["title"] = json!("Competing newer edit");
+    competing.f["data"] = json!(data.to_string());
+    assert_eq!(apply(&mut b, &bc, stored(&ac, vec![competing], 3, 3)).unwrap(), 1);
+    assert_eq!(processes(&b)["processes"][0], data["value"]["row"]);
+    let archived: String = b.query_row("SELECT data FROM mvp_sync_conflicts WHERE id=?1", [&id], |r| r.get(0)).unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&archived).unwrap()["value"]["row"], edited);
+}
+#[test]
+fn unknown_record_envelope_member_preserves_page_cursor_and_local_outbox() {
+    let (a, ac) = replica("newer");
+    let (mut b, bc) = replica("older");
+    task(&a, "remote", "Remote task");
+    task(&b, "local", "Unsent local task");
+    assert!(enqueue(&mut b, &bc).unwrap());
+    let queued: String = b.query_row("SELECT body FROM content_sync_outbox ORDER BY local_seq LIMIT 1", [], |r| r.get(0)).unwrap();
+    let mut remote = row(&a, &json!(["items", ["remote"]]).to_string());
+    let mut data: Value = serde_json::from_str(remote.f["data"].as_str().unwrap()).unwrap();
+    data["futureEnvelopeField"] = json!({"unknown":"preserve remotely"});
+    remote.f["data"] = json!(data.to_string());
+    assert_eq!(apply(&mut b, &bc, stored(&ac, vec![remote], 1, 1)).unwrap_err(), "content_sync_unknown_schema");
+    assert_eq!(scalar(&b, "SELECT receive_seq FROM content_sync_state").unwrap(), 0);
+    assert_eq!(scalar(&b, "SELECT count(*) FROM items WHERE id='remote'").unwrap(), 0);
+    assert_eq!(scalar(&b, "SELECT count(*) FROM content_sync_pending").unwrap(), 0);
+    assert_eq!(b.query_row("SELECT body FROM content_sync_outbox ORDER BY local_seq LIMIT 1", [], |r| r.get::<_, String>(0)).unwrap(), queued);
 }
 /// What a 0.3.33 replica does with a process record: its UI key list lacks
 /// `calendar_processes_v1`, so the record reads exactly like this unknown key.
