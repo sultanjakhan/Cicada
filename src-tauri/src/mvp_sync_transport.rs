@@ -16,6 +16,8 @@ use std::{io::Read, sync::OnceLock, time::Duration};
 mod checkpoint;
 #[path = "mvp_sync_pending.rs"]
 mod pending;
+#[path = "mvp_sync_compat.rs"]
+mod compat;
 pub(super) const CHECKPOINT_SCHEMA: &str = "hanni-mvp-checkpoint-v1";
 
 const DOMAIN: &str = "hanni-mvp-content-v1";
@@ -184,20 +186,18 @@ fn encrypt(cfg: &RelayConfig, payload: &Payload, seq: i64) -> Result<Batch, Stri
     })
 }
 
-fn decrypt(cfg: &RelayConfig, item: &Stored) -> Result<Payload, String> {
-    let env = &item.envelope;
-    if item.seq < 1
-        || !(1..=9_007_199_254_740_991).contains(&item.client_seq)
+fn unseal(cfg: &RelayConfig, sender: &str, batch: &Batch) -> Result<Payload, String> {
+    let env = &batch.envelope;
+    if !(1..=9_007_199_254_740_991).contains(&batch.client_seq)
         || env.v != 1
         || env.alg != "XChaCha20-Poly1305"
         || env.key_id != cfg.key_id
-        || !super::opaque_id(&item.sender_device_id)
-        || uuid::Uuid::parse_str(&item.batch_id)
+        || !super::opaque_id(sender)
+        || uuid::Uuid::parse_str(&batch.batch_id)
             .ok()
             .map(|v| v.to_string())
             .as_deref()
-            != Some(item.batch_id.as_str())
-        || envelope_hash(env)? != item.envelope_sha256
+            != Some(batch.batch_id.as_str())
     {
         return Err("content_sync_invalid_envelope".into());
     }
@@ -215,10 +215,10 @@ fn decrypt(cfg: &RelayConfig, item: &Stored) -> Result<Payload, String> {
     let plain = super::decrypt_bytes(
         &content_key(cfg)?,
         &aad(
-            &item.sender_device_id,
-            &item.batch_id,
+            sender,
+            &batch.batch_id,
             &env.key_id,
-            item.client_seq,
+            batch.client_seq,
         ),
         &blob,
     )?;
@@ -227,7 +227,6 @@ fn decrypt(cfg: &RelayConfig, item: &Stored) -> Result<Payload, String> {
     if payload.v != 1
         || !matches!(payload.kind.as_str(), "changes" | "receipt" | "fragment")
         || payload.applied_seq < 0
-        || payload.applied_seq >= item.seq
         || (payload.kind == "receipt"
             && (!payload.rows.is_empty()
                 || !payload.tombs.is_empty()
@@ -256,6 +255,21 @@ fn decrypt(cfg: &RelayConfig, item: &Stored) -> Result<Payload, String> {
         {
             return Err("content_sync_invalid_fragment".into());
         }
+    }
+    Ok(payload)
+}
+
+fn decrypt(cfg: &RelayConfig, item: &Stored) -> Result<Payload, String> {
+    if item.seq < 1 || envelope_hash(&item.envelope)? != item.envelope_sha256 {
+        return Err("content_sync_invalid_envelope".into());
+    }
+    let payload = unseal(cfg, &item.sender_device_id, &Batch {
+        client_seq: item.client_seq,
+        batch_id: item.batch_id.clone(),
+        envelope: item.envelope.clone(),
+    })?;
+    if payload.applied_seq >= item.seq {
+        return Err("content_sync_invalid_payload".into());
     }
     Ok(payload)
 }
@@ -303,6 +317,7 @@ fn initialize(conn: &mut Connection, cfg: &RelayConfig) -> Result<(), String> {
       CREATE TABLE IF NOT EXISTS content_sync_blocked(seq INTEGER PRIMARY KEY,error_code TEXT NOT NULL);"))?;
     sql(tx.execute_batch("CREATE TABLE IF NOT EXISTS content_sync_tomb_births(table_name TEXT,row_id TEXT,created_at TEXT,PRIMARY KEY(table_name,row_id));"))?;
     pending::initialize(&tx)?;
+    compat::initialize(&tx)?;
     checkpoint::initialize(&tx)?;
     let scope = hash(
         &serde_json::to_vec(&json!([cfg.endpoint, cfg.device_id, cfg.key_id, cfg.key]))
@@ -348,6 +363,7 @@ fn enqueue_next_fragment(tx: &Connection, cfg: &RelayConfig, cursor: i64) -> Res
     let Some((record_id, number, total, body)) = part else {
         return Ok(false);
     };
+    compat::fragment(tx, &Fragment {record_id: record_id.clone(), part: number, total, bytes: B64.encode(&body)})?;
     let payload = Payload {
         v: 1,
         kind: "fragment".into(),
@@ -382,6 +398,8 @@ fn enqueue(conn: &mut Connection, cfg: &RelayConfig) -> Result<bool, String> {
         [],
     ))?;
     if scalar(&tx, "SELECT COUNT(*) FROM content_sync_outbox")? > 0 {
+        compat::outbox(&tx, cfg)?;
+        sql(tx.commit())?;
         return Ok(true);
     }
     let cursor = scalar(&tx, "SELECT receive_seq FROM content_sync_state WHERE id=1")?;
@@ -461,10 +479,9 @@ fn enqueue(conn: &mut Connection, cfg: &RelayConfig) -> Result<bool, String> {
                 .map(|(_, device)| device)
                 .unwrap_or_else(|| writer.clone());
             fields.insert("_device_id".into(), json!(origin));
-            payload.rows.push(Row {
-                t: table.clone(),
-                f: fields,
-            });
+            let row = Row { t: table.clone(), f: fields };
+            compat::row(&tx, &row)?;
+            payload.rows.push(row);
         } else {
             let deleted_at: String = sql(tx.query_row(
                 "SELECT deleted_at FROM sync_tombstones WHERE table_name=?1 AND row_id=?2",
@@ -495,6 +512,7 @@ fn enqueue(conn: &mut Connection, cfg: &RelayConfig) -> Result<bool, String> {
                 }
                 let record_id = uuid::Uuid::new_v4().to_string();
                 let total = record.chunks(42_000).len() as u32;
+                compat::remember(&tx, &record_id, &record)?;
                 for (part, chunk) in record.chunks(42_000).enumerate() {
                     sql(tx.execute("INSERT INTO content_sync_outbound_fragments(table_name,row_id,record_id,part,total,body) VALUES(?1,?2,?3,?4,?5,?6)", params![table,id,record_id,part as u32,total,chunk]))?;
                 }
@@ -599,33 +617,40 @@ fn read_response(
         Ok(out)
     }
 }
-fn upload(conn: &Connection, cfg: &RelayConfig) -> Result<usize, String> {
-    let item: Option<(String,String,String,i64)>=sql(conn.query_row("SELECT batch_id,body,envelope_hash,local_seq FROM content_sync_outbox ORDER BY local_seq LIMIT 1",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional())?;
-    let Some((id, body, digest, seq)) = item else {
+fn upload_with(
+    conn: &Connection,
+    cfg: &RelayConfig,
+    send: impl FnOnce(&str) -> Result<Ack, String>,
+) -> Result<usize, String> {
+    // Commit only local compatibility evidence before HTTP; never alter queued bytes.
+    let tx = sql(conn.unchecked_transaction())?;
+    let item = compat::outbox(&tx, cfg)?;
+    sql(tx.commit())?;
+    let Some((id, body, digest, seq, fragment_id)) = item else {
         return Ok(0);
     };
-    let response = client()?
-        .post(format!("{}/v1/batches", cfg.endpoint))
-        .bearer_auth(&cfg.token)
-        .header("Content-Type", "application/json")
-        .body(body)
-        .send()
-        .map_err(|_| "content_sync_network_unavailable")?;
-    let ack: Ack = serde_json::from_slice(&read_response(conn, response, true)?)
-        .map_err(|_| "content_sync_invalid_ack")?;
-    if ack.seq < 1
-        || ack.client_seq != seq
-        || ack.sender_device_id != cfg.device_id
-        || ack.batch_id != id
-        || ack.envelope_sha256 != digest
+    let ack = send(&body)?;
+    if ack.seq < 1 || ack.client_seq != seq || ack.sender_device_id != cfg.device_id
+        || ack.batch_id != id || ack.envelope_sha256 != digest
     {
         return Err("content_sync_invalid_ack".into());
-    };
-    sql(conn.execute(
-        "DELETE FROM content_sync_outbox WHERE batch_id=?1 AND envelope_hash=?2",
-        params![id, digest],
-    ))?;
+    }
+    let tx = sql(conn.unchecked_transaction())?;
+    sql(tx.execute("DELETE FROM content_sync_outbox WHERE batch_id=?1 AND envelope_hash=?2", params![id, digest]))?;
+    if let Some(record_id) = fragment_id {
+        sql(tx.execute("DELETE FROM content_sync_fragment_compat WHERE record_id=?1 AND NOT EXISTS(SELECT 1 FROM content_sync_outbound_fragments WHERE record_id=?1)", [record_id]))?;
+    }
+    sql(tx.commit())?;
     Ok(1)
+}
+fn upload(conn: &Connection, cfg: &RelayConfig) -> Result<usize, String> {
+    upload_with(conn, cfg, |body| {
+        let response = client()?.post(format!("{}/v1/batches", cfg.endpoint))
+            .bearer_auth(&cfg.token).header("Content-Type", "application/json").body(body.to_owned())
+            .send().map_err(|_| "content_sync_network_unavailable")?;
+        serde_json::from_slice(&read_response(conn, response, true)?)
+            .map_err(|_| "content_sync_invalid_ack".into())
+    })
 }
 
 fn accept_fragment(conn: &Connection, sender: &str, part: Fragment) -> Result<Option<Row>, String> {

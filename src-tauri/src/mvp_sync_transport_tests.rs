@@ -1318,3 +1318,6 @@ fn task_filter_view_sqlite_write_failure_preserves_the_saved_snapshot() {
     assert_eq!(crate::mvp_sync_db::read_ui(&conn, KEY).unwrap().as_deref(), Some(original.as_str()));
     assert!(ui_rows(&conn).is_empty());
 }
+
+#[path = "mvp_sync_compat_tests.rs"]
+mod compatibility_tests;

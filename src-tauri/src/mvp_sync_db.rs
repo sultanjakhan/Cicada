@@ -463,6 +463,17 @@ pub(crate) fn validate_record(
     }
     Ok(())
 }
+/// Current wire rows must carry the graph version gate; historical conflict archives remain exact.
+pub(crate) fn validate_publishable_record(conn: &Connection, fields: &Map<String, Value>) -> Result<(), String> {
+    validate_record(conn, fields)?;
+    let (_, record, _, _) = decoded(fields)?;
+    if record.v == 1 && record.kind == "ui" && recurring_identity(&record.key)
+        && graph_payload(&record.key, &record.value, record.deleted)
+    {
+        return Err("content_sync_legacy_graph_queue".into());
+    }
+    Ok(())
+}
 enum ArchivedVersionUse {
     Replay,
     Checkpoint,

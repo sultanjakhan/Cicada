@@ -303,7 +303,7 @@ fn snapshot_row(conn: &Connection, table: &str, id: &str, _writer: &str) -> Resu
     f.insert("updated_at".into(), json!(ts));
     f.insert("_updated_at".into(), json!(ts));
     f.insert("_device_id".into(), json!(origin));
-    crate::mvp_sync_db::validate_record(conn, &f)?;
+    crate::mvp_sync_db::validate_publishable_record(conn, &f)?;
     Ok(Row { t: table.into(), f })
 }
 
@@ -602,7 +602,7 @@ fn install(conn: &mut Connection, cfg: &RelayConfig, d: &Descriptor) -> Result<u
                 if row.t != "mvp_records" || !conflicts.is_empty() {
                     return Err("content_sync_checkpoint_row_order".into());
                 }
-                crate::mvp_sync_db::validate_record(&tx, &row.f)?;
+                crate::mvp_sync_db::validate_publishable_record(&tx, &row.f)?;
                 if !seen.insert(remote_id(
                     row.f.get("id").ok_or("content_sync_invalid_identity")?,
                 )?) {

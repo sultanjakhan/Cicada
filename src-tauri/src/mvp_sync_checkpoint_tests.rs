@@ -876,3 +876,248 @@ fn review_checkpoint_capture_accepts_canonical_equivalent_archive_encoding() {
     assert_eq!(imported.len(), 1);
     assert_eq!(imported[0]["data"], canonical);
 }
+
+#[test]
+fn issue122_capture_rejects_live_legacy_graph_without_creating_transfer_job() {
+    for group in ["plans", "days"] {
+        let cfg = config("compat-capture");
+        let mut conn = connection(&cfg);
+        let state = json!({"version":1,"plans":[{"id":"p","mode":"graph","title":"Plan"}],"days":{"2026-09-28":{"p":{"snapshot":{"id":"p","mode":"graph","title":"Run"}}}}});
+        crate::mvp_sync_db::set_ui(&conn, "calendar_recurring_v1", &state.to_string(), None)
+            .unwrap();
+        let mut seq = 0;
+        drain_local(&mut conn, &cfg, &mut seq);
+        let id = if group == "plans" {
+            json!(["ui", ["calendar_recurring_v1", group, "p"]])
+        } else {
+            json!(["ui", ["calendar_recurring_v1", group, "2026-09-28", "p"]])
+        }
+        .to_string();
+        conn.execute(
+            "UPDATE mvp_records SET data=json_set(data,'$.v',1) WHERE id=?1",
+            [&id],
+        )
+        .unwrap();
+        conn.execute("DELETE FROM content_sync_dirty", []).unwrap();
+        assert!(capture_ready(&conn).unwrap());
+        let before = queues(&conn);
+        assert_eq!(
+            capture(&mut conn, &cfg, 0).unwrap_err(),
+            "content_sync_legacy_graph_queue"
+        );
+        assert_eq!(queues(&conn), before);
+        assert!(load::<Upload>(&conn, "upload").unwrap().is_none());
+        assert_eq!(
+            scalar(
+                &conn,
+                "SELECT count(*) FROM mvp_sync_checkpoint_parts WHERE direction='upload'"
+            )
+            .unwrap(),
+            0
+        );
+    }
+}
+#[test]
+fn issue122_checkpoint_live_graph_gate_is_atomic_and_preserves_safe_rows_and_queues() {
+    for group in ["plans", "days"] {
+        for version in [1, 2] {
+            let cfg = config("compat-publisher");
+            let source = connection(&cfg);
+            let state = json!({"version":1,"plans":[{"id":"p","mode":"graph","title":"Plan"}],"days":{"2026-09-28":{"p":{"snapshot":{"id":"p","mode":"graph","title":"Run"}}}}});
+            crate::mvp_sync_db::set_ui(&source, "calendar_recurring_v1", &state.to_string(), None)
+                .unwrap();
+            let id = if group == "plans" {
+                json!(["ui", ["calendar_recurring_v1", group, "p"]])
+            } else {
+                json!(["ui", ["calendar_recurring_v1", group, "2026-09-28", "p"]])
+            }
+            .to_string();
+            let mut incoming = snapshot_row(&source, "mvp_records", &id, &cfg.device_id).unwrap();
+            let mut data: Value =
+                serde_json::from_str(incoming.f["data"].as_str().unwrap()).unwrap();
+            data["v"] = json!(version);
+            incoming.f["data"] = json!(data.to_string());
+            let target_cfg = config("compat-downloader");
+            let mut target = connection(&target_cfg);
+            task(&target, "local", "Local pending task");
+            enqueue(&mut target, &target_cfg).unwrap();
+            let before = queues(&target);
+            let count = scalar(&target, "SELECT count(*) FROM mvp_records").unwrap();
+            let header = Header {
+                v: 1,
+                schema: SCHEMA.into(),
+                tables: tables(),
+                base_seq: 100,
+                applied_seq: 100,
+                receipts: vec![],
+                watermarks: vec![Watermark {
+                    device_id: cfg.device_id.clone(),
+                    client_seq: 1,
+                    server_seq: 100,
+                }],
+            };
+            let mut plain = vec![];
+            append(&mut plain, &Line::Header(header)).unwrap();
+            let general = json!(["event_categories", ["general"]]).to_string();
+            append(
+                &mut plain,
+                &Line::Row(snapshot_row(&source, "mvp_records", &general, &cfg.device_id).unwrap()),
+            )
+            .unwrap();
+            append(&mut plain, &Line::Row(incoming)).unwrap();
+            let descriptor = stage_plain(&target, &cfg, &plain, 100, 100);
+            if version == 1 {
+                assert_eq!(
+                    install(&mut target, &target_cfg, &descriptor).unwrap_err(),
+                    "content_sync_legacy_graph_queue"
+                );
+                assert_eq!(
+                    scalar(&target, "SELECT receive_seq FROM content_sync_state").unwrap(),
+                    0
+                );
+                assert_eq!(
+                    scalar(&target, "SELECT count(*) FROM mvp_records").unwrap(),
+                    count
+                );
+                assert_eq!(
+                    scalar(
+                        &target,
+                        "SELECT count(*) FROM ui_state WHERE key='calendar_recurring_v1'"
+                    )
+                    .unwrap(),
+                    0
+                );
+            } else {
+                install(&mut target, &target_cfg, &descriptor).unwrap();
+                assert_eq!(
+                    scalar(&target, "SELECT receive_seq FROM content_sync_state").unwrap(),
+                    100
+                );
+                assert_eq!(
+                    target
+                        .query_row(
+                            "SELECT json_extract(data,'$.v') FROM mvp_records WHERE id=?1",
+                            [id],
+                            |r| r.get::<_, u8>(0)
+                        )
+                        .unwrap(),
+                    2
+                );
+            }
+            assert_eq!(queues(&target), before);
+        }
+    }
+}
+
+#[test]
+fn issue122_checkpoint_null_tombstones_and_historical_archives_remain_compatible() {
+    for group in ["plans", "days"] {
+        for version in [1, 2] {
+            let cfg = config("tomb-publisher");
+            let mut source = connection(&cfg);
+            let state = json!({"version":1,"plans":[{"id":"p","mode":"graph","title":"Plan"}],"days":{"2026-09-28":{"p":{"snapshot":{"id":"p","mode":"graph","title":"Run"}}}}});
+            crate::mvp_sync_db::set_ui(&source, "calendar_recurring_v1", &state.to_string(), None)
+                .unwrap();
+            let mut seq = 0;
+            drain_local(&mut source, &cfg, &mut seq);
+            let id = if group == "plans" {
+                json!(["ui", ["calendar_recurring_v1", group, "p"]])
+            } else {
+                json!(["ui", ["calendar_recurring_v1", group, "2026-09-28", "p"]])
+            }
+            .to_string();
+            let mut incoming = snapshot_row(&source, "mvp_records", &id, &cfg.device_id).unwrap();
+            let mut data: Value =
+                serde_json::from_str(incoming.f["data"].as_str().unwrap()).unwrap();
+            data["v"] = json!(version);
+            data["deleted"] = json!(true);
+            data["value"] = Value::Null;
+            incoming.f["data"] = json!(data.to_string());
+            let target_cfg = config("tomb-downloader");
+            let mut target = connection(&target_cfg);
+            task(&target, "local", "Local queued task");
+            enqueue(&mut target, &target_cfg).unwrap();
+            let before = queues(&target);
+            let header = Header {
+                v: 1,
+                schema: SCHEMA.into(),
+                tables: tables(),
+                base_seq: 100,
+                applied_seq: 100,
+                receipts: vec![],
+                watermarks: vec![Watermark {
+                    device_id: cfg.device_id.clone(),
+                    client_seq: 1,
+                    server_seq: 100,
+                }],
+            };
+            let mut plain = vec![];
+            append(&mut plain, &Line::Header(header)).unwrap();
+            append(&mut plain, &Line::Row(incoming)).unwrap();
+            let descriptor = stage_plain(&target, &cfg, &plain, 100, 100);
+            install(&mut target, &target_cfg, &descriptor).unwrap();
+            assert_eq!(
+                scalar(&target, "SELECT receive_seq FROM content_sync_state").unwrap(),
+                100
+            );
+            let applied: String = target
+                .query_row("SELECT data FROM mvp_records WHERE id=?1", [&id], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            let applied: Value = serde_json::from_str(&applied).unwrap();
+            assert_eq!(applied["deleted"], true);
+            assert_eq!(applied["value"], Value::Null);
+            assert_eq!(queues(&target), before);
+            source
+                .execute(
+                    "UPDATE mvp_records SET data=?1 WHERE id=?2",
+                    params![data.to_string(), id],
+                )
+                .unwrap();
+            source
+                .execute("DELETE FROM content_sync_dirty", [])
+                .unwrap();
+            assert!(capture(&mut source, &cfg, 0).unwrap());
+        }
+        // Historical alternatives retain the exact existing v1 deletion format.
+        let cfg = config("archive-publisher");
+        let mut source = connection(&cfg);
+        let state = json!({"version":1,"plans":[{"id":"p","mode":"graph","title":"Plan"}],"days":{"2026-09-28":{"p":{"snapshot":{"id":"p","mode":"graph","title":"Run"}}}}});
+        crate::mvp_sync_db::set_ui(&source, "calendar_recurring_v1", &state.to_string(), None)
+            .unwrap();
+        let mut seq = 0;
+        drain_local(&mut source, &cfg, &mut seq);
+        let id = if group == "plans" {
+            json!(["ui", ["calendar_recurring_v1", group, "p"]])
+        } else {
+            json!(["ui", ["calendar_recurring_v1", group, "2026-09-28", "p"]])
+        }
+        .to_string();
+        let mut archived: Value = serde_json::from_str(
+            &source
+                .query_row("SELECT data FROM mvp_records WHERE id=?1", [&id], |r| {
+                    r.get::<_, String>(0)
+                })
+                .unwrap(),
+        )
+        .unwrap();
+        archived["v"] = json!(1);
+        archived["deleted"] = json!(true);
+        archived["value"] = Value::Null;
+        source.execute("INSERT INTO mvp_sync_conflicts VALUES(?1,'2026-09-28T14:00:00.000Z','legacy-peer',?2)",params![id,archived.to_string()]).unwrap();
+        assert!(capture(&mut source, &cfg, 0).unwrap());
+        let peer_cfg = config("archive-downloader");
+        let mut peer = connection(&peer_cfg);
+        let descriptor = descriptor(&source, &cfg, &peer);
+        install(&mut peer, &peer_cfg, &descriptor).unwrap();
+        let actual: String = peer
+            .query_row(
+                "SELECT data FROM mvp_sync_conflicts WHERE id=?1 AND writer='legacy-peer'",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&actual).unwrap(), archived);
+    }
+}
