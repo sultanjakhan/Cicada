@@ -1,7 +1,7 @@
 {
   "name": "cicada",
-  "version": "0.5.4-rc.2",
-  "cicadaBuildId": "20261008-functional-054-candidate.2",
+  "version": "0.5.4",
+  "cicadaBuildId": "20261008-functional-054-update-candidate.1",
   "private": true,
   "type": "module",
   "scripts": {
