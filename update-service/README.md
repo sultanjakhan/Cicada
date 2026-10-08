@@ -47,3 +47,5 @@ The local Miniflare fixture verifies that a `Range` request reaches the assets
 binding unchanged. Its current local runtime returns the full asset (`200`) for
 that fixture; range support must be rechecked against the deployed Worker before
 making a resumable-download claim.
+
+The local Miniflare tooling overrides `sharp` to `0.35.5` for [GHSA-wq5f-xc86-pv6w](https://github.com/advisories/GHSA-wq5f-xc86-pv6w). The pinned upstream release still requires the affected `0.35.4`; the override selects the patched librsvg dependency without changing update-service bindings or deploying assets. Keep the audit gate enabled.
