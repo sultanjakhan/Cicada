@@ -48,7 +48,13 @@ fn initialize(c: &mut Connection) -> Result<()> {
       CREATE TABLE IF NOT EXISTS shared_task_intent_runs(intent_id TEXT PRIMARY KEY,task_id TEXT NOT NULL,run_id TEXT NOT NULL UNIQUE,acknowledge_operation_id TEXT NOT NULL UNIQUE);
       CREATE TRIGGER IF NOT EXISTS shared_result_requires_review BEFORE UPDATE OF completed,status ON items
       WHEN (NEW.completed=1 OR NEW.status='done') AND EXISTS(SELECT 1 FROM local_review_state r JOIN shared_task_result_runs s ON s.task_id=r.task_id AND s.result_version=r.result_version WHERE r.task_id=NEW.id AND r.state!='accepted')
-      BEGIN SELECT RAISE(ABORT,'shared_result_requires_review'); END;"))?;
+      BEGIN SELECT RAISE(ABORT,'shared_result_requires_review'); END;
+      CREATE TRIGGER IF NOT EXISTS shared_running_intent_delete BEFORE DELETE ON items
+      WHEN EXISTS(SELECT 1 FROM local_review_state WHERE task_id=OLD.id AND state='running')
+      BEGIN SELECT RAISE(ABORT,'active_review_intent'); END;
+      CREATE TRIGGER IF NOT EXISTS shared_running_intent_archive BEFORE UPDATE OF archived ON items
+      WHEN NEW.archived<>0 AND EXISTS(SELECT 1 FROM local_review_state WHERE task_id=OLD.id AND state='running')
+      BEGIN SELECT RAISE(ABORT,'active_review_intent'); END;"))?;
     let tx = sql(c.transaction_with_behavior(TransactionBehavior::Immediate))?;
     migrate_intent_runs(&tx)?;
     if access::read(&tx, EXCHANGE)
@@ -212,7 +218,7 @@ fn projection(c: &Connection, id: &str) -> Result<Value> {
     let mut intents = vec![];
     let mut q=sql(c.prepare("SELECT intent_id,result_version,comment,state,event_id FROM local_review_intents WHERE task_id=?1 ORDER BY rowid"))?;
     for r in sql(q.query_map([id],|r|Ok(json!({"intentId":r.get::<_,String>(0)?,"resultVersion":r.get::<_,i64>(1)?,"comment":r.get::<_,String>(2)?,"state":r.get::<_,String>(3)?,"eventId":r.get::<_,String>(4)?}))))? {intents.push(sql(r)?)}
-    let workflow = access::read(c, &format!("calendar_task_workflow_v1:{id}"))
+    let workflow = access::read(c, &format!("calendar_task_workflow_v1:cicada:note:{id}"))
         .map_err(|_| Error(409, "invalid_existing_workflow"))?;
     task["stage"] = json!(crate::task_attributes::stage(&tags));
     task["process"] = json!(crate::task_attributes::effective_process(&tags));
@@ -374,15 +380,8 @@ fn perform(c: &mut Connection, op: &str, command: &str, args: Value) -> Result<V
         .optional())?;
     if let Some((id, d, receipt)) = old {
         // Archived receipts can replay without resurrecting a task; content scope is rechecked.
-        let tags: String =
-            sql(tx.query_row("SELECT tags FROM items WHERE id=?1", [&id], |r| r.get(0)))?;
-        if !tags.split(',').any(|t| t == "task-sphere:personal")
-            || tags.split(',').any(|t| {
-                t.starts_with("jira") || t.starts_with("investlink") || t == "task-sphere:work"
-            })
-        {
-            return Err(Error(404, "shared_task_not_found"));
-        }
+        access::personal_with_archive(&tx, &id, true)
+            .map_err(|_| Error(404, "shared_task_not_found"))?;
         if d != digest {
             return Err(Error(409, "operation_payload_conflict"));
         }
@@ -1116,7 +1115,10 @@ mod tests {
     }
     #[test]
     fn legacy_workflow_survives_share_and_archive_retry() {
-        let mut c = db();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("calendar.db");
+        let mut c = Connection::open(&path).unwrap();
+        crate::init_schema(&c).unwrap();
         let item = crate::calendar_compat::create_note_in_transaction(
             &c,
             "Existing",
@@ -1130,8 +1132,8 @@ mod tests {
         let id = item.id;
         access::write(
             &c,
-            &format!("calendar_task_workflow_v1:{id}"),
-            &json!({"savedResult":"Earlier manual result","steps":[]}),
+            &format!("calendar_task_workflow_v1:cicada:note:{id}"),
+            &json!({"version":1,"taskId":format!("cicada:note:{id}"),"result":"Earlier manual result","steps":[],"run":null}),
         )
         .unwrap();
         let shared = call(
@@ -1141,15 +1143,20 @@ mod tests {
             json!({"taskId":id,"expectedVersion":1}),
         );
         assert_eq!(
-            shared["task"]["workflow"]["savedResult"],
+            shared["task"]["workflow"]["result"],
             "Earlier manual result"
         );
+        drop(c);
+        let mut c = Connection::open(&path).unwrap();
+        assert_eq!(call(&mut c, "workflow-reopen-read", "get", json!({"taskId":id})), shared["task"]);
         let archived = call(
             &mut c,
             "archive-shared-01",
             "archive",
             json!({"taskId":id,"expectedVersion":2}),
         );
+        drop(c);
+        let mut c = Connection::open(&path).unwrap();
         assert_eq!(
             archived,
             call(
@@ -1202,5 +1209,68 @@ mod tests {
             )["code"],
             "review_controls_status"
         );
+    }
+
+    #[test]
+    fn acknowledged_rework_blocks_native_delete_and_archive_after_reopen() {
+        use tauri::{test::{mock_builder, mock_context, noop_assets}, Manager};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("calendar.db");
+        let mut c = Connection::open(&path).unwrap();
+        crate::init_schema(&c).unwrap();
+        let first = create(&mut c);
+        let id = first["task"]["id"].as_str().unwrap().to_owned();
+        observed(&mut c, &id, 1, "native-guard-original");
+        let result = call(&mut c, "native-guard-result", "submit_result",
+            json!({"taskId":id,"expectedVersion":1,"runId":"native-guard-original","content":"First result"}));
+        assert_eq!(result["task"]["version"], 2);
+        let decision = call(&mut c, "native-guard-rework", "review",
+            json!({"taskId":id,"expectedVersion":2,"resultVersion":1,"decision":"rework","comment":"Preserved feedback"}));
+        assert_eq!(decision["task"]["review"]["state"], "awaiting_dispatch");
+        let ack = call(&mut c, "native-guard-ack", "acknowledge",
+            json!({"taskId":id,"expectedVersion":3,"intentId":"native-guard-rework","report":report("native-guard-new-run","running",1)}));
+        assert_eq!(ack["task"]["review"]["state"], "running");
+        // Older schema already has the awaiting-dispatch triggers but lacks running guards.
+        c.execute_batch("DROP TRIGGER IF EXISTS shared_running_intent_delete; DROP TRIGGER IF EXISTS shared_running_intent_archive;").unwrap();
+        initialize(&mut c).unwrap();
+        drop(c);
+        let mut c = Connection::open(&path).unwrap();
+        assert!(crate::remove(&mut c, &id, 4).is_err(), "ordinary deletion must preserve active rework");
+        let app = mock_builder().manage(AppState(std::sync::Mutex::new(c)))
+            .build(mock_context(noop_assets())).unwrap();
+        assert!(crate::calendar_compat::toggle_note_archive(id.clone(), app.state()).is_err(),
+            "ordinary archive must preserve active rework");
+        let state = app.state::<AppState>();
+        let mut c = state.0.lock().unwrap();
+        assert_eq!(projection(&c, &id).unwrap(), ack["task"]);
+        finish(&mut c, &id, 4, "native-guard-new-run");
+        let next = call(&mut c, "native-guard-fixed-result", "submit_result",
+            json!({"taskId":id,"expectedVersion":4,"runId":"native-guard-new-run","content":"Fixed result"}));
+        assert_eq!(next["task"]["results"][0]["content"], "First result");
+        assert_eq!(next["task"]["results"][1]["content"], "Fixed result");
+        // Completed rework no longer prevents ordinary archival.
+        assert!(c.execute("UPDATE items SET archived=1 WHERE id=?1", [&id]).is_ok());
+    }
+
+    #[test]
+    fn replay_rechecks_normalized_personal_scope() {
+        for tags in ["task-sphere:personal,JIRA:fixture", "task-sphere:personal, task-sphere:work",
+            "task-sphere:personal,InvestLink:fixture"] {
+            let mut c = db();
+            let created = create(&mut c);
+            let id = created["task"]["id"].as_str().unwrap();
+            c.execute("UPDATE items SET tags=?1 WHERE id=?2", params![tags, id]).unwrap();
+            assert_eq!(call(&mut c, "scope-current-read", "get", json!({"taskId":id}))["status"], 404);
+            assert_eq!(create_replay(&mut c)["status"], 404,
+                "a receipt cannot disclose content revoked from the current projection: {tags}");
+        }
+        let mut c = db();
+        let created = create(&mut c);
+        let id = created["task"]["id"].as_str().unwrap();
+        c.execute("UPDATE items SET tags=' task-sphere:personal ,source:shared' WHERE id=?1", [id]).unwrap();
+        assert_eq!(create_replay(&mut c), created,
+            "the authority also accepts whitespace around a personal tag");
+        c.execute("UPDATE items SET kind='event' WHERE id=?1", [id]).unwrap();
+        assert_eq!(create_replay(&mut c)["status"], 404);
     }
 }

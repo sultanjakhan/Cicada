@@ -69,7 +69,7 @@ pub(crate) fn write(conn:&Connection,key:&str,value:&Value)->Result<(),String> {
 pub(crate) fn personal(conn:&Connection,id:&str)->Result<Value,String> {
     personal_with_archive(conn,id,false)
 }
-fn personal_with_archive(conn:&Connection,id:&str,allow_archived:bool)->Result<Value,String> {
+pub(crate) fn personal_with_archive(conn:&Connection,id:&str,allow_archived:bool)->Result<Value,String> {
     if !token(id,1,80){return Err(err())}
     let row:(String,String,i64,i64,i64,String)=conn.query_row("SELECT kind,tags,archived,completed,version,status FROM items WHERE id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).map_err(|_|err())?;
     if row.0!="task"||(!allow_archived&&row.2!=0)||!row.1.split(',').any(|s|s.trim()=="task-sphere:personal")||row.1.split(',').any(|s|{let t=s.trim().to_ascii_lowercase();t.starts_with("jira")||t.starts_with("investlink")||t=="task-sphere:work"}){return Err("personal_task_required".into())}
