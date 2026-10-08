@@ -66,10 +66,11 @@ export const formatNumber = value => Number.isFinite(Number(value)) ? new Intl.N
 /** Real current/target values only for goals that use a measurable result. */
 export function goalNumericProgress(goal) {
   if (!goal || goal.goal_kind !== 'goal') return null;
-  const target = Number(goal.target_value), current = Number(goal.current_value);
+  const unknownCurrent = goal.current_value == null || (typeof goal.current_value === 'string' && !goal.current_value.trim());
+  const target = Number(goal.target_value), current = unknownCurrent ? null : Number(goal.current_value);
   const measurable = goal.numeric_progress ?? (!!String(goal.unit || '').trim() || (Number.isFinite(target) && target !== 1) || (goal.current_value != null && Number.isFinite(current) && current > 0));
-  if (!measurable || !Number.isFinite(target) || target <= 0) return null;
-  const value = goal.current_value == null || !Number.isFinite(current) ? 0 : current;
+  if (!measurable || !Number.isFinite(target) || target <= 0 || unknownCurrent || !Number.isFinite(current)) return null;
+  const value = current;
   const unit = String(goal.unit || '').trim();
   return { done: value, total: target, percent: Math.max(0, Math.min(100, Math.round(value / target * 100))), scope: 'numeric', unit,
     label: `${formatNumber(value)} из ${formatNumber(target)}${unit ? ` ${unit}` : ''}` };
