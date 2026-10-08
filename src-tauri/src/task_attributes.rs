@@ -25,6 +25,9 @@
 //! stable slugs, so renaming a stage never touches tasks; a task whose stage
 //! was deleted keeps the id until the user picks another stage.
 
+#[path = "manual_stage_undo.rs"]
+pub(crate) mod manual_stage_undo;
+
 pub const KIND_NORMAL: &str = "normal";
 pub const KIND_INSTANT: &str = "instant";
 pub const SPHERES: &[&str] = &["work", "home", "health", "growth", "personal"];
