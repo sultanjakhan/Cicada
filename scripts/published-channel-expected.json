@@ -1,0 +1,676 @@
+{
+  "schemaVersion": 1,
+  "version": "0.5.4",
+  "source": "6758f2d1adcf0d064a222deba966886b58b1b809",
+  "feedSha256": "0660ec837e1e3022caeaac0aa4428e42b062eadcfb2770e2701233ae2ab496ad",
+  "feed": {
+    "version": "0.5.4",
+    "notes": "Cicada 0.5.4: обновлённые фильтры и язык интерфейса, ручная отмена изменений, исправления календаря и хранения данных.",
+    "pub_date": "2026-10-09T16:48:14.523Z",
+    "platforms": {
+      "windows-x86_64": {
+        "url": "https://hanni-mvp-updates-v1.hanni-services.workers.dev/releases/Cicada-0.5.4-windows-x86_64.exe",
+        "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUa0pRalR4TjZTaEFMb3lpNnV0UVkyKzdLMjNoUUYwVWVVMXZoNmdMU05tdTYvZ25kTXZRam9hbXVZRHpMV1RNWnNkREFrbGdYMjNYNzRpVHM2bk5zdkxnVmZIR1FRMGdRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxNTYzMjg1CWZpbGU6Q2ljYWRhLTAuNS40LXdpbmRvd3MteDg2XzY0LmV4ZQpDdER5dWNpRFFQUUNCaHFaKzR3bFVoaktEdXM4cU9SZDJOcXBBVzYyemlrZmVxN1hLSmFwVk5ENzQ3TzVyWmJGWElwbFhzREZjV2krb0ZGMWFRRTVDUT09Cg==",
+        "sha256": "6412669195230778f28d437771c76004682b08cab9daacad3f559f51eaf4fef0",
+        "size": 5401367
+      },
+      "android-aarch64": {
+        "url": "https://hanni-mvp-updates-v1.hanni-services.workers.dev/releases/Cicada-0.5.4-android-aarch64.apk",
+        "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUa0pRalR4TjZTaEwxZWpXSWRJdyttRUVzVFo3YmVSM3NjdVNES09WVHZjS2hjNVU5OGNzNjJIUmEzMDJmQWQyNnYvNXUrc3dnaUMrNjJwdUtBL1A3MnNEVVB2TjZQWWc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxNTYzMzg3CWZpbGU6Q2ljYWRhLTAuNS40LWFuZHJvaWQtYWFyY2g2NC5hcGsKQWFKOUFlMjlWM3ZvakRheG42L3VDU2xSREh0TGxSeGhxSXZ0QWszUmR5TDZWNGd6UElubHNQRk5CeDMzNGhTZlpGcjhFN2ltS3pSbExOeTdRU2ZlQWc9PQo=",
+        "sha256": "16375ca4640644a1ed147b5ce3072a4b109b273d2ad46a9cab12513d428bb4a4",
+        "size": 19328452,
+        "version_code": 5004
+      },
+      "darwin-aarch64": {
+        "url": "https://hanni-mvp-updates-v1.hanni-services.workers.dev/releases/Cicada-0.5.4-darwin-aarch64.app.tar.gz",
+        "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUa0pRalR4TjZTaEdleUdIa2ZqSm44cVByT2FXcXdaM1BzY3Q2NHpaTjlEZUI1d1Y2Sy9jc005VmI1ak9UVFk5WENTS0tSbzFtRzNBMFlkSkFQdFpuZ09YTjJqNEYvVUFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxNTYzMTM3CWZpbGU6Q2ljYWRhLTAuNS40LWRhcndpbi1hYXJjaDY0LmFwcC50YXIuZ3oKbmw1Y0xWQmMrWjROOUlTeC8rdXFxd2drSlpxMklRYUJlWHVOVWtwN0IybDZIditsUEVJN253a1hwV1FYUTBmaEk0anRzQTlmT09nTGtKOHJGRiszRFE9PQo=",
+        "sha256": "3a7af0bfa2749888ed7c86ce06d04b00ed736953f556d7d417f488a3200bf571",
+        "size": 7772485
+      }
+    }
+  },
+  "pinnedPublicKeySha256": "edeb35dda891418923bdbc92c9251a66ab2cdad8b3ba3ebe31d70288a146843d",
+  "retainedFiles": 122,
+  "files": [
+    {
+      "name": "Cicada-0.3.23-android-aarch64.apk",
+      "size": 18791876,
+      "sha256": "c33f2ad8b4e5b2f814e5beabad2f2664665df9c5b528964ef8335aff80f8ca94"
+    },
+    {
+      "name": "Cicada-0.3.23-android-aarch64.apk.sig",
+      "size": 424,
+      "sha256": "8b55536050c64c87d1079f2ac68b2c333b9dc55efa523311dc32ac107d8f2183"
+    },
+    {
+      "name": "Cicada-0.3.23-darwin-aarch64.app.tar.gz",
+      "size": 7255809,
+      "sha256": "c5a5e7d93747db236c2b4dd5101d53deaa0abf87349320a5037515516e5a3543"
+    },
+    {
+      "name": "Cicada-0.3.23-darwin-aarch64.app.tar.gz.sig",
+      "size": 432,
+      "sha256": "7fc6e3af26c1708c4efc23ec411d8e74af3827211f3976f7034bbf4da9439699"
+    },
+    {
+      "name": "Cicada-0.3.23-windows-x86_64.exe",
+      "size": 5625395,
+      "sha256": "b4519728b7c123fd7c2564eff1cc0b4ee9dacbaa994e7d442f1f80999f46a76f"
+    },
+    {
+      "name": "Cicada-0.3.23-windows-x86_64.exe.sig",
+      "size": 424,
+      "sha256": "b495cf0e69550d89a103513c680c59b4e312fffea84fe21df4beefc44be18e52"
+    },
+    {
+      "name": "Cicada-0.3.24-android-aarch64.apk",
+      "size": 18791876,
+      "sha256": "7f6ddc98bc851c7e541887d9ef67f7fb19f3dc2891102f2576359c6bf6cb09b6"
+    },
+    {
+      "name": "Cicada-0.3.24-android-aarch64.apk.sig",
+      "size": 424,
+      "sha256": "9bf43aaa45944afc65d6f2276f8b718f244b8b5ef1682f5bb2e68a837c0878f4"
+    },
+    {
+      "name": "Cicada-0.3.24-darwin-aarch64.app.tar.gz",
+      "size": 7259665,
+      "sha256": "2f849084664b1e0e04e1364cb5247b6790b79c61df3fe0ee0cffda0f2a7ec5fc"
+    },
+    {
+      "name": "Cicada-0.3.24-darwin-aarch64.app.tar.gz.sig",
+      "size": 432,
+      "sha256": "e6b33beb420357d99e80865d7c76978714c265301e5321e1ca9739956e1ba19d"
+    },
+    {
+      "name": "Cicada-0.3.24-windows-x86_64.exe",
+      "size": 5627877,
+      "sha256": "7eeec2db990379ac4ed6cd58daed0bdbb9bc132ce0932ad5656c11cca7a50370"
+    },
+    {
+      "name": "Cicada-0.3.24-windows-x86_64.exe.sig",
+      "size": 424,
+      "sha256": "64bb2b33dd6c66a29dea8a50a38fa91d26e1a29eaf5ee76c7fef011d0f74e30a"
+    },
+    {
+      "name": "Cicada-0.3.25-android-aarch64.apk",
+      "size": 18791876,
+      "sha256": "19617ff16aaba897a9d569044abf0b869318cbc2cddf51ab1129a139729298f8"
+    },
+    {
+      "name": "Cicada-0.3.25-android-aarch64.apk.sig",
+      "size": 424,
+      "sha256": "f5e45edfe209c698fa826a49b1aa2f784bf84dcb66589f7882864ffdf9462de3"
+    },
+    {
+      "name": "Cicada-0.3.25-darwin-aarch64.app.tar.gz",
+      "size": 7259450,
+      "sha256": "2e6c7986d99ff7081a513231e2fadae68903e1bb38f98da809fd814205d57122"
+    },
+    {
+      "name": "Cicada-0.3.25-darwin-aarch64.app.tar.gz.sig",
+      "size": 432,
+      "sha256": "df14f20c77e55367cd789ba64a94f85b3d33603b015136a17caf7d49e74b7b35"
+    },
+    {
+      "name": "Cicada-0.3.25-windows-x86_64.exe",
+      "size": 5626058,
+      "sha256": "d8ca6cf6ba9486d3eaab4d1c79791885adc69161dfb292b9b1d62db27543ccbe"
+    },
+    {
+      "name": "Cicada-0.3.25-windows-x86_64.exe.sig",
+      "size": 424,
+      "sha256": "a7b37839b8b1284b356b6f5cd5a17c742e9f7ceec963a0b3c2faa9cfa70d4aa9"
+    },
+    {
+      "name": "Cicada-0.3.28-android-aarch64.apk",
+      "size": 18791876,
+      "sha256": "b65b02d6f37605c2d927fe3b7e95df5fd19f9a2f0a4ae2d18bb06266ecbf3f49"
+    },
+    {
+      "name": "Cicada-0.3.28-android-aarch64.apk.sig",
+      "size": 424,
+      "sha256": "f28b1b8da23cae79cbde715101c3232d53cb3fa4bae660d4b099a1fee59579f6"
+    },
+    {
+      "name": "Cicada-0.3.28-darwin-aarch64.app.tar.gz",
+      "size": 7259580,
+      "sha256": "0ea2f3ffdb6a2f42b06b62eb2e29e27460c6618fcb0898b083c9ab12b34d29ad"
+    },
+    {
+      "name": "Cicada-0.3.28-darwin-aarch64.app.tar.gz.sig",
+      "size": 432,
+      "sha256": "9eb1434d74d24e71cc393c6fbd4f8d3bc1e43290c83b85547a7241199e1ff81f"
+    },
+    {
+      "name": "Cicada-0.3.28-windows-x86_64.exe",
+      "size": 5625298,
+      "sha256": "e81e7b7ab2acc298d9e48120e843ff82b3a7dfa30512f361e51443070ffa613e"
+    },
+    {
+      "name": "Cicada-0.3.28-windows-x86_64.exe.sig",
+      "size": 424,
+      "sha256": "8506dd97c41bc19204e109e874a21bc3060af1887ea25895fef877796fe7d9f0"
+    },
+    {
+      "name": "Cicada-0.3.29-android-aarch64.apk",
+      "size": 18795972,
+      "sha256": "9a78bbd8253b73adb151ca9be885ec36635ad4d21437578436548bf404db6e15"
+    },
+    {
+      "name": "Cicada-0.3.29-android-aarch64.apk.sig",
+      "size": 424,
+      "sha256": "4c4aec16b785565ad51b3f86e2bb6ee8d6b2fcf7cd684ecde2b3a8e7c72c1a7c"
+    },
+    {
+      "name": "Cicada-0.3.29-darwin-aarch64.app.tar.gz",
+      "size": 7263092,
+      "sha256": "232adffd206ce875b0743b5d1241b05f41d2e99d9fc035c4b09a6c538df92f3c"
+    },
+    {
+      "name": "Cicada-0.3.29-darwin-aarch64.app.tar.gz.sig",
+      "size": 432,
+      "sha256": "37ce0f7268e1f1ca7ae123df1eb5b4d570917ae867dbe8b1ee0ca75946483176"
+    },
+    {
+      "name": "Cicada-0.3.29-windows-x86_64.exe",
+      "size": 5630471,
+      "sha256": "028f381f8c3147cb47eece45962695f02b574339a2f748c7b17a1354f70434e8"
+    },
+    {
+      "name": "Cicada-0.3.29-windows-x86_64.exe.sig",
+      "size": 424,
+      "sha256": "bcdb550e818e1add24a57791cfa0e7a0789d9126cc99d5f3c97e5a0f5acd2eba"
+    },
+    {
+      "name": "Cicada-0.3.30-android-aarch64.apk",
+      "size": 18812356,
+      "sha256": "37979c686a2bd1327e66fed9f5f9985647bce3db2b7704a6db472b33b00f3eb1"
+    },
+    {
+      "name": "Cicada-0.3.30-android-aarch64.apk.sig",
+      "size": 424,
+      "sha256": "819c0888f08665aa44588538e788a0b40b14f53903d5184cc81268b16135cb46"
+    },
+    {
+      "name": "Cicada-0.3.30-darwin-aarch64.app.tar.gz",
+      "size": 7257890,
+      "sha256": "b68d829b3e2fd819f8c43ee7487c2c4d3223258b003eecf3b2e90be0dc5cf223"
+    },
+    {
+      "name": "Cicada-0.3.30-darwin-aarch64.app.tar.gz.sig",
+      "size": 432,
+      "sha256": "582c429d58d21e68ca7dbb56c758a65b7a27fe9bf76fffa46ff5604976865248"
+    },
+    {
+      "name": "Cicada-0.3.30-windows-x86_64.exe",
+      "size": 5636360,
+      "sha256": "ad6f30a7ff2401767dce843ba0af3dcb701cb899f14324c77dbf634330b5faaa"
+    },
+    {
+      "name": "Cicada-0.3.30-windows-x86_64.exe.sig",
+      "size": 424,
+      "sha256": "13b53d17ff0ad330303318c27b6f17a2580932edfa8a040386ce476d4f9f4642"
+    },
+    {
+      "name": "Cicada-0.3.31-android-aarch64.apk",
+      "size": 18824644,
+      "sha256": "2d306455032231453479bbe02e988c51e6e665cd106f78789572632ff996eb8e"
+    },
+    {
+      "name": "Cicada-0.3.31-android-aarch64.apk.sig",
+      "size": 424,
+      "sha256": "de836ae06887f96ca686ce131a5b457a122b013cc6803e292fdf781e87f7a94d"
+    },
+    {
+      "name": "Cicada-0.3.31-darwin-aarch64.app.tar.gz",
+      "size": 7264091,
+      "sha256": "8cb26b4ced8d4aae4a8ff29bd4a7a22533720a1afae59550546bb58cad872d57"
+    },
+    {
+      "name": "Cicada-0.3.31-darwin-aarch64.app.tar.gz.sig",
+      "size": 432,
+      "sha256": "e801c41aac994093fa0b38bb9aa9030cd733d7022989de73d610c0d702431ceb"
+    },
+    {
+      "name": "Cicada-0.3.31-windows-x86_64.exe",
+      "size": 5645307,
+      "sha256": "f85bc53400f224630d47e848225f4c66fdb1138794687892d8b67a6f15c2777b"
+    },
+    {
+      "name": "Cicada-0.3.31-windows-x86_64.exe.sig",
+      "size": 424,
+      "sha256": "0b9ee5ea975fb61302ce5de471ba587e67db510d8c2f17e05448eafab337c686"
+    },
+    {
+      "name": "Cicada-0.3.32-android-aarch64.apk",
+      "size": 18828740,
+      "sha256": "7065cc583b62abe271dd0bd09cd768d44c215f6e1c2d3355536a6565e68b9ea3"
+    },
+    {
+      "name": "Cicada-0.3.32-android-aarch64.apk.sig",
+      "size": 424,
+      "sha256": "e03a510561354417e55cbd54c0957d322efeff0da5cc250df707b3c7f922a95c"
+    },
+    {
+      "name": "Cicada-0.3.32-darwin-aarch64.app.tar.gz",
+      "size": 7277224,
+      "sha256": "8238efb6fda126658982f8a166cd751335998295368116351c8b47d2610f7dc8"
+    },
+    {
+      "name": "Cicada-0.3.32-darwin-aarch64.app.tar.gz.sig",
+      "size": 432,
+      "sha256": "54bba71fda32bf18e818b0b103ebd5d4b032ec7a38a3814001551991c6e84470"
+    },
+    {
+      "name": "Cicada-0.3.32-windows-x86_64.exe",
+      "size": 5662591,
+      "sha256": "8d9075ca316aee0faafd513f99209abe9ff45f4d6fee2611b6f000fae0e3528c"
+    },
+    {
+      "name": "Cicada-0.3.32-windows-x86_64.exe.sig",
+      "size": 424,
+      "sha256": "61cee0af3c66f038e195f011f33e6c5cd4edd91cee8b3be974692640f868995e"
+    },
+    {
+      "name": "Cicada-0.3.33-android-aarch64.apk",
+      "size": 18845124,
+      "sha256": "fd7248fe63301d3ad083a13ff35e8838040dfc63bbff9630d61c65dd745d8540"
+    },
+    {
+      "name": "Cicada-0.3.33-android-aarch64.apk.sig",
+      "size": 424,
+      "sha256": "d7b0c2923b92af041f1f798a987d79dc83b10ec61f5327fedd0325b5964329f1"
+    },
+    {
+      "name": "Cicada-0.3.33-darwin-aarch64.app.tar.gz",
+      "size": 7291893,
+      "sha256": "afaa7f7dff16141eb228026d5dcccb7438e8c7fb8cffb5b4347159200e7c03d0"
+    },
+    {
+      "name": "Cicada-0.3.33-darwin-aarch64.app.tar.gz.sig",
+      "size": 432,
+      "sha256": "c79790f528099416a71d2cfc108ad359d0835a2c5b3be6f87d6523b3b3fe0b9e"
+    },
+    {
+      "name": "Cicada-0.3.33-windows-x86_64.exe",
+      "size": 5678534,
+      "sha256": "2328309f6c8b711aaa1f56905b01a3452eed967b9765a58a389c86b9fbc65e7c"
+    },
+    {
+      "name": "Cicada-0.3.33-windows-x86_64.exe.sig",
+      "size": 424,
+      "sha256": "82230fd6016acd57e25d5c209f7770f9c0d27a434696eb8876b2a088ebbe6106"
+    },
+    {
+      "name": "Cicada-0.3.34-android-aarch64.apk",
+      "size": 18845124,
+      "sha256": "418d03a2bd9085d091c698f5a04c8cfcda67be076b43134582bdaececd692dd5"
+    },
+    {
+      "name": "Cicada-0.3.34-android-aarch64.apk.sig",
+      "size": 424,
+      "sha256": "57f1699413d7cb716d487f40d761f67e56241c9b4fe27d04ff07fbeccb8516b5"
+    },
+    {
+      "name": "Cicada-0.3.34-darwin-aarch64.app.tar.gz",
+      "size": 7292060,
+      "sha256": "b387f410012726e3949fc8968bf1e71354365884e84491d71df65087e2da7f23"
+    },
+    {
+      "name": "Cicada-0.3.34-darwin-aarch64.app.tar.gz.sig",
+      "size": 432,
+      "sha256": "90f3eb685298a548253ed91e5872ee935e39bc6b1b854c95853a4f03672577ef"
+    },
+    {
+      "name": "Cicada-0.3.34-windows-x86_64.exe",
+      "size": 5683042,
+      "sha256": "087ec5f984664d094d034c24117d40837880830cbc7505e7f4788bf9965b4966"
+    },
+    {
+      "name": "Cicada-0.3.34-windows-x86_64.exe.sig",
+      "size": 424,
+      "sha256": "0e6acc881fc1c7a1757560c725d97211415fb2b3166fd8fb090853a924443308"
+    },
+    {
+      "name": "Cicada-0.3.35-android-aarch64.apk",
+      "size": 18861508,
+      "sha256": "4c9de902565f767b7d6f13b1b2b12cf25ef0d2ef13ffa2210a91bbd65c6b5983"
+    },
+    {
+      "name": "Cicada-0.3.35-android-aarch64.apk.sig",
+      "size": 424,
+      "sha256": "d7a226a1b8078452df7ba7d28b744475e455c4dbd6594849f99d914c9b029730"
+    },
+    {
+      "name": "Cicada-0.3.35-darwin-aarch64.app.tar.gz",
+      "size": 7317541,
+      "sha256": "c062a7de5a615d100d83732455322a35fcbbc63aa9ab256d27657d4f1f3bb506"
+    },
+    {
+      "name": "Cicada-0.3.35-darwin-aarch64.app.tar.gz.sig",
+      "size": 432,
+      "sha256": "0ca265b1a9263fbb389464a767845e55d814b2a4f07c17c07b3db0328ad655a0"
+    },
+    {
+      "name": "Cicada-0.3.35-windows-x86_64.exe",
+      "size": 5705230,
+      "sha256": "8cf3eb475342538abcce4a7def88651b7013f552dfabcfc40760f12cd20a98a8"
+    },
+    {
+      "name": "Cicada-0.3.35-windows-x86_64.exe.sig",
+      "size": 424,
+      "sha256": "94b4b0089f097c97ee00ea840f9e2ed211cd3278c22b292160c30cb663c802e4"
+    },
+    {
+      "name": "Cicada-0.4.0-android-aarch64.apk",
+      "size": 18902468,
+      "sha256": "cb5c8a0a2ef04a74f57f367c566290156b9c0af79830e5b841e10ac7b7dc1cc6"
+    },
+    {
+      "name": "Cicada-0.4.0-android-aarch64.apk.sig",
+      "size": 424,
+      "sha256": "5831565af0269894c1ab6b81b1befe7f9b949882ae8b1114eb57f71139e03f03"
+    },
+    {
+      "name": "Cicada-0.4.0-darwin-aarch64.app.tar.gz",
+      "size": 7354963,
+      "sha256": "47b901bab1fd9244c07b5229d3061b1127a41eeaed61787e59ae2d842c23bb96"
+    },
+    {
+      "name": "Cicada-0.4.0-darwin-aarch64.app.tar.gz.sig",
+      "size": 432,
+      "sha256": "1f9979d587edc034908a7882df8333e2df4057b1981f2d0da6e70812e58b13b4"
+    },
+    {
+      "name": "Cicada-0.4.0-windows-x86_64.exe",
+      "size": 5742205,
+      "sha256": "d1777ebfe16df482a83b6740d90edd9f630fab8f8114c1050ed33128a090d311"
+    },
+    {
+      "name": "Cicada-0.4.0-windows-x86_64.exe.sig",
+      "size": 424,
+      "sha256": "ada76ae1e6985907f361dc644421877ead406419d10b6cd8f3c94b01d654f675"
+    },
+    {
+      "name": "Cicada-0.4.5-android-aarch64.apk",
+      "size": 19000772,
+      "sha256": "56a39e6c4b23200e78897af1499d59e808a60c2f0283180d4e7e3060b4610455"
+    },
+    {
+      "name": "Cicada-0.4.5-android-aarch64.apk.sig",
+      "size": 424,
+      "sha256": "b9e4111a648d58223741d9b8f64b784c24de6b38b819b891c1c6b876bce99840"
+    },
+    {
+      "name": "Cicada-0.4.5-darwin-aarch64.app.tar.gz",
+      "size": 7430323,
+      "sha256": "dc138618aa19074fdc8f111be8f1784c6fff227f612034a74618c7410bd97a71"
+    },
+    {
+      "name": "Cicada-0.4.5-darwin-aarch64.app.tar.gz.sig",
+      "size": 432,
+      "sha256": "b07cf29924006bbc0220a68e45e35a1c351c4f634349f3addfd2bc352bbe8dcd"
+    },
+    {
+      "name": "Cicada-0.4.5-windows-x86_64.exe",
+      "size": 5111024,
+      "sha256": "eda1d36e57ccffa9d5f25aecc0e4842a9e292661d02c3b205c1749a24a108916"
+    },
+    {
+      "name": "Cicada-0.4.5-windows-x86_64.exe.sig",
+      "size": 424,
+      "sha256": "72aa00f9f1844d579a76961edde5c7df3e62d68fe8603e4d9353f5cfdb6aa2d0"
+    },
+    {
+      "name": "Cicada-0.4.6-android-aarch64.apk",
+      "size": 19000772,
+      "sha256": "35ba3485b81a5d15645237dbc951f32e50ea754c46b4ee2e9ffafab5b46aa651"
+    },
+    {
+      "name": "Cicada-0.4.6-android-aarch64.apk.sig",
+      "size": 424,
+      "sha256": "cf9ca137c0d5536a0825b8d8d7c3ca2785dd326555ce3db3453271849e275eb8"
+    },
+    {
+      "name": "Cicada-0.4.6-darwin-aarch64.app.tar.gz",
+      "size": 7429433,
+      "sha256": "b0ab5b51687a9fb1e4da9af70344a897bdea63b17bdaa1de69df3702ab18dba8"
+    },
+    {
+      "name": "Cicada-0.4.6-darwin-aarch64.app.tar.gz.sig",
+      "size": 432,
+      "sha256": "0620a211e65ca1b5e8728685d9fbe4ca1844ebc1f1a002e86eb57f9c36a92d21"
+    },
+    {
+      "name": "Cicada-0.4.6-windows-x86_64.exe",
+      "size": 5110708,
+      "sha256": "6e7dd54efe9fe2125c306d0be090c7336ce25e469c7c1a0cbcf57a5136524c17"
+    },
+    {
+      "name": "Cicada-0.4.6-windows-x86_64.exe.sig",
+      "size": 424,
+      "sha256": "7466eb0c377d8b0c0935f4a7f12eae2bac136b1159a9a9b7ebe9a4e53b0a6b95"
+    },
+    {
+      "name": "Cicada-0.4.7-android-aarch64.apk",
+      "size": 19082692,
+      "sha256": "ccc11969d80bb5db43e5d15fd1adec21d1812173a631c42a598d8f631a32af32"
+    },
+    {
+      "name": "Cicada-0.4.7-android-aarch64.apk.sig",
+      "size": 424,
+      "sha256": "5fcdc4f8ed13d123bd693c9a396000f9cb66253f128b55cddf0f54a056b364ca"
+    },
+    {
+      "name": "Cicada-0.4.7-darwin-aarch64.app.tar.gz",
+      "size": 7498235,
+      "sha256": "220c7a6c48d1f2cae9106fdc558bd18f4cb145f99c4bc7ed6ac0351050840928"
+    },
+    {
+      "name": "Cicada-0.4.7-darwin-aarch64.app.tar.gz.sig",
+      "size": 432,
+      "sha256": "09f2e36576db6a05e460dfc98a2f84855996723e1a2787fb1103c984a3e1b6b9"
+    },
+    {
+      "name": "Cicada-0.4.7-windows-x86_64.exe",
+      "size": 5202082,
+      "sha256": "902dc66e909394cf8059313d2b34610ab9c19ec14a21e8e005e3f5ba7cb23e88"
+    },
+    {
+      "name": "Cicada-0.4.7-windows-x86_64.exe.sig",
+      "size": 424,
+      "sha256": "05de9da290cd4cf4e2b6e12096637c41eb57045716c3e0e0271c0d5d566cce2d"
+    },
+    {
+      "name": "Cicada-0.4.8-android-aarch64.apk",
+      "size": 19090884,
+      "sha256": "ea41b082a034888b46fa5fdf38ae667584e5159d7dfc916c2d7ca78fef59beff"
+    },
+    {
+      "name": "Cicada-0.4.8-android-aarch64.apk.sig",
+      "size": 424,
+      "sha256": "5ea80c32eae46989f8716715ee716479e8ab314482febbb5c8d14d435d0ebab8"
+    },
+    {
+      "name": "Cicada-0.4.8-darwin-aarch64.app.tar.gz",
+      "size": 7511186,
+      "sha256": "e4dd88e32895b9907f7ef21c695c43755af7763dbce0820e6e5d0dc9b960d7cd"
+    },
+    {
+      "name": "Cicada-0.4.8-darwin-aarch64.app.tar.gz.sig",
+      "size": 432,
+      "sha256": "5ef622ebf8db40505c8424f4ee208b62d1c657058e44f980531374f6ba50696d"
+    },
+    {
+      "name": "Cicada-0.4.8-windows-x86_64.exe",
+      "size": 5207867,
+      "sha256": "e394246fcd3088c7b09a6e6424762278be0927c3ff6f8cb95b1ae1ed189b72f5"
+    },
+    {
+      "name": "Cicada-0.4.8-windows-x86_64.exe.sig",
+      "size": 424,
+      "sha256": "3f45455ed41735d326aeadb85720434d27a41243f9ca79364fe31b6fa4a07494"
+    },
+    {
+      "name": "Cicada-0.5.0-android-aarch64.apk",
+      "size": 19152324,
+      "sha256": "50875106a84035926ce9f3c3c64c5eacdca31ffd200159f0b45f3e9337e95cfd"
+    },
+    {
+      "name": "Cicada-0.5.0-android-aarch64.apk.sig",
+      "size": 424,
+      "sha256": "05131a4521b043425287b9333a8963e04b60a0ea94f92353a6a1da185ec18879"
+    },
+    {
+      "name": "Cicada-0.5.0-darwin-aarch64.app.tar.gz",
+      "size": 7577947,
+      "sha256": "90e57f02484a0051477b0a555bba711759bb6197efd131a989d03bc89a95dd75"
+    },
+    {
+      "name": "Cicada-0.5.0-darwin-aarch64.app.tar.gz.sig",
+      "size": 432,
+      "sha256": "4d03905ffea442d8ddeae1f35a8accd04cfec3b46d5bec50102f581648b16836"
+    },
+    {
+      "name": "Cicada-0.5.0-windows-x86_64.exe",
+      "size": 5268888,
+      "sha256": "ad07abebb716f426b8587b5fe84f9e2543a37d1518a1edd32268fb8c0ff0c5fa"
+    },
+    {
+      "name": "Cicada-0.5.0-windows-x86_64.exe.sig",
+      "size": 424,
+      "sha256": "03a60c50052b36dc577c3854d03f1e66c8bf81526583a472ad30511f63c476d1"
+    },
+    {
+      "name": "Cicada-0.5.2-android-aarch64.apk",
+      "size": 19172804,
+      "sha256": "b11008f900849d433699c9a3dd4b126f6206da758d04c3cb83f68286f3ae7942"
+    },
+    {
+      "name": "Cicada-0.5.2-android-aarch64.apk.sig",
+      "size": 424,
+      "sha256": "7eac41d0dafbfb685823598303130cd38a7bc45ff66f7eda26212b74cfec96b4"
+    },
+    {
+      "name": "Cicada-0.5.2-darwin-aarch64.app.tar.gz",
+      "size": 7587010,
+      "sha256": "0a64053ab54edd498bbc0ef1f75376789956badb46d728c6707e0b2633dce413"
+    },
+    {
+      "name": "Cicada-0.5.2-darwin-aarch64.app.tar.gz.sig",
+      "size": 432,
+      "sha256": "ed82b3776c3ed00706202599db409df4c16ef5a4f860ab81d50df5b1a762f738"
+    },
+    {
+      "name": "Cicada-0.5.2-windows-x86_64.exe",
+      "size": 5298191,
+      "sha256": "ff6d5050fca391f2d828d6dd2c6bd14fa5557276c5da4073a5ebb23dd5bb851d"
+    },
+    {
+      "name": "Cicada-0.5.2-windows-x86_64.exe.sig",
+      "size": 424,
+      "sha256": "c9d05dcb5b6ea6696dc8379c40690c1ffce0ffa96f2bd3213303c889549d2568"
+    },
+    {
+      "name": "Cicada-0.5.3-android-aarch64.apk",
+      "size": 19172804,
+      "sha256": "73aa39383314b8e1396e8c51fd8b18a57894b935939a6fdd532d3b17d30672e4"
+    },
+    {
+      "name": "Cicada-0.5.3-android-aarch64.apk.sig",
+      "size": 424,
+      "sha256": "3664c9de7478ad034a255acf439c47930f85cdcabb7835399e92b960b724ebfe"
+    },
+    {
+      "name": "Cicada-0.5.3-darwin-aarch64.app.tar.gz",
+      "size": 7601007,
+      "sha256": "65c0e34a1db1ec42c4f48a0525b2aafc59e1f8bbe94f219a4014b1f0bfc119d1"
+    },
+    {
+      "name": "Cicada-0.5.3-darwin-aarch64.app.tar.gz.sig",
+      "size": 432,
+      "sha256": "9ea6b3a53b0856a502140339e95f2d7350f0b5d0b4eb2b975ec58b28a00b300b"
+    },
+    {
+      "name": "Cicada-0.5.3-windows-x86_64.exe",
+      "size": 5297909,
+      "sha256": "fe6211df2ba94695933baa299a719189bae262e4e6ee10224eb4ea418493fee5"
+    },
+    {
+      "name": "Cicada-0.5.3-windows-x86_64.exe.sig",
+      "size": 424,
+      "sha256": "3a9274056a81fbd4d62e3d0a6ec781cc8ae1038f4a25be57204cb5478fec846e"
+    },
+    {
+      "name": "Cicada-0.5.4-android-aarch64.apk",
+      "size": 19328452,
+      "sha256": "16375ca4640644a1ed147b5ce3072a4b109b273d2ad46a9cab12513d428bb4a4"
+    },
+    {
+      "name": "Cicada-0.5.4-android-aarch64.apk.sig",
+      "size": 424,
+      "sha256": "6f3a7b295253802f183810e6e92c431024372549273558105a644c097a919a0f"
+    },
+    {
+      "name": "Cicada-0.5.4-darwin-aarch64.app.tar.gz",
+      "size": 7772485,
+      "sha256": "3a7af0bfa2749888ed7c86ce06d04b00ed736953f556d7d417f488a3200bf571"
+    },
+    {
+      "name": "Cicada-0.5.4-darwin-aarch64.app.tar.gz.sig",
+      "size": 432,
+      "sha256": "f5250e3c2aea11cabd14effa9cae6c86629ef3463508ba0faa5eb981398152d5"
+    },
+    {
+      "name": "Cicada-0.5.4-windows-x86_64.exe",
+      "size": 5401367,
+      "sha256": "6412669195230778f28d437771c76004682b08cab9daacad3f559f51eaf4fef0"
+    },
+    {
+      "name": "Cicada-0.5.4-windows-x86_64.exe.sig",
+      "size": 424,
+      "sha256": "df1967168abf926a30f5353ee15b55c912b523fe3e4a68ac6326c8cef079cc09"
+    },
+    {
+      "name": "Hanni-MVP-0.3.16-android-aarch64.apk",
+      "size": 16583191,
+      "sha256": "e3e6a221c2337c283e9c6d9f82877274443f078069fba0c1b5f9220d0122f0aa"
+    },
+    {
+      "name": "Hanni-MVP-0.3.16-android-aarch64.apk.sig",
+      "size": 428,
+      "sha256": "61954fe153068c724c0949a3857a31034900b1e84c7f19fabc5873c3ef7feabe"
+    },
+    {
+      "name": "Hanni-MVP-0.3.16-windows-x86_64.exe",
+      "size": 5558761,
+      "sha256": "c6f6bf40ddb2b7c52c77061c10067c6ff518bf4a16f15e8d5bf134b8f9b1076e"
+    },
+    {
+      "name": "Hanni-MVP-0.3.16-windows-x86_64.exe.sig",
+      "size": 428,
+      "sha256": "8dd66798c0aac488cb9595fe418437c500bf591009377171e65766884dbfaa7f"
+    },
+    {
+      "name": "Hanni-MVP-0.3.21-android-aarch64.apk",
+      "size": 18742724,
+      "sha256": "6bf8005f3b937bd2ecd112bcac82f2f9a7b1982a6b84e7dcf09f450fa37cb28e"
+    },
+    {
+      "name": "Hanni-MVP-0.3.21-android-aarch64.apk.sig",
+      "size": 428,
+      "sha256": "6b8e58c652f46354b1f6a60e10d3a21c86b6eff22a070fc8f9c46d09d3880d86"
+    },
+    {
+      "name": "Hanni-MVP-0.3.21-windows-x86_64.exe",
+      "size": 5615952,
+      "sha256": "5aa61d0329a9e8970ee2972f40b4fbb8a1ace5ecf73a8b47502984a0d635b5d3"
+    },
+    {
+      "name": "Hanni-MVP-0.3.21-windows-x86_64.exe.sig",
+      "size": 428,
+      "sha256": "ec2501890b90a94922fea09ba13645f572ab0a6cfcb05d32d2b6e2a825c9697e"
+    }
+  ]
+}

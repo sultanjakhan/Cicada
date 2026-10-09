@@ -2,12 +2,18 @@ name: macOS isolated QA candidate
 
 on:
   workflow_dispatch:
+    inputs:
+      channel_proof:
+        description: Read-only published update channel proof
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   macos-qa:
+    if: inputs.channel_proof != true
     runs-on: macos-15
     timeout-minutes: 30
     env:
@@ -86,3 +92,18 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 3
+
+  verify-published-channel:
+    if: inputs.channel_proof == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify feed, retained payloads and pinned signatures
+        env:
+          MVP_UPDATES_URL: ${{ secrets.MVP_UPDATES_URL }}
+          MVP_UPDATES_TOKEN: ${{ secrets.MVP_UPDATES_TOKEN }}
+        run: node scripts/verify-published-channel.mjs

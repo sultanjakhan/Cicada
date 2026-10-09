@@ -1,6 +1,8 @@
 name: CI
 on:
   push:
+    branches-ignore:
+      - candidate/channel-proof-6758-20261009
   pull_request:
 permissions:
   contents: read
