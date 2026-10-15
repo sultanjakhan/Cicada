@@ -135,6 +135,75 @@ test('editing one skill merges an independent remote skill change in the same go
   assert.equal(modal.open,false);assert.equal(writes,1);assert.deepEqual(JSON.parse(stored).goals.g.skills.map(skill=>skill.title),['Local A','Remote B']);
 });
 
+test('a delayed development refresh cannot replace a newer refresh', async t => {
+  const host = document.createElement('div'); document.body.append(host);
+  const snapshot = title => JSON.stringify({ version: 1, goals: { g: { skills: [{ id: 'a', title, topic: 'Topic' }], stages: [] } } });
+  let stored = snapshot('Initial'), delay = false, release;
+  const invoke = async command => {
+    assert.equal(command, 'get_ui_state');
+    const raw = stored;
+    if (delay) { delay = false; await new Promise(resolve => { release = resolve; }); }
+    return raw;
+  };
+  const controller = await mountGoalDevelopment(host, { invoke, goal: { id: 'g', title: 'Goal' } });
+  t.after(() => { controller.dispose(); host.remove(); });
+  delay = true;
+  const oldRefresh = controller.refresh();
+  stored = snapshot('From phone');
+  await controller.refresh();
+  assert.equal(host.querySelector('[data-dev-skill="a"]').textContent, 'From phone');
+  release(); await oldRefresh;
+  assert.equal(host.querySelector('[data-dev-skill="a"]').textContent, 'From phone');
+});
+
+test('a development refresh started before saving cannot replace the acknowledged edit', async t => {
+  const host = document.createElement('div'); document.body.append(host);
+  let stored = JSON.stringify({ version: 1, goals: { g: { skills: [{ id: 'a', title: 'Initial', topic: 'Topic' }], stages: [] } } });
+  let delay = false, release;
+  const invoke = async (command, args) => {
+    if (command === 'get_ui_state') {
+      const raw = stored;
+      if (delay) { delay = false; await new Promise(resolve => { release = resolve; }); }
+      return raw;
+    }
+    assert.equal(command, 'set_ui_state'); assert.equal(args.expectedValue, stored); stored = args.value;
+  };
+  const controller = await mountGoalDevelopment(host, { invoke, goal: { id: 'g', title: 'Goal' } });
+  t.after(() => { controller.dispose(); host.remove(); });
+  host.querySelector('[data-dev-skill="a"]').click();
+  const modal = document.querySelector('dialog[open]'); modal.querySelector('[name=title]').value = 'Saved edit';
+  delay = true;
+  const oldRefresh = controller.refresh();
+  modal.querySelector('form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })); await settle();
+  assert.equal(modal.isConnected, false); assert.equal(host.querySelector('[data-dev-skill="a"]').textContent, 'Saved edit');
+  release(); await oldRefresh;
+  assert.equal(host.querySelector('[data-dev-skill="a"]').textContent, 'Saved edit');
+  assert.equal(JSON.parse(stored).goals.g.skills[0].title, 'Saved edit');
+});
+
+for (const remoteChange of ['delete-stage', 'change-stage-focus', 'delete-skill']) test(`focus picker preserves its draft instead of overwriting ${remoteChange}`, async t => {
+  const host = document.createElement('div'); document.body.append(host);
+  const original = { version: 1, goals: { g: { skills: [{ id: 'a', title: 'A', topic: 'Topic' }, { id: 'b', title: 'B', topic: 'Topic' }], stages: [{ id: 's', title: 'Stage', skillIds: ['a', 'b'], focusId: 'a' }], activeStageId: 's', focusId: 'a' } } };
+  let stored = JSON.stringify(original), writes = 0;
+  const invoke = async (command, args) => {
+    if (command === 'get_ui_state') return stored;
+    assert.equal(command, 'set_ui_state'); writes++; stored = args.value;
+  };
+  const controller = await mountGoalDevelopment(host, { invoke, goal: { id: 'g', title: 'Goal' } });
+  t.after(() => { controller.dispose(); host.remove(); });
+  controller.openFocusPicker();
+  const modal = document.querySelector('dialog[open]'); modal.querySelector('[data-dev-topic="Topic"]').click();
+  const choice = modal.querySelector('input[value="b"]'); choice.checked = true; choice.dispatchEvent(new window.Event('change', { bubbles: true }));
+  if (remoteChange === 'delete-stage') original.goals.g.stages = [];
+  else if (remoteChange === 'change-stage-focus') original.goals.g.stages[0].focusId = 'b';
+  else original.goals.g.skills = original.goals.g.skills.filter(skill => skill.id !== 'b');
+  stored = JSON.stringify(original); const remote = stored;
+  modal.querySelector('form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })); await settle();
+  assert.equal(modal.open, true); assert.equal(modal.querySelector('input[value="b"]').checked, true);
+  assert.match(modal.querySelector('[data-dialog-error]').textContent, /другом устройстве|недоступен/);
+  assert.equal(stored, remote); assert.equal(writes, 0);
+});
+
 const glanceText = host => ({ stage: host.querySelector('[data-glance-stage]')?.textContent.trim(), progress: host.querySelector('[data-glance-progress]')?.getAttribute('aria-label') || null, count: host.querySelector('.calendar-goal-glance__count')?.textContent || null });
 
 test('development changes preserve lifecycle metadata; numeric result has its own scope', () => {

@@ -213,3 +213,19 @@ test('an unsupported stored format is reported and never overwritten', async t =
   await assert.rejects(createWish({ title: 'Новое' }, { invoke: x.data.invoke }), /Неподдерживаемый/);
   assert.equal(x.data.writes(), 0);
 });
+
+for (const editor of ['edit', 'delete']) test(`closing a wish ${editor} dialog applies a deferred remote refresh and preserves the open draft`, async t => {
+  const x = await mountList(t, { version: 1, wishes: [wish('a')] });
+  if (editor === 'edit') x.host.querySelector('[data-wish-edit="a"]').click();
+  else await x.menu('a', 'delete');
+  const modal = document.querySelector('dialog[open]');
+  if (editor === 'edit') modal.querySelector('[name=title]').value = 'Unsaved draft';
+  x.data.raw = JSON.stringify({ version: 1, wishes: [wish('a', { title: 'From phone', status: 'saving' })] });
+  dom.window.dispatchEvent(new dom.window.CustomEvent('hanni:calendar-refresh', { detail: { remoteSync: true, canCommit: () => true } })); await settle();
+  assert.equal(modal.open, true);
+  if (editor === 'edit') assert.equal(modal.querySelector('[name=title]').value, 'Unsaved draft');
+  modal.querySelector('[data-dialog-close]').click(); await settle();
+  assert.equal(x.host.querySelector('[data-wish-edit="a"] .cp-wish-row__title').textContent, 'From phone');
+  assert.equal(x.host.querySelector('[data-wish-status="a"]').value, 'saving');
+  assert.equal(x.data.writes(), 0);
+});

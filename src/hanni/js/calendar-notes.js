@@ -9,6 +9,9 @@ const drafts = new Map(), pendingDrafts = new Map(), retainedEditors = new Map()
 // Closed editors may still own an unsaved window-local draft.
 export const hasUnsavedCalendarNoteDrafts = () => drafts.size > 0 || pendingDrafts.size > 0 || retainedEditors.size > 0;
 const keyOf = id => id == null ? 'new' : String(id);
+const isBlockEditorData = value => Array.isArray(value?.blocks) && value.blocks.every(block =>
+  block && typeof block === 'object' && typeof block.type === 'string' && block.type.trim() &&
+  block.data && typeof block.data === 'object' && !Array.isArray(block.data));
 const blockSignature = data => JSON.stringify((data?.blocks || []).map(({ id, ...block }) => block));
 export function isCalendarNote(note) {
   const calendar = note && (note.tab_name === 'calendar' || (!note.tab_name && String(note.tags || '').split(',').some(tag => tag.trim().toLowerCase() === 'calendar')));
@@ -87,7 +90,7 @@ export async function mountCalendarNotes(element, dependencies = {}) {
     if (value.rich && value.ready && !value.note?.archived && !value.invalid && !value.editorFailed && !value.committed && !value.destroyed) {
       const token = ++value.captureRevision, output = await value.editor.save();
       if (value.destroyed || token !== value.captureRevision) return;
-      if (!Array.isArray(output?.blocks)) throw new Error('Некорректный ответ редактора.');
+      if (!isBlockEditorData(output)) throw new Error('Некорректный ответ редактора.');
       value.output = sanitizeBlockEditorData(output, window.DOMPurify); remember(value);
     }
   }
@@ -110,7 +113,7 @@ export async function mountCalendarNotes(element, dependencies = {}) {
   async function showEditor(note = null, options = {}) {
     const key = keyOf(note?.id), draft = drafts.get(key);
     let originalBlocks = null, invalid = false;
-    if (note?.content_blocks) { try { originalBlocks = JSON.parse(note.content_blocks); invalid = !Array.isArray(originalBlocks?.blocks); } catch { invalid = true; } }
+    if (note?.content_blocks) { try { originalBlocks = JSON.parse(note.content_blocks); invalid = !isBlockEditorData(originalBlocks); } catch { invalid = true; } }
     if (!invalid) originalBlocks = sanitizeBlockEditorData(originalBlocks, window.DOMPurify);
     const rich = draft ? (draft.rich ?? !!draft.blocks) : !!originalBlocks && !invalid;
     const value = { key, note, baseUpdatedAt: draft ? draft.baseUpdatedAt : note?.updated_at,

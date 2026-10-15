@@ -20,7 +20,7 @@ export function mountCalendarWishes(element, dependencies = {}) {
   const { invoke } = dependencies;
   const document = element.ownerDocument, window = document.defaultView;
   const prefix = `calendar-wishes-${++nextInstance}`;
-  let disposed = false, revision = 0, wishes = null, failed = false, closedOpen = false, dialog = null, pendingConversion = null, busy = false;
+  let disposed = false, revision = 0, wishes = null, failed = false, closedOpen = false, dialog = null, deferredRefresh = null, pendingConversion = null, busy = false;
   element.classList.add('cp-wishes');
   element.innerHTML = `<p class="cp-message" data-wish-message role="status" aria-live="polite"></p><button type="button" data-wish-retry hidden>Повторить</button><div class="cp-wish-list" data-wish-list aria-busy="true"></div>`;
   const list = element.querySelector('[data-wish-list]'), message = element.querySelector('[data-wish-message]'), retry = element.querySelector('[data-wish-retry]');
@@ -103,10 +103,15 @@ export function mountCalendarWishes(element, dependencies = {}) {
     }
     render();
   }
+  function onDialogClose() {
+    dialog = null;
+    const deferred = deferredRefresh; deferredRefresh = null;
+    if (!disposed && deferred) void refresh(deferred.canCommit);
+  }
   function openForm(wish = null, options = {}) {
     if (dialog || disposed) return null;
     const editor = createCalendarDialog({ document, title: wish ? 'Изменить желание' : 'Новое желание', hint: 'Желание — одно действие без плана. Цену и ссылку можно добавить позже.', submitLabel: 'Сохранить',
-      isCurrent: () => !disposed && element.isConnected, returnFocus: () => wish && findWish(wish.id) ? focusRow(wish.id) : (options.returnFocus ? options.returnFocus() : fallbackFocus()), onClose: () => { dialog = null; } });
+      isCurrent: () => !disposed && element.isConnected, returnFocus: () => wish && findWish(wish.id) ? focusRow(wish.id) : (options.returnFocus ? options.returnFocus() : fallbackFocus()), onClose: onDialogClose });
     dialog = editor; editor.modal.dataset.wishForm = '';
     const id = `${prefix}-form`;
     editor.body.innerHTML = `<div class="calendar-goal-fields cp-wish-fields">
@@ -139,7 +144,7 @@ export function mountCalendarWishes(element, dependencies = {}) {
   function confirmDelete(wish, restore) {
     if (dialog || disposed) return;
     const editor = createCalendarDialog({ document, title: 'Удалить желание?', hint: wish.goalId ? 'Созданная из него цель останется.' : 'Желание исчезнет со всех устройств.', submitLabel: 'Удалить', isCurrent: () => !disposed && element.isConnected,
-      returnFocus: () => (findWish(wish.id) ? restore?.() : fallbackFocus()), onClose: () => { dialog = null; } });
+      returnFocus: () => (findWish(wish.id) ? restore?.() : fallbackFocus()), onClose: onDialogClose });
     dialog = editor; editor.modal.dataset.wishDelete = ''; editor.body.textContent = wish.title;
     editor.form.addEventListener('submit', async event => {
       event.preventDefault(); if (editor.pending || disposed) return;
@@ -211,8 +216,11 @@ export function mountCalendarWishes(element, dependencies = {}) {
   });
   // Local wish writes and remote sync change the list; goal renames arrive through render().
   const onExternal = event => {
-    if (dialog || busy || (event.type === 'hanni:calendar-refresh' && !event.detail?.remoteSync)) return;
-    void refresh(event.detail?.remoteSync ? event.detail.canCommit : null);
+    if (busy || (event.type === 'hanni:calendar-refresh' && !event.detail?.remoteSync)) return;
+    const canCommit = event.detail?.remoteSync ? event.detail.canCommit : null;
+    if (canCommit && !canCommit()) return;
+    if (dialog) { deferredRefresh = { canCommit }; return; }
+    void refresh(canCommit);
   };
   window.addEventListener('hanni:wishes-changed', onExternal);
   window.addEventListener('hanni:calendar-refresh', onExternal);

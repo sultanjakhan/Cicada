@@ -306,6 +306,32 @@ test('an in-flight process save prevents closing the settings shell', async () =
   assert.equal(x.modal.querySelector('.calendar-editor-actions [data-dialog-close]').disabled, false);
 });
 
+test('a failed process Cancel read keeps the Settings draft guarded after the pending read', async () => {
+  const x = await boot({ section: 'processes' });
+  const process = x.modal.querySelector('.calendar-processes');
+  const stage = process.querySelector('[data-stage-id="analysis"] [data-control="stage-title"]');
+  stage.value = 'Unsaved analysis'; stage.dispatchEvent(new x.dom.window.Event('input', { bubbles: true }));
+  const invoke = x.dom.window.__TAURI__.core.invoke;
+  let rejectRead;
+  x.dom.window.__TAURI__.core.invoke = (command, args) => command === 'get_ui_state' && args.key === 'calendar_processes_v1'
+    ? new Promise((_resolve, reject) => { rejectRead = reject; }) : invoke(command, args);
+  process.querySelector('[data-processes-cancel]').click(); await tick();
+  assert.equal(x.modal.querySelector('footer [data-dialog-close]').disabled, true);
+  x.modal.dispatchEvent(new x.dom.window.Event('cancel', { cancelable: true }));
+  assert.equal(x.modal.open, true);
+  assert.equal(x.modal.querySelector('[data-close-confirmation]').hidden, true, 'pending read cannot be dismissed or discarded');
+  rejectRead(Error('process read unavailable')); await tick();
+  assert.equal(x.modal.querySelector('footer [data-dialog-close]').disabled, false);
+  assert.equal(process.querySelector('[data-stage-id="analysis"] [data-control="stage-title"]').value, 'Unsaved analysis');
+  assert.match(process.querySelector('[data-processes-error]').textContent, /process read unavailable/);
+  x.modal.querySelector('#calendar-settings-tab-calendar').click();
+  x.modal.querySelector('#calendar-settings-tab-processes').click();
+  assert.equal(process.querySelector('[data-stage-id="analysis"] [data-control="stage-title"]').value, 'Unsaved analysis', 'section navigation keeps the retained draft');
+  x.modal.dispatchEvent(new x.dom.window.Event('cancel', { cancelable: true }));
+  assert.equal(x.modal.querySelector('[data-close-confirmation]').hidden, false, 'failed Cancel does not make the shell believe the draft was discarded');
+  assert.deepEqual(x.writes, []);
+});
+
 test('connection drafts survive calendar saves and closing requires explicit discard', async () => {
   const x = await boot();
   const preference = x.modal.querySelector('[data-key="recommendTasks"]');
