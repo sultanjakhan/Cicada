@@ -165,4 +165,35 @@ for (const library of [false, true]) {
     assert.equal(app.fixture.writes, 2);
     assert.equal(app.fixture.calls.includes('start_task_block'), false);
   });
+
+  for (const status of ['done', 'skipped']) test(`${surface}: a stale quick mark preserves a newer ${status} mark`, async t => {
+    const app = await setup(t, library), remote = app.read();
+    remote.days[today] = { [check.id]: { snapshot: check, status } };
+    app.fixture.raw = JSON.stringify(remote);
+    app.markCheck(); await settle();
+    assert.equal(app.read().days[today][check.id].status, status);
+    assert.equal(app.fixture.writes, 0, 'an outdated pending button cannot replace a confirmed mark');
+    assert.equal(app.fixture.changes, 0);
+    assert.match(app.host.querySelector('[data-recurring-error]').textContent, /уже отмечена/);
+  });
+
+  test(`${surface}: a stale quick undo preserves a newer mark`, async t => {
+    const app = await setup(t, library);
+    app.markCheck(); await settle();
+    const remote = app.read(); remote.days[today][check.id].status = 'skipped'; app.fixture.raw = JSON.stringify(remote);
+    app.markCheck(); await settle();
+    assert.equal(app.read().days[today][check.id].status, 'skipped');
+    assert.equal(app.fixture.writes, 1, 'only the original explicit completion is written');
+    assert.equal(app.fixture.changes, 1);
+    assert.match(app.host.querySelector('[data-recurring-error]').textContent, /уже отмечена/);
+  });
+
+  test(`${surface}: explicit rule details can correct the latest mark`, async t => {
+    const app = await setup(t, library), dialog = app.openRule(), remote = app.read();
+    remote.days[today] = { [daily.id]: { snapshot: daily, status: 'broken' } }; app.fixture.raw = JSON.stringify(remote);
+    dialog.querySelector('[data-detail-status="kept"]').click(); await settle();
+    assert.equal(app.read().days[today][daily.id].status, 'kept');
+    assert.equal(app.fixture.writes, 1);
+    assert.equal(dialog.isConnected, false);
+  });
 }

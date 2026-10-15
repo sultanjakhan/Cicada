@@ -20,6 +20,23 @@ test('edit preserves historical title/status and updates today only',async()=>{c
 test('future observations and mismatched rule/action statuses rejected',async()=>{const {store}=setup();const {result:id}=await store.savePlan({...action,kind:'rule'});await assert.rejects(store.setStatus(id,'kept','2026-09-14'));await assert.rejects(store.setStatus(id,'done'));await store.setStatus(id,'broken');assert.equal(recurringItems(await store.read(),'2026-09-13')[0].status,'broken');await store.setStatus(id,'pending');assert.equal(recurringItems(await store.read(),'2026-09-13')[0].status,'pending');});
 test('native failure retains previous snapshot',async()=>{const context=setup();const {result:id}=await context.store.savePlan(action);const raw=context.raw();context.fail();await assert.rejects(context.store.setStatus(id,'done'));assert.equal(context.raw(),raw);});
 test('concurrent controllers serialize updates against latest snapshot',async()=>{const context=setup();await Promise.all([context.store.savePlan(action),context.second().savePlan({...action,title:'Вторая'})]);assert.equal((await context.store.read()).plans.length,2);});
+test('queued quick marks check their expected status against the latest state',async()=>{
+  const context=setup(),{store}=context;const {result:id}=await store.savePlan(action);
+  const results=await Promise.allSettled([
+    store.setStatus(id,'done','2026-09-13',{expectedStatus:'pending'}),
+    context.second().setStatus(id,'skipped','2026-09-13',{expectedStatus:'pending'}),
+  ]);
+  assert.equal(results[0].status,'fulfilled');assert.equal(results[1].status,'rejected');
+  assert.match(results[1].reason.message,/уже отмечена/);
+  assert.equal((await store.read()).days['2026-09-13'][id].status,'done');
+});
+test('explicit manager edits can still replace and clear existing marks',async()=>{
+  const {store}=setup();const {result:id}=await store.savePlan(action);
+  for(const status of ['skipped','done','pending']){
+    await store.setStatus(id,status);
+    assert.equal((await store.read()).days['2026-09-13'][id].status,status);
+  }
+});
 test('new plan without start cannot appear before creation',async()=>{const {store}=setup();const {state}=await store.savePlan({...action,startsOn:''});assert.equal(recurringItems(state,'2026-09-12').length,0);});
 test('invalid snapshots never silently reset data',()=>{assert.throws(()=>parseRecurring('{'));assert.throws(()=>parseRecurring('{"version":2,"plans":[],"days":{}}'));});
 

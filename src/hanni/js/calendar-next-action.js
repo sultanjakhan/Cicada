@@ -310,7 +310,7 @@ export function mountCalendarNextAction(element, dependencies) {
         if (!openRoutine) throw new Error(uiCopy("Запуск рутины недоступен."));
         if (openRoutine({ id: current.routine.id, date: current.date, start: true }) === false) return;
       } else if (current.type === 'routine' && kind === 'done' && current.action === 'done') {
-        await store.setStatus(current.routine.id, 'done', current.date);
+        await store.setStatus(current.routine.id, 'done', current.date, { expectedStatus:'pending' });
       } else throw new Error(uiCopy("Действие больше недоступно. Обнови список."));
       notifyChange?.();
       feedback = current.action === 'done' || kind === 'done' ? uiCopy.format("«{0}» — выполнено.", current.title) : '';

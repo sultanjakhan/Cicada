@@ -15,6 +15,7 @@ function setup(t, { tasks = [], plans = [], days = {}, active = [], failTasks = 
   let timerCallback = null; dom.window.setInterval = callback => { timerCallback = callback; return 1; };
   const host = dom.window.document.querySelector('main'), calls = [];
   let currentTasks = tasks, currentState = state(plans, days), activeBlocks = active, readFailure = failTasks, goalFailure = failGoals;
+  let afterRecurringRead = null;
   const invoke = async (name, args) => {
     calls.push({ name, args });
     if (name === 'get_calendar_tasks') { if (readFailure) throw Error('offline'); return currentTasks; }
@@ -22,11 +23,16 @@ function setup(t, { tasks = [], plans = [], days = {}, active = [], failTasks = 
     if (name === 'get_goals') { if (goalFailure) throw Error('goals offline'); return goals; }
     if (name === 'get_active_blocks') return activeBlocks;
     if (name === 'get_active_block') return activeBlocks[0] || null;
-    if (name === 'get_ui_state') return args?.key === 'calendar_processes_v1' ? (processes ? JSON.stringify({ version: 1, processes }) : null) : currentState;
+    if (name === 'get_ui_state') {
+      if (args?.key === 'calendar_processes_v1') return processes ? JSON.stringify({ version: 1, processes }) : null;
+      const raw = currentState, callback = afterRecurringRead; afterRecurringRead = null;
+      if (callback) { const next = JSON.parse(raw); callback(next); currentState = JSON.stringify(next); }
+      return raw;
+    }
     if (name === 'set_ui_state') { currentState = args.value; return null; }
     throw Error(name);
   };
-  return { dom, host, calls, invoke, tick() { timerCallback?.(); }, get tasks() { return currentTasks; }, set tasks(value) { currentTasks = value; }, get currentState() { return currentState; }, set active(value) { activeBlocks = value; }, set fail(value) { readFailure = value; }, set failGoals(value) { goalFailure = value; } };
+  return { dom, host, calls, invoke, afterNextRecurringRead(callback) { afterRecurringRead = callback; }, tick() { timerCallback?.(); }, get tasks() { return currentTasks; }, set tasks(value) { currentTasks = value; }, get currentState() { return currentState; }, set active(value) { activeBlocks = value; }, set fail(value) { readFailure = value; }, set failGoals(value) { goalFailure = value; } };
 }
 
 test('ranking favors today-bound work, but current-period routines beat ordinary old backlog', () => {
@@ -224,6 +230,20 @@ test('a check-only routine can be marked done, but a chain is started explicitly
   x.host.querySelector('[data-next-action-action="done"]').click(); await settle();
   assert.equal(JSON.parse(x.currentState).days[today].check.status, 'done');
   assert.match(x.host.textContent, /Подходящей задачи или дела сейчас нет/);
+  assert.equal(x.calls.some(call => call.name === 'start_task_block'), false);
+});
+
+for (const status of ['done', 'skipped']) test(`recommendation preserves a ${status} mark arriving after click revalidation`, async t => {
+  const saved = plan('check', { title: 'Поесть' });
+  const x = setup(t, { plans: [saved] }); let changes = 0;
+  const dispose = mountCalendarNextAction(x.host, { invoke: x.invoke, clock: now, notifyChange: () => { changes++; } });
+  t.after(dispose); await settle();
+  x.afterNextRecurringRead(snapshot => { snapshot.days[today] = { check: { snapshot: saved, status } }; });
+  x.host.querySelector('[data-next-action-action="done"]').click(); await settle();
+  assert.equal(JSON.parse(x.currentState).days[today].check.status, status);
+  assert.equal(x.calls.some(call => call.name === 'set_ui_state'), false, 'the stale recommendation writes no mark');
+  assert.equal(changes, 0, 'a rejected stale action announces no change');
+  assert.match(x.host.querySelector('[role="alert"]').textContent, /уже отмечена/);
   assert.equal(x.calls.some(call => call.name === 'start_task_block'), false);
 });
 

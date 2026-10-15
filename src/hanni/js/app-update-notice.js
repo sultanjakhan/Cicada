@@ -8,12 +8,12 @@ export function createSoftUpdateNotice(window, { invoke, safe = () => true }) {
   const dismissalKey = version => 'cicada:soft-update-dismissed:' + version;
   function isDismissed(version) {
     if (dismissed.has(version)) return true;
-    try { return window.localStorage.getItem(dismissalKey(version)) === 'true'; } catch { return false; }
+    try { return window.sessionStorage.getItem(dismissalKey(version)) === 'true'; } catch { return false; }
   }
   function hide() { host?.remove(); host = null; }
   function dismiss() {
     dismissed.add(status.version);
-    try { window.localStorage.setItem(dismissalKey(status.version), 'true'); } catch { /* Session dismissal survives unavailable storage. */ }
+    try { window.sessionStorage.setItem(dismissalKey(status.version), 'true'); } catch { /* Session dismissal survives unavailable storage. */ }
     hide();
   }
   async function install() {
@@ -67,7 +67,10 @@ export function createSoftUpdateNotice(window, { invoke, safe = () => true }) {
       render(); return true;
     },
     update(next) {
-      revision++;
+      // Progress events for this release must not invalidate its pending IPC
+      // reply, including an installation error that needs an explicit retry.
+      if (next?.phase === 'current' || next?.configured === false
+          || (isOfferableUpdate(next) && next.version !== status?.version)) revision++;
       nativeBusy = ['checking', 'downloading', 'installing'].includes(next?.phase);
       if (host) {
         if (next?.phase === 'installing' || next?.phase === 'current' || next?.configured === false) { hide(); return; }

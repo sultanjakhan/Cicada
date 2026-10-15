@@ -75,6 +75,9 @@ test('a process save failure keeps the draft and emits no changed event', async 
 });
 
 function detailsFixture(t, { instant = false } = {}) {
+  // Active block dates/start times are local; keep their elapsed time fixed.
+  const clockNow = new Date(2026, 9, 8, 9, 0).getTime();
+  t.mock.method(Date, 'now', () => clockNow);
   const dom = new JSDOM('<!doctype html><body><button id="opener">Open</button></body>', { url: 'https://stage-details.invalid', pretendToBeVisual: true });
   const { window } = dom;
   window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
@@ -140,6 +143,7 @@ test('normal rows have no inferred process, while instant cards hide retained pr
   assert.equal(taskStage(explicit, [DEFAULT_PROCESS, process]).processId, 'p-105', 'process appears only from explicit task tags');
   const details = detailsFixture(t, { instant: true }); await settle(); const doc = details.window.document;
   assert.equal(doc.querySelector('.task-details-stage-row').hidden, true); assert.equal(doc.querySelector('.task-details-route').hidden, true);
+  assert.equal(doc.querySelector('.task-details-total').textContent, 'Учтено 16:30', '15 active minutes plus 90 saved seconds, with no retained estimate');
   assert.doesNotMatch(doc.querySelector('.task-details-total').textContent, /25/);
   assert.ok(details.calls.some(([command]) => command === 'get_active_blocks'));
   assert.equal(doc.querySelector('.task-details-stage-row').hidden, true, 'instant process tags do not expose a stage selector');

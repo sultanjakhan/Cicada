@@ -120,6 +120,47 @@ test('Later survives notice restart for exactly the dismissed version', () => {
   notice.dispose(); dom.window.close();
 });
 
+test('a new app session offers the same release after Later, including old persisted dismissals', () => {
+  const first = new JSDOM('', { pretendToBeVisual:true, url:'https://synthetic.test' });
+  const notice = createSoftUpdateNotice(first.window, { invoke:async () => available });
+  notice.show(available);
+  first.window.document.querySelector('[data-soft-update-later]').click();
+  const persisted = Object.entries(first.window.localStorage);
+  notice.dispose(); first.window.close();
+
+  const next = new JSDOM('', { pretendToBeVisual:true, url:'https://synthetic.test' });
+  for (const [key, value] of persisted) next.window.localStorage.setItem(key, value);
+  // Previous versions persisted Later here without a session boundary.
+  next.window.localStorage.setItem('cicada:soft-update-dismissed:' + available.version, 'true');
+  const nextNotice = createSoftUpdateNotice(next.window, { invoke:async () => available });
+  try { assert.equal(nextNotice.show(available), true); }
+  finally { nextNotice.dispose(); next.window.close(); }
+});
+
+test('native download progress and failure do not discard the installation error or block retry', async () => {
+  const dom = new JSDOM('', { pretendToBeVisual:true });
+  let reject, attempts = 0;
+  const notice = createSoftUpdateNotice(dom.window, { invoke:() => ++attempts === 1
+    ? new Promise((_, fail) => { reject = fail; }) : Promise.resolve({ ...available, phase:'permission_required' }) });
+  try {
+    notice.show(available);
+    const host = dom.window.document.querySelector('.calendar-soft-update');
+    host.querySelector('[data-soft-update-install]').click();
+    notice.update({ ...available, phase:'downloading', downloaded:50 });
+    assert.equal(host.querySelector('[data-soft-update-install]').disabled, true);
+    notice.update({ ...available, phase:'error', error:'synthetic download failed' });
+    reject('synthetic download failed'); await tick();
+    assert.equal(dom.window.document.querySelector('.calendar-soft-update'), host);
+    assert.equal(host.querySelector('[data-soft-update-text]').textContent, 'synthetic download failed');
+    assert.equal(host.querySelector('[data-soft-update-install]').textContent, 'Повторить');
+    assert.equal(host.querySelector('[data-soft-update-install]').disabled, false);
+    assert.equal(host.querySelector('[data-soft-update-later]').disabled, false);
+    host.querySelector('[data-soft-update-install]').click(); await tick();
+    assert.equal(attempts, 2);
+    assert.equal(host.querySelector('[data-soft-update-install]').textContent, 'Разрешить');
+  } finally { notice.dispose(); dom.window.close(); }
+});
+
 test('a late installation reply cannot overwrite a newer offered version or disable Later forever', async () => {
   const dom = new JSDOM('', {pretendToBeVisual:true}); let resolve;
   const notice = createSoftUpdateNotice(dom.window,{invoke:()=>new Promise(r=>resolve=r)});
