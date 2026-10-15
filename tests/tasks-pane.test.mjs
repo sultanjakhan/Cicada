@@ -167,3 +167,129 @@ test('large synthetic catalogue retains filters and search through failed reads 
   assert.equal(state.filter,'undated');assert.equal(state.sphere,'work');assert.equal(search.value,'Synthetic 4999');
   assert.equal(dom.window.document.activeElement,search);
 });
+
+for (const scenario of [
+  {label:'Начать', active:false, worked:false, action:'start', recoveredLabel:'Пауза'},
+  {label:'Продолжить', active:false, worked:true, action:'start', recoveredLabel:'Пауза'},
+  {label:'Пауза', active:true, worked:true, action:'pause', recoveredLabel:'Продолжить'},
+]) {
+  test(`${scenario.label}: a successful timer change followed by a failed read locks stale execution until Retry`, async t => {
+    const dom=new JSDOM('<main></main>',{pretendToBeVisual:true}),host=dom.window.document.querySelector('main');
+    let task=row('Synthetic timer',null,{is_active:scenario.active,has_work:scenario.worked}),failRead=false;
+    const actions=[];
+    const dispose=mountCalendarTasks(host,{
+      invoke:async command=>{
+        if(command==='get_calendar_tasks'){if(failRead)throw Error('synthetic list read fault');return [{...task}];}
+        return command==='get_ui_state'?null:[];
+      },
+      openTask(){},editDate(){},notifyChange(){dom.window.dispatchEvent(new dom.window.Event('task-state-changed'));},
+      executeAction:async (selected,action)=>{
+        actions.push([selected.source_id,action]);
+        task={...task,is_active:action==='start',has_work:true};
+        failRead=true;
+      },
+    });
+    t.after(()=>{dispose();dom.window.close();});await settle();await settle();
+    const run=()=>host.querySelector('[data-task-control="execute"]');
+    const original=run();assert.equal(original.textContent,scenario.label);original.click();await settle();await settle();
+    assert.deepEqual(actions,[['Synthetic timer',scenario.action]]);
+    assert.equal(task.is_active,scenario.action==='start','the timer mutation succeeded');
+    assert.equal(run().textContent,scenario.label,'the previous list remains visible');
+    assert.equal(run().disabled,true,'a stale timer state cannot choose Start or Pause');
+    const message=host.querySelector('[data-tasks-message]'),retry=host.querySelector('[data-tasks-retry]');
+    assert.match(message.textContent,/Не удалось обновить задачи/);
+    assert.equal(message.getAttribute('role'),'alert');assert.equal(retry.hidden,false);
+    original.click();run().click();await settle();
+    assert.equal(actions.length,1,'stale controls cannot issue a second timer action');
+    retry.click();await settle();await settle();
+    assert.equal(run().disabled,true);assert.match(message.textContent,/Не удалось обновить задачи/);
+    failRead=false;retry.click();await settle();await settle();
+    assert.equal(run().disabled,false);assert.equal(run().textContent,scenario.recoveredLabel);
+    assert.equal(retry.hidden,true);assert.equal(message.textContent,'');assert.equal(message.getAttribute('role'),'status');
+    assert.equal(actions.length,1,'Retry only reads authoritative state');
+  });
+}
+
+test('Retry unlocks timer execution when the authoritative list is unchanged after a read failure', async t => {
+  const dom=new JSDOM('<main></main>'),host=dom.window.document.querySelector('main');
+  const task=row('Synthetic paused timer',null,{has_work:true});let failRead=false;
+  const dispose=mountCalendarTasks(host,{invoke:async command=>{
+    if(command==='get_calendar_tasks'){if(failRead)throw Error('synthetic read fault');return [task];}
+    return command==='get_ui_state'?null:[];
+  },openTask(){},editDate(){},notifyChange(){},executeAction(){throw Error('No timer action requested');}});
+  t.after(()=>{dispose();dom.window.close();});await settle();await settle();
+  const run=()=>host.querySelector('[data-task-control="execute"]');
+  assert.equal(run().disabled,false);assert.equal(run().textContent,'Продолжить');
+  failRead=true;dom.window.dispatchEvent(new dom.window.Event('task-state-changed'));await settle();await settle();
+  assert.equal(run().disabled,true);
+  failRead=false;host.querySelector('[data-tasks-retry]').click();await settle();await settle();
+  assert.equal(run().disabled,false);assert.equal(run().textContent,'Продолжить');
+  assert.equal(host.querySelector('[data-tasks-retry]').hidden,true);
+  assert.equal(host.querySelector('[data-tasks-message]').textContent,'');
+});
+
+test('a change-event refresh that supersedes the action read cannot unlock a stale timer while pending', async t => {
+  const dom=new JSDOM('<main></main>'),host=dom.window.document.querySelector('main');
+  let task=row('Synthetic event timer',null),changed=false;
+  const actions=[],pending=[];
+  const dispose=mountCalendarTasks(host,{
+    invoke:async command=>{
+      if(command==='get_calendar_tasks'){
+        if(!changed)return [{...task}];
+        return new Promise((resolve,reject)=>pending.push({resolve,reject}));
+      }
+      return command==='get_ui_state'?null:[];
+    },
+    openTask(){},editDate(){},
+    notifyChange(){dom.window.dispatchEvent(new dom.window.Event('task-state-changed'));},
+    executeAction:async (_row,action)=>{actions.push(action);task={...task,is_active:true,has_work:true};changed=true;},
+  });
+  t.after(()=>{dispose();dom.window.close();});await settle();await settle();
+  const run=()=>host.querySelector('[data-task-control="execute"]');
+  run().click();await settle();await settle();
+  assert.equal(pending.length,2,'the action and its change event both reread the list');
+  pending[0].resolve([{...task}]);await settle();await settle();
+  assert.equal(run().textContent,'Начать');assert.equal(run().disabled,true,'the superseded read cannot validate the old timer state');
+  host.querySelector('[data-tasks-filter="undated"]').click();run().click();await settle();
+  assert.equal(run().disabled,true,'a filter render also keeps the pending state locked');assert.deepEqual(actions,['start']);
+  pending[1].reject(Error('synthetic latest read fault'));await settle();await settle();
+  assert.match(host.querySelector('[data-tasks-message]').textContent,/Не удалось обновить задачи/);
+  assert.equal(run().disabled,true);const retry=host.querySelector('[data-tasks-retry]');assert.equal(retry.hidden,false);
+  retry.click();await settle();assert.equal(pending.length,3);assert.equal(run().disabled,true);
+  pending[2].resolve([{...task}]);await settle();await settle();
+  assert.equal(run().textContent,'Пауза');assert.equal(run().disabled,false);assert.equal(retry.hidden,true);assert.deepEqual(actions,['start']);
+});
+
+test('a late superseded action read cannot release a newer pending timer mutation', async t => {
+  const dom=new JSDOM('<main></main>'),host=dom.window.document.querySelector('main');
+  let task=row('Synthetic ordered timer',null),changed=false,releasePause;
+  const actions=[],pending=[];
+  const dispose=mountCalendarTasks(host,{
+    invoke:async command=>{
+      if(command==='get_calendar_tasks'){
+        if(!changed)return [{...task}];
+        return new Promise(resolve=>pending.push(resolve));
+      }
+      return command==='get_ui_state'?null:[];
+    },
+    openTask(){},editDate(){},
+    notifyChange(){dom.window.dispatchEvent(new dom.window.Event('task-state-changed'));},
+    executeAction:async (_row,action)=>{
+      actions.push(action);
+      if(action==='pause')await new Promise(resolve=>{releasePause=resolve;});
+      task={...task,is_active:action==='start',has_work:true};changed=true;
+    },
+  });
+  t.after(()=>{dispose();dom.window.close();});await settle();await settle();
+  const run=()=>host.querySelector('[data-task-control="execute"]');
+  run().click();await settle();await settle();assert.equal(pending.length,2);
+  pending[1]([{...task}]);await settle();await settle();
+  assert.equal(run().textContent,'Пауза');assert.equal(run().disabled,false);
+  run().click();await settle();assert.deepEqual(actions,['start','pause']);assert.equal(run().disabled,true);
+  pending[0]([{...task}]);await settle();await settle();
+  assert.equal(run().disabled,true,'the older action cleanup must preserve the pending pause lock');
+  run().click();await settle();assert.deepEqual(actions,['start','pause'],'one explicit Pause issues one timer mutation');
+  releasePause();await settle();await settle();assert.equal(pending.length,4);
+  pending[2]([{...task}]);pending[3]([{...task}]);await settle();await settle();
+  assert.equal(run().textContent,'Продолжить');assert.equal(run().disabled,false);assert.deepEqual(actions,['start','pause']);
+});

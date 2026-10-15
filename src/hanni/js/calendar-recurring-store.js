@@ -98,13 +98,16 @@ export function createRecurringStore(invoke,{now=()=>new Date(),uuid=()=>crypto.
       if (record && !record.run && record.status==='pending') record.snapshot=clone(plan);
       return plan.id;
     }); },
-    setStatus(id,status,date=dateKey(now())) { return update(state=>{
+    setStatus(id,status,date=dateKey(now()),{expectedStatus=null}={}) { return update(state=>{
       if (!validDate(date)||date>dateKey(now())) throw Error('Отметить можно только наступивший день.');
       const record=state.days[date]?.[id];
       const plan=record?.snapshot||state.plans.find(item=>item.id===id);
       if (!plan || (!record&&!applies(plan,date))) throw Error('На этот день повторение не запланировано.');
       if (!allowed(plan.kind).includes(status)) throw Error('Недопустимая отметка.');
       if (record?.run) throw Error('Открой выполнение, чтобы завершить или пропустить его шаг.');
+      // Quick actions carry the status they observed; an explicit manager edit
+      // can omit it. Check inside the queued read, before preparing a write.
+      if (expectedStatus!==null && (record?.status||'pending')!==expectedStatus) throw Error('Рутина уже отмечена или изменена. Обнови список.');
       state.days[date]||={};
       state.days[date][id]={snapshot:clone(plan),status};
     }); },

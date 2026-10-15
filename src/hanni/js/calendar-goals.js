@@ -1,3 +1,7 @@
+import { createUiCopy } from './ui-copy.js';
+const uiCopy = value => createUiCopy(globalThis.document)(value);
+uiCopy.format = (pattern, ...values) => createUiCopy(globalThis.document).format(pattern, ...values);
+const uiLocale = () => createUiCopy(globalThis.document).locale;
 import { invoke as defaultInvoke } from './state.js';
 import { escapeHtml } from './utils.js';
 import { createCalendarDialog } from './calendar-dialog.js';
@@ -10,7 +14,7 @@ let nextInstance = 0;
 export const calendarGoalDateLabel = value => {
   if (!value) return '';
   const date = new Date(`${value}T12:00:00`);
-  return Number.isFinite(date.getTime()) ? date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }) : value;
+  return Number.isFinite(date.getTime()) ? date.toLocaleDateString(uiLocale(), { day: 'numeric', month: 'long', year: 'numeric' }) : value;
 };
 const plural = (n, forms) => forms[n % 100 >= 11 && n % 100 <= 14 ? 2 : n % 10 === 1 ? 0 : n % 10 >= 2 && n % 10 <= 4 ? 1 : 2];
 export function calendarGoalLinks(links, goalId, descendantIds = []) {
@@ -19,7 +23,7 @@ export function calendarGoalLinks(links, goalId, descendantIds = []) {
   links.filter(link => goalIds.has(String(link.goal_id))).forEach(link => counts[link.source_type]?.add(String(link.source_id)));
   return Object.entries(counts).filter(([, ids]) => ids.size).map(([kind, ids]) => {
     const forms = { note: ['задача', 'задачи', 'задач'], event: ['событие', 'события', 'событий'], schedule: ['повторение', 'повторения', 'повторений'] }[kind];
-    return `${ids.size} ${plural(ids.size, forms)}`;
+    return uiLocale().startsWith("en") ? uiCopy.format({ note: ids.size === 1 ? "{0} задача" : "{0} задач", event: ids.size === 1 ? "{0} событие" : "{0} событий", schedule: ids.size === 1 ? "{0} повторение" : "{0} повторений" }[kind], ids.size) : `${ids.size} ${plural(ids.size, forms)}`;
   }).join(' · ');
 }
 export function calendarGoalForest(goals) {
@@ -33,8 +37,8 @@ export function calendarGoalForest(goals) {
   const seen = new Set();
   const visit = (item, depth = 0, out = [], ancestorIds = [], path = [], rootId = String(item.goal.id)) => {
     if (seen.has(String(item.goal.id))) return out;
-    seen.add(String(item.goal.id)); out.push({ ...item, depth, rootId, ancestorIds, path: [...path, item.goal.title || 'Без названия'] });
-    item.children.forEach(child => visit(child, depth + 1, out, [...ancestorIds, String(item.goal.id)], [...path, item.goal.title || 'Без названия'], rootId)); return out;
+    seen.add(String(item.goal.id)); out.push({ ...item, depth, rootId, ancestorIds, path: [...path, item.goal.title || uiCopy("Без названия")] });
+    item.children.forEach(child => visit(child, depth + 1, out, [...ancestorIds, String(item.goal.id)], [...path, item.goal.title || uiCopy("Без названия")], rootId)); return out;
   };
   const out = roots.flatMap(item => visit(item));
   for (const item of byId.values()) visit(item, 0, out);
@@ -52,27 +56,28 @@ export function calendarGoalDescendants(goals, goalId) {
 }
 export function calendarGoalPath(goals, goal) {
   const path = [], seen = new Set(); let current = goal;
-  while (current && !seen.has(String(current.id))) { seen.add(String(current.id)); path.unshift(current.title || 'Без названия'); current = goals.find(candidate => String(candidate.id) === String(current.parent_goal_id)); }
+  while (current && !seen.has(String(current.id))) { seen.add(String(current.id)); path.unshift(current.title || uiCopy("Без названия")); current = goals.find(candidate => String(candidate.id) === String(current.parent_goal_id)); }
   return path;
 }
 
 /** Shared goal editor (create, edit, subgoal, prefilled draft). Saving uses save_calendar_goal only. */
 export function openCalendarGoalEditor({ document, invoke, goal = null, parent = null, draft = null, goals = [], returnFocus, isCurrent = () => true, onSaved, onSavingChange, onClose } = {}) {
+  const uiCopy = createUiCopy(document);
   const window = document.defaultView, prefix = `calendar-goal-editor-${++nextInstance}`;
   let creating = false;
-  const editor = createCalendarDialog({ document, title: goal ? 'Изменить цель' : parent ? 'Новая подцель' : 'Новая цель', hint: 'Сохрани то, к чему хочешь прийти. Срок можно добавить позже.', submitLabel: 'Сохранить цель',
+  const editor = createCalendarDialog({ document, title: goal ? uiCopy("Изменить цель") : parent ? uiCopy("Новая подцель") : uiCopy("Новая цель"), hint: uiCopy("Сохрани то, к чему хочешь прийти. Срок можно добавить позже."), submitLabel: uiCopy("Сохранить цель"),
     isCurrent, returnFocus, onClose });
   editor.modal.dataset.goalCreate = '';
-  editor.body.innerHTML = `<label class="calendar-editor-field" for="${prefix}-new-title">Что хочешь получить?<input id="${prefix}-new-title" name="title" required maxlength="500" placeholder="Например, подготовить учебный проект" autocomplete="off"></label>
-    <label class="calendar-editor-field" for="${prefix}-new-deadline">Срок · необязательно<input id="${prefix}-new-deadline" name="deadline" type="date"></label>`;
+  editor.body.innerHTML = `<label class="calendar-editor-field" for="${prefix}-new-title">${uiCopy("Что хочешь получить?")}<input id="${prefix}-new-title" name="title" required maxlength="500" placeholder="${uiCopy("Например, подготовить учебный проект")}" autocomplete="off"></label>
+    <label class="calendar-editor-field" for="${prefix}-new-deadline">${uiCopy("Срок · необязательно")}<input id="${prefix}-new-deadline" name="deadline" type="date"></label>`;
   const extra = document.createElement('div');
   extra.className = 'calendar-goal-fields';
-  extra.innerHTML = `<fieldset ${goal?.goal_kind === 'daily_norm' ? '' : 'hidden'}><legend>Как учитывать</legend><label><input type="radio" name="goal_kind" value="goal"> Долгосрочная цель</label><label><input type="radio" name="goal_kind" value="daily_norm"> Ежедневная норма</label></fieldset>
-    <label class="calendar-editor-field">Желаемый результат<textarea name="description" maxlength="10000" placeholder="Что должно измениться?"></textarea></label>
-    <label class="calendar-editor-field">Критерии — по одному на строку<textarea name="criteria" maxlength="10000" placeholder="Например: самостоятельно описываю API-контракт"></textarea></label>
-    <label class="calendar-editor-field calendar-goal-numeric-toggle" data-numeric-toggle><input type="checkbox" name="numeric_progress"> Числовой прогресс</label>
-    <div data-numeric-fields><label class="calendar-editor-field">Целевое значение<input type="number" name="target_value" min="0.001" step="any"></label>
-    <label class="calendar-editor-field">Единица измерения<input name="unit" maxlength="100" placeholder="Например, л"></label><label class="calendar-editor-field">Текущий прогресс · необязательно<input type="number" name="current_value" min="0" step="any"></label></div><label class="calendar-editor-field" data-parent>Родительская цель<select name="parent_goal_id"><option value="">Верхний уровень</option></select></label>`;
+  extra.innerHTML = `<fieldset ${goal?.goal_kind === 'daily_norm' ? '' : 'hidden'}><legend>${uiCopy("Как учитывать")}</legend><label><input type="radio" name="goal_kind" value="goal"> ${uiCopy("Долгосрочная цель")}</label><label><input type="radio" name="goal_kind" value="daily_norm"> ${uiCopy("Ежедневная норма")}</label></fieldset>
+    <label class="calendar-editor-field">${uiCopy("Желаемый результат")}<textarea name="description" maxlength="10000" placeholder="${uiCopy("Что должно измениться?")}"></textarea></label>
+    <label class="calendar-editor-field">${uiCopy("Критерии — по одному на строку")}<textarea name="criteria" maxlength="10000" placeholder="${uiCopy("Например: самостоятельно описываю API-контракт")}"></textarea></label>
+    <label class="calendar-editor-field calendar-goal-numeric-toggle" data-numeric-toggle><input type="checkbox" name="numeric_progress"> ${uiCopy("Числовой прогресс")}</label>
+    <div data-numeric-fields><label class="calendar-editor-field">${uiCopy("Целевое значение")}<input type="number" name="target_value" min="0.001" step="any"></label>
+    <label class="calendar-editor-field">${uiCopy("Единица измерения")}<input name="unit" maxlength="100" placeholder="${uiCopy("Например, л")}"></label><label class="calendar-editor-field">${uiCopy("Текущий прогресс · необязательно")}<input type="number" name="current_value" min="0" step="any"></label></div><label class="calendar-editor-field" data-parent>${uiCopy("Родительская цель")}<select name="parent_goal_id"><option value="">${uiCopy("Верхний уровень")}</option></select></label>`;
   editor.body.append(extra);
   const fields = editor.form.elements;
   fields.title.value = goal?.title || draft?.title || ''; fields.deadline.value = goal?.deadline || '';
@@ -98,19 +103,19 @@ export function openCalendarGoalEditor({ document, invoke, goal = null, parent =
     editor.showError('');
     const titleInput = fields.title, deadlineInput = fields.deadline;
     const title = titleInput.value.trim(), deadlineValue = deadlineInput.value;
-    if (!title) { editor.showError('Напиши, к чему хочешь прийти.', titleInput); return; }
-    if (title.length > 500) { editor.showError('Сократи название цели до 500 символов.', titleInput); return; }
+    if (!title) { editor.showError(uiCopy("Напиши, к чему хочешь прийти."), titleInput); return; }
+    if (title.length > 500) { editor.showError(uiCopy("Сократи название цели до 500 символов."), titleInput); return; }
     const deadlineDate = deadlineValue ? new Date(`${deadlineValue}T12:00:00Z`) : null;
     if (deadlineInput.validity.badInput || !deadlineInput.validity.valid || (deadlineValue && (!/^\d{4}-\d{2}-\d{2}$/.test(deadlineValue) || !Number.isFinite(deadlineDate.getTime()) || deadlineDate.toISOString().slice(0, 10) !== deadlineValue))) {
-      editor.showError('Введи срок полностью или очисти поле даты.', deadlineInput); return;
+      editor.showError(uiCopy("Введи срок полностью или очисти поле даты."), deadlineInput); return;
     }
     const deadline = deadlineValue || null;
-    if (!fields.goal_kind.value && !goal) { editor.showError('Выбери долгосрочную цель или ежедневную норму.', editor.body.querySelector('[name=goal_kind]')); return; }
+    if (!fields.goal_kind.value && !goal) { editor.showError(uiCopy("Выбери долгосрочную цель или ежедневную норму."), editor.body.querySelector('[name=goal_kind]')); return; }
     const numeric = fields.goal_kind.value === 'daily_norm' || fields.numeric_progress.checked;
     const targetValue = numeric ? Number(fields.target_value.value) : (goal?.target_value > 0 ? goal.target_value : 1);
-    if (!Number.isFinite(targetValue) || targetValue <= 0) { editor.showError('Укажи положительное целевое значение.', fields.target_value); return; }
+    if (!Number.isFinite(targetValue) || targetValue <= 0) { editor.showError(uiCopy("Укажи положительное целевое значение."), fields.target_value); return; }
     const currentValue = numeric ? (fields.current_value.value === '' ? null : Number(fields.current_value.value)) : (goal?.current_value ?? null);
-    if (currentValue != null && (!Number.isFinite(currentValue) || currentValue < 0)) { editor.showError('Укажи неотрицательный прогресс или очисти поле.', fields.current_value); return; }
+    if (currentValue != null && (!Number.isFinite(currentValue) || currentValue < 0)) { editor.showError(uiCopy("Укажи неотрицательный прогресс или очисти поле."), fields.current_value); return; }
     creating = true; onSavingChange?.(true); editor.setPending(true);
     try {
       const id = await invoke('save_calendar_goal', { id: goal?.id || null, title, targetValue, unit: numeric ? fields.unit.value.trim() : (goal?.unit || ''), deadline, goalKind: fields.goal_kind.value || null, description: fields.description.value.trim(), criteria: fields.criteria.value.trim(), parentGoalId: parentSelect.value ? String(parentSelect.value) : null, clearParent: !!goal?.parent_goal_id && !parentSelect.value, currentValue, numericProgress: numeric });
@@ -118,7 +123,7 @@ export function openCalendarGoalEditor({ document, invoke, goal = null, parent =
       editor.setPending(false); editor.close();
       window.dispatchEvent(new window.Event('task-state-changed'));
       await onSaved?.(goal?.id ?? id);
-    } catch { if (editor.modal.isConnected) { editor.setPending(false); editor.showError('Не удалось сохранить цель. Текст остался в форме — попробуй ещё раз.'); } }
+    } catch { if (editor.modal.isConnected) { editor.setPending(false); editor.showError(uiCopy("Не удалось сохранить цель. Текст остался в форме — попробуй ещё раз.")); } }
     finally { creating = false; onSavingChange?.(false); }
   });
   editor.open(fields.title);
@@ -126,10 +131,11 @@ export function openCalendarGoalEditor({ document, invoke, goal = null, parent =
 }
 
 export function openCalendarGoalDeletion({ document, invoke, goal, returnFocus, isCurrent = () => true, onDeleted, onSavingChange, onClose } = {}) {
+  const uiCopy = createUiCopy(document);
   const window = document.defaultView;
   let deleting = false;
-  const editor = createCalendarDialog({ document, title: 'Удалить цель?', submitLabel: 'Удалить цель',
-    hint: 'Связанные задачи и события сохранятся без этой цели.', isCurrent, returnFocus, onClose });
+  const editor = createCalendarDialog({ document, title: uiCopy("Удалить цель?"), submitLabel: uiCopy("Удалить цель"),
+    hint: uiCopy("Связанные задачи и события сохранятся без этой цели."), isCurrent, returnFocus, onClose });
   editor.modal.dataset.goalDelete = ''; editor.body.textContent = goal.title;
   editor.form.addEventListener('submit', async event => {
     event.preventDefault(); if (deleting) return;
@@ -139,7 +145,7 @@ export function openCalendarGoalDeletion({ document, invoke, goal, returnFocus, 
       editor.setPending(false); editor.close();
       window.dispatchEvent(new window.Event('task-state-changed'));
       await onDeleted?.(goal.id);
-    } catch { if (editor.modal.isConnected) { editor.setPending(false); editor.showError('Не удалось удалить цель. Попробуй ещё раз.'); } }
+    } catch { if (editor.modal.isConnected) { editor.setPending(false); editor.showError(uiCopy("Не удалось удалить цель. Попробуй ещё раз.")); } }
     finally { deleting = false; onSavingChange?.(false); }
   });
   editor.open(editor.modal.querySelector('[data-dialog-close]'));
@@ -155,13 +161,14 @@ export function openCalendarGoalDeletion({ document, invoke, goal, returnFocus, 
 export async function mountCalendarGoals(element, dependencies = {}) {
   const api = dependencies.invoke || defaultInvoke;
   const document = element.ownerDocument, window = document.defaultView;
+  const uiCopy = createUiCopy(document);
   const viewState = dependencies.state || { view: 'goals' };
   let disposed = false, revision = 0, busy = false, creating = false;
   let goals = [], goalsLoaded = false, development = readDevelopmentState(null), selectedId = null, active = null, creationDialog = null, wishes = null;
   element.classList.add('calendar-panels', 'calendar-goals');
-  element.innerHTML = `<header class="cp-heading"><div><h2>Цели</h2><p data-goals-hint></p></div></header>
-    <div class="cp-goals-switch" role="group" aria-label="Что показать"><button type="button" data-goals-view="goals">Цели</button><button type="button" data-goals-view="wishes">Желания</button></div>
-    <div data-goals-panel><p class="cp-message" data-message role="status" aria-live="polite"></p><button type="button" data-retry hidden>Повторить загрузку</button><div class="cp-goal-list" data-list aria-busy="true"></div></div>
+  element.innerHTML = `<header class="cp-heading"><div><h2>${uiCopy("Цели")}</h2><p data-goals-hint></p></div></header>
+    <div class="cp-goals-switch" role="group" aria-label="${uiCopy("Что показать")}"><button type="button" data-goals-view="goals">${uiCopy("Цели")}</button><button type="button" data-goals-view="wishes">${uiCopy("Желания")}</button></div>
+    <div data-goals-panel><p class="cp-message" data-message role="status" aria-live="polite"></p><button type="button" data-retry hidden>${uiCopy("Повторить загрузку")}</button><div class="cp-goal-list" data-list aria-busy="true"></div></div>
     <div data-wishes-panel hidden></div>`;
   const list = element.querySelector('[data-list]'), message = element.querySelector('[data-message]');
   const goalById = id => goals.find(goal => String(goal.id) === String(id));
@@ -173,7 +180,7 @@ export async function mountCalendarGoals(element, dependencies = {}) {
     element.querySelectorAll('[data-goals-view]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.goalsView === viewState.view)));
     element.querySelector('[data-goals-panel]').hidden = wishesView;
     const panel = element.querySelector('[data-wishes-panel]'); panel.hidden = !wishesView;
-    element.querySelector('[data-goals-hint]').textContent = wishesView ? 'Покупки, поездки и впечатления без плана. Если нужно накопить — преврати желание в цель.' : 'Сохрани то, к чему хочешь прийти. Задачи можно добавить позже.';
+    element.querySelector('[data-goals-hint]').textContent = wishesView ? uiCopy("Покупки, поездки и впечатления без плана. Если нужно накопить — преврати желание в цель.") : uiCopy("Сохрани то, к чему хочешь прийти. Задачи можно добавить позже.");
     if (wishesView && !wishes) {
       wishes = mountCalendarWishes(panel, { invoke: api, mountMenu: mountCalendarContextMenu, getGoals: () => goalsLoaded ? goals : null,
         openGoal: dependencies.onOpenGoal ? (goal, returnFocus) => dependencies.onOpenGoal(goal, { primaryGoalId: selectedId, returnFocus }) : null, openUrl: dependencies.openUrl,
@@ -185,18 +192,18 @@ export async function mountCalendarGoals(element, dependencies = {}) {
   function goalActions(goal, path) {
     const actions = [];
     if (goal.goal_kind === 'goal') {
-      actions.push({ id: 'task', label: 'Добавить задачу', dialog: true, run: () => dependencies.onCreateTask?.({ goalId: goal.id, title: goal.title, path: path.join(' → ') }) });
-      actions.push({ id: 'subgoal', label: 'Подцель', dialog: true, run: restore => openCreation(null, goal, { returnFocus: restore }) });
+      actions.push({ id: 'task', label: uiCopy("Добавить задачу"), dialog: true, run: () => dependencies.onCreateTask?.({ goalId: goal.id, title: goal.title, path: path.join(' → ') }) });
+      actions.push({ id: 'subgoal', label: uiCopy("Подцель"), dialog: true, run: restore => openCreation(null, goal, { returnFocus: restore }) });
       if (goal.status !== 'achieved' && String(goal.id) !== String(selectedId) && dependencies.onSelectGoal) {
-        actions.push({ id: 'select', label: 'Сделать главной', run: () => selectGoal(goal.id) });
+        actions.push({ id: 'select', label: uiCopy("Сделать главной"), run: () => selectGoal(goal.id) });
       }
     }
-    actions.push({ id: 'edit', label: 'Редактировать', dialog: true, run: restore => openCreation(goal, null, { returnFocus: restore }) });
-    actions.push({ id: 'delete', label: 'Удалить', dialog: true, run: restore => openDeletion(goal, restore) });
+    actions.push({ id: 'edit', label: uiCopy("Редактировать"), dialog: true, run: restore => openCreation(goal, null, { returnFocus: restore }) });
+    actions.push({ id: 'delete', label: uiCopy("Удалить"), dialog: true, run: restore => openDeletion(goal, restore) });
     return actions;
   }
   const disposeMenu = mountCalendarContextMenu(list, {
-    getRecord: row => { const goal = goalById(row.dataset.contextRecord); return goal ? { ...goal, title: goal.title || 'Без названия' } : null; },
+    getRecord: row => { const goal = goalById(row.dataset.contextRecord); return goal ? { ...goal, title: goal.title || uiCopy("Без названия") } : null; },
     getActions: record => goalActions(goalById(record.id), calendarGoalPath(goals, goalById(record.id))),
     restoreFocus: row => focusMenu(row.dataset.contextRecord),
   });
@@ -207,12 +214,12 @@ export async function mountCalendarGoals(element, dependencies = {}) {
   }
   function rowMeta(goal, id) {
     const meta = [], ext = developmentOf(development, id), stage = ext.stages.find(item => item.id === ext.activeStageId);
-    if (goal.goal_kind === 'daily_norm') meta.push(`Каждый день: ${formatNumber(goal.target_value)} ${goal.unit || ''}`.trim());
-    else if (goal.goal_kind !== 'goal') meta.push('Тип не выбран');
-    if (ext.stages.length) meta.push(stage ? `Этап: ${stage.title}` : 'Этап не выбран');
+    if (goal.goal_kind === 'daily_norm') meta.push(uiCopy.format("Каждый день: {0} {1}", formatNumber(goal.target_value), goal.unit || '').trim());
+    else if (goal.goal_kind !== 'goal') meta.push(uiCopy("Тип не выбран"));
+    if (ext.stages.length) meta.push(stage ? uiCopy.format("Этап: {0}", stage.title) : uiCopy("Этап не выбран"));
     const numeric = goalNumericProgress(goal);
-    if (numeric) meta.push(numeric.label);
-    if (goal.deadline) meta.push(`до ${calendarGoalDateLabel(goal.deadline)}`);
+    if (numeric) meta.push(uiCopy.format("{0} из {1}{2}", formatNumber(numeric.done), formatNumber(numeric.total), goal.unit ? ` ${goal.unit}` : ""));
+    if (goal.deadline) meta.push(uiCopy.format("до {0}", calendarGoalDateLabel(goal.deadline)));
     return meta;
   }
   function renderCards() {
@@ -226,40 +233,40 @@ export async function mountCalendarGoals(element, dependencies = {}) {
     longTerm.forEach(row => (rootStatuses.get(String(row.rootId)) === 'achieved' ? longTermAchieved : longTermActive).push(row));
     const daily = goals.filter(goal => goal.goal_kind === 'daily_norm');
     const unknown = goals.filter(goal => goal.goal_kind !== 'goal' && goal.goal_kind !== 'daily_norm');
-    if (!goals.length) { list.innerHTML = '<div class="cp-empty"><h3>Начни с того, что важно тебе</h3><p>Можно сохранить идею без срока и без готового плана.</p></div>'; return; }
+    if (!goals.length) { list.innerHTML = `<div class="cp-empty"><h3>${uiCopy("Начни с того, что важно тебе")}</h3><p>${uiCopy("Можно сохранить идею без срока и без готового плана.")}</p></div>`; return; }
     const renderGroup = (title, rows) => {
       const heading = document.createElement('h3'); heading.className = 'cp-goal-group'; heading.textContent = title; list.append(heading);
       rows.forEach(row => {
         const goal = row.goal || row, id = String(goal.id);
         const selected = goal.goal_kind === 'goal' && id === selectedId, achieved = goal.status === 'achieved', meta = rowMeta(goal, id);
         const selectedChild = selectedGoal && selectedRootId === id && id !== String(selectedGoal.id) ? selectedGoal : null;
-        if (row.children?.length) meta.push(`Подцели: ${row.children.length}`);
-        if (selectedChild) meta.unshift(`Главная подцель: ${selectedChild.title || 'Без названия'}`);
+        if (row.children?.length) meta.push(uiCopy.format("Подцели: {0}", row.children.length));
+        if (selectedChild) meta.unshift(uiCopy.format("Главная подцель: {0}", selectedChild.title || uiCopy("Без названия")));
         const description = String(goal.description || '').split('\n').find(line => line.trim())?.trim() || '';
         const card = document.createElement('article');
         card.className = `cp-goal-row${selected ? ' is-primary' : ''}${achieved ? ' is-achieved' : ''}`;
         card.dataset.goalId = id; card.dataset.contextRecord = id;
         const lead = document.createElement('span'); lead.className = 'cp-goal-row__lead';
         const open = document.createElement('button'); open.type = 'button'; open.className = 'cp-goal-row__open'; open.dataset.goalOpen = id; open.setAttribute('aria-haspopup', 'dialog');
-        open.innerHTML = `<span class="cp-goal-row__line"><span class="cp-goal-row__title">${escapeHtml(goal.title || 'Без названия')}</span>${selected ? '<span class="cp-goal-row__badge">Главная</span>' : ''}${achieved ? '<span class="cp-goal-row__status">Достигнута</span>' : ''}</span>${description ? `<span class="cp-goal-row__desc">${escapeHtml(description)}</span>` : ''}${meta.length ? `<span class="cp-goal-row__meta">${meta.map(escapeHtml).join(' · ')}</span>` : ''}`;
+        open.innerHTML = `<span class="cp-goal-row__line"><span class="cp-goal-row__title">${escapeHtml(goal.title || uiCopy("Без названия"))}</span>${selected ? `<span class="cp-goal-row__badge">${uiCopy("Главная")}</span>` : ''}${achieved ? `<span class="cp-goal-row__status">${uiCopy("Достигнута")}</span>` : ''}</span>${description ? `<span class="cp-goal-row__desc">${escapeHtml(description)}</span>` : ''}${meta.length ? `<span class="cp-goal-row__meta">${meta.map(escapeHtml).join(' · ')}</span>` : ''}`;
         open.onclick = () => openGoal(goal);
         const tools = document.createElement('span'); tools.className = 'cp-goal-row__tools';
         const more = document.createElement('button'); more.type = 'button'; more.className = 'cp-goal-row__more'; more.textContent = '⋯';
-        more.dataset.recordMenu = ''; more.dataset.goalMenu = id; more.setAttribute('aria-label', `Действия: ${goal.title || 'Без названия'}`); more.setAttribute('aria-haspopup', 'menu'); more.setAttribute('aria-expanded', 'false');
+        more.dataset.recordMenu = ''; more.dataset.goalMenu = id; more.setAttribute('aria-label', uiCopy.format("Действия: {0}", goal.title || uiCopy("Без названия"))); more.setAttribute('aria-haspopup', 'menu'); more.setAttribute('aria-expanded', 'false');
         tools.append(more);
         card.append(lead, open, tools);
         card.addEventListener('click', event => { if (!event.target.closest('button, a, input, select, textarea')) open.click(); });
         list.append(card);
       });
     };
-    if (longTermActive.length) renderGroup('Долгосрочные цели', longTermActive);
-    if (longTermAchieved.length) renderGroup('Достигнутые цели', longTermAchieved);
-    if (daily.length) renderGroup('Ежедневные нормы', daily);
-    if (unknown.length) renderGroup('Без типа — выбери, как учитывать', unknown);
+    if (longTermActive.length) renderGroup(uiCopy("Долгосрочные цели"), longTermActive);
+    if (longTermAchieved.length) renderGroup(uiCopy("Достигнутые цели"), longTermAchieved);
+    if (daily.length) renderGroup(uiCopy("Ежедневные нормы"), daily);
+    if (unknown.length) renderGroup(uiCopy("Без типа — выбери, как учитывать"), unknown);
   }
   async function refresh(success = '', canCommit = null) {
     if (canCommit && !canCommit()) return;
-    const rev = ++revision; message.textContent = 'Загружаем цели…'; list.setAttribute('aria-busy', 'true'); element.querySelector('[data-retry]').hidden = true;
+    const rev = ++revision; message.textContent = uiCopy("Загружаем цели…"); list.setAttribute('aria-busy', 'true'); element.querySelector('[data-retry]').hidden = true;
     const focused = document.activeElement?.closest?.('[data-goal-open], [data-goal-menu]');
     const focusSelector = focused && list.contains(focused) ? Object.entries(focused.dataset).map(([key, value]) => `[data-${key.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`)}="${value}"]`).join('') : '';
     try {
@@ -268,23 +275,23 @@ export async function mountCalendarGoals(element, dependencies = {}) {
       const saved = raw ? JSON.parse(raw) : null;
       if (saved && saved.version !== 1) throw new Error('Unsupported calendar state');
       goals = loadedGoals; goalsLoaded = true; selectedId = saved?.goalId == null ? null : String(saved.goalId); active = block; development = readDevelopmentState(developmentRaw);
-      renderCards(); focusSelector && list.querySelector(focusSelector)?.focus(); message.textContent = goals.some(goal => goal.goal_metadata_error) ? 'Состояние целей и этапы не удалось прочитать. Сами цели доступны.' : active ? 'Задача сейчас выполняется. Главную цель можно сменить.' : success;
+      renderCards(); focusSelector && list.querySelector(focusSelector)?.focus(); message.textContent = goals.some(goal => goal.goal_metadata_error) ? uiCopy("Состояние целей и этапы не удалось прочитать. Сами цели доступны.") : active ? uiCopy("Задача сейчас выполняется. Главную цель можно сменить.") : success;
       wishes?.render();
     } catch {
       if (disposed || rev !== revision || (canCommit && !canCommit())) return;
-      message.textContent = 'Не удалось загрузить цели. Сохранённые цели остаются на месте.';
+      message.textContent = uiCopy("Не удалось загрузить цели. Сохранённые цели остаются на месте.");
       element.querySelector('[data-retry]').hidden = false;
     } finally { if (!disposed && rev === revision) list.removeAttribute('aria-busy'); }
   }
   async function selectGoal(id) {
     if (busy || !dependencies.onSelectGoal) return;
-    busy = true; renderCards(); message.textContent = 'Выбираем главную цель…';
+    busy = true; renderCards(); message.textContent = uiCopy("Выбираем главную цель…");
     let selectionError = '';
     try {
       try { await dependencies.onSelectGoal(id); }
       catch (error) { selectionError = typeof error?.message === 'string' ? error.message : ''; throw error; }
-      if (!disposed) await refresh('Главная цель выбрана. Задача начнётся только после нажатия «Начать».');
-    } catch { if (!disposed) message.textContent = selectionError || 'Не удалось сменить главную цель. Повтори выбор; текущая задача сохранена.'; }
+      if (!disposed) await refresh(uiCopy("Главная цель выбрана. Задача начнётся только после нажатия «Начать»."));
+    } catch { if (!disposed) message.textContent = selectionError || uiCopy("Не удалось сменить главную цель. Повтори выбор; текущая задача сохранена."); }
     finally { busy = false; if (!disposed) renderCards(); }
   }
   function openCreation(goal = null, initialParent = null, { draft = null, onSaved = null, returnFocus = null } = {}) {
@@ -294,7 +301,7 @@ export async function mountCalendarGoals(element, dependencies = {}) {
       returnFocus: returnFocus || (() => (goal ? rowButton(goal.id, '[data-record-menu]') : element.querySelector('[data-goals-view="goals"]'))?.focus()),
       onSavingChange: value => { creating = value; },
       onClose: () => { creationDialog = null; },
-      onSaved: async id => { await onSaved?.(id); if (!disposed) await refresh(draft ? 'Цель создана из желания.' : 'Цель сохранена. Можно выбрать её главной, когда будешь готов.'); } });
+      onSaved: async id => { await onSaved?.(id); if (!disposed) await refresh(draft ? uiCopy("Цель создана из желания.") : uiCopy("Цель сохранена. Можно выбрать её главной, когда будешь готов.")); } });
   }
   function openDeletion(goal, restore = null) {
     if (creationDialog || disposed) return;
@@ -303,7 +310,7 @@ export async function mountCalendarGoals(element, dependencies = {}) {
       onSavingChange: value => { creating = value; }, onClose: () => { creationDialog = null; },
       onDeleted: async () => {
         if (disposed) return;
-        await refresh('Цель удалена. Задачи сохранены.');
+        await refresh(uiCopy("Цель удалена. Задачи сохранены."));
         // The deleted row took the restored focus with it.
         const focused = document.activeElement;
         if (!disposed && (!focused || focused === document.body || !focused.isConnected)) element.querySelector('[data-goals-view="goals"]')?.focus();

@@ -49,7 +49,7 @@ export function mountCalendarRoutineChoices(element, { invoke, openRoutine, open
       if (disposed) return;
       if (!fresh) throw Error('Рутина уже отмечена или изменена. Обнови список.');
       if (fresh.runnable) await openRoutine({ id:fresh.id, date:fresh.date, start:true });
-      else { await store.setStatus(fresh.id, 'done', fresh.date); notifyChange?.(); }
+      else { await store.setStatus(fresh.id, 'done', fresh.date, { expectedStatus:'pending' }); notifyChange?.(); }
     } catch (cause) { if (!disposed) fail(cause); }
     finally {
       busy = false;

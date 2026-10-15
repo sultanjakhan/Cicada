@@ -463,6 +463,54 @@ pub(crate) fn validate_record(
     }
     Ok(())
 }
+/// Current wire rows must carry the graph version gate; historical conflict archives remain exact.
+pub(crate) fn validate_publishable_record(conn: &Connection, fields: &Map<String, Value>) -> Result<(), String> {
+    validate_record(conn, fields)?;
+    let (_, record, _, _) = decoded(fields)?;
+    if record.v == 1 && record.kind == "ui" && recurring_identity(&record.key)
+        && graph_payload(&record.key, &record.value, record.deleted)
+    {
+        return Err("content_sync_legacy_graph_queue".into());
+    }
+    Ok(())
+}
+enum ArchivedVersionUse {
+    Replay,
+    Checkpoint,
+}
+fn check_archived_version(
+    conn: &Connection,
+    id: &str,
+    stamp: &str,
+    writer: &str,
+    record: &Record,
+    usage: ArchivedVersionUse,
+) -> Result<(), String> {
+    let incoming = serde_json::to_value(record).map_err(|_| "mvp_sync_encode_failed")?;
+    let mut statement = sql(conn.prepare(
+        "SELECT data FROM mvp_sync_conflicts WHERE id=?1 AND stamp=?2 AND writer=?3 UNION ALL SELECT data FROM mvp_sync_resolution_archive WHERE id=?1 AND stamp=?2 AND writer=?3",
+    ))?;
+    let rows = sql(statement.query_map(params![id, stamp, writer], |r| r.get::<_, String>(0)))?;
+    // Human decisions can retain multiple payloads for an equivocated tuple.
+    // Exact retained variants remain harmless replays; a new variant is quarantined.
+    let mut archived = false;
+    let mut known = false;
+    let mut different = false;
+    for raw in rows {
+        archived = true;
+        let prior: Record =
+            serde_json::from_str(&sql(raw)?).map_err(|_| "mvp_sync_invalid_local_record")?;
+        let prior = serde_json::to_value(prior).map_err(|_| "mvp_sync_encode_failed")?;
+        known |= prior == incoming;
+        different |= prior != incoming;
+    }
+    // Checkpoint merge requires one canonical payload per tuple. Do not publish or
+    // merge a snapshot containing equivocation merely because each variant is known.
+    if archived && (!known || (matches!(usage, ArchivedVersionUse::Checkpoint) && different)) {
+        return Err("content_sync_version_conflict".into());
+    }
+    Ok(())
+}
 fn keep_conflict(
     conn: &Connection,
     id: &str,
@@ -470,6 +518,7 @@ fn keep_conflict(
     writer: &str,
     record: &Record,
 ) -> Result<(), String> {
+    check_archived_version(conn, id, stamp, writer, record, ArchivedVersionUse::Replay)?;
     if conflicts::was_resolved(conn, id, stamp, writer, record)? {
         return Ok(());
     }
@@ -511,27 +560,27 @@ pub(crate) fn checkpoint_merge_conflict(conn: &Connection, value: &Value) -> Res
         json!({"id":id,"data":data,"updated_at":stamp,"_updated_at":stamp,"_device_id":writer});
     validate_record(conn, fields.as_object().unwrap())?;
     let (_, record, stamp, writer) = decoded(fields.as_object().unwrap())?;
-    let prior: Option<String> = sql(conn
-        .query_row(
-            "SELECT data FROM mvp_sync_conflicts WHERE id=?1 AND stamp=?2 AND writer=?3",
-            params![id, stamp, writer],
-            |r| r.get(0),
-        )
-        .optional())?;
-    if let Some(prior) = prior {
-        let prior: Value =
-            serde_json::from_str(&prior).map_err(|_| "mvp_sync_invalid_local_record")?;
-        let incoming: Value =
-            serde_json::from_str(data).map_err(|_| "content_sync_unknown_schema")?;
-        if prior != incoming {
-            return Err("content_sync_version_conflict".into());
-        }
-    }
+    check_archived_version(
+        conn,
+        id,
+        &stamp,
+        &writer,
+        &record,
+        ArchivedVersionUse::Checkpoint,
+    )?;
     keep_conflict(conn, id, &stamp, &writer, &record)
 }
 pub(crate) fn apply_record(conn: &Connection, fields: &Map<String, Value>) -> Result<bool, String> {
     validate_record(conn, fields)?;
     let (id, record, stamp, writer) = decoded(fields)?;
+    check_archived_version(
+        conn,
+        &id,
+        &stamp,
+        &writer,
+        &record,
+        ArchivedVersionUse::Replay,
+    )?;
     if conflicts::was_resolved(conn, &id, &stamp, &writer, &record)? {
         return Ok(false);
     }

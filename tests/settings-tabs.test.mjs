@@ -57,7 +57,7 @@ afterEach(() => {
   windows.clear();
 });
 
-async function boot({ failPreferenceSave = false, failPreferenceLoad = false, delayPreferenceLoad = false, deferProcessSave = false, initialPreferences = null, section = 'next-action', recommendationsOnly = false, lang = 'ru', theme = 'light' } = {}) {
+async function boot({ failPreferenceSave = false, failPreferenceLoad = false, delayPreferenceLoad = false, deferProcessSave = false, initialPreferences = null, initialDataSources = null, section = 'next-action', recommendationsOnly = false, lang = 'ru', theme = 'light' } = {}) {
   const dom = new JSDOM('<button id="settings">Настройки</button>', { url: 'http://cicada.local', pretendToBeVisual: true });
   windows.add(dom.window);
   dom.window.document.documentElement.lang = lang;
@@ -70,6 +70,7 @@ async function boot({ failPreferenceSave = false, failPreferenceLoad = false, de
   globalThis.marked = { Marked: class { use() {} parse(value) { return value; } } };
 
   const ui = new Map(), writes = [], calls = [];
+  if (initialDataSources) ui.set('cicada_data_sources_v1', JSON.stringify(initialDataSources));
   if (initialPreferences) ui.set('calendar_preferences_v1', JSON.stringify(initialPreferences));
   let preferenceFailures = failPreferenceLoad ? 1 : 0;
   let resolvePreferenceLoad = null, deferredPreferenceUsed = false, resolveProcessSave = null;
@@ -224,22 +225,23 @@ test('a preference write failure stays in its edited tab and retains the draft',
   assert.doesNotMatch(x.modal.querySelector('[data-prefs-error]').textContent, /ничего не изменено/i);
 });
 
-test('full preference save merges an independent remote change into the open draft', async () => {
-  const x = await boot({ initialPreferences: { version: 1, first_day: 'mon', default_view: 'Месяц', density: 'comfortable', showCompleted: false, recommendationsEnabled: true, recommendTasks: true, recommendRoutines: true } });
-  const density = x.modal.querySelector('[data-value="compact"]');
-  density.click();
+test('full preference save merges an independent change and preserves hidden legacy density', async () => {
+  const x = await boot({ initialPreferences: { version: 1, first_day: 'mon', default_view: 'Месяц', density: 'compact', showCompleted: false, recommendationsEnabled: true, recommendTasks: true, recommendRoutines: true } });
+  assert.equal(x.modal.querySelector('[data-key="density"]'), null);
+  x.modal.querySelector('[data-value="День"]').click();
   const remote = JSON.parse(x.ui.get('calendar_preferences_v1'));
   remote.first_day = 'sun';
   x.ui.set('calendar_preferences_v1', JSON.stringify(remote));
   x.modal.querySelector('form').dispatchEvent(new x.dom.window.Event('submit', { bubbles: true, cancelable: true }));
   await tick();
   const saved = JSON.parse(x.ui.get('calendar_preferences_v1'));
-  assert.equal(saved.density, 'compact');
+  assert.equal(saved.default_view, 'День');
+  assert.equal(saved.density, 'compact', 'removing the UI does not migrate stored settings');
   assert.equal(saved.first_day, 'sun');
   assert.equal(x.modal.open, false);
 });
 
-test('full preference save rejects a conflicting remote field and retains the draft', async () => {
+test('full preference save rejects a conflicting concurrent field and retains the draft', async () => {
   const x = await boot({ initialPreferences: { version: 1, first_day: 'mon', default_view: 'Месяц', density: 'comfortable', showCompleted: false, recommendationsEnabled: true, recommendTasks: true, recommendRoutines: true } });
   const day = x.modal.querySelector('[data-value="День"]');
   day.click();
@@ -251,7 +253,7 @@ test('full preference save rejects a conflicting remote field and retains the dr
   assert.equal(JSON.parse(x.ui.get('calendar_preferences_v1')).default_view, 'Неделя');
   assert.equal(x.modal.open, true);
   assert.equal(x.modal.querySelector('[data-value="День"]').classList.contains('active'), true);
-  assert.match(x.modal.querySelector('[data-prefs-error]').textContent, /Вид при запуске.*изменилась на другом устройстве/i);
+  assert.match(x.modal.querySelector('[data-prefs-error]').textContent, /Вид при запуске.*изменилась/i);
   x.modal.querySelector('form').dispatchEvent(new x.dom.window.Event('submit', { bubbles: true, cancelable: true }));
   await tick();
   assert.equal(JSON.parse(x.ui.get('calendar_preferences_v1')).default_view, 'Неделя', 'repeating stale save cannot overwrite the remote value');
@@ -351,4 +353,198 @@ test('Today entry exposes only selection settings and saves no unrelated prefere
     assert.equal(saved.density,'comfortable');assert.equal(saved.first_day,'sun');assert.equal(saved.showCompleted,true);
     assert.equal(x.modal.open,false);
   } finally{x.modal.close();}
+});
+
+
+test('source settings remain discoverable on first launch and reopen after a saved skip without folder access', async () => {
+  const {defaultDataSources, DATA_SOURCES_KEY} = await import('../src/hanni/js/data-sources.js');
+  for (const initialDataSources of [null, defaultDataSources()]) {
+    const x = await boot({section:'connections', initialDataSources});
+    const stored = x.ui.get(DATA_SOURCES_KEY);
+    const check = () => {
+      const panel = document.querySelector('#calendar-settings-panel-connections');
+      assert.equal(panel.hidden, false);
+      const sources = panel.querySelector('.data-source-settings');
+      assert.ok(sources, 'Sources is available under the visible Connections tab');
+      assert.equal(sources.querySelectorAll('input[type="text"]').length, 2);
+      assert.equal(x.calls.some(c => c === 'choose_data_source' || c === 'inspect_data_source'), false);
+      assert.equal(x.ui.get(DATA_SOURCES_KEY), stored, 'Opening settings preserves an absent or previously skipped configuration');
+      assert.equal(x.writes.length, 0);
+    };
+    check();
+    x.modal.close();
+    const module = await import(`../src/hanni/js/calendar-settings.js?${Math.random()}`);
+    module.showCalendarSettings(document.querySelector('#settings'), {section:'connections'});
+    await tick();
+    check();
+    document.querySelector('dialog').close();
+  }
+});
+
+test('main workspace does not mount optional folder onboarding on first launch', () => {
+  const source = fs.readFileSync(new URL('../src/hanni/js/calendar-workspace.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /mountSourceOnboarding|disposeSourceOnboarding/);
+});
+
+
+function escapeKey(x, target = x.dom.window.document.activeElement, options = {}) {
+  const event = new x.dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true, ...options });
+  target.dispatchEvent(event);
+  return event;
+}
+
+function editTaskPreference(x) {
+  const input = x.modal.querySelector('[data-key="recommendTasks"]');
+  input.checked = false;
+  input.dispatchEvent(new x.dom.window.Event('change', { bubbles: true }));
+  input.focus();
+  return input;
+}
+
+test('separate Escape presses keep RU/EN general and recommendation drafts until explicit discard', async () => {
+  for (const lang of ['ru', 'en-US']) for (const recommendationsOnly of [false, true]) {
+    const x = await boot({ lang, recommendationsOnly });
+    const input = editTaskPreference(x);
+    const confirmation = x.modal.querySelector('[data-close-confirmation]');
+    for (let i = 0; i < 4; i++) {
+      assert.equal(escapeKey(x).defaultPrevented, true, 'Escape cannot create a native close request');
+      assert.equal(x.modal.open, true);
+      assert.equal(confirmation.hidden, i % 2 === 1);
+      assert.equal(input.checked, false, 'the existing draft remains mounted');
+      assert.deepEqual(x.writes, []);
+    }
+    assert.equal(document.activeElement, input, 'dismissal returns to the edited field');
+    x.modal.close();
+  }
+});
+
+test('holding Escape blocks native closure without alternating the confirmation', async () => {
+  const x = await boot();
+  editTaskPreference(x);
+  escapeKey(x);
+  const confirmation = x.modal.querySelector('[data-close-confirmation]');
+  for (let i = 0; i < 8; i++) {
+    assert.equal(escapeKey(x, document.activeElement, { repeat: true }).defaultPrevented, true);
+    assert.equal(confirmation.hidden, false);
+    assert.equal(x.modal.open, true);
+  }
+  escapeKey(x);
+  assert.equal(confirmation.hidden, true);
+  assert.deepEqual(x.writes, []);
+});
+
+test('Continue, Cancel and explicit discard preserve focus and reopen stored values', async () => {
+  const x = await boot();
+  const input = editTaskPreference(x);
+  const confirmation = x.modal.querySelector('[data-close-confirmation]');
+  escapeKey(x);
+  confirmation.querySelector('button:first-of-type').click();
+  assert.equal(confirmation.hidden, true);
+  assert.equal(input.checked, false);
+  assert.equal(document.activeElement, input);
+  x.modal.querySelector('footer [data-dialog-close]').click();
+  assert.equal(confirmation.hidden, false);
+  escapeKey(x);
+  assert.equal(confirmation.hidden, true);
+  assert.equal(x.modal.open, true);
+  x.modal.querySelector('footer [data-dialog-close]').click();
+  confirmation.querySelector('button:last-child').click();
+  assert.equal(x.modal.isConnected, false);
+  assert.equal(document.activeElement.id, 'settings');
+  assert.deepEqual(x.writes, []);
+  const module = await import('../src/hanni/js/calendar-settings.js?reopen=' + Math.random());
+  module.showCalendarSettings(document.querySelector('#settings'));
+  await tick();
+  assert.equal(document.querySelector('[data-key="recommendTasks"]').checked, true);
+  assert.equal(escapeKey(x).defaultPrevented, true, 'a clean reopen closes normally');
+  assert.equal(document.querySelector('dialog'), null);
+  assert.equal(escapeKey(x, document.body).defaultPrevented, false, 'closed Settings releases its document listener');
+});
+
+test('pending process save resists Escape even when focus is on body', async () => {
+  const x = await boot({ section: 'processes', deferProcessSave: true });
+  const title = x.modal.querySelector('[data-control="process-title"]');
+  title.value = 'Synthetic process draft';
+  title.dispatchEvent(new x.dom.window.Event('input', { bubbles: true }));
+  x.modal.querySelector('[data-processes-save]').click();
+  await tick();
+  for (let i = 0; i < 4; i++) {
+    assert.equal(escapeKey(x, document.body).defaultPrevented, true);
+    assert.equal(x.modal.open, true);
+    assert.equal(x.modal.querySelector('[data-close-confirmation]').hidden, true);
+  }
+  assert.equal(x.ui.has('calendar_processes_v1'), false, 'pending write not yet acknowledged');
+  x.resolveProcessSave(); await tick();
+  assert.equal(x.modal.open, true);
+  assert.equal(x.ui.has('calendar_processes_v1'), true, 'only the explicitly requested save writes');
+  escapeKey(x);
+  assert.equal(x.modal.isConnected, false);
+});
+
+test('process-only and connection-only drafts survive repeated Escape', async () => {
+  for (const kind of ['process', 'sync']) {
+    const x = await boot({ section: kind === 'process' ? 'processes' : 'connections' });
+    const input = x.modal.querySelector(kind === 'process' ? '[data-control="process-title"]' : '[data-sync-enabled]');
+    if (kind === 'process') { input.value = 'Unsaved synthetic process'; input.dispatchEvent(new x.dom.window.Event('input', { bubbles: true })); }
+    else { input.checked = false; input.dispatchEvent(new x.dom.window.Event('change', { bubbles: true })); }
+    input.focus(); await tick();
+    for (let i = 0; i < 4; i++) { escapeKey(x); assert.equal(x.modal.open, true); }
+    assert.equal(kind === 'process' ? input.value : input.checked, kind === 'process' ? 'Unsaved synthetic process' : false);
+    assert.deepEqual(x.writes, []);
+    assert.equal(x.calls.includes('mvp_sync_set_enabled'), false);
+    x.modal.close();
+  }
+});
+
+test('Escape cancels a routines transition; later normal discard cannot open it', async () => {
+  const x = await boot();
+  let opened = 0;
+  x.dom.window.addEventListener('hanni:open-recurring-settings', () => opened++);
+  editTaskPreference(x);
+  x.modal.querySelector('[data-recurring]').click();
+  escapeKey(x);
+  assert.equal(x.modal.querySelector('[data-close-confirmation]').hidden, true);
+  assert.equal(opened, 0);
+  x.modal.querySelector('footer [data-dialog-close]').click();
+  x.modal.querySelector('[data-close-confirmation] button:last-child').click();
+  assert.equal(opened, 0, 'dismissed routines intent cannot leak into a later close');
+});
+
+test('Settings respects handled Escape, composition and another open dialog', async () => {
+  const x = await boot();
+  const input = editTaskPreference(x);
+  const handled = new x.dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+  handled.preventDefault(); input.dispatchEvent(handled);
+  assert.equal(x.modal.querySelector('[data-close-confirmation]').hidden, true);
+  assert.equal(escapeKey(x, input, { isComposing: true }).defaultPrevented, true, 'composing Escape cannot create a dialog close request');
+  assert.equal(x.modal.querySelector('[data-close-confirmation]').hidden, true);
+  const nested = document.createElement('dialog'); document.body.append(nested); nested.showModal();
+  assert.equal(escapeKey(x, nested).defaultPrevented, false, 'another dialog owns its close request');
+  assert.equal(x.modal.querySelector('[data-close-confirmation]').hidden, true);
+  nested.close(); nested.remove();
+  assert.equal(escapeKey(x, input).defaultPrevented, true);
+  assert.equal(x.modal.querySelector('[data-close-confirmation]').hidden, false);
+});
+
+
+test('a descendant dialog cancel does not close Settings or change its draft', async () => {
+  const x = await boot();
+  const input = editTaskPreference(x);
+  const nested = document.createElement('dialog');
+  x.modal.append(nested); nested.showModal();
+  const childCancel = new x.dom.window.Event('cancel', { cancelable: true });
+  nested.dispatchEvent(childCancel);
+  assert.equal(childCancel.defaultPrevented, false, 'the descendant retains its native cancel');
+  assert.equal(x.modal.open, true);
+  assert.equal(x.modal.querySelector('[data-close-confirmation]').hidden, true);
+  assert.equal(input.checked, false);
+  assert.deepEqual(x.writes, []);
+  const childClose = document.createElement('button'); childClose.type = 'button'; childClose.dataset.dialogClose = '';
+  childClose.addEventListener('click', () => nested.close()); nested.append(childClose); childClose.click();
+  assert.equal(nested.open, false, 'the child owns its close button');
+  assert.equal(x.modal.querySelector('[data-close-confirmation]').hidden, true);
+  assert.equal(x.modal.open, true);
+  nested.remove();
+  escapeKey(x, input);
+  assert.equal(x.modal.querySelector('[data-close-confirmation]').hidden, false);
 });

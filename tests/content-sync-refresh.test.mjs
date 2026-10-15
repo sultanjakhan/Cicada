@@ -5,8 +5,9 @@ import { JSDOM } from 'jsdom';
 import { startMvpSyncRefresh } from '../src/hanni/js/content-sync-refresh.js';
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-function setupRefresh(t, initialRevision='9007199254740993') {
+function setupRefresh(t, initialRevision='9007199254740993', { initiallyHidden = false } = {}) {
   const dom=new JSDOM('',{pretendToBeVisual:true});
+  if (initiallyHidden) Object.defineProperty(dom.window.document,'visibilityState',{configurable:true,value:'hidden'});
   let received,status={revision:initialRevision},wakes=0,unlistened=0,interval;
   let failedReads=0;
   const changes=[],statuses=[];
@@ -62,6 +63,30 @@ test('returning from a hidden window checks the current revision without a spuri
   Object.defineProperty(x.dom.window.document,'visibilityState',{configurable:true,value:'visible'});
   x.dom.window.document.dispatchEvent(new x.dom.window.Event('visibilitychange')); await tick();
   assert.equal(x.wakes,2); assert.deepEqual(x.changes,[]);
+});
+
+test('a minimized startup invalidates views on first foreground when a receive event was missed', async t => {
+  const x=setupRefresh(t,'9007199254740993',{initiallyHidden:true}); await tick();
+  // The workspace can load local rows while minimized. A background receive may
+  // finish without a renderer event, so foreground polling must detect it.
+  x.setStatus({revision:'9007199254740994'});
+  x.fireInterval(); await tick();
+  assert.equal(x.wakes,1, 'hidden windows do not add periodic sync requests');
+  assert.deepEqual(x.changes,[]);
+  Object.defineProperty(x.dom.window.document,'visibilityState',{configurable:true,value:'visible'});
+  x.dom.window.document.dispatchEvent(new x.dom.window.Event('visibilitychange')); await tick();
+  assert.deepEqual(x.changes,[{remote:true}]);
+  x.dom.window.dispatchEvent(new x.dom.window.Event('focus')); await tick();
+  x.fireInterval(); await tick();
+  assert.deepEqual(x.changes,[{remote:true}], 'the first-foreground refresh happens only once');
+});
+
+test('first-foreground invalidation does not depend on a successful status read', async t => {
+  const x=setupRefresh(t,'9007199254740993',{initiallyHidden:true}); await tick();
+  x.failNext();
+  Object.defineProperty(x.dom.window.document,'visibilityState',{configurable:true,value:'visible'});
+  x.dom.window.dispatchEvent(new x.dom.window.Event('focus')); await tick();
+  assert.deepEqual(x.changes,[{remote:true}]);
 });
 
 test('native invoke schedules sync only for acknowledged writes', async t => {

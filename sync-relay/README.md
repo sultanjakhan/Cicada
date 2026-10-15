@@ -100,8 +100,8 @@ ACK и уведомления отправляются после SQLite transac
 
 ## Воспроизводимая локальная проверка
 
-Зависимости закреплены lockfile: Wrangler 4.129.0, Miniflare
-5.20260903.0-alpha, workerd 1.20260903.1. `node_modules` и локальное Wrangler
+Зависимости закреплены lockfile: Wrangler 4.147.0, Miniflare
+5.20261001.0-alpha, workerd 1.20261001.1. `node_modules` и локальное Wrangler
 состояние игнорируются. Работайте из временной копии/отдельного worktree MVP.
 
 ```sh
@@ -134,3 +134,5 @@ Persistent fixtures создаются в системном temporary directory
 Основания: [Wrangler commands](https://developers.cloudflare.com/workers/wrangler/commands/),
 [локальная разработка](https://developers.cloudflare.com/workers/local-development/),
 [SQLite Durable Objects](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/).
+
+The local tooling overrides `sharp` to `0.35.5` because the pinned Miniflare release still requires `0.35.4`, which is affected by [GHSA-wq5f-xc86-pv6w](https://github.com/advisories/GHSA-wq5f-xc86-pv6w). The patched Sharp package includes the fixed librsvg dependency. This override affects local tooling and CI; it does not change Worker bindings or deploy the relay. Keep the audit gate enabled.

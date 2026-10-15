@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ru" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Синтетический стенд: сохранённые фильтры задач</title>
+  <link rel="stylesheet" href="../../src/hanni/css/shared-neutral.css">
+  <link rel="stylesheet" href="../../src/hanni/css/calendar-tasks.css">
+  <style>
+    html { color-scheme: light; }
+    html[data-theme="dark"] { color-scheme: dark; }
+    body { margin: 0; padding: 24px; background: var(--ui-page); color: var(--ui-text); font: 14px/1.45 system-ui, sans-serif; }
+    body > header, main, body > footer { max-width: 1040px; margin: 0 auto; }
+    body > header { border-bottom: 1px solid var(--ui-line); margin-bottom: 20px; padding-bottom: 12px; }
+    body > header p, body > footer { color: var(--ui-secondary); font-size: 12px; }
+    body > header nav { display: flex; flex-wrap: wrap; gap: 12px; }
+    a { color: inherit; text-underline-offset: 3px; }
+    @media (max-width: 680px) { body { padding: 12px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>Сохранённые фильтры · синтетический стенд</strong>
+    <p>Настоящие компоненты и нейтральные темы. Данные вымышлены; native API и профиль не подключены.</p>
+    <nav aria-label="Сценарии стенда">
+      <a href="?theme=light&scene=tabs">Светлая</a>
+      <a href="?theme=dark&scene=tabs">Тёмная</a>
+      <a data-fixture-scene="tabs">Вкладки</a>
+      <a data-fixture-scene="delete">Подтверждение удаления</a>
+      <a data-fixture-scene="write-error">Ошибка записи</a>
+      <a data-fixture-scene="conflict">Конфликт</a>
+      <a data-fixture-scene="read-error">Ошибка чтения</a>
+    </nav>
+  </header>
+  <main id="tasks"></main>
+  <footer><p data-fixture-status role="status">Готовим сценарий…</p></footer>
+  <script type="module" src="./task-filter-focus.mjs"></script>
+</body>
+</html>

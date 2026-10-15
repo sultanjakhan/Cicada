@@ -209,6 +209,20 @@ fn graph_records_are_v2_and_that_identity_stays_v2_after_graph_is_edited_away() 
 }
 
 #[test]
+fn graph_version_is_decided_per_plan_and_run_snapshot() {
+    for (plan_mode, run_mode, plan_version, run_version) in [("chain", "graph", 1, 2), ("graph", "chain", 2, 1)] {
+        let (conn, _) = replica("mixed-graph-version");
+        let mut state = recurring_state(plan_mode, "Mixed versions");
+        state["days"]["2026-09-28"]["graph-plan"]["snapshot"]["mode"] = json!(run_mode);
+        crate::mvp_sync_db::set_ui(&conn, "calendar_recurring_v1", &state.to_string(), None).unwrap();
+        let plan = json!(["ui", ["calendar_recurring_v1", "plans", "graph-plan"]]).to_string();
+        let run = json!(["ui", ["calendar_recurring_v1", "days", "2026-09-28", "graph-plan"]]).to_string();
+        assert_eq!(recurring_version(&conn, &plan), plan_version);
+        assert_eq!(recurring_version(&conn, &run), run_version);
+    }
+}
+
+#[test]
 fn initialize_upgrades_historical_local_graph_envelopes_and_queues_them() {
     let (conn, _) = replica("graph-migration");
     crate::mvp_sync_db::set_ui(
@@ -695,6 +709,34 @@ fn malformed_wish_snapshots_are_rejected_before_any_record() {
 fn processes(conn: &Connection) -> Value {
     serde_json::from_str::<Value>(&crate::mvp_sync_db::read_ui(conn, "calendar_processes_v1").unwrap().unwrap()).unwrap()
 }
+#[test]
+fn archived_version_equivocation_retains_both_payloads_for_review() {
+    let (a, ac) = replica("sender");
+    let (mut b, bc) = replica("receiver");
+    task(&a, "t", "Source");
+    task(&b, "t", "Current");
+    let id = json!(["items", ["t"]]).to_string();
+    let mut old = row(&a, &id);
+    old.f["updated_at"] = json!("2026-09-14T01:00:00.000Z");
+    old.f["_updated_at"] = old.f["updated_at"].clone();
+    assert_eq!(apply(&mut b, &bc, stored(&ac, vec![old.clone()], 1, 1)).unwrap(), 0);
+    assert_eq!(scalar(&b, "SELECT count(*) FROM mvp_sync_conflicts").unwrap(), 1);
+    let archived: String = b.query_row("SELECT data FROM mvp_sync_conflicts", [], |r| r.get(0)).unwrap();
+    assert_eq!(apply(&mut b, &bc, stored(&ac, vec![old.clone()], 2, 2)).unwrap(), 0);
+    assert_eq!(scalar(&b, "SELECT count(*) FROM content_sync_pending").unwrap(), 0);
+    let mut changed: Value = serde_json::from_str(old.f["data"].as_str().unwrap()).unwrap();
+    changed["value"]["title"] = json!("Changed payload at the archived version");
+    old.f["data"] = json!(changed.to_string());
+    assert_eq!(apply(&mut b, &bc, stored(&ac, vec![old], 3, 3)).unwrap(), 0);
+    assert_eq!(scalar(&b, "SELECT receive_seq FROM content_sync_state").unwrap(), 3);
+    assert_eq!(scalar(&b, "SELECT count(*) FROM content_sync_pending").unwrap(), 1);
+    let (payload, error): (String, String) = b.query_row("SELECT payload,error_code FROM content_sync_pending", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+    assert_eq!(error, "content_sync_version_conflict");
+    let pending: Row = serde_json::from_str(&payload).unwrap();
+    assert_eq!(serde_json::from_str::<Value>(pending.f["data"].as_str().unwrap()).unwrap(), changed);
+    assert_eq!(b.query_row("SELECT data FROM mvp_sync_conflicts", [], |r| r.get::<_, String>(0)).unwrap(), archived);
+    assert_eq!(b.query_row("SELECT title FROM items WHERE id='t'", [], |r| r.get::<_, String>(0)).unwrap(), "Current");
+}
 fn process(id: &str, title: &str, stages: &[(&str, &str)]) -> Value {
     json!({"id":id,"title":title,"stages":stages.iter().map(|(id, title)| json!({"id":id,"title":title})).collect::<Vec<_>>()})
 }
@@ -763,6 +805,53 @@ fn malformed_process_snapshots_are_rejected_before_any_record() {
     }
     assert!(ui_rows(&a).is_empty());
     assert!(crate::mvp_sync_db::read_ui(&a, "calendar_processes_v1").unwrap().is_none());
+}
+#[test]
+fn additive_process_fields_survive_replay_local_edit_and_conflict_archive() {
+    let (a, ac) = replica("newer");
+    let (mut b, bc) = replica("older");
+    let mut extended = process("p", "Process", &[("s", "Stage")]);
+    extended["futureProcess"] = json!({"nested":[null, false, {"number":7}]});
+    extended["stages"][0]["futureStage"] = json!({"policy":"preserved"});
+    save_processes(&a, vec![extended.clone()]);
+    assert_eq!(apply(&mut b, &bc, stored(&ac, ui_rows(&a), 1, 1)).unwrap(), 1);
+    assert_eq!(processes(&b)["processes"][0], extended);
+    assert_eq!(apply(&mut b, &bc, stored(&ac, ui_rows(&a), 2, 2)).unwrap(), 0);
+    assert_eq!(scalar(&b, "SELECT count(*) FROM mvp_sync_conflicts").unwrap(), 0);
+    let mut edited = processes(&b)["processes"][0].clone();
+    edited["title"] = json!("Known field edited by older replica");
+    save_processes(&b, vec![edited.clone()]);
+    let id = json!(["ui", ["calendar_processes_v1", "processes", "p"]]).to_string();
+    let older_row = row(&b, &id);
+    assert_eq!(serde_json::from_str::<Value>(older_row.f["data"].as_str().unwrap()).unwrap()["value"]["row"], edited);
+    let mut competing = row(&a, &id);
+    competing.f["updated_at"] = json!("2030-01-01T00:00:00.000Z");
+    competing.f["_updated_at"] = competing.f["updated_at"].clone();
+    let mut data: Value = serde_json::from_str(competing.f["data"].as_str().unwrap()).unwrap();
+    data["value"]["row"]["title"] = json!("Competing newer edit");
+    competing.f["data"] = json!(data.to_string());
+    assert_eq!(apply(&mut b, &bc, stored(&ac, vec![competing], 3, 3)).unwrap(), 1);
+    assert_eq!(processes(&b)["processes"][0], data["value"]["row"]);
+    let archived: String = b.query_row("SELECT data FROM mvp_sync_conflicts WHERE id=?1", [&id], |r| r.get(0)).unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&archived).unwrap()["value"]["row"], edited);
+}
+#[test]
+fn unknown_record_envelope_member_preserves_page_cursor_and_local_outbox() {
+    let (a, ac) = replica("newer");
+    let (mut b, bc) = replica("older");
+    task(&a, "remote", "Remote task");
+    task(&b, "local", "Unsent local task");
+    assert!(enqueue(&mut b, &bc).unwrap());
+    let queued: String = b.query_row("SELECT body FROM content_sync_outbox ORDER BY local_seq LIMIT 1", [], |r| r.get(0)).unwrap();
+    let mut remote = row(&a, &json!(["items", ["remote"]]).to_string());
+    let mut data: Value = serde_json::from_str(remote.f["data"].as_str().unwrap()).unwrap();
+    data["futureEnvelopeField"] = json!({"unknown":"preserve remotely"});
+    remote.f["data"] = json!(data.to_string());
+    assert_eq!(apply(&mut b, &bc, stored(&ac, vec![remote], 1, 1)).unwrap_err(), "content_sync_unknown_schema");
+    assert_eq!(scalar(&b, "SELECT receive_seq FROM content_sync_state").unwrap(), 0);
+    assert_eq!(scalar(&b, "SELECT count(*) FROM items WHERE id='remote'").unwrap(), 0);
+    assert_eq!(scalar(&b, "SELECT count(*) FROM content_sync_pending").unwrap(), 0);
+    assert_eq!(b.query_row("SELECT body FROM content_sync_outbox ORDER BY local_seq LIMIT 1", [], |r| r.get::<_, String>(0)).unwrap(), queued);
 }
 /// What a 0.3.33 replica does with a process record: its UI key list lacks
 /// `calendar_processes_v1`, so the record reads exactly like this unknown key.
@@ -1061,3 +1150,174 @@ fn capacity_error_and_outbox_survive_independent_pull_backoff() {
         None
     );
 }
+
+#[test]
+fn diagnosis_database_status_is_select_only_and_exposes_no_payload() {
+    let (conn, _) = replica("synthetic-status");
+    task(&conn, "synthetic-status-task", "Private synthetic title");
+    conn.execute("UPDATE content_sync_state SET upload_error='content_sync_http_507',last_error='content_sync_http_507'", []).unwrap();
+    let before = conn.total_changes();
+    conn.pragma_update(None, "query_only", true).unwrap();
+    let state = database_status(&conn).unwrap();
+    assert_eq!(state["pending_keys"], scalar(&conn, "SELECT COUNT(*) FROM content_sync_dirty").unwrap());
+    assert_eq!(state["error_code"], "content_sync_http_507");
+    assert_eq!(conn.total_changes(), before);
+    let raw = state.to_string();
+    assert!(!raw.contains("Private synthetic title"));
+    assert!(!raw.contains("synthetic-status-task"));
+    assert!(!raw.contains("token"));
+    assert!(!raw.contains("endpoint"));
+}
+
+fn initializing_status_fixture() -> Connection {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch("CREATE TABLE app_settings(key TEXT PRIMARY KEY,value TEXT,updated_at TEXT); INSERT INTO app_settings VALUES('content_sync_enabled','true','synthetic');").unwrap();
+    conn
+}
+
+#[test]
+fn initializing_status_counts_existing_dirty_records_without_writes() {
+    let conn = initializing_status_fixture();
+    conn.execute_batch("CREATE TABLE content_sync_dirty(seq INTEGER PRIMARY KEY,table_name TEXT,row_id TEXT); INSERT INTO content_sync_dirty VALUES(1,'mvp_records','synthetic-first'),(2,'mvp_records','synthetic-second');").unwrap();
+    let before = conn.total_changes();
+    conn.pragma_update(None, "query_only", true).unwrap();
+    let state = database_status(&conn).unwrap();
+    assert_eq!(state["initializing"], true);
+    assert_eq!(state["pending_keys"], 2);
+    assert_eq!(conn.total_changes(), before);
+    assert_eq!(scalar(&conn, "SELECT COUNT(*) FROM sqlite_master WHERE name='content_sync_state'").unwrap(), 0);
+}
+
+#[test]
+fn initializing_status_missing_dirty_table_returns_zero_without_creating_it() {
+    let conn = initializing_status_fixture();
+    let before = conn.total_changes();
+    conn.pragma_update(None, "query_only", true).unwrap();
+    let state = database_status(&conn).unwrap();
+    assert_eq!(state["enabled"], true);
+    assert_eq!(state["initializing"], true);
+    assert_eq!(state["pending_keys"], 0);
+    assert_eq!(conn.total_changes(), before);
+    assert_eq!(scalar(&conn, "SELECT COUNT(*) FROM sqlite_master WHERE name IN ('content_sync_dirty','content_sync_state')").unwrap(), 0);
+}
+
+#[test]
+fn initializing_status_empty_dirty_table_returns_zero() {
+    let conn = initializing_status_fixture();
+    conn.execute_batch("CREATE TABLE content_sync_dirty(seq INTEGER PRIMARY KEY,table_name TEXT,row_id TEXT);").unwrap();
+    conn.pragma_update(None, "query_only", true).unwrap();
+    assert_eq!(database_status(&conn).unwrap()["pending_keys"], 0);
+}
+
+#[test]
+fn database_status_sql_errors_are_not_reported_as_empty_queues() {
+    let missing_settings = Connection::open_in_memory().unwrap();
+    missing_settings.pragma_update(None, "query_only", true).unwrap();
+    assert_eq!(database_status(&missing_settings).unwrap_err(), "mvp_sync_database_failed");
+    let malformed_state = initializing_status_fixture();
+    malformed_state.execute_batch("CREATE TABLE content_sync_state(id INTEGER PRIMARY KEY);").unwrap();
+    malformed_state.pragma_update(None, "query_only", true).unwrap();
+    assert_eq!(database_status(&malformed_state).unwrap_err(), "content_sync_database_failed");
+    let failed_dirty_count = initializing_status_fixture();
+    failed_dirty_count.execute_batch("CREATE TABLE content_sync_dirty(seq INTEGER PRIMARY KEY); CREATE TEMP VIEW content_sync_dirty AS SELECT * FROM missing_synthetic_table;").unwrap();
+    failed_dirty_count.pragma_update(None, "query_only", true).unwrap();
+    assert_eq!(database_status(&failed_dirty_count).unwrap_err(), "content_sync_database_failed");
+}
+
+fn task_filter_view_filters() -> Value {
+    json!({
+        "filter":"active","search":"","goal":"","sphere":"","personal":"",
+        "groupBy":"date","source":"","project":"","tag":""
+    })
+}
+
+#[test]
+fn task_filter_views_remain_local_and_use_durable_compare_and_swap() {
+    const KEY: &str = "calendar_task_filter_views_v1";
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("filter-views.db");
+    let mut conn = Connection::open(&path).unwrap();
+    crate::init_schema(&conn).unwrap();
+    let cfg = derive_config(&config("filter-view-device")).unwrap();
+    initialize(&mut conn, &cfg).unwrap();
+    task(&conn, "existing-task", "Fictional task");
+    let task_before: (String, i64, String) = conn
+        .query_row(
+            "SELECT title,version,updated_at FROM items WHERE id='existing-task'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    let records_before = scalar(&conn, "SELECT count(*) FROM mvp_records").unwrap();
+    let active_filters = task_filter_view_filters();
+    let mut personal_filters = active_filters.clone();
+    personal_filters["sphere"] = json!("personal");
+    let first = json!({"version":1,"views":[
+        {"id":"work","title":"Work","filters":active_filters.clone()},
+        {"id":"personal","title":"Personal","filters":personal_filters.clone()}
+    ]})
+    .to_string();
+    crate::mvp_sync_db::set_ui(&conn, KEY, &first, Some("")).unwrap();
+    assert!(ui_rows(&conn).is_empty(), "local view definitions must not enter sync");
+    drop(conn);
+
+    let conn = Connection::open(&path).unwrap();
+    assert_eq!(crate::mvp_sync_db::read_ui(&conn, KEY).unwrap().as_deref(), Some(first.as_str()));
+    let edited = json!({"version":1,"views":[
+        {"id":"work","title":"Current work","filters":active_filters.clone()},
+        {"id":"personal","title":"Personal","filters":personal_filters.clone()}
+    ]})
+    .to_string();
+    crate::mvp_sync_db::set_ui(&conn, KEY, &edited, Some(&first)).unwrap();
+    assert_eq!(
+        crate::mvp_sync_db::set_ui(&conn, KEY, &first, Some(&first)).unwrap_err(),
+        "mvp_sync_stale_ui_state",
+        "a stale save cannot replace the edited definition"
+    );
+    let deleted = json!({"version":1,"views":[
+        {"id":"personal","title":"Personal","filters":personal_filters.clone()}
+    ]})
+    .to_string();
+    assert_eq!(
+        crate::mvp_sync_db::set_ui(&conn, KEY, &deleted, Some(&first)).unwrap_err(),
+        "mvp_sync_stale_ui_state",
+        "a stale deletion cannot remove a definition"
+    );
+    assert_eq!(crate::mvp_sync_db::read_ui(&conn, KEY).unwrap().as_deref(), Some(edited.as_str()));
+    crate::mvp_sync_db::set_ui(&conn, KEY, &deleted, Some(&edited)).unwrap();
+    assert_eq!(crate::mvp_sync_db::read_ui(&conn, KEY).unwrap().as_deref(), Some(deleted.as_str()));
+    let task_after: (String, i64, String) = conn
+        .query_row(
+            "SELECT title,version,updated_at FROM items WHERE id='existing-task'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(task_after, task_before, "deleting a view must not edit task rows");
+    assert_eq!(scalar(&conn, "SELECT count(*) FROM mvp_records").unwrap(), records_before);
+    assert!(ui_rows(&conn).is_empty(), "view edits must not create sync records");
+}
+
+#[test]
+fn task_filter_view_sqlite_write_failure_preserves_the_saved_snapshot() {
+    const KEY: &str = "calendar_task_filter_views_v1";
+    let (conn, _) = replica("filter-view-device");
+    let original = json!({"version":1,"views":[{"id":"work","title":"Work","filters":task_filter_view_filters()}]}).to_string();
+    crate::mvp_sync_db::set_ui(&conn, KEY, &original, Some("")).unwrap();
+    conn.execute_batch(
+        "CREATE TRIGGER reject_filter_view_update BEFORE UPDATE ON ui_state
+         WHEN NEW.key='calendar_task_filter_views_v1'
+         BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END;",
+    )
+    .unwrap();
+    let changed = json!({"version":1,"views":[]}).to_string();
+    assert_eq!(
+        crate::mvp_sync_db::set_ui(&conn, KEY, &changed, Some(&original)).unwrap_err(),
+        "mvp_sync_database_failed"
+    );
+    assert_eq!(crate::mvp_sync_db::read_ui(&conn, KEY).unwrap().as_deref(), Some(original.as_str()));
+    assert!(ui_rows(&conn).is_empty());
+}
+
+#[path = "mvp_sync_compat_tests.rs"]
+mod compatibility_tests;

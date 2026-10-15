@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
+import { startMvpSyncRefresh } from '../src/hanni/js/content-sync-refresh.js';
 
 const source = await readFile(new URL('../src/hanni/js/health-view-refresh.js', import.meta.url), 'utf8');
 const settle = () => new Promise(resolve => setTimeout(resolve, 20));
@@ -103,4 +104,22 @@ test('remote changes wait for the editor and provide a commit guard for late res
   x.ui.requestHealthViewRefresh({remote:true});await settle();assert.equal(events.length,0);assert.equal(modal.querySelector('textarea').value,'unsaved');
   modal.remove();await settle();assert.equal(events.length,1);assert.equal(events[0].remoteSync,true);assert.equal(events[0].canCommit(),true);
   x.doc.body.append(modal);assert.equal(events[0].canCommit(),false);modal.remove();await settle();assert.equal(events.length,2,'late unsafe commits requeue the remote refresh');
+});
+
+test('a minimized startup queues its foreground refresh until the open editor closes', async t => {
+  const x = await setup(t); x.ui.startHealthViewRefresh(); x.hide(true);
+  const events=[]; x.w.addEventListener('task-state-changed',event=>events.push(event.detail));
+  const dispose = startMvpSyncRefresh({
+    window:x.w, invoke:async()=>({revision:'2'}), listen:async()=>()=>{},
+    requestSync:()=>{}, requestRefresh:x.ui.requestHealthViewRefresh,
+  });
+  t.after(dispose);
+  const modal=x.doc.createElement('dialog'); modal.open=true;
+  modal.innerHTML='<textarea>unsaved draft</textarea>'; x.doc.body.append(modal);
+  x.hide(false); modal.querySelector('textarea').focus(); await settle();
+  assert.equal(events.length,0);
+  assert.equal(modal.querySelector('textarea').value,'unsaved draft');
+  modal.remove(); await settle();
+  assert.equal(events.length,1);
+  assert.equal(events[0].remoteSync,true);
 });

@@ -537,3 +537,9 @@
   text-decoration-thickness: var(--ui-action-underline-thickness);
   text-underline-offset: var(--ui-action-underline-offset);
 }
+
+/* The goal title is information; preserve the existing focus outline. */
+#calendar-content .calendar-now .calendar-now__goal-link > [data-ui="goal-title"],
+#calendar-content .calendar-now .calendar-now__goal-link:is(:hover,:focus-visible):not(:disabled) > [data-ui="goal-title"] {
+  text-decoration: none;
+}

@@ -1,3 +1,6 @@
+import { createUiCopy } from './ui-copy.js';
+const uiCopy = value => createUiCopy(globalThis.document)(value);
+uiCopy.format = (...args) => createUiCopy(globalThis.document).format(...args);
 // «В работе» (owner decisions 2026-09-24): every running task plus tasks paused
 // today that are still open. Each row shows the task's total time against its
 // estimate, its work stage and goal. Start, pause, finish and cancel use the
@@ -25,7 +28,7 @@ const blockStart = block => new Date(`${block.date}T${block.start_time}`).getTim
 const oneOf = count => count % 10 === 1 && count % 100 !== 11;
 // «2 идут · 1 на паузе»: the header counts only running work, the widget names both parts.
 const summaryOf = rows => { const running = rows.filter(row => row.running).length, paused = rows.length - running;
-  return [running && `${running} ${oneOf(running) ? 'идёт' : 'идут'}`, paused && `${paused} на паузе`].filter(Boolean).join(' · '); };
+  return [running && `${running} ${oneOf(running) ? uiCopy("идёт") : uiCopy("идут")}`, paused && uiCopy.format("{0} на паузе", paused)].filter(Boolean).join(' · '); };
 const closedTask = row => !row || row.archived || row.completed || ['done', 'skipped', 'missed'].includes(row.status_extra || row.status);
 const errorText = error => (typeof error === 'string' ? error : error?.message) || '';
 let sequence = 0;
@@ -34,14 +37,14 @@ let sequence = 0;
 export function formatWorkTime(seconds) {
   const total = Math.max(0, Math.floor(Number(seconds) || 0));
   if (total < 3600) return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
-  return `${Math.floor(total / 3600)} ч ${String(Math.floor(total % 3600 / 60)).padStart(2, '0')} мин`;
+  return uiCopy.format("{0} ч {1} мин", Math.floor(total / 3600), String(Math.floor(total % 3600 / 60)).padStart(2, '0'));
 }
 const pad = value => String(value).padStart(2, '0');
 /** A live clock against an estimate: «12:34 / 60 мин», «1:05:12» without one. */
 export function formatAgainstEstimate(seconds, estimate) {
   const total = Math.max(0, Math.floor(Number(seconds) || 0)), hours = Math.floor(total / 3600);
   const clock = `${hours ? `${hours}:` : ''}${pad(Math.floor(total % 3600 / 60))}:${pad(total % 60)}`;
-  return estimate > 0 ? `${clock} / ${estimate} мин` : clock;
+  return estimate > 0 ? uiCopy.format("{0} / {1} мин", clock, estimate) : clock;
 }
 function readHidden(raw) {
   try {
@@ -62,10 +65,10 @@ export function mountCalendarInProgress(element, dependencies) {
   let day = dayOf(clock());
   element.classList.add('calendar-in-progress');
   element.innerHTML = `<section class="cip-card" aria-labelledby="${prefix}-title" data-cip-card>
-    <div class="cip-heading" data-cip-heading><h2 id="${prefix}-title" tabindex="-1" data-cip-title>Текущие задачи</h2><span class="cip-summary" data-cip-count></span></div>
+    <div class="cip-heading" data-cip-heading><h2 id="${prefix}-title" tabindex="-1" data-cip-title>${uiCopy("Текущие задачи")}</h2><span class="cip-summary" data-cip-count></span></div>
     <div class="cip-lists" data-cip-list></div>
-    <div class="cip-footer" data-cip-footer><button type="button" class="cip-launch" data-cip-launch aria-haspopup="dialog"><span aria-hidden="true">＋</span> Запустить ещё</button></div>
-    <div class="cip-empty" data-cip-empty hidden><span class="cip-empty-text" data-cip-empty-text>Ничего не запущено</span><button type="button" class="cip-start" data-cip-launch data-cip-empty-launch aria-haspopup="dialog"><span class="cip-glyph" aria-hidden="true">${ICONS.play}</span>Запустить</button><button type="button" class="cip-start" data-cip-retry hidden>Повторить</button></div>
+    <div class="cip-footer" data-cip-footer><button type="button" class="cip-launch" data-cip-launch aria-haspopup="dialog"><span aria-hidden="true">＋</span> ${uiCopy("Запустить ещё")}</button></div>
+    <div class="cip-empty" data-cip-empty hidden><span class="cip-empty-text" data-cip-empty-text>${uiCopy("Ничего не запущено")}</span><button type="button" class="cip-start" data-cip-launch data-cip-empty-launch aria-haspopup="dialog"><span class="cip-glyph" aria-hidden="true">${ICONS.play}</span>${uiCopy("Запустить")}</button><button type="button" class="cip-start" data-cip-retry hidden>${uiCopy("Повторить")}</button></div>
     <p class="cip-message" data-cip-message role="alert" aria-live="polite"></p>
     <p class="cip-announcement" data-cip-announcement role="status" aria-live="polite"></p>
   </section>`;
@@ -92,7 +95,7 @@ export function mountCalendarInProgress(element, dependencies) {
     const seconds = secondsOf(row, now), minutes = Math.floor(seconds / 60);
     const over = row.estimate > 0 && minutes > row.estimate;
     const text = formatAgainstEstimate(seconds, row.estimate);
-    const label = `${row.running ? 'Идёт' : 'На паузе'}. Учтено ${row.estimate > 0 ? `${minutes} из ${row.estimate} мин${over ? ', больше оценки' : ''}` : `${minutes} мин`}`;
+    const label = uiCopy.format("{0}. Учтено {1}", row.running ? uiCopy("Идёт") : uiCopy("На паузе"), row.estimate > 0 ? uiCopy.format("{0} из {1} мин{2}", minutes, row.estimate, over ? uiCopy(", больше оценки") : '') : uiCopy.format("{0} мин", minutes));
     return { text, label, over, ratio: row.estimate > 0 ? Math.min(1, seconds / 60 / row.estimate) : 0 };
   }
   function paintTime(row, time, bar, now) {
@@ -111,10 +114,10 @@ export function mountCalendarInProgress(element, dependencies) {
       if (!row?.running) continue;
       paintTime(row, item.querySelector('[data-cip-time]'), item.querySelector('[data-cip-progress]'), now);
       const chip = item.querySelector('.cip-stage');
-      if (chip && row.stageState) chip.title = row.stageTimeAvailable ? stageTitle(row, now) : 'Время по стадиям недоступно';
+      if (chip && row.stageState) chip.title = row.stageTimeAvailable ? stageTitle(row, now) : uiCopy("Время по стадиям недоступно");
       const stageTime = item.querySelector('.cip-stage-time');
       if (stageTime && row.stageState && row.stageTimeAvailable) {
-        const text = `Учтено на этапе ${formatAgainstEstimate(stageSeconds({ blocks: row.stageBlocks, log: row.stageLog, stage: row.stageState.stage, now }).get(row.stageState.stage) || 0, 0)}`;
+        const text = uiCopy.format("Учтено на этапе {0}", formatAgainstEstimate(stageSeconds({ blocks: row.stageBlocks, log: row.stageLog, stage: row.stageState.stage, now }).get(row.stageState.stage) || 0, 0));
         if (stageTime.textContent !== text) stageTime.textContent = text;
       }
     }
@@ -131,25 +134,25 @@ export function mountCalendarInProgress(element, dependencies) {
     chip.classList.toggle('is-deleted', state.deleted);
     chip.innerHTML = state.waiting ? WAIT_ICON : '';
     // «Жду ответа» is the small hourglass before the stage name.
-    chip.append(node('span', 'cip-stage-prefix', 'Этап:'), node('span', 'cip-stage-text', label || (state.waiting ? 'Жду ответа' : 'Не выбран')));
-    chip.title = row.stageTimeAvailable ? stageTitle(row) : 'Время по стадиям недоступно';
+    chip.append(node('span', 'cip-stage-prefix', uiCopy("Этап:")), node('span', 'cip-stage-text', label || (state.waiting ? uiCopy("Жду ответа") : uiCopy("Не выбран"))));
+    chip.title = row.stageTimeAvailable ? stageTitle(row) : uiCopy("Время по стадиям недоступно");
     group.append(chip);
     if (state.next) {
       const next = node('button', 'cip-stage-next'); next.type = 'button'; next.innerHTML = ARROW;
-      next.append(node('span', 'cip-stage-next-label', 'Дальше'));
+      next.append(node('span', 'cip-stage-next-label', uiCopy("Дальше")));
       next.dataset.cipControl = 'stage-next'; next.dataset.cipKey = row.key; next.disabled = busy;
-      next.title = `${state.stage ? 'Дальше' : 'Начать'}: ${state.next.title}`;
-      next.setAttribute('aria-label', `Следующая стадия «${state.next.title}»: ${row.title}`);
+      next.title = `${state.stage ? uiCopy("Дальше") : uiCopy("Начать")}: ${state.next.title}`;
+      next.setAttribute('aria-label', uiCopy.format("Следующая стадия «{0}»: {1}", state.next.title, row.title));
       group.append(next);
     }
     return group;
   }
   function confirmPanel(row) {
-    const panel = node('div', 'cip-confirm'); panel.setAttribute('role', 'group'); panel.setAttribute('aria-label', `Отменить запуск: ${row.title}`);
+    const panel = node('div', 'cip-confirm'); panel.setAttribute('role', 'group'); panel.setAttribute('aria-label', uiCopy.format("Отменить запуск: {0}", row.title));
     const minutes = Math.floor(row.starts.reduce((sum, start) => sum + Math.max(0, clock() - start), 0) / 60000);
-    const text = node('span', 'cip-confirm-text', `Время этого запуска${minutes ? ` (${minutes} мин)` : ''} не сохранится.`);
-    const yes = node('button', 'cip-confirm-yes', 'Отменить запуск'); yes.type = 'button'; yes.dataset.cipControl = 'cancel-confirm'; yes.dataset.cipKey = row.key; yes.disabled = busy;
-    const no = node('button', 'cip-confirm-no', 'Оставить'); no.type = 'button'; no.dataset.cipControl = 'cancel-keep'; no.dataset.cipKey = row.key; no.disabled = busy;
+    const text = node('span', 'cip-confirm-text', uiCopy.format("Время этого запуска{0} не сохранится.", minutes ? uiCopy.format(" ({0} мин)", minutes) : ''));
+    const yes = node('button', 'cip-confirm-yes', uiCopy("Отменить запуск")); yes.type = 'button'; yes.dataset.cipControl = 'cancel-confirm'; yes.dataset.cipKey = row.key; yes.disabled = busy;
+    const no = node('button', 'cip-confirm-no', uiCopy("Оставить")); no.type = 'button'; no.dataset.cipControl = 'cancel-keep'; no.dataset.cipKey = row.key; no.disabled = busy;
     panel.append(text, yes, no);
     return panel;
   }
@@ -162,25 +165,25 @@ export function mountCalendarInProgress(element, dependencies) {
     const head = node('div', 'cip-line cip-title-line'); head.append(open);
     const content = node('div', 'cip-content'); content.append(head);
     const meta = node('div', 'cip-line cip-meta');
-    meta.append(node('span', 'cip-state', row.running ? 'Идёт' : 'На паузе'));
+    meta.append(node('span', 'cip-state', row.running ? uiCopy("Идёт") : uiCopy("На паузе")));
     if (row.stageState) {
       meta.append(stageControl(row));
       const elapsed = stageSeconds({ blocks: row.stageBlocks, log: row.stageLog, stage: row.stageState.stage, now: clock() }).get(row.stageState.stage) || 0;
-      const stageTime = node('span', 'cip-stage-time', row.stageTimeAvailable ? `Учтено на этапе ${formatAgainstEstimate(elapsed, 0)}` : 'Время этапа недоступно');
-      if (!row.stageTimeAvailable) stageTime.title = 'Не удалось загрузить время по стадиям';
+      const stageTime = node('span', 'cip-stage-time', row.stageTimeAvailable ? uiCopy.format("Учтено на этапе {0}", formatAgainstEstimate(elapsed, 0)) : uiCopy("Время этапа недоступно"));
+      if (!row.stageTimeAvailable) stageTime.title = uiCopy("Не удалось загрузить время по стадиям");
       meta.append(stageTime);
     }
-    if (row.goal) { const goal = node('span', 'cip-goal', row.goal); goal.title = `Цель: ${row.goal}`; meta.append(goal); }
+    if (row.goal) { const goal = node('span', 'cip-goal', row.goal); goal.title = uiCopy.format("Цель: {0}", row.goal); meta.append(goal); }
     content.append(meta);
     const meter = node('div', 'cip-time-meter');
-    meter.append(node('span', 'cip-time-label', row.estimate > 0 ? 'Всего / оценка' : 'Затрачено'), time);
+    meter.append(node('span', 'cip-time-label', row.estimate > 0 ? uiCopy('Всего / оценка') : uiCopy('Затрачено')), time);
     let bar = null;
     if (row.estimate > 0) { bar = node('span', 'cip-progress'); bar.dataset.cipProgress = ''; bar.setAttribute('aria-hidden', 'true'); bar.append(node('span')); meter.append(bar); }
     paintTime(row, time, bar);
     const actions = node('div', 'cip-actions');
-    const toggle = iconButton(`cip-toggle${row.running ? ' is-running' : ''}`, ICONS[row.running ? 'pause' : 'play'], row.running ? 'Пауза' : 'Продолжить', 'toggle', row);
-    const finish = iconButton('cip-finish', ICONS.check, 'Готово', 'finish', row);
-    const more = iconButton('cip-more', MORE_ICON, 'Действия', 'menu', row);
+    const toggle = iconButton(`cip-toggle${row.running ? ' is-running' : ''}`, ICONS[row.running ? 'pause' : 'play'], row.running ? uiCopy("Пауза") : uiCopy("Продолжить"), 'toggle', row);
+    const finish = iconButton('cip-finish', ICONS.check, uiCopy("Готово"), 'finish', row);
+    const more = iconButton('cip-more', MORE_ICON, uiCopy("Действия"), 'menu', row);
     more.setAttribute('aria-haspopup', 'menu'); more.setAttribute('aria-expanded', String(menu?.key === row.key && menu.control === 'menu'));
     actions.append(finish, more);
     item.append(toggle, content, meter, actions);
@@ -213,7 +216,7 @@ export function mountCalendarInProgress(element, dependencies) {
     card.classList.toggle('is-empty', empty);
     card.setAttribute('aria-busy', String(busy || rows === null));
     q('heading').hidden = empty; list.hidden = empty; q('footer').hidden = empty || !!dependencies.embedded; q('empty').hidden = !empty;
-    q('empty-text').textContent = rows === null ? (failed ? 'Не удалось загрузить задачи в работе.' : 'Загружаем задачи в работе…') : 'Ничего не запущено';
+    q('empty-text').textContent = rows === null ? (failed ? uiCopy("Не удалось загрузить задачи в работе.") : uiCopy("Загружаем задачи в работе…")) : uiCopy("Ничего не запущено");
     q('empty-launch').hidden = rows === null; q('retry').hidden = !(rows === null && failed);
     q('count').textContent = empty ? '' : summaryOf(visibleRows);
     element.querySelectorAll('[data-cip-launch], [data-cip-retry]').forEach(button => { button.disabled = busy; });
@@ -237,7 +240,7 @@ export function mountCalendarInProgress(element, dependencies) {
       wantedList.push(ul);
     }
     syncChildren(list, wantedList);
-    message.textContent = feedback?.error ? feedback.text : (rows && failed ? 'Не удалось обновить список. Показано последнее состояние.' : '');
+    message.textContent = feedback?.error ? feedback.text : (rows && failed ? uiCopy("Не удалось обновить список. Показано последнее состояние.") : '');
     announcement.textContent = feedback?.announcement || '';
     message.setAttribute('role', feedback?.error || (rows && failed) ? 'alert' : 'status');
     // An open menu follows its re-rendered trigger or closes with its row.
@@ -305,7 +308,7 @@ export function mountCalendarInProgress(element, dependencies) {
       else record = schedules.find(value => String(value.source_id ?? value.id) === row.source_id);
       // Paused work leaves the widget once its task is finished, skipped or removed.
       if (!row.running && (closedTask(record) || (row.source_type === 'note' && record?.status_extra !== 'task'))) continue;
-      row.title = record?.title || row.title || 'Без названия';
+      row.title = record?.title || row.title || uiCopy("Без названия");
       if (row.source_type === 'schedule' && !row.running && record?.block_id != null) row.lastBlockId = Number(record.block_id);
       row.record = { ...(record || {}), source_type: row.source_type, source_id: row.source_id, title: row.title, is_active: row.running, has_work: true, completion_date: row.completion_date, date: record?.date ?? (row.source_type === 'note' ? null : row.completion_date) };
       // Closed work of every day comes from the task row; events fall back to today's blocks.
@@ -388,16 +391,16 @@ export function mountCalendarInProgress(element, dependencies) {
         await invoke('complete_calendar_task', { id: row.source_id });
       } else {
         const blockId = row.blockIds[0] ?? row.lastBlockId ?? Number(row.lastBlock?.id);
-        if (!Number.isFinite(blockId)) throw new Error('Не удалось найти запись о работе. Обнови экран.');
+        if (!Number.isFinite(blockId)) throw new Error(uiCopy("Не удалось найти запись о работе. Обнови экран."));
         await invoke('finish_task_block', { blockId });
       }
       feedback = { announcement: {
-        pause: 'Задача на паузе.', start: 'Задача снова в работе.', finish: 'Задача завершена.',
-        stop: 'Задача остановлена и убрана из «В работе». Время сохранено.', cancel: 'Запуск отменён. Его время не учтено.',
-        advance: `Этап: ${action.label}.`,
+        pause: uiCopy("Задача на паузе."), start: uiCopy("Задача снова в работе."), finish: uiCopy("Задача завершена."),
+        stop: uiCopy("Задача остановлена и убрана из «В работе». Время сохранено."), cancel: uiCopy("Запуск отменён. Его время не учтено."),
+        advance: uiCopy.format("Этап: {0}.", action.label),
       }[action.kind] };
     } catch (error) {
-      feedback = { error: true, text: errorText(error) || 'Не удалось выполнить действие. Обнови экран и повтори.' };
+      feedback = { error: true, text: errorText(error) || uiCopy("Не удалось выполнить действие. Обнови экран и повтори.") };
       control = { finish: 'finish', stop: 'menu', cancel: 'menu', advance: 'stage-next' }[action.kind] || 'toggle';
     } finally {
       busy = false;
@@ -467,11 +470,11 @@ export function mountCalendarInProgress(element, dependencies) {
   }
   function openActionsMenu(row, trigger, point = null) {
     const items = [
-      { id: 'stop', label: 'Остановить', hint: row.running ? 'Пауза, время сохранится' : 'Убрать из «В работе»', run: () => void act(row, { kind: 'stop' }) },
-      ...(row.running ? [{ id: 'cancel', label: 'Отменить запуск', hint: 'Не учитывать этот запуск', run: () => { closeMenu(false); confirming = row.key; render(); findControl(row.key, 'cancel-confirm')?.focus({ preventScroll: true }); } }] : []),
-      { id: 'open', label: 'Открыть', run: () => { closeMenu(false); openTask?.(row.record, () => restore(row.key, 'menu')); } },
+      { id: 'stop', label: uiCopy("Остановить"), hint: row.running ? uiCopy("Пауза, время сохранится") : uiCopy("Убрать из «В работе»"), run: () => void act(row, { kind: 'stop' }) },
+      ...(row.running ? [{ id: 'cancel', label: uiCopy("Отменить запуск"), hint: uiCopy("Не учитывать этот запуск"), run: () => { closeMenu(false); confirming = row.key; render(); findControl(row.key, 'cancel-confirm')?.focus({ preventScroll: true }); } }] : []),
+      { id: 'open', label: uiCopy("Открыть"), run: () => { closeMenu(false); openTask?.(row.record, () => restore(row.key, 'menu')); } },
     ];
-    openMenu(row, 'menu', trigger, items, `Действия: ${row.title}`, point);
+    openMenu(row, 'menu', trigger, items, uiCopy.format("Действия: {0}", row.title), point);
   }
   const onClick = event => {
     const button = event.target.closest('button');

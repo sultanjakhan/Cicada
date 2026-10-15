@@ -2,6 +2,10 @@
 export function startMvpSyncRefresh({ window, invoke, listen, requestSync, requestRefresh }) {
   const document = window.document;
   let disposed = false, checking = false, checkAgain = false, revision = null, unlisten;
+  // A minimized startup can render local rows before the first status read.
+  // Its first visible revision cannot prove those rows are current: background
+  // receives may have completed without a renderer event in the meantime.
+  let refreshOnFirstForeground = document.visibilityState !== 'visible';
   async function check() {
     if (disposed || document.visibilityState !== 'visible') return;
     if (checking) { checkAgain = true; return; }
@@ -17,7 +21,14 @@ export function startMvpSyncRefresh({ window, invoke, listen, requestSync, reque
     } catch { /* Settings show a status read failure when the user opens them. */ }
     finally { checking = false; if (checkAgain && !disposed) { checkAgain = false; void check(); } }
   }
-  const wake = () => { if (document.visibilityState === 'visible') { requestSync(); void check(); } };
+  const wake = () => {
+    if (disposed || document.visibilityState !== 'visible') return;
+    if (refreshOnFirstForeground) {
+      refreshOnFirstForeground = false;
+      requestRefresh({ remote: true });
+    }
+    requestSync(); void check();
+  };
   const received = event => {
     if (disposed) return;
     const payload = event?.payload;

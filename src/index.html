@@ -18,11 +18,11 @@
 #boot-splash { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; background:var(--bg-primary,#fff); color:var(--text-secondary,#888); font:14px -apple-system,system-ui,sans-serif; z-index:99999; transition:opacity 180ms ease; }
 #boot-splash .spinner { width:30px; height:30px; border:3px solid var(--border-color,#e6e6e6); border-top-color:var(--accent-blue,#3b82f6); border-radius:50%; animation:hanni-spin .7s linear infinite; }
 </style>
-<div id="boot-splash"><div class="spinner"></div><span>Загрузка…</span></div>
+<div id="boot-splash"><div class="spinner"></div></div>
 <div id="app-body">
   <div id="mobile-header">
-    <button id="mobile-hamburger" aria-label="Открыть меню"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
-    <span id="mobile-title">Календарь</span>
+    <button id="mobile-hamburger" aria-label="Cicada"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
+    <span id="mobile-title"></span>
   </div>
   <div id="tab-bar"><div class="hanni-brand"><img src="./app-icon.svg" alt="Cicada" width="32" height="32"></div><div id="tab-list"></div><div id="tab-bar-bottom"></div></div>
   <div id="content-area"><div id="view-calendar" class="view active"><div id="calendar-content" class="tab-content"></div></div></div>

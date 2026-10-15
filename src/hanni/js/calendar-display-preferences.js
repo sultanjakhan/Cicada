@@ -1,9 +1,10 @@
+export const normalizeLanguage = value => value === 'en' ? 'en' : 'ru';
 ﻿const KEY='calendar_preferences_v1';
-export const DEFAULT_CALENDAR_PREFERENCES=Object.freeze({version:1,first_day:'mon',default_view:'День',density:'comfortable',showCompleted:false,recommendationsEnabled:true,recommendTasks:true,recommendRoutines:true});
-export function normalizeCalendarPreferences(value={}){if(!value||typeof value!=='object'||Array.isArray(value))throw Error('Повреждённые настройки календаря не были применены.');const p={...DEFAULT_CALENDAR_PREFERENCES,...value};if(!['mon','sun'].includes(p.first_day)||!['Месяц','Неделя','День','Список'].includes(p.default_view)||!['comfortable','compact'].includes(p.density)||!['showCompleted','recommendationsEnabled','recommendTasks','recommendRoutines'].every(key=>typeof p[key]==='boolean'))throw Error('Повреждённые настройки календаря не были применены.');return {...p,default_view:p.default_view==='Список'?'Месяц':p.default_view,version:1};}
+export const DEFAULT_CALENDAR_PREFERENCES=Object.freeze({version:1,language:'ru',first_day:'mon',default_view:'День',density:'comfortable',showCompleted:false,recommendationsEnabled:true,recommendTasks:true,recommendRoutines:true});
+export function normalizeCalendarPreferences(value={}){if(!value||typeof value!=='object'||Array.isArray(value))throw Error('Повреждённые настройки календаря не были применены.');const p={...DEFAULT_CALENDAR_PREFERENCES,...value};if(!['mon','sun'].includes(p.first_day)||!['Месяц','Неделя','День','Список'].includes(p.default_view)||!['comfortable','compact'].includes(p.density)||!['showCompleted','recommendationsEnabled','recommendTasks','recommendRoutines'].every(key=>typeof p[key]==='boolean'))throw Error('Повреждённые настройки календаря не были применены.');return {...p,language:normalizeLanguage(p.language),default_view:p.default_view==='Список'?'Месяц':p.default_view,version:1};}
 const nativeTransport=(command,args)=>window.__TAURI__?.core?.invoke(command,args)||Promise.reject(new Error('Требуется установленная Cicada.'));
 export async function loadCalendarPreferences(transport=nativeTransport){const raw=await transport('get_ui_state',{key:KEY});if(raw!==null&&raw!==undefined&&raw!==''){try{return normalizeCalendarPreferences(JSON.parse(raw));}catch(error){throw error;}}const [first_day,default_view]=await Promise.all([transport('get_app_setting',{key:'tab_calendar_first_day'}),transport('get_app_setting',{key:'tab_calendar_default_view'})]);return normalizeCalendarPreferences({...DEFAULT_CALENDAR_PREFERENCES,first_day:first_day??'mon',default_view:default_view??DEFAULT_CALENDAR_PREFERENCES.default_view});}
-const preferenceLabels={first_day:'Первый день недели',default_view:'Вид при запуске',density:'Плотность интерфейса',showCompleted:'Показывать отмеченные рутины',recommendationsEnabled:'Предлагать, чем заняться',recommendTasks:'Предлагать задачи',recommendRoutines:'Предлагать рутины'};
+const preferenceLabels={language:'Язык интерфейса',first_day:'Первый день недели',default_view:'Вид при запуске',density:'Плотность интерфейса',showCompleted:'Показывать отмеченные рутины',recommendationsEnabled:'Предлагать, чем заняться',recommendTasks:'Предлагать задачи',recommendRoutines:'Предлагать рутины'};
 export async function saveCalendarPreferences(value,transport=nativeTransport,options={}){
   const preferences=normalizeCalendarPreferences(value);
   const raw=await transport('get_ui_state',{key:KEY});
@@ -13,13 +14,13 @@ export async function saveCalendarPreferences(value,transport=nativeTransport,op
   if(base){
     for(const key of Object.keys(DEFAULT_CALENDAR_PREFERENCES)){
       const mine=preferences[key]!==base[key], remote=current[key]!==base[key];
-      if(mine&&remote&&current[key]!==preferences[key]) throw Error(`Настройка «${preferenceLabels[key]||key}» изменилась на другом устройстве. Закрой и открой настройки, чтобы загрузить актуальные значения.`);
+      if(mine&&remote&&current[key]!==preferences[key]) throw Error(`Настройка «${preferenceLabels[key]||key}» изменилась. Закрой и открой настройки, чтобы загрузить актуальные значения.`);
       if(mine) next[key]=preferences[key];
     }
   } else Object.assign(next,preferences);
   const saved=normalizeCalendarPreferences(next);
   try{await transport('set_ui_state',{key:KEY,value:JSON.stringify(saved),expectedValue:raw??''});}
-  catch(error){if(String(error?.message||error).includes('mvp_sync_stale_ui_state'))throw Error('Настройки изменились на другом устройстве. Нажми «Сохранить» ещё раз.');throw error;}
+  catch(error){if(String(error?.message||error).includes('mvp_sync_stale_ui_state'))throw Error('Настройки изменились. Нажми «Сохранить» ещё раз.');throw error;}
   return saved;
 }
 
@@ -33,7 +34,7 @@ export async function saveRecommendationPreferences(value, transport=nativeTrans
   for(const key of ['recommendationsEnabled','recommendTasks','recommendRoutines']) if(Object.hasOwn(value,key)) next[key]=requested[key];
   try { await transport('set_ui_state',{key:KEY,value:JSON.stringify(next),expectedValue:raw??''}); }
   catch(error) {
-    if(String(error?.message||error).includes('mvp_sync_stale_ui_state')) throw Error('Настройки изменились на другом устройстве. Нажми «Сохранить» ещё раз.');
+    if(String(error?.message||error).includes('mvp_sync_stale_ui_state')) throw Error('Настройки изменились. Нажми «Сохранить» ещё раз.');
     throw error;
   }
   return next;

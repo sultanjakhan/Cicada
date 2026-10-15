@@ -1,0 +1,12 @@
+[package]
+name = "activity-summary-harness"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+chrono = { version = "=0.4.45", default-features = false, features = ["std"] }
+uuid = { version = "=1.26.1", default-features = false, features = ["std"] }
+
+[[test]]
+name = "activity-summary"
+path = "harness.rs"
