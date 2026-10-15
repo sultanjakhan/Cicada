@@ -380,12 +380,15 @@ export async function loadTabBlockEditor(tabId, subTab, contentEl, defaultBlocks
 }
 
 export function blocksToPlainText(data) {
+  const extractItems = items => (Array.isArray(items) ? items : []).flatMap(item => {
+    if (typeof item === 'string') return [item];
+    if (!item || typeof item !== 'object') return [];
+    return [item.content || item.text || '', ...extractItems(item.items)];
+  });
   return (data?.blocks || []).map(b => {
-    if (b.type === 'checklist') return (b.data.items || []).map(i => i.text).join('\n');
-    if (b.type === 'list') {
-      const extractItems = (items) => (items || []).map(i => typeof i === 'string' ? i : i.content || i.text || '').join('\n');
-      return extractItems(b.data.items);
-    }
+    if (b.type === 'checklist' || b.type === 'list') return extractItems(b.data?.items).join('\n');
+    if (b.type === 'code') return b.data?.code || '';
+    if (b.type === 'quote') return [b.data?.text, b.data?.caption].filter(Boolean).join('\n');
     return b.data?.text || '';
   }).join('\n');
 }

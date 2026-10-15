@@ -3,6 +3,8 @@ const test = require('node:test'), assert = require('node:assert/strict'), fs = 
 const { JSDOM } = require('jsdom');
 const data = source => 'data:text/javascript;base64,' + Buffer.from(source).toString('base64');
 const read = name => fs.readFileSync(path.resolve(__dirname, '../src/hanni/js', name + '.js'), 'utf8');
+const utilsSource = read('utils');
+const plainTextHelper = utilsSource.slice(utilsSource.indexOf('export function blocksToPlainText('), utilsSource.indexOf('export function migrateTextToBlocks(')).replace('export function', 'function');
 const tick = async () => { for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve)); };
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 let sequence = 0;
@@ -26,7 +28,7 @@ async function setup(t, { realEditor = false, fixtureRows = null } = {}) {
   w.HTMLDialogElement.prototype.showModal = function () { this.open = true; this.querySelector('button')?.focus(); };
   w.HTMLDialogElement.prototype.close = function () { this.open = false; this.dispatchEvent(new w.Event('close')); };
   const source = read('calendar-notes').replace(/^import .*state\.js';\r?$/m, 'const defaultInvoke = () => { throw new Error("Inject API"); };')
-    .replace(/^import .*utils\.js';\r?$/m, 'const initBlockEditor = () => {}; const escapeHtml = value => String(value).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); const blocksToPlainText = value => (value?.blocks || []).map(b => b.data.text || b.data.code || "").join("\\n");')
+    .replace(/^import .*utils\.js';\r?$/m, () => 'const initBlockEditor = () => {}; const escapeHtml = value => String(value).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); ' + plainTextHelper)
     .replace("'./calendar-dialog.js'", JSON.stringify(data(read('calendar-dialog'))))
     .replace("'./block-editor-security.js'", () => JSON.stringify(data(read('block-editor-security'))));
   const module = await import(data(source) + '#' + sequence++);
@@ -153,6 +155,43 @@ test('security: missing purifier renders rich markup as literal text', async t =
   for (const block of modal.querySelectorAll('.ce-block__content')) assertSafeNoteDom(block);
   assert.ok(modal.querySelector('.ce-paragraph').textContent.includes('<img'));
   assert.equal(modal.querySelectorAll('.ce-paragraph a').length, 0);
+});
+
+test('a rich code-only note can save without a title and keeps its searchable text', async t => {
+  const x = await setup(t, { realEditor: true });
+  Object.assign(x.rows[1], { title: '', content: '', content_blocks: JSON.stringify({ blocks: [{ type: 'code', data: { code: 'const answer = 42;\nreturn answer;' } }] }) });
+  const modal = await x.open(2); await x.editors.at(-1).isReady; await tick(); await x.save(modal);
+  assert.equal(x.rows[1].content, 'const answer = 42;\nreturn answer;');
+  assert.equal(x.rows[1].title, 'const answer = 42;');
+  assert.equal(JSON.parse(x.rows[1].content_blocks).blocks[0].data.code, x.rows[1].content);
+});
+
+test('saving rich lists and quotes includes nested items and captions in searchable content', async t => {
+  const x = await setup(t);
+  const blocks = [{ type: 'list', data: { style: 'unordered', items: [{ content: 'Parent', items: [{ content: 'Child', items: [{ content: 'Grandchild', items: [] }] }] }] } },
+    { type: 'quote', data: { text: 'Quotation', caption: 'Attribution' } }];
+  Object.assign(x.rows[1], { content_blocks: JSON.stringify({ blocks }) });
+  const modal = await x.open(2); await x.save(modal);
+  assert.equal(x.rows[1].content, 'Parent\nChild\nGrandchild\nQuotation\nAttribution');
+  const search = x.root.querySelector('[data-search]'); search.value = 'Grandchild'; search.dispatchEvent(new x.w.Event('input'));
+  assert.equal(x.root.querySelectorAll('.cp-note-card').length, 1);
+});
+
+test('malformed rich blocks expose the saved plain text read-only instead of failing to open the note', async t => {
+  const x = await setup(t);
+  for (const blocks of [[null], ['invalid block'], [{ type: 'paragraph' }], [{ type: 'paragraph', data: [] }]]) {
+    const original = JSON.stringify({ blocks }); x.rows[1].content_blocks = original;
+    const modal = await x.open(2);
+    assert.ok(modal, 'the note must remain readable even when individual blocks are malformed');
+    assert.equal(modal.querySelector('[name=content]').value, 'Rich original');
+    assert.equal(modal.querySelector('[name=content]').readOnly, true);
+    assert.equal(modal.querySelector('[type=submit]').disabled, true);
+    assert.match(modal.querySelector('[data-dialog-error]').textContent, /форматирование/);
+    await x.save(modal); await x.close(modal);
+    assert.equal(x.rows[1].content_blocks, original);
+  }
+  assert.equal(x.editors.length, 0);
+  assert.equal(x.calls.some(call => call.name === 'update_note'), false);
 });
 
 test('catalog mounts without a separate create button, excludes other tabs, and shared entry opens the note editor without a phantom draft', async t => {

@@ -80,14 +80,17 @@ function linkedTaskRows(skill, getTasks) {
  */
 export async function mountGoalDevelopment(element, { invoke, goal, onCreateTask, getTasks = () => [], onOpenTask, embedded = false } = {}) {
   if (!element || !invoke || !goal?.id) throw new Error('Не хватает цели или native API.');
-  let disposed = false, state = emptyDevelopmentState(), error = '', skillSearch = '', localStageId; const childDialogs = new Set();
+  let disposed = false, revision = 0, state = emptyDevelopmentState(), error = '', skillSearch = '', localStageId; const childDialogs = new Set();
   const goalId = String(goal.id);
   const current = () => !disposed && element.isConnected;
   const load = async () => {
+    const own = ++revision;
     const raw = await invoke('get_ui_state', { key: DEVELOPMENT_STATE_KEY });
+    if (disposed || own !== revision) return false;
     state = normalizeDevelopmentState(raw);
     const ext = extension(state, goalId);
     if (localStageId === undefined || (localStageId !== null && !ext.stages.some(stage => stage.id === localStageId))) localStageId = ext.activeStageId || null;
+    return true;
   };
   const mutate = async change => {
     const work = developmentWriteQueue.catch(() => {}).then(async () => {
@@ -96,6 +99,8 @@ export async function mountGoalDevelopment(element, { invoke, goal, onCreateTask
       const next = structuredClone(fresh); const draft = extension(next, goalId); next.goals[goalId] = draft; change(draft, next);
       const normalized = normalizeDevelopmentState(next);
       await invoke('set_ui_state', { key: DEVELOPMENT_STATE_KEY, value: JSON.stringify(normalized), expectedValue: raw ?? '' });
+      // Reads started before this acknowledgement must not redraw an old snapshot.
+      revision++;
       state = normalized; error = ''; dispatchChange(goalId); render();
     });
     developmentWriteQueue = work;
@@ -130,7 +135,18 @@ export async function mountGoalDevelopment(element, { invoke, goal, onCreateTask
     const ext = extension(state, goalId); const active = ext.stages.find(stage => stage.id === localStageId) || null; const allowed = active ? new Set(active.skillIds) : null; const list = ext.skills.filter(skill => !allowed || allowed.has(skill.id)); let picker;
     const api = openDialog({ title: 'Навык на сейчас', hint: 'Выбор не меняет текущую задачу. Сначала выбери тему, затем навык.', submitLabel: 'Применить',
       draw: () => `<div data-focus-topic-picker></div>`,
-      submit: async () => mutate(draft => { const id = picker.values[0] || ''; const target = draft.stages.find(stage => stage.id === localStageId); if (target) target.focusId = target.skillIds.includes(id) ? id : null; else draft.focusId = draft.skills.some(skill => skill.id === id) ? id : null; }),
+      submit: async () => mutate(draft => {
+        const id = picker.values[0] || '';
+        if (id) assertUnchangedRecord(draft.skills.find(skill => skill.id === id), list.find(skill => skill.id === id));
+        if (active) {
+          const target = draft.stages.find(stage => stage.id === active.id);
+          assertUnchangedRecord(target, active);
+          target.focusId = id || null;
+        } else {
+          assertUnchangedRecord({ focusId: draft.focusId }, { focusId: ext.focusId });
+          draft.focusId = id || null;
+        }
+      }),
     });
     picker = mountTopicFirstPicker(api.body.querySelector('[data-focus-topic-picker]'), list, { values:[active ? active.focusId : ext.focusId].filter(Boolean) }); return api;
   };
@@ -181,7 +197,7 @@ export async function mountGoalDevelopment(element, { invoke, goal, onCreateTask
       submit:async data=>mutate(draft=>{const id=String(data.get('stage')||'');if(id&&!draft.stages.some(stage=>stage.id===id))throw Error('Этот этап уже недоступен.');localStageId=id||null;draft.activeStageId=id||null;}),
     });
   };
-  return { dispose: () => { disposed = true; for (const api of childDialogs) api.dispose(); childDialogs.clear(); element.replaceChildren(); }, refresh: async () => { await load(); render(); }, openFocusPicker:focusPicker, openStagePicker:chooseStage, openStageEditor:id=>stageEditor(extension(state,goalId).stages.find(stage=>stage.id===id)||null) };
+  return { dispose: () => { disposed = true; revision++; for (const api of childDialogs) api.dispose(); childDialogs.clear(); element.replaceChildren(); }, refresh: async () => { if (await load()) render(); }, openFocusPicker:focusPicker, openStagePicker:chooseStage, openStageEditor:id=>stageEditor(extension(state,goalId).stages.find(stage=>stage.id===id)||null) };
 }
 
 /**

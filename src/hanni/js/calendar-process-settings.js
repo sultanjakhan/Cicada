@@ -110,19 +110,33 @@ export function mountProcessSettings(element, { invoke, setPending = () => {} })
     if (target) { target.setAttribute('aria-invalid', 'true'); target.focus(); }
   }
   async function load() {
-    failed = false; status.textContent = copy("Загружаем процессы…"); showError(''); updateActions();
+    if (disposed || busy) return false;
+    // Cancel rereads the stored version. Keep the existing snapshot and draft
+    // until that read succeeds, and prevent another action from racing it.
+    const replacingDraft = !!saved;
+    busy = true; failed = false;
+    status.textContent = copy("Загружаем процессы…"); showError('');
+    if (replacingDraft) setPending(true);
+    render();
     try {
       const value = await readProcessState(invoke);
-      if (disposed) return;
+      if (disposed) return false;
       saved = value; draft = clone(value.state.processes);
       status.textContent = `${draft.length === 1 ? copy("Один процесс") : `${copy("Процессов: ")}${draft.length}`}.`;
+      return true;
     } catch (cause) {
-      if (disposed) return;
-      failed = true; saved = null; draft = [];
+      if (disposed) return false;
+      failed = true;
       status.textContent = '';
       showError(copy(cause?.message) || copy("Не удалось загрузить процессы."));
+      return false;
+    } finally {
+      busy = false;
+      if (!disposed) {
+        if (replacingDraft) setPending(false);
+        render();
+      }
     }
-    render();
   }
   /** Validates the draft; an error is shown at its field, which gets focus. */
   function check() {
@@ -174,7 +188,11 @@ export function mountProcessSettings(element, { invoke, setPending = () => {} })
   // The buttons are disabled once saved: focus moves to the confirmation.
   status.tabIndex = -1;
   q('save').addEventListener('click', () => { void save().then(ok => { if (ok && !disposed) status.focus({ preventScroll: true }); }); });
-  q('cancel').addEventListener('click', () => { void load().then(() => { if (!disposed) { status.textContent = copy("Изменения отменены."); element.querySelector('[data-control="process-title"]')?.focus(); } }); });
+  q('cancel').addEventListener('click', () => { void load().then(ok => {
+    if (disposed) return;
+    if (ok) { status.textContent = copy("Изменения отменены."); element.querySelector('[data-control="process-title"]')?.focus(); }
+    else { error.tabIndex = -1; error.focus({ preventScroll: true }); }
+  }); });
   q('retry').addEventListener('click', () => void load());
   void load();
   return { dispose() { disposed = true; }, isDirty: dirty, check: () => !!check(), save, get ready() { return !!saved; } };

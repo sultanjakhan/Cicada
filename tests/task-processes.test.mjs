@@ -122,7 +122,7 @@ function editor(t, { stored = null, fail = null } = {}) {
   const host = dom.window.document.createElement('section'); dom.window.document.body.append(host);
   const data = { raw: stored, writes: [], pending: [] };
   const invoke = async (command, args) => {
-    if (command === 'get_ui_state') return data.raw;
+    if (command === 'get_ui_state') return data.read ? data.read() : data.raw;
     if (command === 'set_ui_state') {
       if (fail) throw fail;
       if ((data.raw ?? '') !== args.expectedValue) throw 'mvp_sync_stale_ui_state';
@@ -240,6 +240,47 @@ test('the editor refuses an empty name at its field and reports a save from anot
   assert.equal(x.stageControl(DEFAULT_PROCESS_ID, 'requirements', 'stage-title').value, 'ТЗ', 'the edit stays in the form');
   x.$('[data-processes-cancel]').click(); await settle();
   assert.ok(x.process('p-report'), 'Cancel loads the newer version');
+});
+
+test('a failed Cancel read preserves the process draft and never claims cancellation succeeded', async t => {
+  const x = editor(t); await settle();
+  x.type(x.stageControl(DEFAULT_PROCESS_ID, 'requirements', 'stage-title'), 'Draft requirements');
+  x.data.read = async () => { throw Error('read unavailable'); };
+  x.$('[data-processes-cancel]').click(); await settle();
+  assert.equal(x.stageControl(DEFAULT_PROCESS_ID, 'requirements', 'stage-title')?.value, 'Draft requirements');
+  assert.equal(x.api.isDirty(), true);
+  assert.equal(x.api.ready, true, 'the previous saved snapshot remains available');
+  assert.equal(x.$('[data-processes-error]').hidden, false);
+  assert.match(x.$('[data-processes-error]').textContent, /read unavailable/);
+  assert.doesNotMatch(x.$('[data-processes-status]').textContent, /Изменения отменены/);
+  assert.equal(x.$('[data-processes-save]').disabled, false, 'the retained draft can still be saved');
+  assert.deepEqual(x.data.writes, []);
+  x.data.read = null;
+  x.$('[data-processes-cancel]').click(); await settle();
+  assert.equal(x.stageControl(DEFAULT_PROCESS_ID, 'requirements', 'stage-title').value, 'Требования');
+  assert.equal(x.api.isDirty(), false);
+  assert.equal(x.$('[data-processes-status]').textContent, 'Изменения отменены.');
+});
+
+test('Cancel waits for its read before enabling edits, Save or another Cancel', async t => {
+  const x = editor(t); await settle();
+  x.type(x.stageControl(DEFAULT_PROCESS_ID, 'requirements', 'stage-title'), 'Draft requirements');
+  let finishRead, reads = 0;
+  x.data.read = () => { reads++; return new Promise(resolve => { finishRead = resolve; }); };
+  x.$('[data-processes-cancel]').click(); await settle();
+  assert.equal(x.process(DEFAULT_PROCESS_ID).disabled, true, 'the draft cannot change while it is being replaced');
+  assert.equal(x.$('[data-processes-save]').disabled, true);
+  assert.equal(x.$('[data-processes-cancel]').disabled, true);
+  assert.equal(x.$('[data-processes-add]').disabled, true);
+  assert.deepEqual(x.data.pending, [true], 'the parent dialog cannot close or start a competing save');
+  x.$('[data-processes-cancel]').click();
+  assert.equal(await x.api.save(), false);
+  assert.equal(reads, 1);
+  assert.deepEqual(x.data.writes, []);
+  finishRead(x.data.raw); await settle();
+  assert.deepEqual(x.data.pending, [true, false]);
+  assert.equal(x.process(DEFAULT_PROCESS_ID).disabled, false);
+  assert.equal(x.api.isDirty(), false);
 });
 
 
