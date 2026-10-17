@@ -33,3 +33,24 @@ MCP connection.
 
 The bundled MCP server is intentionally local-only. Public plugin submission
 would require a public HTTPS MCP endpoint; this package is distributed as a local bundle, not an HTTPS registry plugin.
+
+## Complete personal queue reads
+
+`cicada_list_tasks({})` retains the legacy response and ordering (up to 100,
+`tasks` and `hasMore` only). Opt in with `{"pageSize": 50}`; each response adds
+`nextCursor`. Pass that string as `cursor` with the next request, until it is
+null. Page sizes are integers 1–100, default 100; cursors are versioned opaque
+continuations, not task identities to invent or edit. No task content is listed.
+
+Paged reads order eligible personal task IDs by binary ascending order, independent
+of mutable timestamps. Work/corporate and archived records are excluded before
+the page bound. An unchanged queue is exhausted exactly once; this is a live read,
+not a persisted snapshot. If tasks are inserted, deleted, archived or reclassified
+during traversal, restart from the first page to discover the changed queue.
+Deduplicate subsequent investigations by the real task UUID. No read changes
+records, timers, review data, reports or operation receipts.
+
+Requires the matching native application implementation and refreshed MCP tool
+metadata. Updating only an installed 0.4.8 client cannot enable server pagination;
+old native servers reject nonempty list bodies. Preserved 0.4.7/0.4.8 bundles are
+not rewritten. This source change is not an installed-device acceptance claim.
