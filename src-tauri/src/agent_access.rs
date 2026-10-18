@@ -123,6 +123,52 @@ fn apply_report(state:&mut Value,b:&Value,input:Report)->Result<Report,String> {
     let order=state["order"].as_u64().unwrap()+1;state["order"]=json!(order);
     state["runs"][&r.run_id]=json!({"runId":r.run_id,"taskKey":r.task_key,"agent":r.agent,"model":r.model,"provider":r.provider,"report":r,"receivedOrder":order});Ok(r)
 }
+// Keyset pagination is opt-in; the empty legacy request is unchanged.
+// Scan eligibility before LIMIT so corporate/archived records never consume a page.
+// SQL trim uses the Unicode White_Space set, matching personal() / Rust str::trim.
+const PERSONAL_PAGE_SQL: &str = r#"
+WITH RECURSIVE tags(id,rest,tag) AS (
+ SELECT id,tags || ',', '' FROM items WHERE kind='task' AND archived=0
+ UNION ALL
+ SELECT id,substr(rest,instr(rest,',')+1),trim(substr(rest,1,instr(rest,',')-1),char(9,10,11,12,13,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288))
+ FROM tags WHERE rest!=''
+), eligible AS (
+ SELECT id FROM tags GROUP BY id
+ HAVING max(tag='task-sphere:personal')=1
+ AND max(lower(tag) LIKE 'jira%' OR lower(tag) LIKE 'investlink%' OR lower(tag)='task-sphere:work')=0
+)
+SELECT id FROM eligible WHERE id > ?1 COLLATE BINARY ORDER BY id COLLATE BINARY LIMIT ?2
+"#;
+#[derive(Deserialize)]
+#[serde(rename_all="camelCase",deny_unknown_fields)]
+struct ListPage { #[serde(default="default_page_size")] page_size: u64, cursor: Option<String> }
+fn default_page_size()->u64 {100}
+fn list_page(conn:&Connection,body:Value)->Result<Value,String> {
+    if !body.is_object()||body.get("cursor").is_some_and(|v|!v.is_string()){return Err(err())}
+    let page:ListPage=serde_json::from_value(body).map_err(|_|err())?;
+    if !(1..=100).contains(&page.page_size){return Err(err())}
+    let after=match page.cursor {
+        None=>String::new(),
+        Some(cursor)=>{
+            let raw=cursor.strip_prefix("v1:").ok_or_else(err)?;
+            if raw.len()>160{return Err(err())}
+            let id=String::from_utf8(hex::decode(raw).map_err(|_|err())?).map_err(|_|err())?;
+            if !token(&id,1,80)||hex::encode(id.as_bytes())!=raw{return Err(err())}
+            id
+        }
+    };
+    let mut query=conn.prepare(PERSONAL_PAGE_SQL).map_err(|_|err())?;
+    let ids=query.query_map(rusqlite::params![after,page.page_size+1],|r|r.get::<_,String>(0)).map_err(|_|err())?
+        .collect::<Result<Vec<_>,_>>().map_err(|_|err())?;
+    let has_more=ids.len()>page.page_size as usize;
+    let selected=&ids[..ids.len().min(page.page_size as usize)];
+    let rows=selected.iter().map(|id|{
+        let mut task=personal(conn,id)?;
+        task.as_object_mut().unwrap().remove("content");Ok(task)
+    }).collect::<Result<Vec<_>,String>>()?;
+    let next=if has_more {Some(format!("v1:{}",hex::encode(selected.last().unwrap().as_bytes())))}else{None};
+    Ok(json!({"tasks":rows,"hasMore":has_more,"nextCursor":next}))
+}
 pub(crate) fn execute(conn:&mut Connection,mut req:Request)->Result<Value,String> {
     if req.version!=1||!token(&req.operation_id,8,100){return Err(err())}
     if req.action=="task-command" {
@@ -134,12 +180,13 @@ pub(crate) fn execute(conn:&mut Connection,mut req:Request)->Result<Value,String
         if req.body.as_object().is_none_or(|b|b.len()!=1){return Err(err())}
         return personal(conn,req.body["taskId"].as_str().ok_or_else(err)?);
     }
-    if req.action=="list" {
+    if req.action=="list" && req.body==json!({}) {
         if req.body!=json!({}){return Err(err())}
         let mut query=conn.prepare("SELECT id FROM items WHERE kind='task' AND archived=0 AND instr(',' || tags || ',',',task-sphere:personal,')>0 ORDER BY updated_at DESC,id LIMIT 101").map_err(|_|err())?;
         let ids=query.query_map([],|r|r.get::<_,String>(0)).map_err(|_|err())?.collect::<Result<Vec<_>,_>>().map_err(|_|err())?;
         let rows=ids.iter().take(100).filter_map(|id|personal(conn,id).ok()).map(|mut task|{task.as_object_mut().unwrap().remove("content");task}).collect::<Vec<_>>();return Ok(json!({"tasks":rows,"hasMore":ids.len()>100}));
     }
+    if req.action=="list" { return list_page(conn,req.body); }
     if !["begin","report"].contains(&req.action.as_str()){return Err(err())}
     if req.action=="begin" {
         let mut input:Begin=serde_json::from_value(req.body).map_err(|_|err())?;
@@ -215,6 +262,30 @@ pub(crate) fn parse(raw:&[u8])->Result<Request,String>{
     fn report(run:&str,status:&str,seq:u64)->Value{json!({"runId":run,"sequence":seq,"taskKey":null,"agent":"codex","model":null,"provider":null,"stage":null,"status":status,"skillIds":[],"mcpCalls":null,"inputTokens":null,"outputTokens":null})}
     fn call(c:&mut Connection,op:&str,action:&str,body:Value)->Result<Value,String>{execute(c,Request{version:1,operation_id:op.into(),action:action.into(),body})}
     fn begin(c:&mut Connection)->Value{call(c,"test-begin-001","begin",json!({"title":"Synthetic Ж 文 task","content":"Synthetic only","taskId":null,"projects":["cicada"],"report":report("test-run-001","running",1)})).unwrap()}
+    #[test]fn paginated_personal_queue_and_legacy_are_readonly(){
+        let mut c=conn();
+        let seed=begin(&mut c);let source=seed["task"]["id"].as_str().unwrap().to_string();
+        // Clone only fixture fields into synthetic records; no real profile is opened.
+        for n in 0..137 {
+            c.execute("INSERT INTO items(id,kind,title,notes,tags,archived,completed,version,status,duration_minutes,created_at,updated_at) SELECT ?1,kind,title,notes,tags,archived,completed,version,status,duration_minutes,created_at,updated_at FROM items WHERE id=?2",rusqlite::params![format!("task-{n:04}"),source]).unwrap();
+        }
+        let legacy=call(&mut c,"page-legacy-001","list",json!({})).unwrap();
+        assert_eq!(legacy["tasks"].as_array().unwrap().len(),100);
+        assert_eq!(legacy["hasMore"],true);assert!(legacy.get("nextCursor").is_none());
+        let mut seen=std::collections::BTreeSet::new();let mut body=json!({"pageSize":17});
+        loop {
+            let page=call(&mut c,"page-readonly-001","list",body).unwrap();
+            let rows=page["tasks"].as_array().unwrap();assert!(rows.len()<=17);
+            for row in rows {assert!(row.get("content").is_none());assert!(seen.insert(row["id"].as_str().unwrap().to_string()));}
+            if page["nextCursor"].is_null(){assert_eq!(page["hasMore"],false);break}
+            body=json!({"pageSize":17,"cursor":page["nextCursor"]});
+        }
+        assert_eq!(seen.len(),138);
+        assert_eq!(c.query_row("SELECT count(*) FROM timeline_blocks",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+        for body in [json!([17,null]),json!({"pageSize":0}),json!({"pageSize":101}),json!({"pageSize":true}),json!({"cursor":"v1:00"}),json!({"unknown":1})] {
+            assert!(call(&mut c,"page-invalid-001","list",body).is_err());
+        }
+    }
     #[test]fn begin_is_atomic_replay_and_compatible_with_native_exchange(){
         let mut c=conn();let a=begin(&mut c);let b=begin(&mut c);assert_eq!(a,b);
         assert_eq!(c.query_row("SELECT count(*) FROM items",[],|r|r.get::<_,i64>(0)).unwrap(),1);

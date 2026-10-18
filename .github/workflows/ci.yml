@@ -18,6 +18,16 @@ jobs:
       - run: python -B scripts/check-public-history.py
       - run: python -B -m unittest discover -s tests -p 'test*privacy*.py'
       - run: python -B -m unittest discover -s tests -p test_public_history.py
+      - name: Package matching Cicada MCP client
+        run: python3 scripts/package-cicada-plugin.py
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: cicada-local-tasks-${{ github.sha }}
+          path: .local/plugin-package/**/*
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 3
   mac:
     runs-on: macos-latest
     steps:

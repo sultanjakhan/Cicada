@@ -119,7 +119,7 @@ IDENTITY = {'type':'string', 'minLength':8, 'maxLength':100}
 def tools_for(app):
     if app == 'cicada':
         return [
-            {'name':'cicada_list_tasks','description':'Read-only list of up to 100 personal native tasks; no corporate records.', 'inputSchema':schema({},[])},
+            {'name':'cicada_list_tasks','description':'Read-only personal tasks. Empty arguments retain the legacy first page. For complete traversal pass pageSize (1-100), then nextCursor as cursor until null; restart if the queue changes. No corporate records.', 'inputSchema':schema({'pageSize':{'type':'integer','minimum':1,'maximum':100},'cursor':{'type':'string','pattern':'^v1:[0-9a-f]{2,160}$','maxLength':163}},[])},
             {'name':'cicada_read_task','description':'Read-only snapshot of one exact personal native task UUID.', 'inputSchema':schema({'taskId':TEXT},['taskId'])},
             {'name':'cicada_begin_ai_work','description':'Register work the user has authorized and the calling AI is already performing. Reuse an existing task UUID when known; a null taskId may create one only within that authorization. Atomically writes a binding and observed running report; it does not launch a model, start a human timer, or complete the task. Keep operationId after timeout.',
              'inputSchema':schema({'operationId':IDENTITY,'title':TEXT,'content':TEXT,'taskId':{'type':['string','null']},'expectedVersion':{'type':['integer','null']},'projects':{'type':'array','items':TEXT},'report':REPORT},['operationId','title','content','taskId','expectedVersion','projects','report'])},
@@ -142,7 +142,21 @@ def invoke(app, bridge, name, args):
     definition = next((item for item in tools_for(app) if item['name'] == name), None)
     if not definition or type(args) is not dict: raise ValueError('unsupported tool')
     contract = definition['inputSchema']
-    if set(args) != set(contract['properties']): raise ValueError('unsupported tool fields')
+    if name == 'cicada_list_tasks':
+        if set(args) - set(contract['properties']): raise ValueError('unsupported tool fields')
+        if 'pageSize' in args and (type(args['pageSize']) is not int or not 1 <= args['pageSize'] <= 100):
+            raise ValueError('invalid page size')
+        if 'cursor' in args:
+            cursor = args['cursor']
+            if type(cursor) is not str or not cursor.startswith('v1:') or not 2 <= len(cursor[3:]) <= 160:
+                raise ValueError('invalid cursor')
+            try:
+                identity = bytes.fromhex(cursor[3:]).decode('ascii')
+            except (ValueError, UnicodeError):
+                raise ValueError('invalid cursor') from None
+            if identity.encode().hex() != cursor[3:] or not identity or any(not (c.isascii() and (c.isalnum() or c in '_-')) for c in identity):
+                raise ValueError('invalid cursor')
+    elif set(args) != set(contract['properties']): raise ValueError('unsupported tool fields')
     if name == 'cicada_task_command':
         if args.get('command') not in TASK_COMMANDS or type(args.get('arguments')) is not dict:
             raise ValueError('unsupported task command')
