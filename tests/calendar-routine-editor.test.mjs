@@ -7,18 +7,31 @@ globalThis.CustomEvent = bootstrap.window.CustomEvent; globalThis.localStorage =
 globalThis.marked = { Marked: class { use() {} parse(value) { return value; } } };
 const { openCalendarRoutineEditor } = await import('../src/hanni/js/calendar-routine-editor.js');
 
-function setup(t, plan = null, savePlan = async fields => ({ state: { plans: [fields] } })) {
+function setup(t, plan = null, savePlan = async fields => ({ state: { plans: [fields] } }), onSaved = () => {}) {
   const dom = new JSDOM('<!doctype html><main></main>', { url: 'https://fixture.invalid' });
   dom.window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   dom.window.HTMLDialogElement.prototype.close = function () { this.open = false; this.dispatchEvent(new dom.window.Event('close')); };
   t.after(() => dom.window.close());
   const calls = [];
   const store = { savePlan: async (...args) => { calls.push(args); return savePlan(...args); } };
-  const dialog = openCalendarRoutineEditor({ document: dom.window.document, store, plan });
+  const dialog = openCalendarRoutineEditor({ document: dom.window.document, store, plan, onSaved });
   return { dom, dialog, calls };
 }
 function flush() { return new Promise(resolve => setImmediate(resolve)); }
 async function submit(dialog) { dialog.form.dispatchEvent(new dialog.modal.ownerDocument.defaultView.Event('submit', { bubbles: true, cancelable: true })); await flush(); await flush(); }
+
+test('an acknowledged new routine closes despite a failed observer and cannot be created twice', async t => {
+  const { dom, dialog, calls } = setup(t, null, async fields => ({state:{plans:[fields]}}), () => {throw Error('synthetic observer failure');});
+  let notifications = 0;
+  dom.window.addEventListener('hanni:recurring-changed', () => {notifications++;});
+  dialog.body.querySelector('[data-routine-title]').value = 'Persist exactly once';
+  await submit(dialog);
+  assert.equal(calls.length, 1);
+  assert.equal(dialog.modal.isConnected, false, 'a saved routine is not presented as a failed save');
+  assert.equal(notifications, 1, 'other observers can refresh from the persisted state');
+  await submit(dialog);
+  assert.equal(calls.length, 1, 'a detached stale form cannot save again');
+});
 
 test('routine editor starts compact and saves a single action without extra steps', async t => {
   const { dialog, calls } = setup(t);

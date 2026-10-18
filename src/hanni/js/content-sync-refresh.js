@@ -43,7 +43,9 @@ export function startMvpSyncRefresh({ window, invoke, listen, requestSync, reque
   window.addEventListener('pageshow', wake);
   document.addEventListener('visibilitychange', wake);
   window.addEventListener('hanni:sync-check-status', check);
-  const timer = window.setInterval(wake, 30_000);
+  // The native worker owns idle network pulls and socket recovery. Renderer
+  // ticks only observe revisions; returning to the window still wakes sync.
+  const timer = window.setInterval(check, 30_000);
   void check(); requestSync();
   return () => {
     if (disposed) return;
