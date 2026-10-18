@@ -27,3 +27,8 @@ marker. Setup/Skip persists the choice; existing databases never receive a new
 prompt. No Git initialization, private remote creation, file-content import,
 sync, credentials or DEV DPAPI database movement occurs. localGit is an explicit
 preference, not a repository creation action.
+
+The folder preferences above remain metadata-only. Published task content is
+selected separately in the existing Imported work registry section, using its
+bounded, revocable exact-file adapter described in work-registry-import.md.
+Saving a folder path never authorizes that reader, scanning or automatic import.
