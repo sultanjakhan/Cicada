@@ -144,7 +144,7 @@ SELECT id FROM eligible WHERE id > ?1 COLLATE BINARY ORDER BY id COLLATE BINARY 
 struct ListPage { #[serde(default="default_page_size")] page_size: u64, cursor: Option<String> }
 fn default_page_size()->u64 {100}
 fn list_page(conn:&Connection,body:Value)->Result<Value,String> {
-    if body.get("cursor").is_some_and(|v|!v.is_string()){return Err(err())}
+    if !body.is_object()||body.get("cursor").is_some_and(|v|!v.is_string()){return Err(err())}
     let page:ListPage=serde_json::from_value(body).map_err(|_|err())?;
     if !(1..=100).contains(&page.page_size){return Err(err())}
     let after=match page.cursor {
@@ -282,7 +282,7 @@ pub(crate) fn parse(raw:&[u8])->Result<Request,String>{
         }
         assert_eq!(seen.len(),138);
         assert_eq!(c.query_row("SELECT count(*) FROM timeline_blocks",[],|r|r.get::<_,i64>(0)).unwrap(),0);
-        for body in [json!({"pageSize":0}),json!({"pageSize":101}),json!({"pageSize":true}),json!({"cursor":"v1:00"}),json!({"unknown":1})] {
+        for body in [json!([17,null]),json!({"pageSize":0}),json!({"pageSize":101}),json!({"pageSize":true}),json!({"cursor":"v1:00"}),json!({"unknown":1})] {
             assert!(call(&mut c,"page-invalid-001","list",body).is_err());
         }
     }
