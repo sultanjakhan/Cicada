@@ -48,7 +48,8 @@ fn signed(c: &Connection, source: &Connection, config: &RelayConfig) -> Input {
     }).collect();
     let snapshot = Snapshot {records,watermarks:vec![
         Watermark {device_id:"synthetic-mac".into(),client_seq:8,server_seq:8},
-        Watermark {device_id:"synthetic-pc".into(),client_seq:2,server_seq:100}]};
+        Watermark {device_id:"synthetic-pc".into(),client_seq:2,server_seq:100}],
+        conflicts:db::checkpoint_conflicts(source).unwrap().into_iter().map(|v| serde_json::from_value(v).unwrap()).collect()};
     let bytes = serde_json::to_vec(&snapshot).unwrap();
     let mut input = Input {v:1,schema:DOMAIN.into(),operation_id:"00000000-0000-4000-8000-000000000001".into(),
         metadata: Metadata {profile:config.profile.clone(),endpoint:config.endpoint.trim_end_matches('/').into(),key_id:config.key_id.clone(),
@@ -72,16 +73,16 @@ fn unchanged(c: &Connection) -> Value {
     json!({"tasks":task_digest(c).unwrap(),"cursor":scalar(c,"SELECT receive_seq FROM content_sync_state").unwrap(),
         "dirty":scalar(c,"SELECT count(*) FROM content_sync_dirty").unwrap(),"sequence":scalar(c,"SELECT seq FROM sqlite_sequence WHERE name='content_sync_outbox'").unwrap(),
         "receipt":db::get_setting_checked(c,RECEIPT).unwrap(),"enabled":db::get_setting_checked(c,"content_sync_enabled").unwrap(),
-        "day":db::day_ledger(c).unwrap(),"namespace":crate::agent_history::load(c).unwrap()["sourceNamespace"]})
+        "day":db::day_ledger(c).unwrap(),"conflicts":db::checkpoint_conflicts(c).unwrap(),"namespace":crate::agent_history::load(c).unwrap()["sourceNamespace"]})
 }
 #[test]
 fn python_contract_hmac_vector_matches() {
     let config=cfg("synthetic-mac");let c=Connection::open_in_memory().unwrap();crate::init_schema(&c).unwrap();
     c.execute_batch("CREATE TABLE content_sync_state(scope TEXT);INSERT INTO content_sync_state VALUES('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');").unwrap();
     let mut input=signed(&c,&source(),&config);
-    let snapshot=Snapshot {records:vec![],watermarks:vec![Watermark {device_id:"synthetic-mac".into(),client_seq:8,server_seq:8},Watermark {device_id:"synthetic-pc".into(),client_seq:1,server_seq:100}]};
+    let snapshot=Snapshot {records:vec![],watermarks:vec![Watermark {device_id:"synthetic-mac".into(),client_seq:8,server_seq:8},Watermark {device_id:"synthetic-pc".into(),client_seq:1,server_seq:100}],conflicts:vec![]};
     let bytes=serde_json::to_vec(&snapshot).unwrap();input.metadata.payload_bytes=bytes.len();input.metadata.payload_sha256=hash(&bytes);input.metadata.tasks_semantic_sha256=hash(b"[]");input.payload_base64url=B64.encode(bytes);resign(&mut input,&config);
-    assert_eq!(input.hmac,"e3cddea748dadeae8ef01af9df520cb61f1f6191afa238372e12b8d946779ca6");
+    assert_eq!(input.hmac,"ecb27c2f4d4583ab792a29b1c48d2f1d120769d9c66927bb892f2f1e1f9fa56c");
 }
 #[test]
 fn restores_pc_content_preserves_mac_identity_and_never_enqueues_old_dirty() {
@@ -130,4 +131,28 @@ fn invalid_dependency_is_rolled_back_and_replay_does_not_replace_later_work() {
     let fields=field_maps(&snapshot).unwrap();assert!(replace(&mut c,&input,&snapshot,&fields,&config,&json!({})).is_err());assert_eq!(unchanged(&c),before,"the actual replacement transaction also rolls back");
     let valid=signed(&c,&source(),&config);let file=write_input(&path,&valid);let receipt=restore(&mut c,&path,&file).unwrap();task(&c,"later-local-task");
     let before=unchanged(&c);assert_eq!(restore(&mut c,&path,&file).unwrap(),receipt);assert_eq!(unchanged(&c),before);
+}
+#[test]
+fn retains_pc_quarantine_without_acceptance_and_rejects_invalid_or_equivocated_conflicts() {
+    let source=source();
+    let row=checkpoint::snapshot_row(&source,"mvp_records",&json!(["items",["pc-task"]]).to_string(),"synthetic-pc").unwrap();
+    let mut data:Value=serde_json::from_str(row.f["data"].as_str().unwrap()).unwrap();data["value"]["title"]=json!("Synthetic conflicting title");
+    db::checkpoint_merge_conflict(&source,&json!({"id":row.f["id"],"stamp":row.f["updated_at"],"writer":"synthetic-conflicting","data":data.to_string()})).unwrap();
+    let (_dir,path,mut c,config)=mac();let input=signed(&c,&source,&config);let file=write_input(&path,&input);restore(&mut c,&path,&file).unwrap();
+    assert_eq!(db::checkpoint_conflicts(&c).unwrap(),db::checkpoint_conflicts(&source).unwrap());
+    assert_eq!(scalar(&c,"SELECT count(*) FROM mvp_sync_conflicts").unwrap(),1);
+    assert_eq!(scalar(&c,"SELECT count(*) FROM mvp_sync_conflict_resolutions").unwrap(),0);
+    assert_eq!(scalar(&c,"SELECT completed FROM items WHERE id='pc-task'").unwrap(),0);
+    assert_eq!(scalar(&c,"SELECT count(*) FROM local_review_state WHERE task_id='pc-task'").unwrap(),0);
+    for case in ["malformed","equivocation"] {
+        let (_dir,path,mut c,config)=mac();let mut input=signed(&c,&source,&config);
+        let mut snapshot:Snapshot=serde_json::from_slice(&B64.decode(&input.payload_base64url).unwrap()).unwrap();
+        if case=="malformed" {snapshot.conflicts[0].data="{}".into();} else {
+            let mut alternate:Conflict=serde_json::from_value(serde_json::to_value(&snapshot.conflicts[0]).unwrap()).unwrap();
+            let mut data:Value=serde_json::from_str(&alternate.data).unwrap();data["value"]["title"]=json!("Another synthetic variant");alternate.data=data.to_string();snapshot.conflicts.push(alternate);
+        }
+        let bytes=serde_json::to_vec(&snapshot).unwrap();input.metadata.payload_bytes=bytes.len();input.metadata.payload_sha256=hash(&bytes);input.payload_base64url=B64.encode(bytes);resign(&mut input,&config);
+        let before=unchanged(&c);let file=write_input(&path,&input);assert!(restore(&mut c,&path,&file).is_err(),"{case}");assert_eq!(unchanged(&c),before);
+        let fields=field_maps(&snapshot).unwrap();assert!(replace(&mut c,&input,&snapshot,&fields,&config,&json!({})).is_err());assert_eq!(unchanged(&c),before);
+    }
 }

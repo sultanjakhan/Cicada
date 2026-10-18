@@ -54,9 +54,18 @@ struct Watermark {
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct Conflict {
+    id: String,
+    stamp: String,
+    writer: String,
+    data: String,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Snapshot {
     records: Vec<WireRecord>,
     watermarks: Vec<Watermark>,
+    conflicts: Vec<Conflict>,
 }
 fn canonical(input: &Input) -> Result<Vec<u8>, String> {
     let m = &input.metadata;
@@ -96,10 +105,11 @@ fn authenticated(input: &Input, cfg: &RelayConfig, scope: &str) -> Result<Snapsh
         return Err(INVALID.into());
     }
     let snapshot: Snapshot = serde_json::from_slice(&bytes).map_err(|_| INVALID)?;
-    if snapshot.records.len() > 100_000 || snapshot.watermarks.is_empty() || snapshot.watermarks.len() > 64
+    if snapshot.records.len() > 100_000 || snapshot.conflicts.len() > 100_000 || snapshot.watermarks.is_empty() || snapshot.watermarks.len() > 64
         || !snapshot.records.windows(2).all(|v| v[0].id < v[1].id)
         || !snapshot.watermarks.windows(2).all(|v| v[0].device_id < v[1].device_id)
         || snapshot.records.iter().any(|r| r.data.len() > RECORD_LIMIT)
+        || snapshot.conflicts.iter().any(|r| r.data.len() > RECORD_LIMIT)
         || snapshot.watermarks.iter().any(|w| !super::super::opaque_id(&w.device_id)
             || !(1..=9_007_199_254_740_991).contains(&w.client_seq) || !(1..=m.receive_seq).contains(&w.server_seq))
         || snapshot.watermarks.iter().map(|w| w.server_seq).max() != Some(m.receive_seq)
@@ -179,6 +189,9 @@ fn replace(conn: &mut Connection, input: &Input, snapshot: &Snapshot, fields: &[
         if waiting.is_empty() || waiting.len() == before { break; }
     }
     if !waiting.is_empty() { return Err("mvp_sync_private_restore_dependency_failed".into()); }
+    for conflict in &snapshot.conflicts {
+        db::checkpoint_merge_conflict(&tx,&serde_json::to_value(conflict).map_err(|_| INVALID)?)?;
+    }
     if task_digest(&tx)? != input.metadata.tasks_semantic_sha256 {
         return Err("mvp_sync_private_restore_projection_mismatch".into());
     }
