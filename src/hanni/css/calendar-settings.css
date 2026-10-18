@@ -399,3 +399,10 @@
 .registry-field-map th, .registry-field-map td { padding:6px; text-align:left; vertical-align:top; overflow-wrap:anywhere; border-bottom:1px solid var(--border-default); }
 .registry-source-settings > button { min-height:48px; margin:4px 8px 4px 0; }
 .registry-source-settings :is(button,textarea,summary):focus-visible { outline:2px solid var(--text-primary); outline-offset:3px; }
+
+@media(max-width:500px) {
+  .registry-field-map tr { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.5fr); border-bottom:1px solid var(--border-default); }
+  .registry-field-map th, .registry-field-map td { border-bottom:0; padding:5px; }
+  .registry-field-map th:last-child, .registry-field-map td:last-child { grid-column:1 / -1; }
+  .registry-field-map td:first-child { font-weight:600; }
+}

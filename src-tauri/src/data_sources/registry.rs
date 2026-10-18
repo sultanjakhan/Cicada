@@ -78,7 +78,7 @@ pub fn choose_registry_source(window:tauri::WebviewWindow)->Result<Option<Select
    let dialog:IFileOpenDialog=CoCreateInstance(&FileOpenDialog,None,CLSCTX_INPROC_SERVER).map_err(|_|"source_chooser_unavailable")?;
    dialog.SetOptions(FOS_FILEMUSTEXIST|FOS_PATHMUSTEXIST|FOS_FORCEFILESYSTEM|FOS_DONTADDTORECENT|FOS_NOCHANGEDIR).map_err(|_|"source_chooser_unavailable")?;
    dialog.SetFileTypes(&[COMDLG_FILTERSPEC{pszName:w!("Published work registry JSON"),pszSpec:w!("*.json")}]).map_err(|_|"source_chooser_unavailable")?;
-   if let Err(error)=dialog.Show(window.hwnd().map_err(|_|"source_chooser_unavailable")?){if error.code().0==0x800704C7u32 as i32{return Ok(None);}return Err("source_selection_denied".into());}
+   if let Err(error)=dialog.Show(Some(window.hwnd().map_err(|_|"source_chooser_unavailable")?)){if error.code().0==0x800704C7u32 as i32{return Ok(None);}return Err("source_selection_denied".into());}
    let item=dialog.GetResult().map_err(|_|"source_selection_denied")?;let raw=item.GetDisplayName(SIGDN_FILESYSPATH).map_err(|_|"source_selection_denied")?;
    let selected=PCWSTR(raw.0).to_string();CoTaskMemFree(Some(raw.0.cast()));let path=PathBuf::from(selected.map_err(|_|"invalid_selected_source")?);
    Ok(Some(grants().lock().map_err(|_|"source_grant_unavailable")?.select(window.label(),&path)?))
