@@ -549,3 +549,11 @@
 .calendar-development [data-dev-stage-active][aria-pressed="true"]:not(:hover):not(:focus-visible) {
   text-decoration-line: none;
 }
+
+/* Keep the existing rounded text actions, with the agreed mobile hit area.
+   Component rules otherwise shrink header/task actions to 44px, pane tabs to
+   40px and Today to 36px. This changes geometry only; their labels and commands stay explicit. */
+.mobile #calendar-content :is(.uni-header-action, .uni-tabs button.uni-tab, .calendar-day-banner button, .calendar-tasks .ct-run) {
+  min-width: 48px;
+  min-height: 48px;
+}
