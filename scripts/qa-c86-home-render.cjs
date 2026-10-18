@@ -25,7 +25,7 @@ const backend=new Function('return function(options){('+base+')({theme:options.t
  window.__TAURI__.core.invoke=async(command,args={})=>{
   window.c86Calls.push({command,args:structuredClone(args)});
   if(command==='get_calendar_tasks')return structuredClone((await prepared).rows);
-  if(command==='get_ui_state'&&args.key==='calendar_task_run_exchange_v1')return structuredClone((await prepared).exchange);
+  if(command==='get_ui_state'&&args.key==='calendar_task_run_exchange_v1'){if(window.c86FailReports)throw Error('Synthetic disconnected report read');return structuredClone((await prepared).exchange);}
   if(command==='get_calendar_task'){const row=(await prepared).rows.find(row=>row.source_id===args.id);if(row)return structuredClone(row);}
   if(command==='shared_task_command'&&args.input?.command==='get'&&args.input.arguments.taskId.startsWith('synthetic-report-task-')){
    const id=args.input.arguments.taskId,index=Number(id.split('-').at(-1));
@@ -55,17 +55,23 @@ async function main(){assert.equal(process.platform,'linux');assert.ok(process.e
   for(const activation of ['mouse','Enter','Space']){
    if(activation==='mouse')await summary.click();else{await summary.focus();await page.keyboard.press(activation);}
    assert.equal(await page.locator('.calendar-ai-reports details').evaluate(n=>n.open),true);
-   if(activation!=='mouse'){const focus=await summary.evaluate(n=>({visible:n.matches(':focus-visible'),width:getComputedStyle(n).outlineWidth}));assert.equal(focus.visible,true);assert.ok(parseFloat(focus.width)>=2);}
+   if(activation!=='mouse'){const focus=await summary.evaluate(n=>({visible:n.matches(':focus-visible'),width:getComputedStyle(n).outlineWidth}));assert.equal(focus.visible,true);assert.ok(parseFloat(focus.width)>=2);if(activation==='Space')await page.screenshot({path:path.join(output,name+'-disclosure-focus.png')});}
    if(count)assert.equal(await page.locator('.calendar-ai-reports li').count(),24);
    await summary.click();assert.equal(await page.locator('.calendar-ai-reports details').evaluate(n=>n.open),false);
   }
   if(count){
-   await summary.click();const open=page.locator('.calendar-ai-reports [data-native-task-id="synthetic-report-task-0"] button');const beforeOpen=await page.evaluate(()=>window.c86Calls.length);await open.click();
+   await summary.click();const open=page.locator('.calendar-ai-reports [data-native-task-id="synthetic-report-task-0"] button');const beforeOpen=await page.evaluate(()=>window.c86Calls.length);await open.focus();await page.keyboard.press('Enter');
    const dialog=page.locator('dialog[open]');await dialog.waitFor();await page.waitForFunction(()=>document.querySelector('.task-result-review')?.textContent.includes('Current synthetic result'));
    assert.match(await dialog.innerText(),/Preserved synthetic history/);assert.equal(await dialog.locator('h2').first().innerText(),await open.innerText());assert.ok((await page.evaluate(start=>window.c86Calls.slice(start),beforeOpen)).some(c=>c.command==='get_calendar_task'&&c.args.id==='synthetic-report-task-0'));
-   await page.screenshot({path:path.join(output,name+'-history.png')});await page.keyboard.press('Escape');await dialog.waitFor({state:'detached'});
+   const audit=dialog.locator('.task-result-review ol');await audit.scrollIntoViewIfNeeded();await page.screenshot({path:path.join(output,name+'-history.png')});
+   const accept=dialog.locator('.task-result-review-actions button').first();assert.equal(await accept.isEnabled(),true);await page.keyboard.press('Tab');await accept.focus();assert.equal(await accept.evaluate(n=>n.matches(':focus-visible')),true);await page.screenshot({path:path.join(output,name+'-review-focus.png')});
+   const refresh=dialog.locator('.task-result-review-actions button').nth(3);await refresh.focus();await page.keyboard.press('Enter');await page.waitForFunction(()=>document.querySelector('.task-result-review')?.getAttribute('aria-busy')==='false');
+   await page.keyboard.press('Escape');await dialog.waitFor({state:'detached'});
    await page.waitForFunction(()=>document.activeElement?.closest('li')?.dataset.nativeTaskId==='synthetic-report-task-0');
    await page.screenshot({path:path.join(output,name+'-expanded.png')});await summary.click();
+   await page.evaluate(()=>{window.c86FailReports=true;window.dispatchEvent(new Event('task-state-changed'));});await page.waitForFunction(()=>document.querySelector('.calendar-ai-reports summary').textContent.includes('Не удалось прочитать отчёты'));
+   assert.equal(await page.locator('.calendar-ai-reports li').count(),0);assert.equal(await page.locator('.calendar-ai-reports details').evaluate(n=>n.open),false);await summary.scrollIntoViewIfNeeded();await page.screenshot({path:path.join(output,name+'-read-error.png')});
+   await page.evaluate(()=>{window.c86FailReports=false;window.dispatchEvent(new Event('task-state-changed'));});await page.waitForFunction(()=>document.querySelector('.calendar-ai-reports')?.querySelectorAll('li').length===24);assert.match(await summary.innerText(),/на приёмке: 6/);
   }
   assert.equal(await page.evaluate(()=>JSON.stringify(window.c86Data)===window.c86OriginalData),true,'task/run/report data unchanged');
   const writes=await page.evaluate(()=>window.c86Calls.filter(c=>!c.command.startsWith('get_')&&!c.command.startsWith('mvp_sync_')&&c.command!=='read_calendar_day'&&!(c.command==='shared_task_command'&&c.args.input.command==='get')));assert.deepEqual(writes,[],'no task/result/timer/storage writes');
