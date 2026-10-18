@@ -23,7 +23,12 @@ jobs:
       - run: python -B -m unittest discover -s tests -p 'test*privacy*.py'
       - run: python -B -m unittest discover -s tests -p test_public_history.py
       - name: Package matching Cicada MCP client
-        run: python3 scripts/package-cicada-plugin.py
+        run: python3 scripts/package-cicada-plugin.py --client-version 0.5.1
+      - name: Check compatible seven-tool MCP client and guarded flat upgrade
+        run: |
+          python -B plugins/cicada-tasks/cicada-local-tasks-0.5.1/tests/test_package.py
+          python -B plugins/cicada-tasks/cicada-local-tasks-0.5.1/tests/test_installer.py
+          python -B plugins/cicada-tasks/test_flat_upgrade.py
       - uses: actions/upload-artifact@v4
         continue-on-error: true
         with:

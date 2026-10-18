@@ -1,8 +1,9 @@
-# Cicada local tasks plugin 0.5.0
+# Cicada local tasks plugin 0.5.1
 
 Portable publication bundle for the local Cicada task MCP package.
 
-- `cicada-local-tasks-0.5.0/` — current self-contained plugin source;
+- `cicada-local-tasks-0.5.1/` — compatible seven-tool client with optional pagination;
+- `cicada-local-tasks-0.5.0/` — preserved five-tool package source;
 - `cicada-local-tasks-0.4.8/` — preserved source of the previous package;
 - `cicada-local-tasks-0.4.7/` — preserved source of the published package;
 - `install.py` — plan/apply installer for a user-selected marketplace and
@@ -66,3 +67,41 @@ preview/apply path to 0.5.0 while preserving the 0.4.8 cache and a source backup
 The 0.5.0 package supports 64 KiB wire envelopes; result text retains the native
 8000-byte limit. Keep the configured original endpoint profile after an
 application data-folder move: the native pipe namespace remains stable.
+
+## Active flat seven-tool helper
+
+The 0.5.1 client preserves exactly the installed seven narrow tool names and
+the six non-list contracts. It adds optional `pageSize` (integer 1–100) and
+`cursor` to `cicada_list_tasks`. Empty `{}` requests and legacy responses remain
+unchanged. No generic mutation or review tool is added. Existing 0.4.7, 0.4.8
+and 0.5.0 package directories are immutable; the application version/feed is
+not updated by this client-only delivery.
+
+For a flat canonical `agent_mcp.py`, updating a marketplace/cache directory is
+insufficient. The existing `upgrade_050.py` now has an explicit flat-helper
+mode. Preview it with the selected installed helper, this 0.5.1 package, the
+installed helper's expected SHA-256, and the reviewed candidate vendor file's
+SHA-256:
+
+```text
+python upgrade_050.py --flat-helper <active-agent_mcp.py> --candidate <0.5.1-package> --expected-helper-sha256 <installed-sha256> --expected-candidate-sha256 <candidate-vendor-sha256>
+```
+
+Apply the same plan with `--apply --backup-root <new-backup-directory>`.
+Only the reviewed seven-tool baseline is accepted. The helper is backed up,
+staged beside the target and replaced after hash checks. Changed, unknown,
+four-tool or symlink targets are rejected. Profile data, MCP configuration,
+native executables, accepted relay channels and marketplace caches are untouched.
+
+Rollback uses the exact installed candidate hash and original backup:
+
+```text
+python upgrade_050.py --flat-helper <active-agent_mcp.py> --expected-helper-sha256 <candidate-vendor-sha256> --rollback-backup <original-backup-directory> --apply --backup-root <new-rollback-backup-directory>
+```
+
+Rollback refuses newer/changed installed bytes. After installation, independently
+refresh MCP metadata, check all seven names, read `{}`, then traverse with
+`pageSize` and returned cursors. A successful cloud fixture check alone is not
+installed-device acceptance. The native task queue must never be seeded for this
+check. `fixtures/seven-tool-baseline.b64` is the supplied generic reference
+source, pinned by SHA-256 in the upgrade tests; it contains no profile records.

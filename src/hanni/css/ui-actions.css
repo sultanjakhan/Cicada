@@ -25,8 +25,6 @@
 }
 .calendar-in-progress :is(.cip-start, .cip-confirm-yes) {
   font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: var(--ui-action-underline-offset);
 }
 .calendar-in-progress button:focus-visible {
   outline: 2px solid var(--ui-action-focus);
@@ -59,10 +57,8 @@
 #calendar-content .calendar-mvp .calv-record-action[data-record-action="start"] {
   color: var(--text-primary);
   font-weight: 600;
-  text-decoration: underline;
-  text-decoration-thickness: var(--ui-action-underline-thickness);
-  text-underline-offset: var(--ui-action-underline-offset);
 }
+#calendar-content .calendar-tasks .ct-run:is(:hover, :focus-visible):not(:disabled),
 #calendar-content .calendar-mvp .calv-record-action:is(:hover, :focus-visible):not(:disabled),
 .calendar-focus__tools button:is(:hover, :focus-visible):not(:disabled),
 .calendar-development .dev-stage-actions > summary:is(:hover, :focus-visible) {
@@ -357,8 +353,8 @@
   border-bottom: 2px solid transparent;
 }
 
-/* Primary and destructive text actions keep hierarchy through weight and
-   semantic color; the visible affordance is still the label underline. */
+/* Primary commands use weight at rest; underlines signal interaction, while
+   workspace navigation retains its persistent selected-tab indicator. */
 :is(
   #calendar-content .calendar-panels button.cp-primary,
   #calendar-content [data-calendar-launch],
@@ -376,8 +372,11 @@
   background: transparent;
   color: var(--text-primary);
   font-weight: 600;
+}
+#calendar-content [data-calendar-launch]:is(:hover, :focus-visible):not(:disabled),
+#calendar-content .calendar-now .calendar-now__primary:is(:hover, :focus-visible):not(:disabled),
+#calendar-content .calendar-today .calendar-next-action__actions > button:first-child:is(:hover, :focus-visible):not(:disabled) {
   text-decoration-line: underline;
-  text-decoration-thickness: var(--ui-action-underline-thickness);
   text-underline-offset: var(--ui-action-underline-offset);
 }
 
@@ -512,9 +511,7 @@
 }
 .calendar-development .dev-stage.is-current strong,
 .calendar-development [data-dev-stage-active][aria-pressed="true"] {
-  text-decoration-line: underline;
-  text-decoration-thickness: var(--ui-action-underline-thickness);
-  text-underline-offset: var(--ui-action-underline-offset);
+  font-weight: 600;
 }
 .calendar-development [data-dev-stage-active][aria-pressed="true"] {
   border-color: transparent;
@@ -542,4 +539,13 @@
 #calendar-content .calendar-now .calendar-now__goal-link > [data-ui="goal-title"],
 #calendar-content .calendar-now .calendar-now__goal-link:is(:hover,:focus-visible):not(:disabled) > [data-ui="goal-title"] {
   text-decoration: none;
+}
+
+/* Filters already expose their selection through weight and the applied-filter
+   summary. Do not make every selected constraint look like another active tab.
+   The explicit current/viewed stage labels serve the same purpose in goals. */
+#calendar-content .calendar-tasks :is(.ct-filters, .ct-grouping, .ct-spheres, .ct-subspheres) button[aria-pressed="true"]:not(:hover):not(:focus-visible),
+#calendar-content .calendar-panels .cp-goals-switch button[aria-pressed="true"]:not(:hover):not(:focus-visible),
+.calendar-development [data-dev-stage-active][aria-pressed="true"]:not(:hover):not(:focus-visible) {
+  text-decoration-line: none;
 }
