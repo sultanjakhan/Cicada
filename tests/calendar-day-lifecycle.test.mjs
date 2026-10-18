@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {JSDOM} from 'jsdom';
 import {mountCalendarDayLifecycle,DAY_PENDING_KEY,DAY_QUARANTINE_KEY,validDayRequest} from '../src/hanni/js/calendar-day-lifecycle.js';
 const tick=async()=>{for(let i=0;i<8;i++)await new Promise(r=>setImmediate(r));};
-function fixture(t,{storage,handler,asyncClose=false,language='ru'}={}){
+function fixture(t,{storage,handler,asyncClose=false,language='ru',planning=true,dayActions=true}={}){
  const dom=new JSDOM('<main></main>',{url:'https://synthetic.test',pretendToBeVisual:true}),w=dom.window,host=w.document.querySelector('main'),calls=[],receipts=new Map(),receiptRequests=new Map();
  w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};w.HTMLDialogElement.prototype.close=function(){this.open=false;if(asyncClose)setImmediate(()=>this.dispatchEvent(new w.Event('close')));else this.dispatchEvent(new w.Event('close'));};
  w.document.documentElement.lang=language;
@@ -20,7 +20,7 @@ function fixture(t,{storage,handler,asyncClose=false,language='ru'}={}){
    const receipt={operation_id:req.operation_id,action:req.action};receipts.set(req.operation_id,receipt);receiptRequests.set(req.operation_id,structuredClone(req));return receipt;
   }throw Error(command);
  };
- const options={invoke,onOpenTask:record=>openedTasks.push(record),...(storage?{storage}: {})};
+ const options={invoke,planning,dayActions,onOpenTask:record=>openedTasks.push(record),...(storage?{storage}: {})};
  let stop=mountCalendarDayLifecycle(host,options);
  t.after(()=>{stop();dom.window.close();});
  return{w,host,calls,state,receipts,invoke,openedTasks,restart(){stop();stop=mountCalendarDayLifecycle(host,options);},click(sel){const e=w.document.querySelector(sel);assert.ok(e,sel);e.click();},submit(){w.document.querySelector('dialog form').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));}};
@@ -188,3 +188,23 @@ for (const language of ['ru', 'en-US']) {
   });
  });
 }
+
+
+test('Today omits tomorrow planning even when tomorrow already has a saved plan',async t=>{
+ const x=fixture(t,{planning:false});await tick();x.state.next_day.plan_ids=['one'];
+ x.w.dispatchEvent(new x.w.Event('hanni:calendar-refresh'));await tick();
+ assert.equal(x.host.querySelector('[data-next-day-plan]'),null);assert.doesNotMatch(x.host.textContent,/План на завтра/);
+ assert.ok(x.host.querySelector('[data-end-day]'));assert.deepEqual(x.state.next_day.plan_ids,['one']);assert.equal(commits(x).length,0);
+});
+
+test('Calendar planning-only entry retains saved selection, exact ids/deadlines and return focus',async t=>{
+ const x=fixture(t,{dayActions:false});await tick();x.state.next_day.plan_ids=['one'];const before=structuredClone(x.state);
+ assert.equal(x.host.querySelector('[data-end-day]'),null);assert.equal(x.host.querySelector('[data-day-summary]'),null);
+ const trigger=x.host.querySelector('[data-next-day-plan]');trigger.focus();trigger.click();await tick();
+ assert.equal(x.w.document.querySelector('[data-day-plan-task][value=one]').checked,true);
+ x.click('dialog [data-dialog-close]');assert.equal(x.w.document.activeElement,trigger);assert.deepEqual(x.state,before);assert.equal(commits(x).length,0);
+ trigger.click();await tick();x.w.document.querySelector('[data-day-plan-task][value=two]').checked=true;x.submit();await tick();
+ assert.deepEqual(x.state.next_day.plan_ids,['one','two']);assert.deepEqual(x.state.candidates,before.candidates);assert.deepEqual(x.state.active_blocks,before.active_blocks);assert.deepEqual(x.state.history,before.history);
+ trigger.focus();trigger.click();await tick();assert.equal(x.w.document.querySelectorAll('[data-day-plan-task]:checked').length,2);
+ assert.ok(x.calls.every(([c])=>!['start_task_block','complete_calendar_task','save_calendar_task'].includes(c)));
+});

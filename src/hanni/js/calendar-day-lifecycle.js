@@ -17,12 +17,12 @@ export function validDayRequest(value) {
 const secondsText = value => `${Math.floor(value / 60)}:${String(value % 60).padStart(2,'0')}`;
 
 /** One device-local projection; the native transaction owns timers and receipts. */
-export function mountCalendarDayLifecycle(host, { invoke, onOpenTask = () => {}, onDayState = () => {}, storage = null } = {}) {
+export function mountCalendarDayLifecycle(host, { invoke, onOpenTask = () => {}, onDayState = () => {}, storage = null, planning = true, dayActions = true } = {}) {
   const document = host.ownerDocument, window = document.defaultView;
   const uiCopy = createUiCopy(document);
   let snapshot = null, dialog = null, pending = null, busy = false, disposed = false, revision = 0, corrupted = null;
   host.className = 'calendar-day-lifecycle';
-  host.innerHTML = `<div class="calendar-day-lifecycle__actions"><button type="button" data-end-day disabled>${uiCopy('Завершить день')}</button><button type="button" data-next-day-plan disabled>${uiCopy('План на завтра')}</button><button type="button" data-day-summary hidden>${uiCopy('Итоги дней')}</button><button type="button" data-day-action-retry hidden>${uiCopy('Повторить сохранение')}</button><button type="button" data-day-pending-discard hidden>${uiCopy('Отбросить повреждённый запрос')}</button></div><p data-day-status role="status"></p><div data-day-plan-today></div>`;
+  host.innerHTML = `<div class="calendar-day-lifecycle__actions">${dayActions ? `<button type="button" data-end-day disabled>${uiCopy('Завершить день')}</button><button type="button" data-day-summary hidden>${uiCopy('Итоги дней')}</button>` : ''}${planning ? `<button type="button" data-next-day-plan disabled>${uiCopy('План на завтра')}</button>` : ''}<button type="button" data-day-action-retry hidden>${uiCopy('Повторить сохранение')}</button><button type="button" data-day-pending-discard hidden>${uiCopy('Отбросить повреждённый запрос')}</button></div><p data-day-status role="status"></p><div data-day-plan-today></div>`;
   const q = name => host.querySelector(`[data-${name}]`);
   function store(value) {
     if (value) storage.setItem(DAY_PENDING_KEY, JSON.stringify(value));
@@ -39,10 +39,12 @@ export function mountCalendarDayLifecycle(host, { invoke, onOpenTask = () => {},
   function paint() {
     if (disposed) return;
     onDayState(snapshot?.day.closed ?? null);
-    q('end-day').hidden = !!snapshot?.day.closed;
-    q('end-day').disabled = q('next-day-plan').disabled = busy || !!pending || corrupted !== null || !snapshot;
-    q('day-summary').hidden = !snapshot?.history.length;
-    q('day-summary').disabled = busy;
+    if (dayActions) {
+      q('end-day').hidden = !!snapshot?.day.closed;
+      q('day-summary').hidden = !snapshot?.history.length;
+      q('day-summary').disabled = busy;
+    }
+    for (const action of host.querySelectorAll('[data-end-day], [data-next-day-plan]')) action.disabled = busy || !!pending || corrupted !== null || !snapshot;
     q('day-action-retry').hidden = !pending;
     q('day-action-retry').disabled = busy;
     q('day-pending-discard').hidden = corrupted === null;
@@ -51,7 +53,7 @@ export function mountCalendarDayLifecycle(host, { invoke, onOpenTask = () => {},
     else if (pending) q('day-status').textContent = uiCopy('Сохранение не подтверждено. Повтори тот же запрос.');
     else if (snapshot) q('day-status').textContent = snapshot.day.closed ? uiCopy('День закрыт. Таймеры не возобновляются автоматически.') : '';
     const plan=q('day-plan-today'); plan.replaceChildren();
-    if (snapshot?.day.plan_ids.length) {
+    if (dayActions && snapshot?.day.plan_ids.length) {
       const title=document.createElement('h3'); title.textContent=uiCopy('План на сегодня');plan.append(title);
       for (const id of snapshot.day.plan_ids) {
         const task=snapshot.candidates.find(t=>t.id===id);if (!task) continue;
@@ -100,6 +102,7 @@ export function mountCalendarDayLifecycle(host, { invoke, onOpenTask = () => {},
   function paragraph(text) {const p=document.createElement('p');p.textContent=text;return p;}
   async function open(action,date=null) {
     if (busy || pending || corrupted !== null || disposed || dialog) return;
+    const trigger = document.activeElement;
     busy=true;paint();
     let preview, previewFailed = false;
     try {preview=await invoke('read_calendar_day',{date});if(disposed)return;}
@@ -110,7 +113,7 @@ export function mountCalendarDayLifecycle(host, { invoke, onOpenTask = () => {},
     dialog=createCalendarDialog({document,title:action==='plan'?uiCopy('План на завтра'):summary?uiCopy('Итог дня'):uiCopy('Завершить день'),
       hint:`${preview.date} · UTC${zone} · ${uiCopy('На этом устройстве')}`,
       submitLabel:summary?(preview.day.closed?uiCopy('Открыть день снова'):null):action==='plan'?uiCopy('Сохранить план'):uiCopy('Завершить день'),
-      onClose:()=>{if(dialog===current)dialog=null;},returnFocus:()=>host.querySelector('button:not([hidden])')?.focus()});
+      onClose:()=>{if(dialog===current)dialog=null;},returnFocus:()=>{const target=trigger?.isConnected && host.contains(trigger) ? trigger : host.querySelector('button:not([hidden])');target?.focus({preventScroll:true});}});
     const current=dialog;
     if (action==='plan') {
       current.body.append(paragraph(uiCopy('План на {date}. Сроки задач сохраняются.').replace('{date}', preview.next_date)));
@@ -136,9 +139,10 @@ export function mountCalendarDayLifecycle(host, { invoke, onOpenTask = () => {},
     });
     current.open();
   }
-  q('end-day').onclick=()=>void open('close');q('next-day-plan').onclick=()=>void open('plan');
+  if (dayActions) q('end-day').onclick=()=>void open('close');
+  if (planning) q('next-day-plan').onclick=()=>void open('plan');
   q('day-action-retry').onclick=()=>{if(pending)void perform(pending);};
-  q('day-summary').onclick=()=>{
+  if (dayActions) q('day-summary').onclick=()=>{
     if(busy || dialog || !snapshot)return;
     const dates=snapshot.history;
     if(dates.length===1){void open('summary',dates[0].date);return;}

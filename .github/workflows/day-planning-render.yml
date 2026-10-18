@@ -1,0 +1,46 @@
+name: Day planning relocation cloud render
+on:
+  workflow_dispatch:
+  push:
+    branches: [work/853953bc-day-planning-01a14f82]
+permissions:
+  contents: read
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Exact source guards
+        run: |
+          set -e
+          date -u +%FT%TZ
+          git rev-parse HEAD HEAD^{tree}
+          python3 -B scripts/check-private-data.py
+          python3 -B scripts/check-public-history.py
+      - name: Pinned isolated cloud tooling
+        run: |
+          set -e
+          npm install --prefix "$RUNNER_TEMP/planning-tools" --no-save --package-lock=false playwright@1.62.1 jsdom@29.1.1
+          chrome_path="$(command -v google-chrome)"
+          "$chrome_path" --version
+          echo "PLANNING_CHROME=$chrome_path" >> "$GITHUB_ENV"
+          ln -s "$RUNNER_TEMP/planning-tools/node_modules" node_modules
+      - name: Focused existing lifecycle and banner checks
+        run: node --test tests/calendar-day-lifecycle.test.mjs tests/day-banner.test.mjs
+      - name: Today and retained Calendar planning interaction
+        env:
+          NODE_PATH: ${{ runner.temp }}/planning-tools/node_modules
+        run: node scripts/qa-day-planning-render.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: day-planning-${{ github.sha }}
+          path: .local/day-planning-render/
+          if-no-files-found: error
+          retention-days: 3

@@ -23,6 +23,7 @@ import { startCalendarExecution, readActiveBlocks } from './calendar-execution.j
 import { mountCalendarInProgress } from './calendar-in-progress.js';
 import { mountCalendarFocus } from './calendar-focus.js';
 import { mountCalendarDayBanner } from './calendar-day-banner.js';
+import { mountCalendarDayLifecycle } from './calendar-day-lifecycle.js';
 import { loadCalendarPreferences } from './calendar-display-preferences.js';
 import { attachDevelopmentTask, mountGoalGlance } from './calendar-development.js';
 import { openCalendarGoalPopup } from './calendar-goal-popup.js';
@@ -300,7 +301,8 @@ export async function mountCalendarTable(el) {
   el.innerHTML = `<div class="cm-calendar-toolbar"><div class="cm-date-roller" data-date-roller><h2 data-range></h2></div>
     <div class="cm-date"><button data-prev aria-label="${uiCopy("Предыдущий период")}"><span class="cm-icon" aria-hidden="true">${ICONS.chevronLeft}</span></button><button data-next aria-label="${uiCopy("Следующий период")}"><span class="cm-icon" aria-hidden="true">${ICONS.chevronRight}</span></button><button data-today>${uiCopy("Сегодня")}</button></div>
     <div class="cm-toolbar"><div class="cm-segment" role="group" aria-label="${uiCopy("Период календаря")}">${[['day',uiCopy("День")],['week',uiCopy("Неделя")],['month',uiCopy("Месяц")]].map(([id,title]) => `<button data-period="${id}" aria-pressed="${view.period === id}">${uiCopy(title)}</button>`).join('')}</div></div>
-    </div><p data-notice role="status"></p><button data-retry hidden>${uiCopy("Повторить загрузку")}</button><div data-calendar-records></div>`;
+    </div><div class="cm-toolbar"><div data-calendar-day-planning></div></div><p data-notice role="status"></p><button data-retry hidden>${uiCopy("Повторить загрузку")}</button><div data-calendar-records></div>`;
+  const disposePlanning = mountCalendarDayLifecycle(el.querySelector('[data-calendar-day-planning]'), { invoke, dayActions:false });
   const host = el.querySelector('[data-calendar-records]');
   host.tabIndex = -1;
   const actionStatus = document.createElement('p');
@@ -477,7 +479,7 @@ export async function mountCalendarTable(el) {
   };
   window.addEventListener('hanni:calendar-refresh', onChange);
   window.addEventListener('task-state-changed', onChange);
-  disposeTable = () => { disposed = true; revision++; gridViewport.dispose(); menu(); roller.removeEventListener('wheel', wheelDate); roller.removeEventListener('keydown', keyDate); window.removeEventListener('hanni:calendar-refresh', onChange); window.removeEventListener('task-state-changed', onChange); };
+  disposeTable = () => { disposed = true; revision++; disposePlanning(); gridViewport.dispose(); menu(); roller.removeEventListener('wheel', wheelDate); roller.removeEventListener('keydown', keyDate); window.removeEventListener('hanni:calendar-refresh', onChange); window.removeEventListener('task-state-changed', onChange); };
   await refresh();
 }
 

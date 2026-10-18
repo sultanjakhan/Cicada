@@ -69,7 +69,7 @@ export function mountCalendarDayBanner(element, { invoke, now = () => new Date()
   document.addEventListener('visibilitychange', onVisible);
   const timer = window.setInterval(() => { if (day !== dateKey(now())) void refresh(); }, 30_000);
   let disposeLifecycle = null;
-  if (lifecycle) { const host=document.createElement("div");element.append(host);disposeLifecycle=mountCalendarDayLifecycle(host,{invoke,onOpenTask,onDayState:closed=>{if(closed!==null){lifecycleClosed=closed;render();}}}); }
+  if (lifecycle) { const host=document.createElement("div");element.append(host);disposeLifecycle=mountCalendarDayLifecycle(host,{invoke,onOpenTask,planning:false,onDayState:closed=>{if(closed!==null){lifecycleClosed=closed;render();}}});host.querySelector('.calendar-day-lifecycle__actions').prepend(start); }
   void refresh();
   return () => {
     disposeLifecycle?.();

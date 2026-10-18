@@ -65,3 +65,14 @@ test('banner keeps today, the date and the start action on one row', async t => 
   assert.equal(host.querySelector('[data-start-day]').parentElement, host);
   assert.equal(host.querySelector('small'), null);
 });
+
+
+test('Today lifecycle groups Start and End without any tomorrow-plan entry',async t=>{
+ const dom=new JSDOM('<main></main>',{url:'https://synthetic.test',pretendToBeVisual:true}),host=dom.window.document.querySelector('main');
+ const state={scope:'device_local',day:{closed:false,plan_ids:[]},next_day:{plan_ids:['owned-synthetic']},active_blocks:[],candidates:[],history:[]};
+ const calls=[];const stop=mountCalendarDayBanner(host,{lifecycle:true,invoke:async command=>{calls.push(command);if(command==='get_ui_state')return null;if(command==='read_calendar_day')return structuredClone(state);throw Error(command);}});
+ t.after(()=>{stop();dom.window.close();});for(let i=0;i<8;i++)await new Promise(r=>setImmediate(r));
+ assert.equal(host.querySelector('[data-next-day-plan]'),null);
+ assert.equal(host.querySelector('[data-start-day]').parentElement,host.querySelector('[data-end-day]').parentElement);
+ assert.equal(host.querySelector('[data-end-day]').disabled,false);assert.ok(calls.every(c=>['get_ui_state','read_calendar_day'].includes(c)));
+});
