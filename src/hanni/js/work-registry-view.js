@@ -13,7 +13,7 @@ export function mountWorkRegistry(host, { invoke }) {
     return invoke(command,args);
   });
   const copy = createUiCopy(d);
-  let disposed = false, preview = null, busy = false;
+  let disposed = false, preview = null, busy = false, draftGeneration = 0;
   const root = d.createElement('details'), summary = d.createElement('summary'); summary.textContent = copy("Импортированный рабочий реестр");
   root.className='registry-source-settings';
   const hint = d.createElement('p'); hint.textContent = copy("Снимки engineering-задач, опубликованные родителем. Это не live-поток и не запуск исполнителя.");
@@ -29,7 +29,7 @@ export function mountWorkRegistry(host, { invoke }) {
   const headers=d.createElement('tr');for(const title of ['Поле задачи','Поле v1 источника','Правило / значение по умолчанию']){const th=d.createElement('th');th.textContent=title;headers.append(th);}mappings.append(headers);
   for(const [target,path,rule] of [['ID','tasks.id','Обязательный стабильный ID; не генерируется'],['Название','tasks.title','Обязательно; нет подстановки по ID'],['Статус','tasks.status','Явное значение v1; unknown означает неизвестно, done — наблюдение, не приёмка'],['Проект задачи','tasks.projectId','Обязательная ссылка на projects.id'],['ID проекта','projects.id','Обязательный уникальный ID'],['Пространство источника','source.sourceNamespace','Обязательный стабильный UUID; не меняется при обновлении']]){const row=d.createElement('tr');for(const text of [target,path,rule]){const td=d.createElement('td');td.textContent=text;row.append(td);}mappings.append(row);}
   const issues=d.createElement('ul');issues.setAttribute('aria-label','Ошибки записей');
-  function invalidate(){preview=null;save.disabled=true;}
+  function invalidate(){draftGeneration++;preview=null;save.disabled=true;}
   function failure(){invalidate();readState.textContent=`Последнее успешное чтение: ${lastRead?.readAt||'неизвестно'}. Текущее чтение недоступно; актуальность неизвестна.`;status.textContent='Чтение или подтверждение не удалось. Черновик сохранён. Для файла требуется новый явный выбор.';}
   async function release(){const old=selection;selection=null;if(old)await invoke('revoke_registry_source',{grantId:old.grantId});revoke.disabled=true;}
   choose.addEventListener('click',async()=>{
@@ -57,13 +57,15 @@ export function mountWorkRegistry(host, { invoke }) {
   input.addEventListener('input',invalidate);
   check.addEventListener('click',async()=>{
     if(busy)return;busy=true;check.disabled=true;invalidate();issues.replaceChildren();
+    const generation=draftGeneration,raw=input.value,mode=selectedMode,grantId=selection?.grantId;
+    const current=()=>!disposed&&generation===draftGeneration&&raw===input.value&&mode===selectedMode&&grantId===selection?.grantId;
     try{
-      if(selectedMode){if(!selection||!lastRead)throw Error('source_grant_unavailable');const read=await invoke('read_registry_source',{grantId:selection.grantId,expectedDigest:lastRead.digest});if(read.raw!==input.value)throw Error('edited_source_draft');lastRead=read;}
-      const errors=registryPreviewIssues(input.value);for(const error of errors){const li=d.createElement('li');li.textContent=error;issues.append(li);}if(errors.length)throw Error('invalid_snapshot');
-      const next=validateRegistry(input.value);
-      [previewRevision,previewSources]=await Promise.all([invoke('get_ui_state',{key:REGISTRY_KEY}),invoke('get_ui_state',{key:'cicada_data_sources_v1'})]);previewRevision??='';previewSources??='';
-      if(disposed)return;preview=next;render([preview]);status.textContent=copy('Предпросмотр. Данные ещё не сохранены.');save.disabled=false;
-    }catch{invalidate();if(selectedMode&&!issues.children.length){await release().catch(()=>{});failure();}else status.textContent=issues.children.length?'Исправь указанные записи; ничего не сохранено.':'Предпросмотр недоступен или устарел. Черновик сохранён; выбери файл заново либо проверь JSON.';}
+      if(selectedMode){if(!selection||!lastRead)throw Error('source_grant_unavailable');const read=await invoke('read_registry_source',{grantId,expectedDigest:lastRead.digest});if(!current())return;if(read.raw!==raw)throw Error('edited_source_draft');lastRead=read;}
+      const errors=registryPreviewIssues(raw);for(const error of errors){const li=d.createElement('li');li.textContent=error;issues.append(li);}if(errors.length)throw Error('invalid_snapshot');
+      const next=validateRegistry(raw);
+      const [revision,sources]=await Promise.all([invoke('get_ui_state',{key:REGISTRY_KEY}),invoke('get_ui_state',{key:'cicada_data_sources_v1'})]);
+      if(!current())return;previewRevision=revision??'';previewSources=sources??'';preview=next;render([preview]);status.textContent=copy('Предпросмотр. Данные ещё не сохранены.');save.disabled=false;
+    }catch{if(!current())return;invalidate();if(selectedMode&&!issues.children.length){await release().catch(()=>{});failure();}else status.textContent=issues.children.length?'Исправь указанные записи; ничего не сохранено.':'Предпросмотр недоступен или устарел. Черновик сохранён; выбери файл заново либо проверь JSON.';}
     finally{busy=false;if(!disposed)check.disabled=false;}
   });
   save.addEventListener('click',async()=>{
