@@ -3,6 +3,7 @@ import { escapeHtml, initBlockEditor, blocksToPlainText } from './utils.js';
 import { createCalendarDialog } from './calendar-dialog.js';
 import { sanitizeBlockEditorData } from './block-editor-security.js';
 
+export const NOTE_CREATE_PENDING_KEY = 'calendar_note_create_pending_local_v1';
 let nextInstance = 0;
 // Window-local drafts retain the exact version they were based on, never a fresh replacement version.
 const drafts = new Map(), pendingDrafts = new Map(), retainedEditors = new Map();
@@ -66,8 +67,8 @@ export async function mountCalendarNotes(element, dependencies = {}) {
     const pending = value.pending || value.dialog.pending;
     value.dialog.submit.hidden = !!value.note?.archived;
     value.dialog.submit.disabled = pending || !editable || !value.ready || value.conflict;
-    value.title.readOnly = !editable || !value.ready;
-    value.content.readOnly = !editable || !value.ready;
+    value.title.readOnly = pending || !editable || !value.ready;
+    value.content.readOnly = pending || !editable || !value.ready;
     value.holder?.toggleAttribute('inert', pending || !editable || !value.ready);
     value.discard.hidden = !drafts.has(value.key) && !value.conflict;
     value.discard.disabled = pending;
@@ -109,7 +110,11 @@ export async function mountCalendarNotes(element, dependencies = {}) {
     return work.finally(() => { if (pendingDrafts.get(value.key) === work) pendingDrafts.delete(value.key); });
   }
   async function showEditor(note = null, options = {}) {
-    const key = keyOf(note?.id), draft = drafts.get(key);
+    const key = keyOf(note?.id);
+    if (!note && !drafts.has(key)) {
+      try { const attempt = readCreateAttempt(); if (attempt) drafts.set(key, attempt.draft); } catch { /* Saving stays blocked until the durable attempt can be read. */ }
+    }
+    const draft = drafts.get(key);
     let originalBlocks = null, invalid = false;
     if (note?.content_blocks) { try { originalBlocks = JSON.parse(note.content_blocks); invalid = !Array.isArray(originalBlocks?.blocks); } catch { invalid = true; } }
     if (!invalid) originalBlocks = sanitizeBlockEditorData(originalBlocks, window.DOMPurify);
@@ -145,9 +150,9 @@ export async function mountCalendarNotes(element, dependencies = {}) {
       value.ready = false; controls(value);
       try {
         value.editor = createEditor(value.holder.id, value.output, () => {
-          if (!current(value) || !value.ready || value.pending || value.closing || note.archived) return;
+          if (!current(value) || !value.ready || value.pending || value.closing || note?.archived) return;
           void capture(value).catch(() => { if (current(value)) dialog.showError('Не удалось прочитать изменения редактора. Повтори сохранение или закрытие.'); });
-        }, { readOnly: !!note.archived, placeholder: 'Запиши мысль…' });
+        }, { readOnly: !!note?.archived, placeholder: 'Запиши мысль…' });
         await value.editor.isReady;
         if (!current(value)) return;
         value.ready = true; controls(value);
@@ -171,11 +176,27 @@ export async function mountCalendarNotes(element, dependencies = {}) {
       await showEditor(note, options);
     } catch { if (!disposed && request === opening) { retryOpen = id; message.textContent = 'Не удалось открыть заметку или прочитать её черновик. Последний ввод сохранён для повторной попытки.'; element.querySelector('[data-open-retry]').hidden = false; } }
   }
+  function readCreateAttempt() {
+    const raw = window.localStorage.getItem(NOTE_CREATE_PENDING_KEY);
+    if (!raw) return null;
+    const value = JSON.parse(raw);
+    if (value.version !== 1 || typeof value.operationId !== 'string' || !/^[0-9a-f-]{36}$/i.test(value.operationId) || !value.payload || !value.draft) throw Error('invalid_create_attempt');
+    return value;
+  }
+  async function recoverCreate(attempt) {
+    const id = await api('create_note', { ...attempt.payload, operationId:attempt.operationId, recoverOnly:true });
+    if (id == null) return null;
+    const note = await api('get_note', { id:String(id) });
+    if (!matchesSource(note,id)) throw Error('invalid_create_receipt');
+    return note;
+  }
   async function discardReload(value) {
     if (!current(value) || value.pending || value.dialog.pending) return;
     setBusy(value, true);
     try {
-      const fresh = value.note ? await api('get_note', { id: value.note.id }) : null;
+      const attempt = !value.note && readCreateAttempt();
+      const fresh = value.note ? await api('get_note', { id: value.note.id }) : attempt ? await recoverCreate(attempt) : null;
+      if (attempt) window.localStorage.removeItem(NOTE_CREATE_PENDING_KEY);
       if (!current(value)) return;
       if (value.note && !matchesSource(fresh, value.note.id)) throw new Error('changed');
       drafts.delete(value.key); value.committed = true; setBusy(value, false);
@@ -185,6 +206,7 @@ export async function mountCalendarNotes(element, dependencies = {}) {
   }
   function save(value) {
     if (!current(value) || value.pending || value.dialog.pending || value.conflict || value.note?.archived || value.invalid || value.editorFailed || !value.ready) return;
+    const workKey = value.key;
     setBusy(value, true); value.dialog.showError('');
     const work = (async () => {
       try {
@@ -201,7 +223,30 @@ export async function mountCalendarNotes(element, dependencies = {}) {
           if (!current(value)) return;
           if (!matchesSource(fresh, id) || fresh.archived || fresh.updated_at !== value.baseUpdatedAt) { value.conflict = true; throw new Error('changed'); }
           await api('update_note', { id, title, content, tags: fresh.tags || '', pinned: null, archived: null, tabName: null, status: null, dueDate: null, reminderAt: null, contentBlocks: value.rich ? JSON.stringify(value.output) : null, priority: null, expectedVersion: fresh.version ?? null });
-        } else id = await api('create_note', { title, content, tags: '', tabName: 'calendar', status: 'note', dueDate: null, reminderAt: null, priority: null });
+        } else {
+          const payload = { title, content, tags:'', tabName:'calendar', status:'note', dueDate:null, reminderAt:null, priority:null, contentBlocks:value.rich ? JSON.stringify({blocks:value.output.blocks}) : null };
+          let attempt = readCreateAttempt();
+          if (attempt) {
+            const recovered = await recoverCreate(attempt);
+            if (JSON.stringify(attempt.payload) !== JSON.stringify(payload)) {
+              if (!recovered) throw Error('create_payload_changed');
+              // Resolve the committed identity first; keep the edited draft and require an explicit update.
+              window.localStorage.removeItem(NOTE_CREATE_PENDING_KEY);
+              drafts.delete(value.key);value.note=recovered;value.key=String(recovered.id);value.baseUpdatedAt=recovered.updated_at;
+              value.base={title:recovered.title||'',content:recovered.content||'',blocks:blockSignature(recovered.content_blocks ? JSON.parse(recovered.content_blocks) : null)};
+              value.dialog.submit.textContent='Сохранить изменения';value.dialog.modal.dataset.noteEditor=value.key;remember(value);
+              throw Error('create_recovered_changed');
+            }
+            id = recovered?.id;
+          } else {
+            attempt={version:1,operationId:window.crypto.randomUUID(),payload,draft:{title:value.title.value,content,rich:value.rich,blocks:value.rich?value.output:null,base:value.base}};
+            window.localStorage.setItem(NOTE_CREATE_PENDING_KEY,JSON.stringify(attempt));
+          }
+          if (id == null) id=await api('create_note',{...attempt.payload,operationId:attempt.operationId});
+          const confirmed=await api('get_note',{id:String(id)});
+          if (!matchesSource(confirmed,id)) throw Error('invalid_create_receipt');
+          window.localStorage.removeItem(NOTE_CREATE_PENDING_KEY);
+        }
         value.committed = true;
         if (drafts.get(value.key) === savedDraft) drafts.delete(value.key);
         if (current(value)) { setBusy(value, false); value.dialog.close({ skipBeforeClose: true }); await refresh('Заметка сохранена.'); }
@@ -209,12 +254,12 @@ export async function mountCalendarNotes(element, dependencies = {}) {
       } catch (error) {
         if (current(value)) {
           setBusy(value, false);
-          value.dialog.showError(error?.message === 'changed' ? 'Заметка изменилась в другом месте. Черновик сохранён на основе прежней версии. Отмени черновик и загрузи сохранённое перед новой записью.' : 'Не удалось сохранить. Черновик остался в форме — попробуй ещё раз.');
+          value.dialog.showError(error?.message === 'create_recovered_changed' ? 'Прежнее сохранение найдено. Изменённый черновик остался в форме. Проверь его и явно сохрани изменения в найденную заметку.' : error?.message === 'create_payload_changed' ? 'Состав запроса изменился. Черновик сохранён; прежнее создание не найдено. Отмени черновик для нового запроса или верни прежний текст для повторной попытки.' : error?.message === 'changed' ? 'Заметка изменилась в другом месте. Черновик сохранён на основе прежней версии. Отмени черновик и загрузи сохранённое перед новой записью.' : 'Сохранение не подтверждено. Черновик и запрос сохранены для проверки при повторной попытке; новая заметка пока не создаётся.');
         }
       } finally { if (current(value)) setBusy(value, false); }
     })();
-    pendingDrafts.set(value.key, work);
-    void work.finally(() => { if (pendingDrafts.get(value.key) === work) pendingDrafts.delete(value.key); });
+    pendingDrafts.set(workKey, work);
+    void work.finally(() => { if (pendingDrafts.get(workKey) === work) pendingDrafts.delete(workKey); });
     return work;
   }
   async function changeArchive(value = null) {

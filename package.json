@@ -1,7 +1,7 @@
 {
   "name": "cicada",
-  "version": "0.5.11",
-  "cicadaBuildId": "20261019-focus-day-planning-0511.1",
+  "version": "0.5.12",
+  "cicadaBuildId": "20261019-note-retry-0512.1",
   "private": true,
   "type": "module",
   "scripts": {
