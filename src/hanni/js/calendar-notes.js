@@ -150,9 +150,9 @@ export async function mountCalendarNotes(element, dependencies = {}) {
       value.ready = false; controls(value);
       try {
         value.editor = createEditor(value.holder.id, value.output, () => {
-          if (!current(value) || !value.ready || value.pending || value.closing || note.archived) return;
+          if (!current(value) || !value.ready || value.pending || value.closing || note?.archived) return;
           void capture(value).catch(() => { if (current(value)) dialog.showError('Не удалось прочитать изменения редактора. Повтори сохранение или закрытие.'); });
-        }, { readOnly: !!note.archived, placeholder: 'Запиши мысль…' });
+        }, { readOnly: !!note?.archived, placeholder: 'Запиши мысль…' });
         await value.editor.isReady;
         if (!current(value)) return;
         value.ready = true; controls(value);
