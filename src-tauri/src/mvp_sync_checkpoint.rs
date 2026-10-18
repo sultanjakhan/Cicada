@@ -270,7 +270,7 @@ fn watermarks(conn: &Connection) -> Result<Vec<Watermark>, String> {
     }))?;
     sql(rows.collect())
 }
-fn snapshot_row(conn: &Connection, table: &str, id: &str, _writer: &str) -> Result<Row, String> {
+pub(super) fn snapshot_row(conn: &Connection, table: &str, id: &str, _writer: &str) -> Result<Row, String> {
     let Some(Value::Object(mut f)) =
         crate::mvp_sync_db::row_to_json(conn, table, &rusqlite::types::Value::Text(id.into()))
             .map_err(|_| "content_sync_checkpoint_row_failed")?

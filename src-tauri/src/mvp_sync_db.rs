@@ -1217,6 +1217,28 @@ pub(crate) fn day_ledger(conn: &Connection) -> Result<Value, String> {
     }))?;
     Ok(json!({"version":1,"entries":sql(rows.collect::<Result<Vec<_>,_>>())?}))
 }
+#[cfg(target_os = "macos")]
+pub(crate) fn clear_private_restore_business(conn: &Connection) -> Result<(), String> {
+    // The caller owns a complete backup and one replacement transaction. These
+    // changes must never become outgoing deletions or retain the old pending data.
+    sql(conn.execute("UPDATE content_sync_control SET applying=1 WHERE id=1", []))?;
+    for table in ["calendar_task_goals", "timeline_blocks", "items", "calendar_goals", "event_categories", "mvp_day_starts", "mvp_records"] {
+        sql(conn.execute(&format!("DELETE FROM {table}"), []))?;
+    }
+    for name in UI_KEYS.iter().copied().chain(std::iter::once(DAY_KEY)) {
+        sql(conn.execute("DELETE FROM ui_state WHERE key=?1", [name]))?;
+    }
+    for table in ["sync_row_versions", "sync_tombstones", "content_sync_tomb_births", "content_sync_dirty"] {
+        sql(conn.execute(&format!("DELETE FROM {table} WHERE table_name='mvp_records'"), []))?;
+    }
+    for table in ["content_sync_blocked", "content_sync_pending", "content_sync_fragments", "content_sync_fragments_v2",
+        "content_sync_fragment_compat", "mvp_sync_checkpoint_jobs", "mvp_sync_checkpoint_parts", "mvp_sync_conflicts", "mvp_sync_conflict_resolutions", "mvp_sync_resolution_archive"] {
+        // Offline profiles may predate these additive transport caches.
+        if exists(conn,table)? { sql(conn.execute(&format!("DELETE FROM {table}"), []))?; }
+    }
+    sql(conn.execute("INSERT OR IGNORE INTO content_sync_seeded_tables(table_name) VALUES('mvp_records')",[]))?;
+    Ok(())
+}
 fn write_day_projection(conn: &Connection) -> Result<(), String> {
     write_ui(conn, DAY_KEY, &day_ledger(conn)?.to_string())
 }

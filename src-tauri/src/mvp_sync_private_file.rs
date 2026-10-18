@@ -85,6 +85,9 @@ fn acl_private(file: &File, no_grants: bool) -> Result<(), String> {
     invalid()
 }
 fn validate(file: &File, directory: bool, private: bool) -> Result<(), String> {
+    validate_limit(file, directory, private, LIMIT)
+}
+fn validate_limit(file: &File, directory: bool, private: bool, limit: u64) -> Result<(), String> {
     let m = file.metadata().map_err(|_| UNAVAILABLE)?;
     let uid = unsafe { geteuid() };
     if directory {
@@ -102,7 +105,7 @@ fn validate(file: &File, directory: bool, private: bool) -> Result<(), String> {
         || m.uid() != uid
         || m.mode() & 0o7777 != 0o600
         || m.nlink() != 1
-        || m.len() > LIMIT
+        || m.len() > limit
     {
         return invalid();
     }
@@ -146,18 +149,21 @@ fn directory(path: &Path, private: bool) -> Result<File, String> {
     Ok(current)
 }
 fn read(parent: &File, leaf: &str) -> Result<String, String> {
+    read_limit(parent, leaf, LIMIT)
+}
+fn read_limit(parent: &File, leaf: &str, limit: u64) -> Result<String, String> {
     let file = child(parent, leaf.as_ref(), false)?.ok_or(UNAVAILABLE)?;
-    validate(&file, false, true)?;
+    validate_limit(&file, false, true, limit)?;
     let before = file.metadata().map_err(|_| UNAVAILABLE)?;
     let mut bytes = Vec::new();
     (&file)
-        .take(LIMIT + 1)
+        .take(limit + 1)
         .read_to_end(&mut bytes)
         .map_err(|_| UNAVAILABLE)?;
-    validate(&file, false, true)?;
+    validate_limit(&file, false, true, limit)?;
     let after = file.metadata().map_err(|_| UNAVAILABLE)?;
     if bytes.is_empty()
-        || bytes.len() as u64 > LIMIT
+        || bytes.len() as u64 > limit
         || bytes.len() as u64 != after.len()
         || before.len() != after.len()
         || before.mtime() != after.mtime()
@@ -262,9 +268,17 @@ pub(super) fn write_selected(database: &Path, raw: &str) -> Result<bool, String>
     Ok(true)
 }
 pub(super) fn read_external(path: &Path) -> Result<String, String> {
+    read_external_limited(path, LIMIT)
+}
+pub(super) fn read_external_limited(path: &Path, limit: u64) -> Result<String, String> {
     let parent = directory(path.parent().ok_or(INVALID)?, true)?;
     let leaf = path.file_name().and_then(|v| v.to_str()).ok_or(INVALID)?;
-    read(&parent, leaf)
+    read_limit(&parent, leaf, limit)
+}
+pub(super) fn recovery_directory(database: &Path) -> Result<std::path::PathBuf, String> {
+    let (dir, _) = store(database)?.ok_or(UNAVAILABLE)?;
+    validate(&dir, true, true)?;
+    Ok(database.canonicalize().map_err(|_| INVALID)?.parent().ok_or(INVALID)?.join(DIRECTORY))
 }
 // Caller validates the exact pairing and durable sync scope before creating anything.
 pub(super) fn install(database: &Path, raw: &str) -> Result<(), String> {

@@ -134,6 +134,20 @@ pub(crate) fn configure_private_file(conn: &Connection, database: &std::path::Pa
     private_file::install(database, &raw)?;
     enabled(conn, cfg.enabled)
 }
+#[cfg(target_os = "macos")]
+pub(crate) fn private_file_disabled_receipt(conn: &Connection, database: &std::path::Path) -> Result<Option<Value>, String> {
+    let raw = private_file::read_selected(database)?.ok_or("mvp_sync_private_file_unavailable")?;
+    let cfg = RelayConfig::parse(&raw)?;
+    if cfg.enabled { return Ok(None); }
+    if db::get_setting_checked(conn,"content_sync_enabled")?.as_deref() != Some("false") {
+        return Err("mvp_sync_configuration_failed".into());
+    }
+    Ok(Some(json!({"ok":true,"configured":true,"enabled":false,"credential_store":"private_file","network_started":false})))
+}
+#[cfg(target_os = "macos")]
+pub(crate) fn restore_private_content(conn: &mut Connection, database: &std::path::Path, input: &std::path::Path) -> Result<Value,String> {
+    transport::private_restore::restore(conn,database,input)
+}
 fn encrypt_bytes(key: &[u8; 32], aad: &[u8], plain: &[u8]) -> Result<Vec<u8>, String> {
     crate::mvp_sync_crypto::seal(key, aad, plain)
 }

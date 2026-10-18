@@ -76,6 +76,21 @@ fn private_configuration_and_relocation_keep_the_same_sender_scope_and_queues() 
     assert_eq!(moved.query_row("SELECT receive_seq FROM content_sync_state", [], |r| r.get::<_, i64>(0)).unwrap(), 123);
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn disabled_file_provisioning_finishes_without_a_runtime_or_sync_poll() {
+    let (_root,database,conn,input)=private_profile();
+    let mut value:Value=serde_json::from_str(&private_config()).unwrap();value["enabled"]=json!(false);
+    std::fs::write(&input,value.to_string()).unwrap();
+    let mode=crate::desktop_launch::Options::ConfigureSyncFile(input);
+    assert!(mode.is_one_shot()&&mode.is_recovery_provisioning());
+    let cursor=conn.query_row("SELECT receive_seq FROM content_sync_state",[],|r|r.get::<_,i64>(0)).unwrap();
+    let result=mode.prepare_sync_file(&conn,&database).unwrap().expect("disabled setup finishes before Runtime construction");
+    assert_eq!(result["enabled"],false);assert_eq!(result["configured"],true);assert_eq!(result["network_started"],false);
+    assert_eq!(db::get_setting_checked(&conn,"content_sync_enabled").unwrap().as_deref(),Some("false"));
+    assert_eq!(conn.query_row("SELECT receive_seq FROM content_sync_state",[],|r|r.get::<_,i64>(0)).unwrap(),cursor);
+}
+
 fn fixture() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
     crate::init_schema(&conn).unwrap();
