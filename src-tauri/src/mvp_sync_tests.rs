@@ -11,6 +11,7 @@ fn private_config() -> String {
 fn private_profile() -> (tempfile::TempDir, PathBuf, Connection, PathBuf) {
     use std::os::unix::fs::PermissionsExt;
     let root = tempfile::tempdir().unwrap();
+    std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     let physical = root.path().canonicalize().unwrap();
     let database = physical.join("calendar.db");
     let conn = Connection::open(&database).unwrap();
@@ -42,7 +43,8 @@ fn wrong_scope_invalid_config_and_unsafe_file_cannot_partially_select_private_st
             _ => unreachable!(),
         }
         std::fs::write(&input, value.to_string()).unwrap();
-        assert!(configure_private_file(&conn, &database, &input).is_err(), "{change}");
+        let expected = match change { "unknown-field" => "mvp_sync_invalid_config", "unsafe" => "mvp_sync_private_file_invalid", _ => "mvp_sync_pairing_changed" };
+        assert_eq!(configure_private_file(&conn, &database, &input).unwrap_err(), expected, "{change}");
         assert!(!root.path().join(".cicada-sync-backend.json").exists());
         assert!(!root.path().join(".cicada-sync-private").exists());
         assert_eq!(db::get_setting_checked(&conn, "content_sync_enabled").unwrap(), before);

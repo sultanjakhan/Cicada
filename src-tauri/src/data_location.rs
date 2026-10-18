@@ -557,6 +557,7 @@ mod tests {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
         let root = tempdir().unwrap();
         let root = root.path().canonicalize().unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
         let source = root.join("profile");
         fs::create_dir(&source).unwrap();
         let database = source.join("calendar.db");

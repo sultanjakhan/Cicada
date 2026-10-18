@@ -375,6 +375,7 @@ mod tests {
     #[test]
     fn external_pairing_requires_a_private_nonsymlink_single_link_file() {
         let root = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
         let physical = root.path().canonicalize().unwrap();
         let input = physical.join("input.json");
         std::fs::write(&input, b"synthetic").unwrap();
