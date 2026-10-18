@@ -51,6 +51,8 @@ jobs:
       - run: npm run check:privacy
       - run: npm run build
       - run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+      - name: Check updater archive security and compatibility
+        run: cargo test --manifest-path tests/updater-archive/Cargo.toml --locked
       - name: Check standalone activity summary
         run: cargo test --manifest-path tests/activity-summary/Cargo.toml --locked
       - run: npm ci
@@ -136,6 +138,8 @@ jobs:
         working-directory: update-service
       - run: cargo test --locked
         working-directory: src-tauri
+      - name: Check updater archive security and compatibility
+        run: cargo test --manifest-path tests/updater-archive/Cargo.toml --locked
       - name: Check standalone activity summary
         run: cargo test --manifest-path tests/activity-summary/Cargo.toml --locked
       - if: github.event_name == 'push'
