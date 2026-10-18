@@ -292,3 +292,32 @@ test('reported done never supplies review counts; failed review/source reads rem
   assert.match(host.querySelector('summary').textContent,/Не удалось прочитать отчёты/);assert.equal(host.querySelector('li'),null);assert.equal(details.open,true);
   assert.equal(data.rows[0].completed,false);assertReadOnly(data);
 });
+
+test('disabled review authority is unknown while a genuine missing result is known absence', async t => {
+  const data=await fixture(),dom=new JSDOM('<main></main>'),host=dom.window.document.querySelector('main');t.after(()=>dom.window.close());
+  let failure={status:403,code:'review_prototype_disabled'};
+  const dispose=mountCalendarAiReports(host,{invoke:data.invoke,window:dom.window,readTaskReview:async()=>{throw failure;}});t.after(dispose);
+  await waitForReports(host);
+  assert.match(host.querySelector('summary').textContent,/приёмка неизвестна: 1/);
+  assert.match(host.querySelector('li').textContent,/Состояние приёмки не обновлено/);
+  failure={status:404,code:'no_review_result'};
+  dom.window.dispatchEvent(new dom.window.Event('task-state-changed'));await waitForReports(host);
+  assert.match(host.querySelector('summary').textContent,/на приёмке: 0/);
+  assert.doesNotMatch(host.textContent,/приёмка неизвестна|Состояние приёмки не обновлено/);
+  assertReadOnly(data);
+});
+
+test('an unreported latest run retains the existing review identity and exact history callback', async t => {
+  const data=await fixture(),dom=new JSDOM('<main></main>'),host=dom.window.document.querySelector('main');t.after(()=>dom.window.close());
+  const exchange=await data.invoke('get_ui_state',{key:TASK_RUN_KEY});
+  exchange.order=4;exchange.runs['run-new-00001']={runId:'run-new-00001',taskKey:data.binding.taskKey,agent:'codex',provider:null,model:null,report:null,receivedOrder:4};data.setExchange(exchange);
+  const before=JSON.stringify(exchange),opened=[];
+  const dispose=mountCalendarAiReports(host,{invoke:data.invoke,window:dom.window,readTaskReview:async id=>({taskId:id,taskRevision:7,resultVersion:2,reviewState:'awaiting_review'}),onOpenTask:record=>opened.push(record)});t.after(dispose);
+  await waitForReports(host);
+  const row=host.querySelector('li');
+  assert.equal(row.dataset.nativeTaskId,'task-primary');assert.equal(row.dataset.runId,'run-new-00001');assert.equal(row.dataset.resultVersion,'2');
+  assert.match(host.querySelector('summary').textContent,/на приёмке: 1/);assert.match(row.textContent,/На приёмке · результат v2/);
+  assert.match(row.textContent,/Регистрация задачи не означает запуск/);assert.doesNotMatch(row.textContent,/сообщил, что ожидает/);
+  row.querySelector('button').click();assert.deepEqual(opened,[data.rows[0]]);
+  assert.equal(JSON.stringify(exchange),before);assert.equal(data.rows[0].completed,false);assertReadOnly(data);
+});

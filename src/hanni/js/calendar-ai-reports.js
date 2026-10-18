@@ -48,7 +48,7 @@ export function mountCalendarAiReports(host, { invoke, listen = null, readTaskRe
     renderedSignature = signature;
   }
 
-  function render(rows, contexts) {
+  function render(rows, contexts, unavailableReviews) {
     const items = [];
     for (const row of rows) {
       if (row.source_type !== 'note' || row.archived || row.readonly || row.status_extra !== 'task') continue;
@@ -56,10 +56,10 @@ export function mountCalendarAiReports(host, { invoke, listen = null, readTaskRe
       if (!context?.binding || !context.reports.length) continue;
       const report = context.reports.reduce((latest, item) => !latest || item.receivedOrder > latest.receivedOrder ? item : latest, null);
       if (context.latestRun && !context.latestRun.report && context.latestRun.receivedOrder > report?.receivedOrder) {
-        items.push({ nativeTaskId:String(row.source_id), title:row.title, runId:context.latestRun.runId, report:null, order:context.latestRun.receivedOrder, review:context.review, reviewReadError:context.reviewReadError });
+        items.push({ nativeTaskId:String(row.source_id), title:row.title, runId:context.latestRun.runId, report:null, order:context.latestRun.receivedOrder, review:context.review, reviewReadError:context.reviewReadError || unavailableReviews.has(String(row.source_id)) });
         continue;
       }
-      if (report && STATUS_LABELS[report.status]) items.push({ nativeTaskId:String(row.source_id), title:row.title, report, order:report.receivedOrder, review:context.review, reviewReadError:context.reviewReadError });
+      if (report && STATUS_LABELS[report.status]) items.push({ nativeTaskId:String(row.source_id), title:row.title, report, order:report.receivedOrder, review:context.review, reviewReadError:context.reviewReadError || unavailableReviews.has(String(row.source_id)) });
     }
     items.sort((a, b) => b.order - a.order);
     if (!items.length) { section.hidden = false; message(uiCopy('Нет связанных отчётов о работе ИИ. Регистрация задачи не означает запуск.'), 'empty'); return; }
@@ -96,15 +96,14 @@ export function mountCalendarAiReports(host, { invoke, listen = null, readTaskRe
       if (!item.report) {
         status.textContent = uiCopy('Нет связанных отчётов о работе ИИ. Регистрация задачи не означает запуск.');
         row.append(title, status);
-        list.append(row);
-        continue;
+      } else {
+        const who = uiCopy(AGENT_LABELS[item.report.agent]);
+        status.textContent = uiCopy.format('По последнему отчёту{0}: исполнитель {1}.', who ? ` (${who})` : '', uiCopy(STATUS_LABELS[item.report.status]));
+        const facts = host.ownerDocument.createElement('p');
+        facts.textContent = uiCopy.format('Модель: {0} · этап: {1} · актуальность: {2}', item.report.model || uiCopy('не сообщена'), item.report.stage || uiCopy('не сообщён'), (!item.report.freshness || item.report.freshness === 'unknown') ? uiCopy('неизвестна') : item.report.freshness);
+        if (item.report.status === 'done') status.textContent += uiCopy(' Завершение задачи требует приёмки пользователем.');
+        row.append(title, status, facts);
       }
-      const who = uiCopy(AGENT_LABELS[item.report.agent]);
-      status.textContent = uiCopy.format('По последнему отчёту{0}: исполнитель {1}.', who ? ` (${who})` : '', uiCopy(STATUS_LABELS[item.report.status]));
-      const facts = host.ownerDocument.createElement('p');
-      facts.textContent = uiCopy.format('Модель: {0} · этап: {1} · актуальность: {2}', item.report.model || uiCopy('не сообщена'), item.report.stage || uiCopy('не сообщён'), (!item.report.freshness || item.report.freshness === 'unknown') ? uiCopy('неизвестна') : item.report.freshness);
-      if (item.report.status === 'done') status.textContent += uiCopy(' Завершение задачи требует приёмки пользователем.');
-      row.append(title, status, facts);
       if (item.reviewReadError) {
         const unknown = host.ownerDocument.createElement('p'); unknown.textContent = uiCopy('Состояние приёмки не обновлено. Повтори чтение.'); row.append(unknown);
       } else if (item.review) {
@@ -134,11 +133,21 @@ export function mountCalendarAiReports(host, { invoke, listen = null, readTaskRe
       const nativeRows = await invoke('get_calendar_tasks', {});
       if (!Array.isArray(nativeRows)) throw new Error('Invalid task response');
       const rows = nativeRows.filter(row => row?.source_type === 'note' && !row.archived && !row.readonly && row.status_extra === 'task');
-      const observed = await readNativeTaskObservations(rows, invoke, { readReview:readTaskReview });
+      // The shared join treats disabled review authority like an absent result.
+      // This summary must distinguish that unavailable authority from a known 404 absence.
+      const unavailableReviews = new Set();
+      const readReview = readTaskReview && (async id => {
+        try { return await readTaskReview(id); }
+        catch (error) {
+          if (error?.status === 403 && error?.code === 'review_prototype_disabled') unavailableReviews.add(id);
+          throw error;
+        }
+      });
+      const observed = await readNativeTaskObservations(rows, invoke, { readReview });
       if (!observed.available) throw new Error('Native observation read failed');
       if (disposed || request !== revision) return;
       note.textContent = uiCopy(unknownFreshness);
-      render(rows, observed.contexts);
+      render(rows, observed.contexts, unavailableReviews);
       hasLoaded = true;
     } catch {
       if (!disposed && request === revision) {
