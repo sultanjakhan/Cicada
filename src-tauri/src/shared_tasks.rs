@@ -158,6 +158,17 @@ fn migrate_intent_runs(c: &Connection) -> Result<()> {
 fn native(c: &Connection, id: &str) -> Result<Value> {
     access::personal(c, id).map_err(|_| Error(404, "shared_task_not_found"))
 }
+// Receipts survive archival, but never current personal-scope or binding revocation.
+fn authorize_receipt(c: &Connection, id: &str) -> Result<()> {
+    access::personal_with_archive(c, id, true)
+        .map_err(|_| Error(404, "shared_task_not_found"))?;
+    let state = exchange(c)?;
+    let b = access::binding(&state, id);
+    if state["bindings"].get(b["taskKey"].as_str().unwrap()) != Some(&b) {
+        return Err(Error(404, "shared_task_not_found"));
+    }
+    Ok(())
+}
 fn exchange(c: &Connection) -> Result<Value> {
     access::exchange(c).map_err(|_| Error(409, "invalid_shared_binding"))
 }
@@ -358,7 +369,7 @@ fn perform(c: &mut Connection, op: &str, command: &str, args: Value) -> Result<V
         return match row {
             None => Ok(json!({"known":false})),
             Some((id, receipt)) => {
-                native(c, &id)?;
+                authorize_receipt(c, &id)?;
                 Ok(
                     json!({"known":true,"receipt":serde_json::from_str::<Value>(&receipt).map_err(|_|Error(500,"invalid_shared_record"))?}),
                 )
@@ -380,8 +391,7 @@ fn perform(c: &mut Connection, op: &str, command: &str, args: Value) -> Result<V
         .optional())?;
     if let Some((id, d, receipt)) = old {
         // Archived receipts can replay without resurrecting a task; content scope is rechecked.
-        access::personal_with_archive(&tx, &id, true)
-            .map_err(|_| Error(404, "shared_task_not_found"))?;
+        authorize_receipt(&tx, &id)?;
         if d != digest {
             return Err(Error(409, "operation_payload_conflict"));
         }
@@ -1166,9 +1176,56 @@ mod tests {
                 json!({"taskId":id,"expectedVersion":2})
             )
         );
+        let before: (i64, i64) = c.query_row(
+            "SELECT version,(SELECT count(*) FROM shared_task_operations) FROM items WHERE id=?1",
+            [&id], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        for _ in 0..2 {
+            assert_eq!(call(&mut c, "archive-receipt-lookup", "operation",
+                json!({"operationId":"archive-shared-01"}))["receipt"], archived);
+            assert_eq!(call(&mut c, "share-receipt-lookup", "operation",
+                json!({"operationId":"share-existing-01"}))["receipt"], shared);
+        }
+        assert_eq!(call(&mut c, "archived-still-hidden", "get", json!({"taskId":id}))["status"], 404);
+        assert_eq!(call(&mut c, "archive-shared-01", "archive",
+            json!({"taskId":id,"expectedVersion":3}))["code"], "operation_payload_conflict");
+        let after: (i64, i64) = c.query_row(
+            "SELECT version,(SELECT count(*) FROM shared_task_operations) FROM items WHERE id=?1",
+            [&id], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert_eq!(before, after, "receipt reads/replays must not bump task or operation history");
         let snap = call(&mut c, "snapshot-001", "snapshot", json!({}));
         assert_eq!(snap["tombstones"][0]["version"], 3);
         assert!(snap["tasks"].as_array().unwrap().is_empty());
+    }
+    #[test]
+    fn archived_receipts_recheck_scope_identity_and_binding() {
+        for change in ["nonpersonal", "corporate", "work", "kind", "deleted", "binding"] {
+            let mut c = db();
+            let created = create(&mut c);
+            let id = created["task"]["id"].as_str().unwrap();
+            let args = json!({"taskId":id,"expectedVersion":1});
+            let archived = call(&mut c, "archive-scope-001", "archive", args.clone());
+            assert_eq!(archived["acknowledged"], true);
+            assert_eq!(call(&mut c, "lookup-before-revoke", "operation",
+                json!({"operationId":"archive-scope-001"}))["receipt"], archived);
+            match change {
+                "nonpersonal" => { c.execute("UPDATE items SET tags='source:shared' WHERE id=?1", [id]).unwrap(); }
+                "corporate" => { c.execute("UPDATE items SET tags='task-sphere:personal,JIRA:fixture' WHERE id=?1", [id]).unwrap(); }
+                "work" => { c.execute("UPDATE items SET tags='task-sphere:personal, task-sphere:work' WHERE id=?1", [id]).unwrap(); }
+                "kind" => { c.execute("UPDATE items SET kind='event' WHERE id=?1", [id]).unwrap(); }
+                "deleted" => { c.execute("DELETE FROM items WHERE id=?1", [id]).unwrap(); }
+                "binding" => { c.execute("DELETE FROM agent_task_bindings WHERE source_id=?1", [id]).unwrap(); }
+                _ => unreachable!(),
+            }
+            for op in ["archive-scope-001", "create-shared-001"] {
+                let denied = call(&mut c, "lookup-after-revoke", "operation", json!({"operationId":op}));
+                assert_eq!(denied["status"], 404, "{change}");
+                assert!(denied.get("receipt").is_none(), "revocation must not reveal old content");
+            }
+            assert_eq!(call(&mut c, "archive-scope-001", "archive", args)["status"], 404, "{change}");
+            assert_eq!(create_replay(&mut c)["status"], 404, "{change}");
+        }
     }
     #[test]
     fn operation_lookup_and_foreign_result_version() {
