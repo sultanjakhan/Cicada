@@ -150,16 +150,17 @@ export function mountCalendarWishes(element, dependencies = {}) {
     });
     editor.open(editor.modal.querySelector('[data-dialog-close]'));
   }
-  async function markConverted(wishId, goalId) {
-    pendingConversion = { wishId, goalId };
+  async function markConverted(wishId, goalId, expectedGoalId) {
+    pendingConversion = { wishId, goalId, expectedGoalId };
     try {
-      await markWishConverted(wishId, goalId, { invoke }); pendingConversion = null;
+      await markWishConverted(wishId, goalId, { invoke, expectedGoalId }); pendingConversion = null;
       if (!disposed) { await refresh(); say('Цель создана. Желание осталось в списке со ссылкой на неё.'); focusRow(wishId); }
     } catch (cause) { if (!disposed) { render(); say(cause?.message || 'Не удалось отметить желание.', true); } }
   }
   function convert(wish) {
     if (!dependencies.convertToGoal || disposed) return;
-    dependencies.convertToGoal(wish, goalId => markConverted(wish.id, goalId), () => focusRow(wish.id, '[data-wish-menu]'));
+    const expectedGoalId = wish.goalId;
+    dependencies.convertToGoal(wish, goalId => markConverted(wish.id, goalId, expectedGoalId), () => focusRow(wish.id, '[data-wish-menu]'));
   }
   async function openLink(wish) {
     if (!wish?.url) return;
@@ -190,7 +191,7 @@ export function mountCalendarWishes(element, dependencies = {}) {
     const button = event.target.closest('button'); if (!button || !element.contains(button) || button.disabled) return;
     if (button === retry) { void refresh(); return; }
     if ('wishClosedToggle' in button.dataset) { closedOpen = !closedOpen; render(); list.querySelector('[data-wish-closed-toggle]')?.focus(); return; }
-    if ('wishConvertRetry' in button.dataset && pendingConversion) { void markConverted(pendingConversion.wishId, pendingConversion.goalId); return; }
+    if ('wishConvertRetry' in button.dataset && pendingConversion) { void markConverted(pendingConversion.wishId, pendingConversion.goalId, pendingConversion.expectedGoalId); return; }
     if (button.dataset.wishEdit) { const wish = findWish(button.dataset.wishEdit); if (wish) openForm(wish); return; }
     if (button.dataset.wishLink) void openLink(findWish(button.dataset.wishLink));
   };

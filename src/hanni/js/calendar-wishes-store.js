@@ -92,13 +92,15 @@ export const WISH_STALE_MESSAGE = 'Желания изменены на друг
 const errorText = cause => typeof cause === 'string' ? cause : cause?.message;
 
 /** Serialized read → change → CAS write. `change` may return a value for the caller. */
-export async function mutateWishes(invoke, change) {
+export async function mutateWishes(invoke, change, { skipUnchanged = false } = {}) {
   if (typeof invoke !== 'function') throw new Error('Не хватает native API.');
   const work = writeQueue.catch(() => {}).then(async () => {
     const raw = await invoke('get_ui_state', { key: WISHES_STATE_KEY });
-    const next = structuredClone(normalizeWishState(raw));
+    const before = normalizeWishState(raw);
+    const next = structuredClone(before);
     const result = change(next);
     const normalized = normalizeWishState(next);
+    if (skipUnchanged && JSON.stringify(normalized) === JSON.stringify(before)) return { state: normalized, result };
     try { await invoke('set_ui_state', { key: WISHES_STATE_KEY, value: JSON.stringify(normalized), expectedValue: raw ?? '' }); }
     catch (cause) { if (errorText(cause) === 'mvp_sync_stale_ui_state') throw new Error(WISH_STALE_MESSAGE); throw cause; }
     globalThis.window?.dispatchEvent(new globalThis.window.CustomEvent('hanni:wishes-changed'));
@@ -171,14 +173,23 @@ export async function deleteWish(id, { invoke, original = null } = {}) {
   }
 }
 /** Records the goal created from a wish; the wish itself stays as the source. */
-export async function markWishConverted(id, goalId, { invoke, now = () => new Date() } = {}) {
+const CONVERSION_STALE_MESSAGE = 'Связь желания с целью не подтверждена: данные изменились на другом устройстве. Созданная цель сохранена, текущая связь не перезаписана. Обнови желания перед повторной отметкой цели.';
+export async function markWishConverted(id, goalId, { invoke, expectedGoalId = null, now = () => new Date() } = {}) {
   if (goalId == null || goalId === '') throw new Error('Не хватает созданной цели.');
-  const { result } = await mutateWishes(invoke, state => {
-    const wish = state.wishes.find(item => item.id === String(id));
-    if (!wish) throw missing();
-    wish.goalId = String(goalId); wish.convertedAt = now().toISOString(); wish.updatedAt = wish.convertedAt; return wish;
-  });
-  return result;
+  try {
+    const { result } = await mutateWishes(invoke, state => {
+      const wish = state.wishes.find(item => item.id === String(id));
+      if (!wish) throw missing();
+      // A lost acknowledgement may retry the same link without changing timestamps.
+      if (wish.goalId === String(goalId)) return wish;
+      if (wish.goalId !== (expectedGoalId == null || expectedGoalId === '' ? null : String(expectedGoalId))) throw new Error(CONVERSION_STALE_MESSAGE);
+      wish.goalId = String(goalId); wish.convertedAt = now().toISOString(); wish.updatedAt = wish.convertedAt; return wish;
+    }, { skipUnchanged: true });
+    return result;
+  } catch (cause) {
+    if (errorText(cause) === WISH_STALE_MESSAGE) throw new Error(CONVERSION_STALE_MESSAGE);
+    throw cause;
+  }
 }
 
 export const wishPriceLabel = wish => wish.price == null ? '' : `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(wish.price)} ${CURRENCY.get(wish.currency) || '₸'}`;
