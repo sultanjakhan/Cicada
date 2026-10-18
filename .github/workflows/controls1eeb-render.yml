@@ -7,6 +7,7 @@ permissions:
   contents: read
 jobs:
   render:
+    if: ${{ !contains(github.event.head_commit.message, '[test-diagnostic]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -38,5 +39,59 @@ jobs:
         with:
           name: controls1eeb-render-${{ github.sha }}
           path: .local/controls1eeb-render/
+          if-no-files-found: error
+          retention-days: 3
+  isolate-test-exit:
+    if: ${{ contains(github.event.head_commit.message, '[test-diagnostic]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify unchanged investigation source
+        shell: bash
+        run: |
+          set -e
+          git diff --exit-code ff7dc8820b01e7447cf8d3c7338b35f3e7cc2af0 HEAD -- tests/tasks-pane.test.mjs tests/unified-native-task-composition.test.mjs src/hanni/js/calendar-tasks.js src/hanni/js/native-task-observations.js package.json package-lock.json
+          python -B scripts/check-private-data.py
+          python -B scripts/check-public-history.py
+      - run: npm ci
+      - name: Isolate preceding and next file with resource evidence
+        shell: bash
+        run: |
+          set -e
+          mkdir -p .local/test-diag
+          cat > .local/test-diag/preload.mjs <<'JS'
+          import {createHook} from 'node:async_hooks';
+          import {after} from 'node:test';
+          Error.stackTraceLimit=30;
+          const timers=new Map();
+          createHook({init(id,type){if(type==='Timeout'){const stack=new Error().stack;if(/calendar-tasks\.js|Window\.js/.test(stack))timers.set(id,stack);}},destroy(id){timers.delete(id);}}).enable();
+          const snapshot=phase=>console.error(JSON.stringify({phase,pid:process.pid,resources:process.getActiveResourcesInfo(),timers:[...timers.values()]}));
+          after(()=>snapshot('after-tests'));
+          setTimeout(()=>snapshot('still-alive-after-8s'),8000).unref();
+          JS
+          cat > .local/test-diag/run.cjs <<'JS'
+          const {spawn}=require('node:child_process'),fs=require('node:fs'),path=require('node:path'),{pathToFileURL}=require('node:url');
+          (async()=>{let failed=false;for(const file of ['tests/tasks-pane.test.mjs','tests/unified-native-task-composition.test.mjs']){
+            const log=path.join('.local/test-diag',path.basename(file)+'.log');
+            console.log(JSON.stringify({phase:'start',file,node:process.version,platform:process.platform,time:new Date().toISOString()}));
+            const child=spawn(process.execPath,['--import',pathToFileURL(path.resolve('.local/test-diag/preload.mjs')).href,'--test','--experimental-test-isolation=none','--test-reporter=spec',file],{windowsHide:true});
+            for(const stream of [child.stdout,child.stderr])stream.on('data',data=>{fs.appendFileSync(log,data);process.stdout.write(data);});
+            let expired=false;const deadline=setTimeout(()=>{expired=true;console.error(JSON.stringify({phase:'diagnostic-timeout',file,pid:child.pid}));child.kill();},20000);
+            const code=await new Promise((resolve,reject)=>{child.once('error',reject);child.once('exit',resolve);});clearTimeout(deadline);
+            console.log(JSON.stringify({phase:'exit',file,code,expired}));if(code!==0||expired)failed=true;
+          }process.exitCode=failed?1:0;})().catch(error=>{console.error(error);process.exitCode=1;});
+          JS
+          node .local/test-diag/run.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-exit-diagnostic-${{ github.sha }}
+          path: .local/test-diag/
           if-no-files-found: error
           retention-days: 3
