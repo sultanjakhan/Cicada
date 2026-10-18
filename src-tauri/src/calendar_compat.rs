@@ -822,14 +822,81 @@ pub fn update_note_status(
         Err(fail("task not found"))
     }
 }
-#[tauri::command]
-pub fn toggle_note_archive(id: String, state: State<'_, AppState>) -> Result<bool, String> {
+#[tauri::command(rename_all = "camelCase")]
+pub fn toggle_note_archive(id: String, expected_version: Option<i64>, state: State<'_, AppState>) -> Result<bool, String> {
     let conn = lock(&state)?;
-    conn.execute("UPDATE items SET archived=1-archived,version=version+1,updated_at=?1 WHERE id=?2 AND kind='task'",params![now(),id]).map_err(|e|fail(e.to_string()))?;
-    conn.query_row("SELECT archived!=0 FROM items WHERE id=?1", [id], |r| {
-        r.get(0)
-    })
-    .map_err(|_| fail("note not found"))
+    toggle_note_archive_record(&conn, &id, expected_version)
+}
+
+fn toggle_note_archive_record(conn: &Connection, id: &str, expected_version: Option<i64>) -> Result<bool, String> {
+    // Compare, toggle and return our result in one statement: another writer
+    // cannot make a stale archive/restore act as the opposite action.
+    conn.query_row("UPDATE items SET archived=1-archived,version=version+1,updated_at=?1 WHERE id=?2 AND kind='task' AND (?3 IS NULL OR version=?3) RETURNING archived!=0",
+        params![now(),id,expected_version], |r| r.get(0))
+        .optional().map_err(|e| fail(e.to_string()))?
+        .ok_or_else(|| fail("note changed elsewhere or was deleted"))
+}
+
+#[cfg(test)]
+mod note_archive_tests {
+    use super::*;
+
+    fn fixture() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE items(id TEXT PRIMARY KEY,kind TEXT,archived INTEGER,version INTEGER,updated_at TEXT,title TEXT,notes TEXT,tags TEXT);
+            INSERT INTO items VALUES('synthetic-note','task',0,1,'baseline','Synthetic note','Preserved content','keep,synthetic');").unwrap();
+        conn
+    }
+
+    fn snapshot(conn: &Connection) -> (bool, i64, String, String, String, String) {
+        conn.query_row("SELECT archived!=0,version,updated_at,title,notes,tags FROM items WHERE id='synthetic-note'", [],
+            |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).unwrap()
+    }
+
+    #[test]
+    fn reviewed_archive_restore_and_legacy_calls_preserve_note_content() {
+        let conn = fixture();
+        assert!(toggle_note_archive_record(&conn, "synthetic-note", Some(1)).unwrap());
+        assert_eq!(snapshot(&conn).1, 2);
+        assert!(!toggle_note_archive_record(&conn, "synthetic-note", Some(2)).unwrap());
+        assert_eq!(snapshot(&conn).1, 3);
+        assert!(toggle_note_archive_record(&conn, "synthetic-note", None).unwrap());
+        assert!(!toggle_note_archive_record(&conn, "synthetic-note", None).unwrap());
+        let state = snapshot(&conn);
+        assert_eq!(state.1, 5);
+        assert_eq!((state.3,state.4,state.5), ("Synthetic note".into(),"Preserved content".into(),"keep,synthetic".into()));
+    }
+
+    #[test]
+    fn stale_archive_restore_and_replayed_version_never_toggle() {
+        let conn = fixture();
+        conn.execute("UPDATE items SET archived=1,version=2,updated_at='remote',notes='Remote content'", []).unwrap();
+        let remote = snapshot(&conn);
+        assert!(toggle_note_archive_record(&conn, "synthetic-note", Some(1)).is_err());
+        assert_eq!(snapshot(&conn), remote);
+        conn.execute("UPDATE items SET archived=0,version=3,updated_at='remote-restore'", []).unwrap();
+        let restored = snapshot(&conn);
+        assert!(toggle_note_archive_record(&conn, "synthetic-note", Some(2)).is_err());
+        assert_eq!(snapshot(&conn), restored);
+        assert!(toggle_note_archive_record(&conn, "synthetic-note", Some(3)).unwrap());
+        let committed = snapshot(&conn);
+        assert!(toggle_note_archive_record(&conn, "synthetic-note", Some(3)).is_err());
+        assert_eq!(snapshot(&conn), committed);
+    }
+
+    #[test]
+    fn missing_and_wrong_kind_rows_are_not_successful_noop_toggles() {
+        let conn = fixture();
+        for expected in [None, Some(1)] {
+            assert!(toggle_note_archive_record(&conn, "missing", expected).is_err());
+        }
+        conn.execute("UPDATE items SET kind='event'", []).unwrap();
+        let before = snapshot(&conn);
+        for expected in [None, Some(1)] {
+            assert!(toggle_note_archive_record(&conn, "synthetic-note", expected).is_err());
+            assert_eq!(snapshot(&conn), before);
+        }
+    }
 }
 
 #[tauri::command(rename_all = "camelCase")]

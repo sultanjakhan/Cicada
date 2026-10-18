@@ -2735,3 +2735,23 @@ fn day_lifecycle_uses_real_ipc_and_preserves_task_deadline() {
  let planned=call(&view,"commit_calendar_day_action",json!({"input":req})).unwrap();assert_eq!(planned["day"]["plan_ids"],json!([id]));
  assert_eq!(call(&view,"set_ui_state",json!({"key":crate::calendar_day_lifecycle::KEY,"value":"{}"})).unwrap_err(),json!("calendar_day_managed_key"));
 }
+
+#[test]
+fn note_archive_version_guard_rejects_stale_native_ipc_and_preserves_legacy_calls() {
+    let (_app, view) = fixture();
+    let id = call(&view, "create_note", json!({"title":"Synthetic archive race","content":"Preserved content",
+        "tags":"keep","tabName":"calendar","status":"note","dueDate":null,"reminderAt":null,"priority":null})).unwrap();
+    let original = call(&view, "get_note", json!({"id":id})).unwrap();
+    assert_eq!(call(&view, "toggle_note_archive", json!({"id":id,"expectedVersion":original["version"]})).unwrap(), true);
+    let archived = call(&view, "get_note", json!({"id":id})).unwrap();
+    assert!(call(&view, "toggle_note_archive", json!({"id":id,"expectedVersion":original["version"]})).is_err());
+    assert_eq!(call(&view, "get_note", json!({"id":id})).unwrap(), archived);
+    assert_eq!(call(&view, "toggle_note_archive", json!({"id":id,"expectedVersion":archived["version"]})).unwrap(), false);
+    let restored = call(&view, "get_note", json!({"id":id})).unwrap();
+    assert!(call(&view, "toggle_note_archive", json!({"id":id,"expectedVersion":archived["version"]})).is_err());
+    assert_eq!(call(&view, "get_note", json!({"id":id})).unwrap(), restored);
+    assert_eq!(restored["content"], "Preserved content");
+    assert_eq!(call(&view, "toggle_note_archive", json!({"id":id})).unwrap(), true);
+    assert_eq!(call(&view, "toggle_note_archive", json!({"id":id})).unwrap(), false);
+    assert!(call(&view, "toggle_note_archive", json!({"id":"missing","expectedVersion":1})).is_err());
+}

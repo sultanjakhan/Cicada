@@ -223,7 +223,8 @@ export async function mountCalendarNotes(element, dependencies = {}) {
       const fresh = await api('get_note', { id });
       if (disposed || (value && !current(value))) return;
       if (!isCalendarNote(fresh) || (value ? !!fresh.archived !== !!value.note.archived || fresh.updated_at !== value.baseUpdatedAt : !fresh.archived)) throw new Error('changed');
-      const isArchived = await api('toggle_note_archive', { id }); lastArchived = isArchived ? id : null;
+      if (!Number.isSafeInteger(fresh.version) || fresh.version < 1) throw new Error('changed');
+      const isArchived = await api('toggle_note_archive', { id, expectedVersion: fresh.version }); lastArchived = isArchived ? id : null;
       if (value) { value.committed = true; setBusy(value, false); value.dialog.close({ skipBeforeClose: true }); }
       if (!disposed) { if (!isArchived) archived = false; element.querySelector('[data-undo]').hidden = !lastArchived; await refresh(isArchived ? 'Заметка в архиве. Её можно вернуть.' : 'Заметка восстановлена.'); }
     } catch (error) {
