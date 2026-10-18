@@ -2,7 +2,8 @@
 const fs=require('node:fs'),path=require('node:path'),http=require('node:http'),assert=require('node:assert/strict');
 const {chromium}=require('playwright');
 const root=path.resolve(__dirname,'..'),output=path.join(root,'.local/review-read-render');fs.mkdirSync(output,{recursive:true});
-const html=`<!doctype html><html lang="ru"><head><meta charset="utf-8"><link rel="stylesheet" href="/src/styles.css"><link rel="stylesheet" href="/src/hanni/css/calendar-dashboard-v7.css"><link rel="stylesheet" href="/src/hanni/css/ui-actions.css"></head><body><main></main><script type="module">
+const html=`<!doctype html><html lang="ru"><head><meta charset="utf-8"><link rel="stylesheet" href="/src/styles.css"><link rel="stylesheet" href="/src/hanni/css/calendar-dashboard-v7.css"><link rel="stylesheet" href="/src/hanni/css/ui-actions.css"></head><body><main id="calendar-content"></main><script type="module">
+document.documentElement.dataset.theme=localStorage.getItem('hanni_theme')||'light';
 import {mountCalendarTasks} from '/src/hanni/js/calendar-tasks.js';
 import {createSharedResultReviewAdapter} from '/src/hanni/js/shared-result-review-adapter.js';
 const id='00000000-0000-4000-8000-000000000001';
@@ -30,7 +31,7 @@ async function main(){await new Promise(r=>server.listen(0,'127.0.0.1',r));const
   const page=await browser.newPage({viewport:{width,height:720}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.addInitScript(theme=>localStorage.setItem('hanni_theme',theme),theme);await page.goto('http://127.0.0.1:'+server.address().port);await page.waitForFunction(()=>window.fixtureReady);
   const row=page.locator('li.ct-row'),retry=page.locator('[data-task-control="review-retry"]'),finish=row.locator('[data-task-control="finish"]');
-  await row.waitFor();await page.waitForFunction(()=>!document.querySelector('li.ct-row').textContent.includes('не обновлено'));
+  await row.waitFor();assert.equal(await page.locator('html').getAttribute('data-theme'),theme);await page.waitForFunction(()=>!document.querySelector('li.ct-row').textContent.includes('не обновлено'));
   assert.match(await row.textContent(),/В работе/);assert.doesNotMatch(await row.textContent(),/Принято|Завершена|неизвестно/);assert.equal(await finish.isDisabled(),true);
   await page.screenshot({path:path.join(output,width+'-'+theme+'-running.png')});
   for(const failure of ['denied','transport']){

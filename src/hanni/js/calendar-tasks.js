@@ -210,7 +210,10 @@ export function mountCalendarTasks(host, dependencies) {
     if(ctx.reviewReadError||(ctx.review&&ctx.review.reviewState!=='accepted'))complete.disabled=true;
     if(ctx.reviewReadError){
       primaryMeta.append(node('span','ct-status',uiCopy("Состояние приёмки не обновлено. Повтори чтение.")));
-      const retry=control('ct-date',uiCopy("Повторить загрузку"),async()=>{await refresh();restore(id,contextFor(row).reviewReadError?'review-retry':'open');});
+      const retry=control('ct-date',uiCopy("Повторить загрузку"),async event=>{
+        const trigger=event.currentTarget,focused=doc.activeElement===trigger,committed=await refresh();
+        if(committed===true&&focused&&(doc.activeElement===trigger||doc.activeElement===heading))restore(id,contextFor(row).reviewReadError?'review-retry':'open');
+      });
       retry.dataset.taskId=id;retry.dataset.taskControl='review-retry';retry.disabled=busy;primaryMeta.append(retry);
     }
     const content=node('div','ct-content');content.append(title,primaryMeta);
