@@ -29,6 +29,27 @@ function syntheticBackend({theme}) {
     {source_type:'note',source_id:'fixture-task-2',title:'Подготовить пример запроса',date:null,status_extra:'task',tags:'task-sphere:personal',completed:false}];
   const ui={calendar_now_v1:JSON.stringify({version:1,goalId:'fixture-root'}),calendar_development_v1:JSON.stringify({version:1,goals:{'fixture-root':{skills:[],stages:[{id:'fixture-stage-1',title:'Понимание',skillIds:[]},{id:'fixture-stage-2',title:'Практика',skillIds:[]}],activeStageId:'fixture-stage-1'}}})};
   window.fixtureCalls=[];window.fixtureUI=ui;
+  // Native close() clears `open` before its queued close event runs. Record
+  // both boundaries so a focus failure distinguishes cleanup from stale DOM.
+  const ids=new WeakMap();let nextId=0;
+  const node=value=>value?{node:ids.has(value)?ids.get(value):(ids.set(value,++nextId),nextId),
+    tag:value.tagName,classes:value.className,connected:value.isConnected,
+    text:value.textContent?.trim().slice(0,100),goal:value.getAttribute?.('data-goal-open')}:null;
+  window.fixtureFocusTrace=[];
+  window.fixtureFocusSnapshot=phase=>{
+    const value={phase,time:performance.now(),active:node(document.activeElement),
+      trigger:node(document.querySelector('.cp-goal-row__open')),
+      dialogs:[...document.querySelectorAll('dialog')].map(d=>({...node(d),open:d.open,title:d.querySelector('h2')?.textContent}))};
+    window.fixtureFocusTrace.push(value);return value;
+  };
+  for(const type of ['focusin','cancel','close'])document.addEventListener(type,event=>{
+    if(window.fixtureFocusTrace.length>=200)return;
+    window.fixtureFocusSnapshot(type+':capture');
+    if(type==='close'){
+      queueMicrotask(()=>window.fixtureFocusSnapshot('close:after-handlers'));
+      requestAnimationFrame(()=>window.fixtureFocusSnapshot('close:next-animation-frame'));
+    }
+  },true);
   const invoke=async(command,args={})=>{
     window.fixtureCalls.push({command,args:structuredClone(args)});
     if(command==='get_ui_state')return ui[args.key]??null;
@@ -88,9 +109,22 @@ async function main(){
         await page.screenshot({path:path.join(output,prefix+'-subgoal.png'),fullPage:true});
         await page.locator('[data-goal-popup-parent="fixture-root"]').click();
         await page.getByRole('heading',{name:'Изучить анализ данных',exact:true}).waitFor();
-        await page.keyboard.press('Escape');
-        await page.locator('dialog[open]').waitFor({state:'hidden'});
-        assert.equal(await page.evaluate(()=>document.activeElement.matches('.cp-goal-row__open')),true,'Escape restores the catalogue trigger');
+        const closingDialog=await page.locator('dialog[open]').elementHandle();
+        await page.evaluate(()=>window.fixtureFocusSnapshot('before-Escape'));
+        try{
+          await page.keyboard.press('Escape');
+          await page.locator('dialog[open]').waitFor({state:'hidden'});
+          await page.evaluate(()=>window.fixtureFocusSnapshot('open-cleared'));
+          // createCalendarDialog.finish removes the modal and restores focus
+          // synchronously in the close handler. An absent `open` attribute is
+          // earlier than this application-owned completion boundary.
+          await page.waitForFunction(dialog=>!dialog.isConnected,closingDialog,{timeout:2000});
+          await page.evaluate(()=>window.fixtureFocusSnapshot('close-cleanup-complete'));
+          assert.equal(await page.evaluate(()=>document.activeElement.matches('.cp-goal-row__open')),true,'Escape restores the catalogue trigger');
+        }finally{
+          fs.writeFileSync(path.join(output,prefix+'-focus-chronology.json'),JSON.stringify(await page.evaluate(()=>window.fixtureFocusTrace),null,2));
+          await closingDialog.dispose();
+        }
         await page.keyboard.press('Tab');
         const focused=await page.evaluate(()=>({visible:document.activeElement.matches(':focus-visible'),outline:getComputedStyle(document.activeElement).outlineStyle}));
         assert.equal(focused.visible,true);assert.notEqual(focused.outline,'none');
