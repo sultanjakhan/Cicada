@@ -18,7 +18,7 @@ from typing import Any
 
 
 PLUGIN = "cicada-local-tasks"
-SUPPORTED_VERSIONS = ("0.4.8", "0.5.0")
+SUPPORTED_VERSIONS = ("0.4.8", "0.5.0", "0.5.1")
 SERVER = "cicada-local-task-command"
 
 
@@ -71,7 +71,8 @@ def materialize(package: Path, destination: Path, runtime_root: Path, helper_pat
     stage = Path(tempfile.mkdtemp(prefix="cicada-plugin-", dir=destination.parent))
     shutil.copytree(package, stage / package.name, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
     out = stage / package.name
-    if manual:
+    narrow = read_json(package / 'plugin.json').get('version') == '0.5.1'
+    if manual and not narrow:
         compat_path = out / ".mcp.json"
         compat = read_json(out / "mcp.json")
         compat["mcpServers"][SERVER]["enabled_tools"] = ["cicada_task_command"]
@@ -185,7 +186,7 @@ def plan(args: argparse.Namespace) -> dict[str, Any]:
         "cache": str(cache_dest),
         "helper": str(helper_path) if helper_data is not None else None,
         "manualCicadaDetected": manual,
-        "enabledTools": ["cicada_task_command"] if manual else None,
+        "enabledTools": ["cicada_task_command"] if manual and version != '0.5.1' else None,
         "before": before,
         "marketplaceSha256After": hashlib.sha256(marketplace_data).hexdigest(),
         "packageSha256": digest(staged_package),

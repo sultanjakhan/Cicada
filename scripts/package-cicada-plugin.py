@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Package tracked, credential-free MCP source with its guarded installer/upgrade."""
+import argparse
 import hashlib
 import importlib.util
 import json
@@ -9,23 +10,30 @@ import tempfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-PACKAGE = Path('plugins/cicada-tasks/cicada-local-tasks-0.5.0')
 def git(*args):
     return subprocess.check_output(['git', *args], cwd=ROOT).decode().strip()
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--client-version', choices=['0.5.0','0.5.1'], default='0.5.0')
+    args = parser.parse_args()
+    package = Path('plugins/cicada-tasks') / ('cicada-local-tasks-' + args.client_version)
     if git('status', '--porcelain'):
         raise SystemExit('Commit source before packaging.')
     source = git('rev-parse', 'HEAD')
-    manifest = json.loads((ROOT / PACKAGE / 'plugin.json').read_text())
+    manifest = json.loads((ROOT / package / 'plugin.json').read_text())
     native = json.loads((ROOT / 'src-tauri/tauri.conf.json').read_text())['version']
-    if manifest['version'] != '0.5.0' or manifest['name'] != 'cicada-local-tasks':
+    if manifest['version'] != args.client_version or manifest['name'] != 'cicada-local-tasks':
         raise SystemExit('Unexpected MCP package identity.')
-    members = git('ls-files', str(PACKAGE), 'plugins/cicada-tasks/install.py',
+    members = git('ls-files', str(package), 'plugins/cicada-tasks/install.py',
                   'plugins/cicada-tasks/upgrade_050.py').splitlines()
+    if args.client_version == '0.5.1':
+        members += git('ls-files', 'plugins/cicada-tasks/README.md',
+                       'plugins/cicada-tasks/test_flat_upgrade.py',
+                       'plugins/cicada-tasks/fixtures/seven-tool-baseline.b64').splitlines()
     destination = ROOT / '.local/plugin-package' / source[:12]
     destination.mkdir(parents=True, exist_ok=True)
-    archive = destination / 'cicada-local-tasks-0.5.0.zip'
+    archive = destination / ('cicada-local-tasks-' + args.client_version + '.zip')
     hashes = {}
     with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as output:
         for name in sorted(members):
@@ -49,9 +57,9 @@ def main():
     with tempfile.TemporaryDirectory(prefix='cicada-plugin-package-') as temporary:
         with zipfile.ZipFile(archive) as readback:
             readback.extractall(temporary)
-        candidate_tree = upgrade.tree_sha(Path(temporary) / PACKAGE.name)
+        candidate_tree = upgrade.tree_sha(Path(temporary) / package.name)
     receipt = {'source': source, 'clientVersion': manifest['version'],
-               'nativeMinimumVersion': native, 'nativeEnvelopeVersion': 1,
+               'nativeMinimumVersion': '0.5.5' if args.client_version == '0.5.1' else native, 'nativeEnvelopeVersion': 1,
                'candidateTreeSha256': candidate_tree,
                'archive': archive.name, 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
                'members': hashes}
