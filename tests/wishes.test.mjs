@@ -295,6 +295,100 @@ test('a target removed while confirmation is open is reported without a write', 
   assert.match(modal.textContent, /уже удалено/);
 });
 
+async function conversionFixture(t, initial, goals = []) {
+  let saved, creations = 0;
+  const x = await mountList(t, initial, { getGoals: () => goals, convertToGoal: (_wish, done) => { saved = done; creations++; } });
+  await x.menu('a', 'convert');
+  assert.equal(typeof saved, 'function');
+  return { ...x, finish: id => saved(id), creations: () => creations };
+}
+
+test('conversion preserves a changed goal association and retry never replaces it', async t => {
+  const goals = [{ id: 'remote-goal', title: 'Remote goal' }, { id: 'local-goal', title: 'Local goal' }];
+  const x = await conversionFixture(t, { version: 1, wishes: [wish('a')] }, goals);
+  const remote = { version: 1, wishes: [wish('a', { goalId: 'remote-goal' })] };
+  x.data.raw = JSON.stringify(remote);
+  await x.finish('local-goal'); await settle();
+  assert.equal(x.data.writes(), 0, 'an unseen association is rejected before CAS');
+  assert.deepEqual(JSON.parse(x.data.raw), remote);
+  assert.equal(x.host.querySelector('[data-wish-message]').getAttribute('role'), 'alert');
+  assert.match(x.host.querySelector('[data-wish-message]').textContent, /Связь.*не подтверждена/);
+  x.host.querySelector('[data-wish-convert-retry]').click(); await settle();
+  assert.equal(x.data.writes(), 0, 'pending retry retains the original reviewed association');
+  assert.deepEqual(JSON.parse(x.data.raw), remote);
+  assert.deepEqual(goals.map(g => g.id), ['remote-goal', 'local-goal']);
+  assert.equal(x.creations(), 1);
+});
+
+test('ordinary conversion links the acknowledged goal exactly once', async t => {
+  const goals = [{ id: 'new-goal', title: 'New goal' }];
+  const x = await conversionFixture(t, { version: 1, wishes: [wish('a')] }, goals);
+  await x.finish('new-goal'); await settle();
+  assert.equal(x.data.writes(), 1);
+  assert.equal(x.data.wishes()[0].goalId, 'new-goal');
+  assert.equal(x.data.wishes()[0].title, wish('a').title);
+  assert.equal(x.host.querySelector('[data-wish-convert-retry]'), null);
+  assert.match(x.host.textContent, /Цель: New goal/);
+  assert.equal(x.creations(), 1); assert.equal(goals.length, 1);
+});
+
+test('conversion preserves unrelated wish edits and unknown fields', async t => {
+  const x = await conversionFixture(t, { version: 1, wishes: [wish('a'), wish('b')] });
+  const target = wish('a', { note: 'Remote note', future: { retained: true } });
+  const other = wish('b', { status: 'bought', future: ['kept'] });
+  x.data.raw = JSON.stringify({ version: 1, futureState: { retained: true }, wishes: [target, other] });
+  await x.finish('new-goal'); await settle();
+  assert.equal(x.data.writes(), 1);
+  const stored = x.data.wishes();
+  assert.equal(stored[0].goalId, 'new-goal'); assert.equal(stored[0].note, target.note);
+  assert.deepEqual(stored[0].future, target.future);
+  assert.deepEqual(stored[1], normalizeWishState({ version: 1, wishes: [other] }).wishes[0]);
+  assert.deepEqual(JSON.parse(x.data.raw).futureState, { retained: true });
+});
+
+test('same-goal retry after a lost write acknowledgement is read-only and keeps timestamps', async t => {
+  const goals = [{ id: 'new-goal', title: 'New goal' }];
+  const x = await conversionFixture(t, { version: 1, wishes: [wish('a')] }, goals);
+  x.data.before.set('set_ui_state', args => { x.data.raw = args.value; throw Error('synthetic lost acknowledgement'); });
+  await x.finish('new-goal'); await settle();
+  const committed = x.data.raw;
+  assert.equal(x.data.wishes()[0].goalId, 'new-goal');
+  assert.equal(x.data.writes(), 1);
+  x.data.before.delete('set_ui_state');
+  x.host.querySelector('[data-wish-convert-retry]').click(); await settle();
+  assert.equal(x.data.raw, committed, 'retry does not rewrite convertedAt or updatedAt');
+  assert.equal(x.data.writes(), 1, 'same link needs no second CAS');
+  assert.equal(x.host.querySelector('[data-wish-convert-retry]'), null);
+  assert.equal(x.creations(), 1); assert.equal(goals.length, 1);
+});
+
+test('conversion CAS race preserves both goals and retry cannot replace the raced link', async t => {
+  const goals = [{ id: 'remote-goal', title: 'Remote goal' }, { id: 'local-goal', title: 'Local goal' }];
+  const x = await conversionFixture(t, { version: 1, wishes: [wish('a')] }, goals);
+  const remote = { version: 1, wishes: [wish('a', { goalId: 'remote-goal', future: { retained: true } })] };
+  x.data.before.set('set_ui_state', () => { x.data.raw = JSON.stringify(remote); });
+  await x.finish('local-goal'); await settle();
+  assert.equal(x.data.writes(), 1, 'single CAS attempt is rejected');
+  assert.deepEqual(JSON.parse(x.data.raw), remote);
+  assert.match(x.host.querySelector('[data-wish-message]').textContent, /Связь.*не подтверждена/);
+  x.data.before.delete('set_ui_state');
+  x.host.querySelector('[data-wish-convert-retry]').click(); await settle();
+  assert.equal(x.data.writes(), 1, 'retry still checks the original association');
+  assert.deepEqual(JSON.parse(x.data.raw), remote);
+  assert.deepEqual(goals.map(g => g.id), ['remote-goal', 'local-goal']);
+  assert.equal(x.creations(), 1);
+});
+
+test('a deleted linked goal can be intentionally replaced from the reviewed association', async t => {
+  const goals = [];
+  const x = await conversionFixture(t, { version: 1, wishes: [wish('a', { goalId: 'deleted-goal' })] }, goals);
+  goals.push({ id: 'replacement-goal', title: 'Replacement goal' });
+  await x.finish('replacement-goal'); await settle();
+  assert.equal(x.data.writes(), 1); assert.equal(x.data.wishes()[0].goalId, 'replacement-goal');
+  assert.equal(x.host.querySelector('[data-wish-convert-retry]'), null);
+  assert.equal(x.creations(), 1); assert.equal(goals.length, 1);
+});
+
 test('a wish saved by another Create surface appears in the open list', async t => {
   const x = await mountList(t, null);
   await createWish({ title: 'Из общей кнопки Создать', category: 'experience' }, { invoke: x.data.invoke });
