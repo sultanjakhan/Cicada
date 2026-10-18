@@ -1,7 +1,7 @@
 {
   "name": "cicada",
-  "version": "0.5.7",
-  "cicadaBuildId": "20261018-goals-text-actions-057.1",
+  "version": "0.5.8",
+  "cicadaBuildId": "20261018-review-read-recovery-058.1",
   "private": true,
   "type": "module",
   "scripts": {
