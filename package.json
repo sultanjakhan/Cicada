@@ -1,7 +1,7 @@
 {
   "name": "cicada",
-  "version": "0.5.10",
-  "cicadaBuildId": "20261019-home-reports-0510.1",
+  "version": "0.5.11",
+  "cicadaBuildId": "20261019-focus-day-planning-0511.1",
   "private": true,
   "type": "module",
   "scripts": {

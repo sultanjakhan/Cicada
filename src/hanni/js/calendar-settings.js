@@ -13,6 +13,7 @@ import { mountWorkRegistry } from './work-registry-view.js';
 import { mountDataSources } from './data-sources.js';
 import { mountPersonalTaskImport } from './personal-task-import-view.js';
 import { mountDataLocation } from './data-location.js';
+import { mountFocusAdapterSettings } from './focus-adapter-settings.js';
 
 let settingsDialog = null;
 
@@ -49,7 +50,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
   };
 
   let original = null, draft = null, closed = false, disposeSync = null;
-  let disposeUpdates = null, disposeSleep = null, disposeActivity = null, disposeRegistry = null, disposeSources = null, disposePersonalImport = null, disposeDataLocation = null;
+  let disposeUpdates = null, disposeSleep = null, disposeActivity = null, disposeRegistry = null, disposeSources = null, disposePersonalImport = null, disposeDataLocation = null, disposeFocusAdapter = null;
   let processSettings = null, processObserver = null, preferencesLoading = true, preferencesLoadBusy = false;
   let savedLanguageChanged = false;
   const requestedSection = recommendationsOnly ? 'today' : sectionFor(section);
@@ -71,7 +72,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
       document.removeEventListener('keydown', onSettingsEscape);
       processObserver?.disconnect();
       processSettings?.dispose();
-      disposeSync?.(); disposeUpdates?.(); disposeSleep?.(); disposeActivity?.(); disposeRegistry?.(); disposeSources?.(); disposePersonalImport?.(); disposeDataLocation?.();
+      disposeSync?.(); disposeUpdates?.(); disposeSleep?.(); disposeActivity?.(); disposeRegistry?.(); disposeSources?.(); disposePersonalImport?.(); disposeDataLocation?.(); disposeFocusAdapter?.();
       settingsDialog = null;
       if (savedLanguageChanged) window.dispatchEvent(new window.Event('hanni:language-changed'));
     },
@@ -179,7 +180,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
   }
 
   function preferenceDirty() { return !!draft && !samePreferences(draft, original); }
-  function hasUnsavedChanges() { return preferenceDirty() || !!processSettings?.isDirty() || !!disposeSync?.isDirty?.(); }
+  function hasUnsavedChanges() { return preferenceDirty() || !!processSettings?.isDirty() || !!disposeSync?.isDirty?.() || !!disposeFocusAdapter?.isDirty?.(); }
   function setPreferenceControlsEnabled(enabled) {
     preferencesLoading = !enabled;
     for (const root of [hosts.today, hosts.calendar]) {
@@ -199,7 +200,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
     saveButton.textContent = recommendationsOnly ? copy("Сохранить") : copy("Сохранить календарь");
     cancelButton.textContent = hasUnsavedChanges() ? copy("Отмена") : copy("Закрыть");
     api.modal.querySelector('.calendar-settings-actions').dataset.dirty = String(hasUnsavedChanges());
-    if (!settingsStatus.hidden && !processSettings?.isDirty() && !disposeSync?.isDirty?.()) settingsStatus.hidden = true;
+    if (!settingsStatus.hidden && !processSettings?.isDirty() && !disposeSync?.isDirty?.() && !disposeFocusAdapter?.isDirty?.()) settingsStatus.hidden = true;
   }
 
   nav.addEventListener('click', event => {
@@ -415,9 +416,9 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
         settingsStatus.textContent = copy("Настройки календаря сохранены. Черновик этапов ещё не сохранён — сохрани его во вкладке «Этапы задач» или закрой настройки с отменой.");
         settingsStatus.hidden = false;
         setActive('processes', true);
-      } else if (disposeSync?.isDirty?.()) {
+      } else if (disposeSync?.isDirty?.() || disposeFocusAdapter?.isDirty?.()) {
         hosts.connections.prepend(settingsStatus);
-        settingsStatus.textContent = copy("Настройки календаря сохранены. Изменения подключения ещё не сохранены.");
+        settingsStatus.textContent = copy("Настройки календаря сохранены. Изменения подключения или конфигурации фокуса ещё не сохранены.");
         settingsStatus.hidden = false;
         setActive('connections', true);
       } else {
@@ -436,6 +437,7 @@ export function showCalendarSettings(trigger, { section, returnFocus, recommenda
   saveButton.hidden = true;
   api.open(recommendationsOnly ? null : tabs[requestedSection]);
   if (!recommendationsOnly) {
+    disposeFocusAdapter = mountFocusAdapterSettings(hosts.connections, { invoke, setPending: value => { api.setPending(value); refreshFooter(); }, onDirty: refreshFooter });
     disposePersonalImport = mountPersonalTaskImport(hosts.calendar, { invoke, setPending: value => api.setPending(value), onChanged: () => window.dispatchEvent(new window.Event('hanni:calendar-refresh')) });
     processSettings = mountProcessSettings(hosts.processes, {
       invoke,
