@@ -54,3 +54,7 @@ Requires the matching native application implementation and refreshed MCP tool
 metadata. Updating only an installed 0.4.8 client cannot enable server pagination;
 old native servers reject nonempty list bodies. Preserved 0.4.7/0.4.8 bundles are
 not rewritten. This source change is not an installed-device acceptance claim.
+
+Pagination delivery: Cicada **0.5.5+**, client package **0.5.0** from the same
+release source commit, native envelope version **1**. Refresh the MCP connection
+after the supported 0.4.8-to-0.5.0 upgrade; existing empty list calls remain valid.

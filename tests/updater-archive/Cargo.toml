@@ -1,0 +1,9 @@
+[package]
+name = "cicada-updater-archive-regression"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+zip = { version = "=9.0.0", default-features = false }
+tempfile = "3"

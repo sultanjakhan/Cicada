@@ -1,6 +1,6 @@
 [package]
 name = "hanni-mvp"
-version = "0.5.4"
+version = "0.5.5"
 edition = "2021"
 license = "MIT"
 rust-version = "1.98"
@@ -51,7 +51,7 @@ windows = { version = "=0.61.3", features = ["Win32_Foundation", "Win32_Security
 jni = "=0.21.1"
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
-tauri-plugin-updater = "2"
+tauri-plugin-updater = { version = "=2.11.0", path = "../vendor/tauri-plugin-updater" }
 
 [dev-dependencies]
 tempfile = "3"
