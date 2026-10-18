@@ -89,7 +89,15 @@ jobs:
         working-directory: sync-relay
       - run: npm run test:native:checkpoint
         working-directory: sync-relay
-      - run: npm run package:mac
+      - name: Package macOS candidate and verify configured updater
+        env:
+          HANNI_MVP_UPDATES_URL: ${{ secrets.MVP_UPDATES_URL }}
+          HANNI_MVP_UPDATES_TOKEN: ${{ secrets.MVP_UPDATES_TOKEN }}
+        run: |
+          npm run package:mac
+          if [ -n "$HANNI_MVP_UPDATES_URL" ] && [ -n "$HANNI_MVP_UPDATES_TOKEN" ]; then
+            python3 scripts/check-update-configuration.py --executable ".local/mac-package/${GITHUB_SHA:0:12}/Cicada.app/Contents/MacOS/hanni-mvp"
+          fi
       - uses: actions/upload-artifact@v4
         # Optional CI bundle; signed release delivery is enforced separately.
         continue-on-error: true
