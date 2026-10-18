@@ -81,7 +81,7 @@ async function setup(t, { realEditor = false, fixtureRows = null } = {}) {
   const close = async modal => { modal.dispatchEvent(new w.Event('cancel', { cancelable: true })); await tick(); };
   const remount = async () => { dispose(); root.replaceChildren(); dispose = await module.mountCalendarNotes(root, { invoke, initBlockEditor: createEditor }); await tick(); };
   const mountOther = async () => { const other = w.document.createElement('main'); w.document.body.append(other); const cleanup = await module.mountCalendarNotes(other, { invoke, initBlockEditor: createEditor }); t.after(cleanup); return { root: other, cleanup }; };
-  return { mountOther, w, root, rows, responses, before, after, createReceipts, calls, editors, open, set, save, close, remount, dispose: () => dispose(), failEditor: () => { editorFailure = true; } };
+  return { hasUnsaved:module.hasUnsavedCalendarNoteDrafts, mountOther, w, root, rows, responses, before, after, createReceipts, calls, editors, open, set, save, close, remount, dispose: () => dispose(), failEditor: () => { editorFailure = true; } };
 }
 
 test('catalog uses one complete IPC result at 199/200/201 notes without a false truncation warning', async t => {
@@ -385,7 +385,7 @@ test('ordinary lost acknowledgement recovers one exact UUID across remount and r
 test('changed draft reconciles the committed UUID without overwriting either content until explicit update',async t=>{
  const x=await setup(t);let modal=await x.open();x.set(modal,'content','Original intent');x.after.set('create_note',()=>{throw Error('lost acknowledgement');});await x.save(modal);const id=x.rows.at(-1).id,count=x.rows.length;
  x.set(modal,'content','Changed retained draft');await x.save(modal);assert.equal(x.rows.length,count);assert.equal(x.rows.at(-1).content,'Original intent');assert.equal(modal.querySelector('[name=content]').value,'Changed retained draft');assert.match(modal.textContent,/Прежнее сохранение найдено/);
- assert.equal(modal.dataset.noteEditor,String(id));await x.save(modal);assert.equal(x.rows.length,count);assert.equal(x.rows.at(-1).content,'Changed retained draft');
+ assert.equal(modal.dataset.noteEditor,String(id));await x.save(modal);assert.equal(x.rows.length,count);assert.equal(x.rows.at(-1).content,'Changed retained draft');assert.equal(modal.open,false);assert.equal(x.hasUnsaved(),false,'reconciled new-key work is fully settled after explicit update');
  modal=await x.open();x.set(modal,'content','Changed retained draft');x.after.delete('create_note');await x.save(modal);assert.equal(x.rows.length,count+1);assert.notEqual(x.rows.at(-1).id,id,'intentional identical text is a separate note');
 });
 
@@ -401,4 +401,22 @@ test('durable new-note attempt retains rich blocks across lost acknowledgement a
  let modal=await x.open();x.after.set('create_note',()=>{throw Error('lost rich acknowledgement');});await x.save(modal);const count=x.rows.length,id=x.rows.at(-1).id;
  assert.deepEqual(JSON.parse(x.rows.at(-1).content_blocks).blocks,blocks);await x.close(modal);await x.remount();modal=await x.open();assert.deepEqual(x.editors.at(-1).output.blocks,blocks);await x.save(modal);
  assert.equal(x.rows.length,count);assert.equal(x.rows.at(-1).id,id);assert.deepEqual(JSON.parse(x.rows.at(-1).content_blocks).blocks,blocks);assert.equal(x.w.localStorage.getItem('calendar_note_create_pending_local_v1'),null);
+});
+
+
+test('rich lost-ack reconciliation settles only its original work key and releases the unsaved guard',async t=>{
+ const x=await setup(t),blocks=[{id:'owned-rich-work',type:'code',data:{code:'const original = 1;'}}];
+ const payload={title:'Owned rich reconciliation',content:'const original = 1;',tags:'',tabName:'calendar',status:'note',dueDate:null,reminderAt:null,priority:null,contentBlocks:JSON.stringify({blocks})};
+ x.w.localStorage.setItem('calendar_note_create_pending_local_v1',JSON.stringify({version:1,operationId:x.w.crypto.randomUUID(),payload,draft:{title:payload.title,content:payload.content,rich:true,blocks:{blocks},base:{title:'',content:'',blocks:'[]'}}}));
+ const modal=await x.open(),beforeCount=x.rows.length;
+ x.after.set('create_note',()=>{throw Error('owned post-commit lost acknowledgement');});await x.save(modal);
+ const id=x.rows.at(-1).id;assert.equal(x.rows.length,beforeCount+1);assert.equal(x.hasUnsaved(),true);
+ x.editors.at(-1).output.blocks[0].data.code='const edited = 2;';await x.save(modal);
+ assert.equal(modal.dataset.noteEditor,String(id));assert.match(modal.textContent,/Прежнее сохранение найдено/);
+ assert.equal(x.rows.at(-1).content,payload.content);assert.equal(x.editors.at(-1).output.blocks[0].data.code,'const edited = 2;');assert.equal(x.hasUnsaved(),true,'real edited rich draft still prevents idle');
+ const gate=deferred();x.before.set('update_note',()=>gate.promise);await x.save(modal);assert.equal(x.hasUnsaved(),true,'in-flight explicit update must remain guarded');
+ gate.resolve();await tick();assert.equal(modal.open,false);assert.equal(x.rows.length,beforeCount+1);assert.equal(x.rows.at(-1).id,id);
+ assert.equal(x.rows.at(-1).content,'const edited = 2;');assert.equal(JSON.parse(x.rows.at(-1).content_blocks).blocks[0].data.code,'const edited = 2;');
+ assert.equal(x.hasUnsaved(),false,'settled reconciliation must not leave pendingDrafts[new] behind');
+ const readback=await x.open(id);assert.equal(x.editors.at(-1).output.blocks[0].data.code,'const edited = 2;');await x.close(readback);await tick();assert.equal(x.hasUnsaved(),false);
 });

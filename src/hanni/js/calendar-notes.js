@@ -206,6 +206,7 @@ export async function mountCalendarNotes(element, dependencies = {}) {
   }
   function save(value) {
     if (!current(value) || value.pending || value.dialog.pending || value.conflict || value.note?.archived || value.invalid || value.editorFailed || !value.ready) return;
+    const workKey = value.key;
     setBusy(value, true); value.dialog.showError('');
     const work = (async () => {
       try {
@@ -257,8 +258,8 @@ export async function mountCalendarNotes(element, dependencies = {}) {
         }
       } finally { if (current(value)) setBusy(value, false); }
     })();
-    pendingDrafts.set(value.key, work);
-    void work.finally(() => { if (pendingDrafts.get(value.key) === work) pendingDrafts.delete(value.key); });
+    pendingDrafts.set(workKey, work);
+    void work.finally(() => { if (pendingDrafts.get(workKey) === work) pendingDrafts.delete(workKey); });
     return work;
   }
   async function changeArchive(value = null) {
