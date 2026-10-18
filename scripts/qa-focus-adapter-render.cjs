@@ -53,7 +53,7 @@ async function main(){
   const browser=await chromium.launch({headless:true,executablePath:process.env.FOCUS_ADAPTER_CHROME});
   const evidence=[];
   try {
-    for(const width of [1100,390])for(const theme of ['light','dark']) {
+    for(const [width,theme] of [[1100,'light'],[390,'dark']]) {
       const page=await browser.newPage({viewport:{width,height:820}}), errors=[];
       page.on('pageerror',error=>errors.push(error.message));
       await page.addInitScript(syntheticBackend,{theme});
@@ -69,12 +69,34 @@ async function main(){
       const scope=page.locator('[data-focus-adapter]'), status=scope.locator('[role="status"]');
       const action=name=>scope.locator('[data-focus-action="'+name+'"]');
       const field=name=>scope.locator('[data-focus-field="'+name+'"]');
+      const capture=async(name,anchor,targets)=>{
+        await anchor.evaluate(el=>el.scrollIntoView({block:'end',inline:'nearest'}));
+        await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+        const visible=[];
+        for(const target of targets){
+          assert.equal(await target.isVisible(),true,name+' target displayed');
+          const bounds=await target.evaluate(el=>{
+            const box=el.getBoundingClientRect();let top=0,bottom=innerHeight,left=0,right=innerWidth;
+            for(let parent=el.parentElement;parent;parent=parent.parentElement){
+              const style=getComputedStyle(parent),rect=parent.getBoundingClientRect();
+              if(/auto|scroll|hidden|clip/.test(style.overflowY)){top=Math.max(top,rect.top);bottom=Math.min(bottom,rect.bottom);}
+              if(/auto|scroll|hidden|clip/.test(style.overflowX)){left=Math.max(left,rect.left);right=Math.min(right,rect.right);}
+            }
+            return {top:box.top,bottom:box.bottom,left:box.left,right:box.right,clip:{top,bottom,left,right}};
+          });
+          assert.ok(bounds.top>=bounds.clip.top-1&&bounds.bottom<=bounds.clip.bottom+1&&bounds.left>=bounds.clip.left-1&&bounds.right<=bounds.clip.right+1,name+' target inside actual scroll viewport: '+JSON.stringify(bounds));
+          visible.push(bounds);
+        }
+        await page.screenshot({path:path.join(output,width+'-'+theme+'-'+name+'.png'),fullPage:true});
+        evidence.push({width,theme,capture:name,visible});
+      };
       await field('sites').fill('example.com video.example.com');
       await field('exceptions').fill('chat.example.com mail.example.com');
       await field('times').fill('0900-1200,1300-1700');
       for(const day of [1,2,3,4,5])await scope.locator('[data-focus-day="'+day+'"]').check();
       await action('save').focus();await page.keyboard.press('Enter');
       await status.filter({hasText:'Сохранено и перечитано'}).waitFor();
+      await capture('form-top',field('times'),['platform','sites','exceptions','times'].map(name=>field(name).locator('..')));
       const saved=await page.evaluate(()=>window.fixtureUI.cicada_focus_adapter_local_v1);
       await action('export').focus();await page.keyboard.press('Space');
       await scope.locator('pre:visible').waitFor();
@@ -83,21 +105,22 @@ async function main(){
       await action('export').focus();
       const geometry=await scope.evaluate(root=>({overflow:root.scrollWidth>root.clientWidth+1,inputs:[...root.querySelectorAll('input[type="text"],select')].map(el=>({width:el.getBoundingClientRect().width,right:el.getBoundingClientRect().right})),focus:{tag:document.activeElement.tagName,outline:getComputedStyle(document.activeElement).outlineStyle},text:root.innerText}));
       assert.equal(geometry.overflow,false);assert.notEqual(geometry.focus.outline,'none');
-      await page.screenshot({path:path.join(output,prefix+'-manual-export.png'),fullPage:true});
+      await scope.locator('pre').evaluate(el=>el.scrollIntoView({block:'start',inline:'nearest'}));
+      await page.screenshot({path:path.join(output,prefix+'-instruction-start.png'),fullPage:true});
+      await capture('instruction-download-bottom',scope.locator('a'),[scope.locator('a')]);
       evidence.push({width,theme,state:'manual-export',geometry});
       await page.keyboard.press('Escape');await page.locator('dialog[open]').waitFor({state:'detached'});
       await open();assert.equal(await field('times').inputValue(),'0900-1200,1300-1700');assert.equal(await field('exceptions').inputValue(),'chat.example.com mail.example.com');
       for(const day of [1,2,3,4,5])assert.equal(await scope.locator('[data-focus-day="'+day+'"]').isChecked(),true);
       await field('platform').selectOption('unsupported');await action('save').click();await status.filter({hasText:'Сохранено и перечитано'}).waitFor();
       assert.equal(await action('export').isDisabled(),true);
-      await page.screenshot({path:path.join(output,prefix+'-unsupported.png'),fullPage:true});
       evidence.push({width,theme,state:'unsupported',text:await status.innerText(),saved});
       const after=await page.evaluate(()=>structuredClone(window.fixtureUI));delete after.cicada_focus_adapter_local_v1;assert.deepEqual(after,initial,'selected goal and unrelated configuration unchanged');
       await page.keyboard.press('Escape');await page.locator('dialog[open]').waitFor({state:'detached'});
       await page.evaluate(()=>{window.fixtureFocusOffline=true;});
       await page.evaluate(async()=>{const {showCalendarSettings}=await import('/src/hanni/js/calendar-settings.js');showCalendarSettings(document.querySelector('.uni-tab'),{section:'connections'});});
       await scope.locator('summary').click();await status.filter({hasText:'Загрузка не удалась'}).waitFor();assert.equal(await action('save').isDisabled(),true);
-      await page.screenshot({path:path.join(output,prefix+'-unavailable.png'),fullPage:true});
+      await capture('unavailable-controls',status,[action('save'),action('reload'),status]);
       await page.evaluate(()=>{window.fixtureFocusOffline=false;});await action('reload').click();await page.locator('[data-focus-action="save"]:enabled').waitFor();
       assert.equal(await field('platform').inputValue(),'unsupported');
       const calls=await page.evaluate(()=>window.fixtureCalls);
