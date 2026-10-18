@@ -2755,3 +2755,18 @@ fn note_archive_version_guard_rejects_stale_native_ipc_and_preserves_legacy_call
     assert_eq!(call(&view, "toggle_note_archive", json!({"id":id})).unwrap(), false);
     assert!(call(&view, "toggle_note_archive", json!({"id":"missing","expectedVersion":1})).is_err());
 }
+
+#[test]
+fn ordinary_note_attempt_public_ipc_recovers_exact_identity_and_supported_cleanup() {
+    let (_app,view)=fixture();let operation=uuid::Uuid::new_v4().to_string();
+    let args=json!({"title":"Owned ordinary IPC note","content":"Owned content","tags":"calendar,keep","status":"note","operationId":operation,"contentBlocks":json!({"blocks":[{"type":"paragraph","data":{"text":"Owned content"}}]}).to_string()});
+    let mut lookup=args.clone();lookup["recoverOnly"]=json!(true);assert_eq!(call(&view,"create_note",lookup.clone()).unwrap(),Value::Null);
+    let id=call(&view,"create_note",args.clone()).unwrap(); // Treat the first reply as lost at the caller.
+    assert_eq!(call(&view,"create_note",lookup).unwrap(),id);assert_eq!(call(&view,"create_note",args.clone()).unwrap(),id);
+    let mut changed=args.clone();changed["content"]=json!("Changed payload");assert!(call(&view,"create_note",changed).is_err());
+    let note=call(&view,"get_note",json!({"id":id})).unwrap();assert_eq!(note["content"],"Owned content");assert_eq!(note["tags"],"calendar,keep");assert!(note["content_blocks"].as_str().unwrap().contains("Owned content"));
+    let mut distinct=args.clone();distinct["operationId"]=json!(uuid::Uuid::new_v4().to_string());let second=call(&view,"create_note",distinct).unwrap();assert_ne!(id,second);
+    for owned in [&id,&second] {let fresh=call(&view,"get_note",json!({"id":owned})).unwrap();call(&view,"delete_item",json!({"id":owned,"expectedVersion":fresh["version"]})).unwrap();assert!(call(&view,"get_note",json!({"id":owned})).is_err());}
+    assert_eq!(call(&view,"create_note",args).unwrap(),id,"receipt never recreates a deliberately deleted note");
+    assert!(call(&view,"get_active_blocks",json!({})).unwrap().as_array().unwrap().is_empty());
+}
