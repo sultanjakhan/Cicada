@@ -1,6 +1,10 @@
 name: Signed update candidate
 
 on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       platform:
@@ -13,13 +17,64 @@ permissions:
   contents: read
 
 jobs:
+  trusted-source:
+    # workflow_run has secrets/write privileges: never consume PR artifacts or
+    # use github.sha (the default branch tip) instead of the tested head SHA.
+    # https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      platform: ${{ steps.source.outputs.platform }}
+    steps:
+      - id: source
+        name: Validate trusted source before starting any signing job
+        shell: python
+        run: |
+          import json, os, re
+          from pathlib import Path
+
+          event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
+          repository = event.get('repository', {})
+          def require(condition):
+              if not condition:
+                  raise SystemExit('Refusing untrusted signing source')
+
+          require(os.environ['GITHUB_REPOSITORY'] == 'sultanjakhan/Cicada')
+          require(repository.get('full_name') == 'sultanjakhan/Cicada')
+          require(str(repository.get('id')) == os.environ['GITHUB_REPOSITORY_ID'])
+          require(repository.get('fork') is False)
+          if os.environ['GITHUB_EVENT_NAME'] == 'workflow_run':
+              run = event.get('workflow_run', {})
+              head_repository = run.get('head_repository') or {}
+              require(event.get('action') == 'completed')
+              require(run.get('status') == 'completed' and run.get('conclusion') == 'success')
+              require(run.get('event') == 'push' and run.get('head_branch') == 'main')
+              require(run.get('name') == 'CI' and run.get('path') == '.github/workflows/ci.yml')
+              require(head_repository.get('id') == repository.get('id'))
+              require(head_repository.get('full_name') == repository.get('full_name'))
+              require(head_repository.get('fork') is False)
+              sha, platform = run.get('head_sha', ''), 'all'
+          else:
+              require(os.environ['GITHUB_EVENT_NAME'] == 'workflow_dispatch')
+              require(os.environ['GITHUB_REF'] == 'refs/heads/main')
+              sha = os.environ['GITHUB_SHA']
+              platform = (event.get('inputs') or {}).get('platform', 'all')
+          require(isinstance(sha, str) and re.fullmatch(r'[0-9a-f]{40}', sha))
+          require(platform in ('all', 'windows', 'android', 'macos'))
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'sha={sha}\nplatform={platform}\n')
+
   windows:
-    if: inputs.platform == 'all' || inputs.platform == 'windows'
+    needs: trusted-source
+    if: needs.trusted-source.outputs.platform == 'all' || needs.trusted-source.outputs.platform == 'windows'
     runs-on: windows-latest
     timeout-minutes: 45
     permissions:
       contents: write
     env:
+      CANDIDATE_SHA: ${{ needs.trusted-source.outputs.sha }}
       CARGO_PROFILE_DEV_DEBUG: '0'
       CARGO_PROFILE_TEST_DEBUG: '0'
       CARGO_INCREMENTAL: '0'
@@ -29,6 +84,9 @@ jobs:
       HANNI_MVP_UPDATES_TOKEN: ${{ secrets.MVP_UPDATES_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.trusted-source.outputs.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -53,7 +111,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: cicada-update-windows-${{ github.sha }}
+          name: cicada-update-windows-${{ needs.trusted-source.outputs.sha }}
           path: .local/update-candidate/windows/*
           include-hidden-files: true
           if-no-files-found: error
@@ -70,9 +128,9 @@ jobs:
           assets=(.local/update-candidate/windows/*)
           test "${#assets[@]}" -eq 3
           tag="windows-update-candidate-${GITHUB_RUN_ID}"
-          gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --latest=false --title "Cicada Windows update candidate ${GITHUB_RUN_ID}" --notes "CI delivery fallback; not published."
+          gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$CANDIDATE_SHA" --draft --latest=false --title "Cicada Windows update candidate ${GITHUB_RUN_ID}" --notes "CI delivery fallback; not published."
           test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = true
-          test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq '.targetCommitish')" = "$GITHUB_SHA"
+          test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq '.targetCommitish')" = "$CANDIDATE_SHA"
           test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')" -eq 3
       - name: Require candidate delivery
         if: always()
@@ -81,12 +139,14 @@ jobs:
           test "${{ steps.artifact.outcome }}" = success || test "${{ steps.draft_release.outcome }}" = success
 
   android:
-    if: inputs.platform == 'all' || inputs.platform == 'android'
+    needs: trusted-source
+    if: needs.trusted-source.outputs.platform == 'all' || needs.trusted-source.outputs.platform == 'android'
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     permissions:
       contents: write
     env:
+      CANDIDATE_SHA: ${{ needs.trusted-source.outputs.sha }}
       BUILD_TOOLS_VERSION: 35.0.0
       NDK_VERSION: 28.2.13676358
       MVP_UPDATER_PRIVATE_KEY: ${{ secrets.MVP_UPDATER_PRIVATE_KEY }}
@@ -96,6 +156,9 @@ jobs:
       HANNI_MVP_UPDATES_TOKEN: ${{ secrets.MVP_UPDATES_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.trusted-source.outputs.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -148,7 +211,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: cicada-update-android-${{ github.sha }}
+          name: cicada-update-android-${{ needs.trusted-source.outputs.sha }}
           path: .local/update-candidate/android/*
           include-hidden-files: true
           if-no-files-found: error
@@ -165,9 +228,9 @@ jobs:
           assets=(.local/update-candidate/android/*)
           test "${#assets[@]}" -eq 3
           tag="android-update-candidate-${GITHUB_RUN_ID}"
-          gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --latest=false --title "Cicada Android update candidate ${GITHUB_RUN_ID}" --notes "CI delivery fallback; not published."
+          gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$CANDIDATE_SHA" --draft --latest=false --title "Cicada Android update candidate ${GITHUB_RUN_ID}" --notes "CI delivery fallback; not published."
           test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = true
-          test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq '.targetCommitish')" = "$GITHUB_SHA"
+          test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq '.targetCommitish')" = "$CANDIDATE_SHA"
           test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')" -eq 3
       - name: Require candidate delivery
         if: always()
@@ -176,12 +239,14 @@ jobs:
           test "${{ steps.artifact.outcome }}" = success || test "${{ steps.draft_release.outcome }}" = success
 
   macos:
-    if: inputs.platform == 'all' || inputs.platform == 'macos'
+    needs: trusted-source
+    if: needs.trusted-source.outputs.platform == 'all' || needs.trusted-source.outputs.platform == 'macos'
     runs-on: macos-15
     timeout-minutes: 45
     permissions:
       contents: write
     env:
+      CANDIDATE_SHA: ${{ needs.trusted-source.outputs.sha }}
       CARGO_BUILD_JOBS: '2'
       CARGO_PROFILE_DEV_DEBUG: '0'
       CARGO_PROFILE_TEST_DEBUG: '0'
@@ -192,6 +257,9 @@ jobs:
       HANNI_MVP_UPDATES_TOKEN: ${{ secrets.MVP_UPDATES_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.trusted-source.outputs.sha }}
+          persist-credentials: false
       - name: Use a physical temporary directory outside the checkout
         run: |
           task_tmp="$(cd "$GITHUB_WORKSPACE/.." && pwd -P)/cicada-ci-temp"
@@ -221,7 +289,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: cicada-update-macos-${{ github.sha }}
+          name: cicada-update-macos-${{ needs.trusted-source.outputs.sha }}
           path: .local/update-candidate/macos/*
           include-hidden-files: true
           if-no-files-found: error
@@ -238,9 +306,9 @@ jobs:
           assets=(.local/update-candidate/macos/*)
           test "${#assets[@]}" -eq 3
           tag="macos-update-candidate-${GITHUB_RUN_ID}"
-          gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --latest=false --title "Cicada macOS update candidate ${GITHUB_RUN_ID}" --notes "CI delivery fallback; not published."
+          gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$CANDIDATE_SHA" --draft --latest=false --title "Cicada macOS update candidate ${GITHUB_RUN_ID}" --notes "CI delivery fallback; not published."
           test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = true
-          test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq '.targetCommitish')" = "$GITHUB_SHA"
+          test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq '.targetCommitish')" = "$CANDIDATE_SHA"
           test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')" -eq 3
       - name: Require candidate delivery
         if: always()
