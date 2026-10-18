@@ -31,10 +31,12 @@ jobs:
           "$chrome_path" --version
           echo "C86_CHROME=$chrome_path" >> "$GITHUB_ENV"
           ln -s "$RUNNER_TEMP/c86-tools/node_modules" node_modules
-      - name: Existing Home baseline render
+      - name: Focused report and preserved grouping checks
+        run: node --test tests/calendar-ai-reports.test.mjs tests/dashboard-ai-work.test.mjs
+      - name: Candidate Home hierarchy and history render
         env:
           NODE_PATH: ${{ runner.temp }}/c86-tools/node_modules
-          C86_LABEL: baseline
+          C86_LABEL: candidate
         run: node scripts/qa-c86-home-render.cjs
       - uses: actions/upload-artifact@v4
         if: always()

@@ -11,7 +11,7 @@ const STATUS_LABELS = {
 const AGENT_LABELS = { codex: 'Codex', claude: 'Claude', other: 'другой исполнитель', 'agent-city': 'Agent City' };
 
 /** A read-only view of reports explicitly bound to native Cicada tasks. */
-export function mountCalendarAiReports(host, { invoke, listen = null, window: win = globalThis.window } = {}) {
+export function mountCalendarAiReports(host, { invoke, listen = null, readTaskReview = null, onOpenTask = null, window: win = globalThis.window } = {}) {
   const uiCopy = createUiCopy(host.ownerDocument);
   let disposed = false, revision = 0, unlisten = null, hasLoaded = false, renderedSignature = null;
   const section = host.ownerDocument.createElement('section');
@@ -20,20 +20,31 @@ export function mountCalendarAiReports(host, { invoke, listen = null, window: wi
   section.setAttribute('aria-label', uiCopy('Работа ИИ'));
   const heading = host.ownerDocument.createElement('h3');
   heading.textContent = uiCopy('Работа ИИ');
+  const disclosure = host.ownerDocument.createElement('details');
+  const summary = host.ownerDocument.createElement('summary');
+  const counts = host.ownerDocument.createElement('span');
+  counts.dataset.aiReportCounts = '';
+  summary.append(heading, counts);
   const note = host.ownerDocument.createElement('p');
+  note.dataset.aiReportNote = '';
   const unknownFreshness = 'Подключение к исполнителю не подтверждено. По последнему отчёту. Время и актуальность неизвестны; текущее состояние не подтверждено.';
   note.textContent = uiCopy(unknownFreshness);
   const content = host.ownerDocument.createElement('div');
   content.setAttribute('aria-live', 'polite');
-  section.append(heading, note, content);
+  disclosure.append(summary, note, content);
+  section.append(disclosure);
   host.replaceChildren(section);
 
   function message(text, key = text) {
+    counts.textContent = key === 'empty' ? (uiCopy.locale === 'en' ? 'Linked tasks: 0' : 'Связанных задач: 0')
+      : key === 'error' ? uiCopy('Не удалось прочитать отчёты. Прежние данные скрыты.') : uiCopy('Загружаем отчёты…');
     const signature = `message:${uiCopy.locale}:${key}`;
     if (renderedSignature === signature && content.firstElementChild) return;
     const paragraph = host.ownerDocument.createElement('p');
     paragraph.textContent = text;
+    const restore = content.contains(host.ownerDocument.activeElement);
     content.replaceChildren(paragraph);
+    if (restore) summary.focus({ preventScroll:true });
     renderedSignature = signature;
   }
 
@@ -45,15 +56,22 @@ export function mountCalendarAiReports(host, { invoke, listen = null, window: wi
       if (!context?.binding || !context.reports.length) continue;
       const report = context.reports.reduce((latest, item) => !latest || item.receivedOrder > latest.receivedOrder ? item : latest, null);
       if (context.latestRun && !context.latestRun.report && context.latestRun.receivedOrder > report?.receivedOrder) {
-        items.push({ nativeTaskId:String(row.source_id), title:row.title, runId:context.latestRun.runId, report:null, order:context.latestRun.receivedOrder });
+        items.push({ nativeTaskId:String(row.source_id), title:row.title, runId:context.latestRun.runId, report:null, order:context.latestRun.receivedOrder, review:context.review, reviewReadError:context.reviewReadError });
         continue;
       }
-      if (report && STATUS_LABELS[report.status]) items.push({ nativeTaskId:String(row.source_id), title:row.title, report, order:report.receivedOrder });
+      if (report && STATUS_LABELS[report.status]) items.push({ nativeTaskId:String(row.source_id), title:row.title, report, order:report.receivedOrder, review:context.review, reviewReadError:context.reviewReadError });
     }
     items.sort((a, b) => b.order - a.order);
     if (!items.length) { section.hidden = false; message(uiCopy('Нет связанных отчётов о работе ИИ. Регистрация задачи не означает запуск.'), 'empty'); return; }
     section.hidden = false;
-    const signature = `items:${uiCopy.locale}:${JSON.stringify(items.map(item => [item.nativeTaskId, item.title, item.runId, item.report]))}`;
+    const errors = items.filter(item => item.report?.status === 'error').length;
+    const waiting = items.filter(item => item.report?.status === 'waiting').length;
+    const needsReview = items.filter(item => !item.reviewReadError && item.review?.reviewState === 'awaiting_review').length;
+    const unknownReview = items.filter(item => item.reviewReadError || !readTaskReview).length;
+    counts.textContent = uiCopy.locale === 'en'
+      ? `Linked tasks: ${items.length} · reported: errors ${errors}, waiting ${waiting} · awaiting review: ${needsReview}${unknownReview ? ` · review unknown: ${unknownReview}` : ''}`
+      : `Связанных задач: ${items.length} · по отчётам: ошибок ${errors}, ожидают ${waiting} · на приёмке: ${needsReview}${unknownReview ? ` · приёмка неизвестна: ${unknownReview}` : ''}`;
+    const signature = `items:${uiCopy.locale}:${JSON.stringify(items.map(item => [item.nativeTaskId, item.title, item.runId, item.report, item.review, item.reviewReadError]))}`;
     if (renderedSignature === signature && content.querySelector('ul')) return;
     const list = host.ownerDocument.createElement('ul');
     for (const item of items) {
@@ -62,6 +80,18 @@ export function mountCalendarAiReports(host, { invoke, listen = null, window: wi
       row.dataset.runId = item.runId ?? item.report.runId;
       const title = host.ownerDocument.createElement('strong');
       title.textContent = item.title;
+      if (onOpenTask) {
+        const open = host.ownerDocument.createElement('button');
+        open.type = 'button'; open.textContent = item.title;
+        open.addEventListener('click', () => {
+          const record = rows.find(record => String(record.source_id) === item.nativeTaskId);
+          if (!disposed && record) onOpenTask(record, () => {
+            if (!disposed && open.isConnected) open.focus({ preventScroll:true });
+            else if (!disposed) summary.focus({ preventScroll:true });
+          });
+        });
+        title.replaceChildren(open);
+      }
       const status = host.ownerDocument.createElement('p');
       if (!item.report) {
         status.textContent = uiCopy('Нет связанных отчётов о работе ИИ. Регистрация задачи не означает запуск.');
@@ -75,9 +105,21 @@ export function mountCalendarAiReports(host, { invoke, listen = null, window: wi
       facts.textContent = uiCopy.format('Модель: {0} · этап: {1} · актуальность: {2}', item.report.model || uiCopy('не сообщена'), item.report.stage || uiCopy('не сообщён'), (!item.report.freshness || item.report.freshness === 'unknown') ? uiCopy('неизвестна') : item.report.freshness);
       if (item.report.status === 'done') status.textContent += uiCopy(' Завершение задачи требует приёмки пользователем.');
       row.append(title, status, facts);
+      if (item.reviewReadError) {
+        const unknown = host.ownerDocument.createElement('p'); unknown.textContent = uiCopy('Состояние приёмки не обновлено. Повтори чтение.'); row.append(unknown);
+      } else if (item.review) {
+        row.dataset.resultVersion = String(item.review.resultVersion);
+        const review = host.ownerDocument.createElement('p');
+        review.textContent = item.review.reviewState === 'awaiting_review' ? uiCopy.format('На приёмке · результат v{0}', item.review.resultVersion)
+          : item.review.reviewState === 'accepted' ? uiCopy.format('Принято · результат v{0}', item.review.resultVersion)
+          : item.review.reviewState === 'awaiting_dispatch' ? uiCopy('Ожидает передачи исполнителю') : uiCopy('В работе');
+        row.append(review);
+      }
       list.append(row);
     }
+    const focused = content.contains(host.ownerDocument.activeElement) ? host.ownerDocument.activeElement.closest('li')?.dataset.nativeTaskId : null;
     content.replaceChildren(list);
+    if (focused) ([...list.children].find(row => row.dataset.nativeTaskId === focused)?.querySelector('button') || summary).focus({ preventScroll:true });
     renderedSignature = signature;
   }
 
@@ -92,7 +134,7 @@ export function mountCalendarAiReports(host, { invoke, listen = null, window: wi
       const nativeRows = await invoke('get_calendar_tasks', {});
       if (!Array.isArray(nativeRows)) throw new Error('Invalid task response');
       const rows = nativeRows.filter(row => row?.source_type === 'note' && !row.archived && !row.readonly && row.status_extra === 'task');
-      const observed = await readNativeTaskObservations(rows, invoke);
+      const observed = await readNativeTaskObservations(rows, invoke, { readReview:readTaskReview });
       if (!observed.available) throw new Error('Native observation read failed');
       if (disposed || request !== revision) return;
       note.textContent = uiCopy(unknownFreshness);

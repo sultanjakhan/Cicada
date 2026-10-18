@@ -44,7 +44,14 @@
 .calendar-today-links button, .calendar-routine-choices__heading button { border:0; padding:4px 0; background:transparent; color:var(--text-secondary,#626262); font-size:12px; text-decoration:underline; text-underline-offset:3px; cursor:pointer; }
 .calendar-ai-reports { margin-top:16px; }
 .calendar-ai-reports h3 { margin:0; font-size:14px; }
-.calendar-ai-reports > p, .calendar-ai-reports li p { margin:4px 0; color:var(--text-secondary,#626262); font-size:12px; }
+.calendar-ai-reports [data-ai-report-note], .calendar-ai-reports li p { margin:4px 0; color:var(--text-secondary,#626262); font-size:12px; }
+.calendar-ai-reports summary { min-height:48px; box-sizing:border-box; padding:8px 0; cursor:pointer; }
+.calendar-ai-reports summary h3 { display:inline; }
+.calendar-ai-reports [data-ai-report-counts] { display:block; margin-top:4px; color:var(--text-secondary,#626262); font-size:12px; line-height:18px; }
+.calendar-ai-reports summary:hover h3 { text-decoration:underline; text-underline-offset:4px; }
+.calendar-ai-reports li strong > button { min-height:48px; padding:4px 0; border:0; border-radius:4px; background:transparent; color:inherit; font:inherit; text-align:left; overflow-wrap:anywhere; cursor:pointer; }
+.calendar-ai-reports li strong > button:hover { text-decoration:underline; text-underline-offset:4px; }
+.calendar-ai-reports :is(summary, li strong > button):focus-visible { outline:2px solid var(--text-primary,#252525); outline-offset:3px; }
 .calendar-ai-reports ul { margin:8px 0 0; padding:0; list-style:none; }
 .calendar-ai-reports li { overflow-wrap:anywhere; }
 .calendar-ai-reports li + li { margin-top:12px; }
