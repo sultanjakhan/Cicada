@@ -100,7 +100,7 @@ pasted paths and saved folder preferences are never read capabilities. Other
 platform choosers are unavailable until their own supported adapter exists.
 Selection creates one opaque, window-scoped, in-memory grant for at most ten
 minutes. Cancel creates no grant. Selecting another file revokes the old grant;
-explicit revoke and closing the settings section also release it. Grants are
+explicit revoke and closing the Settings dialog also release it. Grants are
 never saved or restored across restart.
 
 The reader rejects links/reparse points, changed/replaced identities, denied

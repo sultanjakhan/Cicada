@@ -150,7 +150,7 @@ fn commit(grants:&mut Grants,owner:&str,id:&str,digest:&str,value:&str,expected:
 #[cfg(test)]
 mod tests {
  use super::*;
- fn fixture()->Value{serde_json::json!({"schemaVersion":1,"kind":"work-registry-snapshot","snapshotId":"owned-snapshot","sequence":1,"source":{"publisherId":"owned","sourceNamespace":"00000000-0000-0000-0000-000000000001","mode":"published-snapshot"},"projects":[{"id":"owned-project","title":"Owned project"}],"tasks":[],"runs":[],"publishedAt":"2026-10-18T12:00:00Z","staleAfterSeconds":3600})}
+ fn fixture()->Value{serde_json::json!({"schemaVersion":1,"kind":"work-registry-snapshot","snapshotId":"owned-snapshot","sequence":1,"source":{"publisherId":"owned","sourceNamespace":"00000000-0000-0000-0000-000000000001","mode":"published-snapshot"},"projects":[{"id":"owned-project","title":"Owned project"}],"tasks":[{"id":"owned-task","projectId":"owned-project","parentTaskId":null,"title":"Owned task","relationship":"root","status":"done","lastUpdated":"2026-10-18T12:00:00Z","provenance":{"kind":"parent-published","reference":"owned fixture"},"operation":null,"waitingFor":null,"result":null,"localBinding":null}],"runs":[],"publishedAt":"2026-10-18T12:00:00Z","staleAfterSeconds":3600})}
  fn file(dir:&Path)->PathBuf{let p=dir.join("owned.json");std::fs::write(&p,fixture().to_string()).unwrap();p}
  #[test]
  fn registry_source_exact_grant_owner_revoke_expiry_and_changed_bytes_fail_closed(){
@@ -181,6 +181,9 @@ mod tests {
   commit(&mut grants,"owner",&s.grant_id,&read.digest,&value,&value,"",&conn).unwrap();assert!(commit(&mut grants,"owner",&s.grant_id,&read.digest,&value,"","",&conn).is_err());
   crate::mvp_sync_db::set_ui(&conn,SOURCES,"changed",Some("")).unwrap();assert!(commit(&mut grants,"owner",&s.grant_id,&read.digest,&value,&value,"",&conn).is_err());assert_eq!(crate::mvp_sync_db::read_ui(&conn,REGISTRY).unwrap().unwrap(),value);
   grants.revoke("owner",&s.grant_id);assert!(commit(&mut grants,"owner",&s.grant_id,&read.digest,&value,&value,"changed",&conn).is_err());assert_eq!(counts(),before);assert_eq!(std::fs::read(&path).unwrap(),original);
+  let fresh=grants.select("owner",&path).unwrap();let preview=grants.read("owner",&fresh.grant_id,None).unwrap();let mut changed=fixture();changed["sequence"]=serde_json::json!(2);let changed_bytes=changed.to_string();std::fs::write(&path,&changed_bytes).unwrap();
+  assert!(commit(&mut grants,"owner",&fresh.grant_id,&preview.digest,&value,&value,"changed",&conn).is_err());assert_eq!(crate::mvp_sync_db::read_ui(&conn,REGISTRY).unwrap().unwrap(),value);assert_eq!(std::fs::read_to_string(&path).unwrap(),changed_bytes);assert_eq!(counts(),before);
+
  }
  #[test]
  fn registry_source_invalid_rows_cannot_bypass_preview_at_confirmation(){
