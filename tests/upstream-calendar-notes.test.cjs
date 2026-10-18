@@ -38,13 +38,19 @@ async function setup(t, { realEditor = false, fixtureRows = null } = {}) {
     { id: 5, title: 'Other', content: 'Не в календаре', tab_name: 'other', status: 'note', updated_at: 'other-v1' },
   ];
   for (const row of rows) row.version ??= 1;
-  const responses = new Map(), before = new Map(), calls = [], editors = []; let editorFailure = false, version = 0;
+  const responses = new Map(), before = new Map(), after = new Map(), createReceipts = new Map(), calls = [], editors = []; let editorFailure = false, version = 0;
   const invoke = async (name, args) => {
     calls.push({ name, args: structuredClone(args) }); if (before.has(name)) await before.get(name)(args);
     if (responses.has(name)) return structuredClone(responses.get(name));
     if (name === 'get_notes') return structuredClone(rows);
     if (name === 'get_note') { const row = rows.find(row => String(row.id) === String(args.id)); if (!row) throw new Error('missing'); return structuredClone(row); }
-    if (name === 'create_note') { const id = 100 + rows.length; rows.push({ id, title: args.title, content: args.content, tags: args.tags, tab_name: args.tabName, status: args.status, updated_at: 'created' }); return id; }
+    if (name === 'create_note') {
+      const {operationId,recoverOnly,...payload}=args,signature=JSON.stringify(payload),receipt=createReceipts.get(operationId);
+      if(receipt){if(receipt.signature!==signature)throw Error('note_create_operation_conflict');return receipt.id;}
+      if(recoverOnly)return null;
+      const id=100+rows.length;rows.push({id,title:args.title,content:args.content,content_blocks:args.contentBlocks,tags:args.tags,tab_name:args.tabName,status:args.status,version:1,updated_at:'created'});
+      if(operationId)createReceipts.set(operationId,{id,signature});if(after.has(name))await after.get(name)(args,id);return id;
+    }
     if (name === 'update_note') {
       const row = rows.find(row => String(row.id) === String(args.id)); Object.assign(row, { title: args.title, content: args.content, tags: args.tags, updated_at: 'saved' + ++version });
       if (args.contentBlocks != null) row.content_blocks = args.contentBlocks; return;
@@ -75,7 +81,7 @@ async function setup(t, { realEditor = false, fixtureRows = null } = {}) {
   const close = async modal => { modal.dispatchEvent(new w.Event('cancel', { cancelable: true })); await tick(); };
   const remount = async () => { dispose(); root.replaceChildren(); dispose = await module.mountCalendarNotes(root, { invoke, initBlockEditor: createEditor }); await tick(); };
   const mountOther = async () => { const other = w.document.createElement('main'); w.document.body.append(other); const cleanup = await module.mountCalendarNotes(other, { invoke, initBlockEditor: createEditor }); t.after(cleanup); return { root: other, cleanup }; };
-  return { mountOther, w, root, rows, responses, before, calls, editors, open, set, save, close, remount, dispose: () => dispose(), failEditor: () => { editorFailure = true; } };
+  return { mountOther, w, root, rows, responses, before, after, createReceipts, calls, editors, open, set, save, close, remount, dispose: () => dispose(), failEditor: () => { editorFailure = true; } };
 }
 
 test('catalog uses one complete IPC result at 199/200/201 notes without a false truncation warning', async t => {
@@ -362,4 +368,37 @@ test('failed save and refresh preserve text through switching to another note', 
   assert.equal(modal.querySelector('[name=content]').value, 'Keep after failure');
   x.before.delete('update_note'); await x.save(modal);
   assert.equal(x.rows[0].content, 'Keep after failure');
+});
+
+
+test('ordinary lost acknowledgement recovers one exact UUID across remount and repeated retry',async t=>{
+ const x=await setup(t),originalIds=x.rows.map(n=>n.id);let modal=await x.open();x.set(modal,'content','Owned lost-ack note');let lose=true;
+ x.after.set('create_note',()=>{if(lose){lose=false;throw Error('lost acknowledgement after INSERT');}});
+ await x.save(modal);const created=x.rows.at(-1).id;assert.equal(x.rows.length,originalIds.length+1);assert.equal(modal.open,true);assert.match(modal.textContent,/Сохранение не подтверждено/);
+ const attempt=JSON.parse(x.w.localStorage.getItem('calendar_note_create_pending_local_v1'));assert.ok(attempt.operationId);
+ await x.close(modal);await x.remount();modal=await x.open();assert.equal(modal.querySelector('[name=content]').value,'Owned lost-ack note');await x.save(modal);
+ assert.equal(x.rows.length,originalIds.length+1);assert.equal(x.rows.at(-1).id,created);assert.equal(x.w.localStorage.getItem('calendar_note_create_pending_local_v1'),null);
+ const recovery=x.calls.filter(c=>c.name==='create_note'&&c.args.recoverOnly);assert.equal(recovery.length,1);assert.equal(recovery[0].args.operationId,attempt.operationId);
+ assert.deepEqual(x.rows.slice(0,originalIds.length).map(n=>n.id),originalIds);
+});
+
+test('changed draft reconciles the committed UUID without overwriting either content until explicit update',async t=>{
+ const x=await setup(t);let modal=await x.open();x.set(modal,'content','Original intent');x.after.set('create_note',()=>{throw Error('lost acknowledgement');});await x.save(modal);const id=x.rows.at(-1).id,count=x.rows.length;
+ x.set(modal,'content','Changed retained draft');await x.save(modal);assert.equal(x.rows.length,count);assert.equal(x.rows.at(-1).content,'Original intent');assert.equal(modal.querySelector('[name=content]').value,'Changed retained draft');assert.match(modal.textContent,/Прежнее сохранение найдено/);
+ assert.equal(modal.dataset.noteEditor,String(id));await x.save(modal);assert.equal(x.rows.length,count);assert.equal(x.rows.at(-1).content,'Changed retained draft');
+ modal=await x.open();x.set(modal,'content','Changed retained draft');x.after.delete('create_note');await x.save(modal);assert.equal(x.rows.length,count+1);assert.notEqual(x.rows.at(-1).id,id,'intentional identical text is a separate note');
+});
+
+test('uncommitted changed payload keeps its draft and original operation until explicit discard',async t=>{
+ const x=await setup(t),count=x.rows.length;let modal=await x.open();x.set(modal,'content','First payload');x.before.set('create_note',args=>{if(!args.recoverOnly)throw Error('request failed before INSERT');});await x.save(modal);
+ const original=x.w.localStorage.getItem('calendar_note_create_pending_local_v1');x.set(modal,'content','Edited payload');await x.save(modal);assert.match(modal.textContent,/Состав запроса изменился/);assert.equal(modal.querySelector('[name=content]').value,'Edited payload');assert.equal(x.w.localStorage.getItem('calendar_note_create_pending_local_v1'),original);assert.equal(x.rows.length,count);
+ modal.querySelector('[data-note-discard]').click();await tick();assert.equal(x.w.localStorage.getItem('calendar_note_create_pending_local_v1'),null);assert.equal(x.rows.length,count);
+});
+
+test('durable new-note attempt retains rich blocks across lost acknowledgement and editor remount',async t=>{
+ const x=await setup(t),blocks=[{id:'owned-block',type:'code',data:{code:'const owned = 1;'}}],payload={title:'Rich retry',content:'const owned = 1;',tags:'',tabName:'calendar',status:'note',dueDate:null,reminderAt:null,priority:null,contentBlocks:JSON.stringify({blocks})};
+ x.w.localStorage.setItem('calendar_note_create_pending_local_v1',JSON.stringify({version:1,operationId:x.w.crypto.randomUUID(),payload,draft:{title:'Rich retry',content:payload.content,rich:true,blocks:{blocks},base:{title:'',content:'',blocks:'[]'}}}));
+ let modal=await x.open();x.after.set('create_note',()=>{throw Error('lost rich acknowledgement');});await x.save(modal);const count=x.rows.length,id=x.rows.at(-1).id;
+ assert.deepEqual(JSON.parse(x.rows.at(-1).content_blocks).blocks,blocks);await x.close(modal);await x.remount();modal=await x.open();assert.deepEqual(x.editors.at(-1).output.blocks,blocks);await x.save(modal);
+ assert.equal(x.rows.length,count);assert.equal(x.rows.at(-1).id,id);assert.deepEqual(JSON.parse(x.rows.at(-1).content_blocks).blocks,blocks);assert.equal(x.w.localStorage.getItem('calendar_note_create_pending_local_v1'),null);
 });

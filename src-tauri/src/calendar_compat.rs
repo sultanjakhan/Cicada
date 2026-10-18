@@ -715,6 +715,9 @@ pub fn create_note(
     due_date: Option<String>,
     priority: Option<i64>,
     personal_import_receipt: Option<bool>,
+    operation_id: Option<String>,
+    recover_only: Option<bool>,
+    content_blocks: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Value, String> {
     let record_status = status.unwrap_or_else(|| "note".into());
@@ -722,9 +725,83 @@ pub fn create_note(
     let marker = tags.split(',').map(str::trim).find(|tag| tag.starts_with("personal-import:personal-backlog:")).map(str::to_owned);
     if receipt && marker.is_none() { return Err(fail("personal import receipt requires identity")); }
     let mut conn = lock(&state)?;
+    if let Some(operation_id) = operation_id {
+        if receipt || marker.is_some() { return Err(fail("note_create_operation_scope")); }
+        return create_note_attempt_record(&mut conn, &operation_id, &title, &content, &tags, &record_status, &due_date, priority, &content_blocks, recover_only.unwrap_or(false));
+    }
+    if recover_only.unwrap_or(false) { return Err(fail("note_create_operation_required")); }
     let outcome = create_note_record(&mut conn, &title, &content, &tags, &record_status, &due_date, priority)?;
     if receipt { Ok(json!({"schemaVersion":1,"id":outcome.id,"created":outcome.created,"marker":marker.unwrap()})) }
     else { Ok(json!(outcome.id)) }
+}
+
+// Optional ordinary-note operation identity. Receipt and note commit in the same
+// transaction; only a payload digest and exact UUID are retained, not note text.
+pub(crate) fn create_note_attempt_record(
+    conn: &mut Connection, operation_id: &str, title: &str, content: &str, tags: &str,
+    record_status: &str, due_date: &Option<String>, priority: Option<i64>,
+    content_blocks: &Option<String>, recover_only: bool,
+) -> Result<Value, String> {
+    use sha2::{Digest, Sha256};
+    let operation = Uuid::parse_str(operation_id).map_err(|_| fail("note_create_invalid_operation"))?;
+    if operation.to_string() != operation_id || record_status != "note" || tags.split(',').any(|t|t.trim().starts_with("personal-import:")) { return Err(fail("note_create_operation_scope")); }
+    validate_title(title)?;date(due_date)?;
+    if let Some(blocks) = content_blocks {
+        let parsed: Value = serde_json::from_str(blocks).map_err(|_| fail("note_create_invalid_blocks"))?;
+        if !parsed.get("blocks").is_some_and(Value::is_array) { return Err(fail("note_create_invalid_blocks")); }
+    }
+    let payload = json!([title,content,tags,record_status,due_date,priority,content_blocks]);
+    let digest = format!("{:x}",Sha256::digest(serde_json::to_vec(&payload).map_err(|_|fail("note_create_invalid_payload"))?));
+    let key = format!("calendar_note_create_local_v1:{operation_id}");
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e|fail(e.to_string()))?;
+    let raw: Option<String> = tx.query_row("SELECT value FROM ui_state WHERE key=?1",[&key],|r|r.get(0)).optional().map_err(|e|fail(e.to_string()))?;
+    if let Some(raw) = raw {
+        let receipt: Value = serde_json::from_str(&raw).map_err(|_|fail("note_create_invalid_receipt"))?;
+        if receipt["schemaVersion"] != 1 || receipt["payloadDigest"] != digest { return Err(fail("note_create_operation_conflict")); }
+        let id = receipt["id"].as_str().filter(|id|Uuid::parse_str(id).is_ok()).ok_or_else(||fail("note_create_invalid_receipt"))?;
+        return Ok(json!(id));
+    }
+    if recover_only { return Ok(Value::Null); }
+    let outcome = create_note_in_transaction(&tx,title,content,tags,record_status,due_date,priority)?;
+    if let Some(blocks) = content_blocks { tx.execute("UPDATE items SET content_blocks=?1 WHERE id=?2",params![blocks,outcome.id]).map_err(|e|fail(e.to_string()))?; }
+    let receipt = json!({"schemaVersion":1,"payloadDigest":digest,"id":outcome.id});
+    tx.execute("INSERT INTO ui_state(key,value,updated_at) VALUES(?1,?2,?3)",params![key,receipt.to_string(),now()]).map_err(|e|fail(e.to_string()))?;
+    tx.commit().map_err(|e|fail(e.to_string()))?;
+    Ok(json!(outcome.id))
+}
+
+#[cfg(test)]
+mod note_create_attempt_tests {
+    use super::*;
+    fn create(conn: &mut Connection, op: &str, text: &str, recover: bool) -> Result<Value,String> {
+        create_note_attempt_record(conn,op,"Owned synthetic note",text,"calendar,keep","note",&None,None,&Some(json!({"blocks":[{"type":"code","data":{"code":"owned"}}]}).to_string()),recover)
+    }
+    #[test]
+    fn ordinary_note_attempt_persists_replays_and_conflicts_without_content_dedup() {
+        let dir=tempfile::tempdir().unwrap();let path=dir.path().join("owned-notes.db");let mut conn=Connection::open(&path).unwrap();crate::init_schema(&conn).unwrap();let op=Uuid::new_v4().to_string();
+        assert_eq!(create(&mut conn,&op,"Original",true).unwrap(),Value::Null);
+        let id=create(&mut conn,&op,"Original",false).unwrap();drop(conn);
+        let mut conn=Connection::open(&path).unwrap();
+        for _ in 0..3 {assert_eq!(create(&mut conn,&op,"Original",false).unwrap(),id);assert_eq!(create(&mut conn,&op,"Original",true).unwrap(),id);}
+        assert!(create(&mut conn,&op,"Changed",false).unwrap_err().contains("operation_conflict"));
+        let other=create(&mut conn,&Uuid::new_v4().to_string(),"Original",false).unwrap();assert_ne!(id,other);
+        assert_eq!(conn.query_row("SELECT count(*) FROM items",[],|r|r.get::<_,i64>(0)).unwrap(),2);
+        let raw:String=conn.query_row("SELECT value FROM ui_state WHERE key=?1",[format!("calendar_note_create_local_v1:{op}")],|r|r.get(0)).unwrap();assert!(!raw.contains("Original"));
+        let blocks:String=conn.query_row("SELECT content_blocks FROM items WHERE id=?1",[id.as_str().unwrap()],|r|r.get(0)).unwrap();assert!(blocks.contains("owned"));
+    }
+    #[test]
+    fn ordinary_note_attempt_receipt_failure_rolls_back_insert_and_rich_blocks() {
+        let mut conn=Connection::open_in_memory().unwrap();crate::init_schema(&conn).unwrap();let op=Uuid::new_v4().to_string();
+        conn.execute_batch("CREATE TRIGGER owned_fail_receipt BEFORE INSERT ON ui_state WHEN NEW.key LIKE 'calendar_note_create_local_v1:%' BEGIN SELECT RAISE(ABORT,'owned receipt failure'); END;").unwrap();
+        assert!(create(&mut conn,&op,"Original",false).is_err());assert_eq!(conn.query_row("SELECT count(*) FROM items",[],|r|r.get::<_,i64>(0)).unwrap(),0);assert_eq!(create(&mut conn,&op,"Original",true).unwrap(),Value::Null);
+        conn.execute_batch("DROP TRIGGER owned_fail_receipt").unwrap();assert!(create(&mut conn,&op,"Original",false).unwrap().is_string());
+    }
+    #[test]
+    fn ordinary_note_attempt_two_connections_insert_only_once() {
+        use std::sync::{Arc,Barrier};let dir=tempfile::tempdir().unwrap();let path=dir.path().join("owned-concurrent.db");let conn=Connection::open(&path).unwrap();crate::init_schema(&conn).unwrap();drop(conn);
+        let op=Uuid::new_v4().to_string();let barrier=Arc::new(Barrier::new(2));let threads:Vec<_>=(0..2).map(|_|{let path=path.clone();let op=op.clone();let barrier=barrier.clone();std::thread::spawn(move||{let mut conn=Connection::open(path).unwrap();conn.busy_timeout(std::time::Duration::from_secs(5)).unwrap();barrier.wait();create(&mut conn,&op,"Original",false).unwrap()})}).collect();
+        let ids:Vec<_>=threads.into_iter().map(|t|t.join().unwrap()).collect();assert_eq!(ids[0],ids[1]);let conn=Connection::open(path).unwrap();assert_eq!(conn.query_row("SELECT count(*) FROM items",[],|r|r.get::<_,i64>(0)).unwrap(),1);
+    }
 }
 
 // Shared by the native command and synthetic two-connection replay tests.
