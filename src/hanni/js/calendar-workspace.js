@@ -300,8 +300,8 @@ export async function mountCalendarTable(el) {
   el.classList.add('calendar-mvp');
   el.innerHTML = `<div class="cm-calendar-toolbar"><div class="cm-date-roller" data-date-roller><h2 data-range></h2></div>
     <div class="cm-date"><button data-prev aria-label="${uiCopy("Предыдущий период")}"><span class="cm-icon" aria-hidden="true">${ICONS.chevronLeft}</span></button><button data-next aria-label="${uiCopy("Следующий период")}"><span class="cm-icon" aria-hidden="true">${ICONS.chevronRight}</span></button><button data-today>${uiCopy("Сегодня")}</button></div>
-    <div class="cm-toolbar"><div class="cm-segment" role="group" aria-label="${uiCopy("Период календаря")}">${[['day',uiCopy("День")],['week',uiCopy("Неделя")],['month',uiCopy("Месяц")]].map(([id,title]) => `<button data-period="${id}" aria-pressed="${view.period === id}">${uiCopy(title)}</button>`).join('')}</div><div data-calendar-day-planning></div></div>
-    </div><p data-notice role="status"></p><button data-retry hidden>${uiCopy("Повторить загрузку")}</button><div data-calendar-records></div>`;
+    <div class="cm-toolbar"><div class="cm-segment" role="group" aria-label="${uiCopy("Период календаря")}">${[['day',uiCopy("День")],['week',uiCopy("Неделя")],['month',uiCopy("Месяц")]].map(([id,title]) => `<button data-period="${id}" aria-pressed="${view.period === id}">${uiCopy(title)}</button>`).join('')}</div></div>
+    </div><div class="cm-toolbar"><div data-calendar-day-planning></div></div><p data-notice role="status"></p><button data-retry hidden>${uiCopy("Повторить загрузку")}</button><div data-calendar-records></div>`;
   const disposePlanning = mountCalendarDayLifecycle(el.querySelector('[data-calendar-day-planning]'), { invoke, dayActions:false });
   const host = el.querySelector('[data-calendar-records]');
   host.tabIndex = -1;
