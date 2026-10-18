@@ -60,7 +60,11 @@ async function main(){
       await page.goto('http://127.0.0.1:'+server.address().port,{waitUntil:'networkidle'});
       await page.waitForFunction(()=>window.fixtureReady);
       const initial=await page.evaluate(()=>structuredClone(window.fixtureUI));
-      const open=async()=>{await page.evaluate(async()=>{const {showCalendarSettings}=await import('/src/hanni/js/calendar-settings.js');showCalendarSettings(document.querySelector('.uni-tab'),{section:'connections'});});await page.locator('[data-focus-action="save"]:enabled').waitFor();await page.locator('[data-focus-adapter] > summary').click();};
+      const open=async()=>{
+        await page.evaluate(async()=>{const {showCalendarSettings}=await import('/src/hanni/js/calendar-settings.js');showCalendarSettings(document.querySelector('.uni-tab'),{section:'connections'});});
+        await page.locator('[data-focus-adapter] > summary').click();
+        await page.locator('[data-focus-action="save"]:enabled').waitFor();
+      };
       await open();
       const scope=page.locator('[data-focus-adapter]'), status=scope.locator('[role="status"]');
       const action=name=>scope.locator('[data-focus-action="'+name+'"]');
