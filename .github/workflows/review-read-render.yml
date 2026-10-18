@@ -1,0 +1,42 @@
+name: Review read recovery cloud render
+on:
+  workflow_dispatch:
+  push:
+    branches: [work/ff8-review-read-01a14f82]
+permissions:
+  contents: read
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify source publication guards
+        run: |
+          python3 -B scripts/check-private-data.py
+          python3 -B scripts/check-public-history.py
+      - name: Prepare isolated hosted browser tooling
+        run: |
+          npm install --prefix "$RUNNER_TEMP/review-tools" --no-save --package-lock=false playwright@1.62.1 jsdom@29.1.1
+          chrome_path="$(command -v google-chrome)"
+          "$chrome_path" --version
+          echo "GOALS85_CHROME=$chrome_path" >> "$GITHUB_ENV"
+          ln -s "$RUNNER_TEMP/review-tools/node_modules" node_modules
+      - name: Check adapter and Tasks behavior
+        run: node --test tests/native-review-read-recovery.test.mjs tests/shared-result-review-adapter.test.mjs tests/task-progress.test.mjs tests/visible-normal-integration.test.mjs tests/unified-native-task-composition.test.mjs tests/tasks-pane.test.mjs
+      - name: Render running review and keyboard recovery
+        env:
+          NODE_PATH: ${{ runner.temp }}/review-tools/node_modules
+        run: node scripts/qa-review-read-render.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: review-read-render-${{ github.sha }}
+          path: .local/review-read-render/
+          if-no-files-found: error
+          retention-days: 3
