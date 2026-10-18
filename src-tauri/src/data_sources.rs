@@ -1,3 +1,4 @@
+pub mod registry;
 use serde::Serialize;
 use std::path::{Component, Path};
 

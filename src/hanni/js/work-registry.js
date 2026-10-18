@@ -41,13 +41,15 @@ export function freshness(snapshot, task, now = Date.now()) {
 export function createRegistryStore(invoke) {
   return {
     async load() { const raw = await invoke('get_ui_state',{key:REGISTRY_KEY}); if (!raw) return {}; const state = JSON.parse(raw); if (!obj(state)) fail(); for (const [key,s] of Object.entries(state)) { validateRegistry(JSON.stringify(s)); if (key !== `${s.source.publisherId}:${s.source.sourceNamespace}`) fail(); } return state; },
-    async import(raw) {
+    async import(raw, options = {}) {
       const incoming = validateRegistry(raw), key = `${incoming.source.publisherId}:${incoming.source.sourceNamespace}`;
-      const previous = await invoke('get_ui_state',{key:REGISTRY_KEY}), all = await this.load();
+      const previous = await invoke('get_ui_state',{key:REGISTRY_KEY});
+      if (Object.hasOwn(options,'expectedValue') && (previous ?? '') !== options.expectedValue) throw new Error('registry_preview_stale');
+      const all = await this.load();
       // If another writer changed storage between reads, CAS rejects this write.
       const current = all[key];
       if (current && incoming.sequence <= current.sequence) {
-        if (incoming.sequence === current.sequence && canonical(incoming) === canonical(current)) return {changed:false,snapshot:current};
+        if (incoming.sequence === current.sequence && canonical(incoming) === canonical(current)) { if (options.verifyReplay) await invoke('set_ui_state',{key:REGISTRY_KEY,value:previous,expectedValue:previous ?? ''}); return {changed:false,snapshot:current}; }
         throw new Error('registry_sequence_conflict');
       }
       all[key] = incoming; const value = canonical(all);
@@ -71,4 +73,24 @@ export async function readRegistryTask(record, invoke) {
     matches.push({snapshot:s,task:t,freshness:freshness(s,t)});
   }
   return matches;
+}
+
+
+/** Bounded field diagnostics; validateRegistry remains the sole v1 schema authority. */
+export function registryPreviewIssues(raw) {
+  if (typeof raw !== 'string' || new TextEncoder().encode(raw).length > 1024*1024) return ['snapshot: максимум 1 MiB'];
+  let s;try { s=JSON.parse(raw); } catch { return ['snapshot: некорректный JSON']; }
+  if (!obj(s) || !Array.isArray(s.tasks) || s.tasks.length>1000 || !Array.isArray(s.projects) || s.projects.length>100) return ['snapshot: неподдерживаемая структура или лимит записей'];
+  const issues=[],projects=new Set(),tasks=new Set();
+  const add=message=>{if(issues.length<50)issues.push(message);};
+  if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(s.source?.sourceNamespace))add('source.sourceNamespace: требуется стабильный UUID');
+  s.projects.forEach((p,i)=>{if(!id(p?.id)||projects.has(p.id))add(`projects[${i}].id: неверный или повторяющийся ID`);if(p)projects.add(p.id);});
+  s.tasks.forEach((t,i)=>{
+    if(!id(t?.id)||tasks.has(t.id))add(`tasks[${i}].id: неверный или повторяющийся ID`);if(!obj(t)){add(`tasks[${i}]: требуется объект`);return;}tasks.add(t.id);
+    if(!text(t.title,500))add(`tasks[${i}].title: требуется название до 500 символов`);
+    if(!projects.has(t.projectId))add(`tasks[${i}].projectId: неизвестный проект`);
+    if(!['planned','running','waiting','checking','decision-needed','done','error','cancelled','unknown'].includes(t.status))add(`tasks[${i}].status: неподдерживаемый статус`);
+  });
+  try {validateRegistry(raw);}catch {if(!issues.length)add('snapshot: ошибка схемы v1, иерархии, времени или привязки');}
+  return issues;
 }
