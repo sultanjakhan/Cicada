@@ -32,10 +32,10 @@ async function main(){await new Promise(r=>server.listen(0,'127.0.0.1',r));const
   await page.addInitScript(theme=>localStorage.setItem('hanni_theme',theme),theme);await page.goto('http://127.0.0.1:'+server.address().port);await page.waitForFunction(()=>window.fixtureReady);
   const row=page.locator('li.ct-row'),retry=page.locator('[data-task-control="review-retry"]'),finish=row.locator('[data-task-control="finish"]');
   await row.waitFor();assert.equal(await page.locator('html').getAttribute('data-theme'),theme);await page.waitForFunction(()=>!document.querySelector('li.ct-row').textContent.includes('не обновлено'));
-  assert.match(await row.textContent(),/В работе/);assert.doesNotMatch(await row.textContent(),/Принято|Завершена|неизвестно/);assert.equal(await finish.isDisabled(),true);
+  assert.match(await row.textContent(),/В работе/);assert.equal((await row.textContent()).match(/В работе/g).length,1);assert.doesNotMatch(await row.textContent(),/Принято|Завершена|неизвестно/);assert.equal(await finish.isDisabled(),true);
   await page.screenshot({path:path.join(output,width+'-'+theme+'-running.png')});
   for(const failure of ['denied','transport']){
-   await page.evaluate(mode=>{window.mode=mode;window.refresh();},failure);await retry.waitFor();assert.match(await row.textContent(),/не обновлено/);assert.equal(await finish.isDisabled(),true);
+   await page.evaluate(mode=>{window.mode=mode;window.refresh();},failure);await retry.waitFor();assert.match(await row.textContent(),/не обновлено/);assert.doesNotMatch(await row.textContent(),/В работе|Принято/);assert.equal(await finish.isDisabled(),true);
    await retry.focus();assert.equal(await retry.evaluate(n=>n===document.activeElement),true);
    await page.screenshot({path:path.join(output,width+'-'+theme+'-'+failure+'.png')});
    await page.keyboard.press('Enter');await page.waitForFunction(()=>document.activeElement?.dataset.taskControl==='review-retry');assert.equal(await retry.isVisible(),true,'persistent failure retains retry and focus');

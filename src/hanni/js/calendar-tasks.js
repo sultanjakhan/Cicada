@@ -204,7 +204,7 @@ export function mountCalendarTasks(host, dependencies) {
     if(parts.length&&!(state.goal&&String(goalId)===state.goal)){const goal=node('span','ct-goal',parts.at(-1));goal.title=chain.join(' / ');meta.append(goal);}
     renderTaskImportance(doc,meta,row,item);
     const ctx=contextFor(row);
-    if(ctx.review)primaryMeta.append(node('span','ct-status',ctx.review.reviewState==='awaiting_review'?uiCopy.format("На приёмке · результат v{0}", ctx.review.resultVersion):ctx.review.reviewState==='awaiting_dispatch'?uiCopy("Ожидает передачи исполнителю"):ctx.review.reviewState==='running'?uiCopy("В работе"):uiCopy.format("Принято · результат v{0}", ctx.review.resultVersion)));
+    if(ctx.review&&!ctx.reviewReadError&&ctx.review.reviewState!=='running')primaryMeta.append(node('span','ct-status',ctx.review.reviewState==='awaiting_review'?uiCopy.format("На приёмке · результат v{0}", ctx.review.resultVersion):ctx.review.reviewState==='awaiting_dispatch'?uiCopy("Ожидает передачи исполнителю"):uiCopy.format("Принято · результат v{0}", ctx.review.resultVersion)));
     if(ctx.reports.length){const reported=ctx.reports.at(-1);meta.append(node('span',null,uiCopy.format("По отчёту: {0} / {1} · {2}. Live feed отсутствует.", reported.agent, reported.model||uiCopy("модель не сообщена"), reported.status)));}
     for(const observation of ctx.observations)meta.append(node('span',null,uiCopy.format("Источник {0}: {1} · {2}{3}", observation.snapshot.source.publisherId, observation.task.status, observation.freshness, observation.task.result?uiCopy.format(" · результат источника: {0}", observation.task.result):'')));
     if(ctx.reviewReadError||(ctx.review&&ctx.review.reviewState!=='accepted'))complete.disabled=true;
