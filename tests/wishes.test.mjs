@@ -169,6 +169,49 @@ test('wish status: saving first, bought folds into history and focus follows the
   assert.equal(x.host.querySelector('[data-wish-message]').getAttribute('role'), 'alert');
 });
 
+test('status change blocks an unseen target update before writing', async t => {
+  const x = await mountList(t, { version: 1, wishes: [wish('a')] });
+  const select = x.host.querySelector('[data-wish-status="a"]');
+  assert.equal(select.value, 'want');
+  const remote = { version: 1, wishes: [wish('a', { status: 'bought', note: 'Remote purchase confirmed' })] };
+  x.data.raw = JSON.stringify(remote);
+  select.value = 'saving'; select.dispatchEvent(new dom.window.Event('change', { bubbles: true })); await settle();
+  assert.equal(x.data.writes(), 0, 'an unseen target edit is rejected before CAS');
+  assert.deepEqual(JSON.parse(x.data.raw), remote);
+  const message = x.host.querySelector('[data-wish-message]');
+  assert.equal(message.getAttribute('role'), 'alert');
+  assert.match(message.textContent, /изменено.*статус/);
+});
+
+test('ordinary status change preserves unrelated remote edits and unknown fields', async t => {
+  const target = wish('a', { future: { retained: true } });
+  const x = await mountList(t, { version: 1, wishes: [target, wish('b')] });
+  const other = wish('b', { note: 'Remote note', future: { nested: ['kept'] } });
+  x.data.raw = JSON.stringify({ version: 1, futureState: { retained: true }, wishes: [target, other] });
+  const select = x.host.querySelector('[data-wish-status="a"]');
+  select.value = 'saving'; select.dispatchEvent(new dom.window.Event('change', { bubbles: true })); await settle();
+  assert.equal(x.data.writes(), 1);
+  assert.equal(x.data.wishes()[0].status, 'saving');
+  assert.deepEqual(x.data.wishes()[0].future, target.future);
+  assert.deepEqual(x.data.wishes()[1], normalizeWishState({ version: 1, wishes: [other] }).wishes[0]);
+  assert.deepEqual(JSON.parse(x.data.raw).futureState, { retained: true });
+  assert.equal(x.host.querySelector('[data-wish-message]').getAttribute('role'), 'status');
+});
+
+test('a status CAS race preserves the concurrent change and reports a status conflict', async t => {
+  const x = await mountList(t, { version: 1, wishes: [wish('a')] });
+  const remote = { version: 1, wishes: [wish('a', { status: 'dropped', note: 'Concurrent decision' })] };
+  x.data.before.set('set_ui_state', () => { x.data.raw = JSON.stringify(remote); });
+  const select = x.host.querySelector('[data-wish-status="a"]');
+  select.value = 'saving'; select.dispatchEvent(new dom.window.Event('change', { bubbles: true })); await settle();
+  assert.equal(x.data.writes(), 1, 'the single CAS attempt is rejected');
+  assert.deepEqual(JSON.parse(x.data.raw), remote);
+  const message = x.host.querySelector('[data-wish-message]');
+  assert.equal(message.getAttribute('role'), 'alert');
+  assert.match(message.textContent, /изменено.*статус/);
+  assert.doesNotMatch(message.textContent, /Текст остался в форме/);
+});
+
 test('wish link opens through the native command and falls back to copying it', async t => {
   const urls = [];
   const x = await mountList(t, { version: 1, wishes: [wish('a', { url: 'https://example.com/a' })] }, { openUrl: async url => { urls.push(url); } });

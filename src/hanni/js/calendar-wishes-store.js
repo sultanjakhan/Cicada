@@ -140,14 +140,21 @@ export async function updateWish(id, input, { invoke, original = null, now = () 
   });
   return result;
 }
-export async function setWishStatus(id, status, { invoke, now = () => new Date() } = {}) {
+const STATUS_STALE_MESSAGE = 'Это желание изменено на другом устройстве. Обнови желания перед повторной сменой статуса.';
+export async function setWishStatus(id, status, { invoke, original = null, now = () => new Date() } = {}) {
   if (!STATUS.has(status)) throw new Error('Неизвестный статус желания.');
-  const { result } = await mutateWishes(invoke, state => {
-    const wish = state.wishes.find(item => item.id === String(id));
-    if (!wish) throw missing();
-    wish.status = status; wish.updatedAt = now().toISOString(); return wish;
-  });
-  return result;
+  try {
+    const { result } = await mutateWishes(invoke, state => {
+      const wish = state.wishes.find(item => item.id === String(id));
+      if (!wish) throw missing();
+      if (original && JSON.stringify(wish) !== JSON.stringify(original)) throw new Error(STATUS_STALE_MESSAGE);
+      wish.status = status; wish.updatedAt = now().toISOString(); return wish;
+    });
+    return result;
+  } catch (cause) {
+    if (errorText(cause) === WISH_STALE_MESSAGE) throw new Error(STATUS_STALE_MESSAGE);
+    throw cause;
+  }
 }
 const DELETE_STALE_MESSAGE = 'Это желание изменено на другом устройстве. Закрой подтверждение и открой желание заново перед удалением.';
 export async function deleteWish(id, { invoke, original = null } = {}) {
