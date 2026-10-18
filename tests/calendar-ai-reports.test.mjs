@@ -167,7 +167,7 @@ for (const [status,agent,name,phrase] of [
   const expected=`In the last report (${name}), the executor ${phrase}.`+(status==='done'?' Task completion requires user acceptance.':'');
   await awaitText(host,expected);
   assert.equal(host.querySelector('h3').textContent,'AI work');assert.equal(host.querySelector('section').getAttribute('aria-label'),'AI work');
-  assert.equal(host.querySelector('section > p').textContent,englishUncertainty);
+  assert.equal(host.querySelector('[data-ai-report-note]').textContent,englishUncertainty);
   assert.equal(host.querySelectorAll('li').length,1);assert.equal(host.querySelector('li').dataset.nativeTaskId,'task-primary');
   assert.equal(host.querySelector('strong').textContent,'Завершить день');
   assert.equal(host.querySelector('li > p').textContent,expected);
@@ -180,7 +180,7 @@ test('English absent report facts stay unknown and unconfirmed',async t=>{
   const data=await fixture(),{dom,host}=englishHost(t);
   const dispose=mountCalendarAiReports(host,{invoke:data.invoke,window:dom.window});t.after(dispose);
   await awaitText(host,'In the last report (Codex), the executor reported that they are waiting.');
-  assert.equal(host.querySelector('section > p').textContent,englishUncertainty);
+  assert.equal(host.querySelector('[data-ai-report-note]').textContent,englishUncertainty);
   assert.equal(host.querySelector('li > p:last-child').textContent,'Model: not reported · stage: not reported · freshness: unknown');
   assert.equal(host.querySelector('strong').textContent,'<img src=x onerror=alert(1)> Native title');assert.equal(host.querySelector('img'),null);assertReadOnly(data);
 });
@@ -190,7 +190,7 @@ test('English empty state treats a registered attempt without reports as unstart
   const registered=await data.invoke('get_ui_state',{key:TASK_RUN_KEY});registered.runs['run-first-0001'].report=null;registered.runs['run-last-0001'].report=null;data.setExchange(registered);
   const before=structuredClone(data.rows),dispose=mountCalendarAiReports(host,{invoke:data.invoke,window:dom.window});t.after(dispose);
   await awaitText(host,'No linked AI work reports. Task registration does not mean execution has started.');
-  assert.equal(host.querySelector('section').hidden,false);assert.equal(host.querySelector('section > p').textContent,englishUncertainty);assert.equal(host.querySelector('li'),null);
+  assert.equal(host.querySelector('section').hidden,false);assert.equal(host.querySelector('[data-ai-report-note]').textContent,englishUncertainty);assert.equal(host.querySelector('li'),null);
   assert.doesNotMatch(host.textContent,/[А-Яа-яЁё]/);assert.deepEqual(data.rows,before);assertReadOnly(data);
 });
 
@@ -198,9 +198,9 @@ test('English loading and disconnected errors stay visible without claiming empt
   const {dom,host}=englishHost(t);let reject;
   const dispose=mountCalendarAiReports(host,{window:dom.window,invoke:()=>new Promise((_,r)=>reject=r)});t.after(dispose);
   assert.equal(host.querySelector('section').hidden,false);assert.equal(host.querySelector('section').getAttribute('aria-busy'),'true');
-  assert.equal(host.querySelector('h3').textContent,'AI work');assert.equal(host.querySelector('section').getAttribute('aria-label'),'AI work');assert.equal(host.querySelector('section > p').textContent,englishUncertainty);assert.ok(host.textContent.includes('Loading reports…'));
+  assert.equal(host.querySelector('h3').textContent,'AI work');assert.equal(host.querySelector('section').getAttribute('aria-label'),'AI work');assert.equal(host.querySelector('[data-ai-report-note]').textContent,englishUncertainty);assert.ok(host.textContent.includes('Loading reports…'));
   reject(Error('synthetic disconnected source'));await awaitText(host,'Could not read reports. Previous data is hidden.');
-  assert.equal(host.querySelector('section > p').textContent,'Freshness is unknown: reading reports failed.');assert.equal(host.querySelector('section').hidden,false);assert.equal(host.querySelector('section').hasAttribute('aria-busy'),false);
+  assert.equal(host.querySelector('[data-ai-report-note]').textContent,'Freshness is unknown: reading reports failed.');assert.equal(host.querySelector('section').hidden,false);assert.equal(host.querySelector('section').hasAttribute('aria-busy'),false);
   assert.equal(host.querySelector('li'),null);assert.ok(!host.textContent.includes('No linked AI work reports.'));assert.doesNotMatch(host.textContent,/[А-Яа-яЁё]/);
 });
 
@@ -208,9 +208,9 @@ test('English report read failure hides stale rows and retry restores only obser
   const data=await fixture(),{dom,host}=englishHost(t);const dispose=mountCalendarAiReports(host,{invoke:data.invoke,window:dom.window});t.after(dispose);
   await awaitText(host,'In the last report (Codex), the executor reported that they are waiting.');assert.equal(host.querySelectorAll('li').length,1);
   data.setFailExchangeRead(true);dom.window.dispatchEvent(new dom.window.Event('task-state-changed'));await awaitText(host,'Could not read reports. Previous data is hidden.');
-  assert.equal(host.querySelector('li'),null);assert.equal(host.querySelector('section > p').textContent,'Freshness is unknown: reading reports failed.');
+  assert.equal(host.querySelector('li'),null);assert.equal(host.querySelector('[data-ai-report-note]').textContent,'Freshness is unknown: reading reports failed.');
   data.setFailExchangeRead(false);dom.window.dispatchEvent(new dom.window.Event('task-state-changed'));await awaitText(host,'In the last report (Codex), the executor reported that they are waiting.');
-  assert.equal(host.querySelector('section > p').textContent,englishUncertainty);assert.equal(host.querySelector('li > p:last-child').textContent,'Model: not reported · stage: not reported · freshness: unknown');assertReadOnly(data);
+  assert.equal(host.querySelector('[data-ai-report-note]').textContent,englishUncertainty);assert.equal(host.querySelector('li > p:last-child').textContent,'Model: not reported · stage: not reported · freshness: unknown');assertReadOnly(data);
 });
 
 test('locale refresh translates unchanged report, empty and error states while retaining same-locale row identity',async t=>{
@@ -218,13 +218,13 @@ test('locale refresh translates unchanged report, empty and error states while r
   const dispose=mountCalendarAiReports(host,{invoke:data.invoke,window:dom.window});t.after(dispose);
   await awaitText(host,'По последнему отчёту (Codex): исполнитель сообщил, что ожидает.');const russianRow=host.querySelector('li');
   dom.window.document.documentElement.lang='en';dom.window.dispatchEvent(new dom.window.Event('task-state-changed'));await awaitText(host,'In the last report (Codex), the executor reported that they are waiting.');
-  const englishRow=host.querySelector('li');assert.notEqual(englishRow,russianRow);assert.equal(host.querySelector('h3').textContent,'AI work');assert.equal(host.querySelector('section').getAttribute('aria-label'),'AI work');assert.equal(host.querySelector('section > p').textContent,englishUncertainty);
+  const englishRow=host.querySelector('li');assert.notEqual(englishRow,russianRow);assert.equal(host.querySelector('h3').textContent,'AI work');assert.equal(host.querySelector('section').getAttribute('aria-label'),'AI work');assert.equal(host.querySelector('[data-ai-report-note]').textContent,englishUncertainty);
   dom.window.dispatchEvent(new dom.window.Event('task-state-changed'));await waitForReports(host);assert.equal(host.querySelector('li'),englishRow);
   data.setExchange({version:1,sourceNamespace:namespace,order:0,bindings:{},runs:{}});dom.window.dispatchEvent(new dom.window.Event('task-state-changed'));await awaitText(host,'No linked AI work reports. Task registration does not mean execution has started.');
   dom.window.document.documentElement.lang='ru';dom.window.dispatchEvent(new dom.window.Event('task-state-changed'));await awaitText(host,'Нет связанных отчётов о работе ИИ. Регистрация задачи не означает запуск.');assert.equal(host.querySelector('h3').textContent,'Работа ИИ');
   data.setFailExchangeRead(true);dom.window.dispatchEvent(new dom.window.Event('task-state-changed'));await awaitText(host,'Не удалось прочитать отчёты. Прежние данные скрыты.');
   dom.window.document.documentElement.lang='en';dom.window.dispatchEvent(new dom.window.Event('task-state-changed'));await awaitText(host,'Could not read reports. Previous data is hidden.');
-  assert.equal(host.querySelector('section > p').textContent,'Freshness is unknown: reading reports failed.');assert.equal(host.querySelector('section').getAttribute('aria-label'),'AI work');assertReadOnly(data);
+  assert.equal(host.querySelector('[data-ai-report-note]').textContent,'Freshness is unknown: reading reports failed.');assert.equal(host.querySelector('section').getAttribute('aria-label'),'AI work');assertReadOnly(data);
 });
 
 test('a newly registered attempt does not present the previous done report as its execution', async t => {
@@ -249,4 +249,79 @@ test('a newly registered attempt does not present the previous done report as it
   assert.equal(host.querySelector('li').dataset.runId,'run-new-00001');
   assert.match(host.textContent,/сообщил, что работает/);
   assert.equal(data.rows[0].completed,false);assertReadOnly(data);
+});
+
+test('compact disclosure preserves every latest task/run and opens exact native history without writes', async t => {
+  const data=await fixture(),dom=new JSDOM('<main></main>'),host=dom.window.document.querySelector('main');t.after(()=>dom.window.close());
+  const exchange={version:1,sourceNamespace:namespace,order:24,bindings:{},runs:{}};
+  data.rows.splice(0);
+  for(let i=0;i<24;i++){
+    const record=task('synthetic-task-'+i,'Long synthetic task '+i+' — '+ 'preserved title '.repeat(12)),binding=await stableTaskBinding(namespace,record),runId='synthetic-run-'+i;
+    data.rows.push(record);exchange.bindings[binding.taskKey]=binding;
+    exchange.runs[runId]={runId,taskKey:binding.taskKey,agent:'codex',provider:null,model:null,receivedOrder:i+1,report:report(runId,binding.taskKey,['error','waiting','done'][i%3])};
+  }
+  data.setExchange(exchange);const before=JSON.stringify(exchange),opened=[];
+  const dispose=mountCalendarAiReports(host,{invoke:data.invoke,window:dom.window,
+    readTaskReview:async id=>({taskId:id,taskRevision:7,resultVersion:2,reviewState:id==='synthetic-task-0'?'awaiting_review':'running',history:[],content:'Preserved result'}),
+    onOpenTask:(record,restore)=>opened.push({record,restore})});t.after(dispose);
+  await waitForReports(host);const details=host.querySelector('details'),summary=host.querySelector('summary');
+  assert.equal(details.open,false);assert.equal(host.querySelectorAll('li').length,24);
+  assert.match(summary.textContent,/Связанных задач: 24.*ошибок 8, ожидают 8.*на приёмке: 1/);
+  assert.equal(host.querySelectorAll('li[data-result-version="2"]').length,24);
+  assert.deepEqual(new Set([...host.querySelectorAll('li')].map(n=>n.dataset.runId)),new Set(Object.keys(exchange.runs)));
+  details.open=true;const button=host.querySelector('[data-native-task-id="synthetic-task-0"] button');button.focus();button.click();
+  assert.deepEqual(opened[0].record,data.rows[0]);opened[0].restore();assert.equal(dom.window.document.activeElement,button);
+  dom.window.dispatchEvent(new dom.window.Event('task-state-changed'));await waitForReports(host);
+  assert.equal(details.open,true);assert.equal(host.querySelector('[data-native-task-id="synthetic-task-0"] button'),button);
+  assert.equal(dom.window.document.activeElement,button);assert.equal(JSON.stringify(exchange),before);assert.ok(data.rows.every(row=>!row.completed));assertReadOnly(data);
+});
+
+test('reported done never supplies review counts; failed review/source reads remain explicitly unknown', async t => {
+  const data=await fixture(),dom=new JSDOM('<main></main>'),host=dom.window.document.querySelector('main');t.after(()=>dom.window.close());
+  const exchange=await data.invoke('get_ui_state',{key:TASK_RUN_KEY});exchange.runs['run-last-0001'].report.status='done';data.setExchange(exchange);
+  let denied=false;
+  const dispose=mountCalendarAiReports(host,{invoke:data.invoke,window:dom.window,readTaskReview:async id=>{
+    if(denied)throw {status:403,code:'personal_scope_required'};
+    return {taskId:id,taskRevision:7,resultVersion:2,reviewState:'running'};
+  }});t.after(dispose);await waitForReports(host);
+  const details=host.querySelector('details');details.open=true;
+  assert.match(host.querySelector('summary').textContent,/на приёмке: 0/);assert.match(host.textContent,/Завершение задачи требует приёмки/);
+  denied=true;dom.window.dispatchEvent(new dom.window.Event('task-state-changed'));await waitForReports(host);
+  assert.match(host.querySelector('summary').textContent,/приёмка неизвестна: 1/);assert.match(host.textContent,/Состояние приёмки не обновлено/);assert.equal(details.open,true);
+  data.setFailExchangeRead(true);dom.window.dispatchEvent(new dom.window.Event('task-state-changed'));await waitForReports(host);
+  assert.match(host.querySelector('summary').textContent,/Не удалось прочитать отчёты/);assert.equal(host.querySelector('li'),null);assert.equal(details.open,true);
+  assert.equal(data.rows[0].completed,false);assertReadOnly(data);
+});
+
+test('disabled review authority is unknown while a genuine missing result is known absence', async t => {
+  const data=await fixture(),dom=new JSDOM('<main></main>'),host=dom.window.document.querySelector('main');t.after(()=>dom.window.close());
+  let failure={status:403,code:'review_prototype_disabled'};
+  const dispose=mountCalendarAiReports(host,{invoke:data.invoke,window:dom.window,readTaskReview:async()=>{throw failure;}});t.after(dispose);
+  await waitForReports(host);
+  assert.match(host.querySelector('summary').textContent,/приёмка неизвестна: 1/);
+  assert.match(host.querySelector('li').textContent,/Состояние приёмки не обновлено/);
+  failure={status:404,code:'shared_task_not_found'};
+  dom.window.dispatchEvent(new dom.window.Event('task-state-changed'));await waitForReports(host);
+  assert.match(host.querySelector('summary').textContent,/приёмка неизвестна: 1/);
+  assert.match(host.querySelector('li').textContent,/Состояние приёмки не обновлено/);
+  failure={status:404,code:'no_review_result'};
+  dom.window.dispatchEvent(new dom.window.Event('task-state-changed'));await waitForReports(host);
+  assert.match(host.querySelector('summary').textContent,/на приёмке: 0/);
+  assert.doesNotMatch(host.textContent,/приёмка неизвестна|Состояние приёмки не обновлено/);
+  assertReadOnly(data);
+});
+
+test('an unreported latest run retains the existing review identity and exact history callback', async t => {
+  const data=await fixture(),dom=new JSDOM('<main></main>'),host=dom.window.document.querySelector('main');t.after(()=>dom.window.close());
+  const exchange=await data.invoke('get_ui_state',{key:TASK_RUN_KEY});
+  exchange.order=4;exchange.runs['run-new-00001']={runId:'run-new-00001',taskKey:data.binding.taskKey,agent:'codex',provider:null,model:null,report:null,receivedOrder:4};data.setExchange(exchange);
+  const before=JSON.stringify(exchange),opened=[];
+  const dispose=mountCalendarAiReports(host,{invoke:data.invoke,window:dom.window,readTaskReview:async id=>({taskId:id,taskRevision:7,resultVersion:2,reviewState:'awaiting_review'}),onOpenTask:record=>opened.push(record)});t.after(dispose);
+  await waitForReports(host);
+  const row=host.querySelector('li');
+  assert.equal(row.dataset.nativeTaskId,'task-primary');assert.equal(row.dataset.runId,'run-new-00001');assert.equal(row.dataset.resultVersion,'2');
+  assert.match(host.querySelector('summary').textContent,/на приёмке: 1/);assert.match(row.textContent,/На приёмке · результат v2/);
+  assert.match(row.textContent,/Регистрация задачи не означает запуск/);assert.doesNotMatch(row.textContent,/сообщил, что ожидает/);
+  row.querySelector('button').click();assert.deepEqual(opened,[data.rows[0]]);
+  assert.equal(JSON.stringify(exchange),before);assert.equal(data.rows[0].completed,false);assertReadOnly(data);
 });

@@ -769,7 +769,7 @@ export async function loadCalendarWorkspace(el, { nativeReview = true } = {}) {
         },
       });
       disposeInProgress.setSelectedTask(todayTaskSelection);
-      disposeAiReports = mountCalendarAiReports(pane.querySelector('[data-calendar-ai-reports]'), { invoke, listen });
+      disposeAiReports = mountCalendarAiReports(pane.querySelector('[data-calendar-ai-reports]'), { invoke, listen, readTaskReview, onOpenTask:openNativeTask });
     },
     renderTable: pane => mountCalendarTable(pane),
     renderTasks: pane => {
