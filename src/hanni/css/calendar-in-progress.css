@@ -154,3 +154,11 @@
 @media (prefers-reduced-motion: reduce) {
   .cip-row, .cip-stage-next, .cip-icon { transition: none; }
 }
+
+/* Resume names the existing action; running Pause keeps its icon geometry. */
+.calendar-in-progress .cip-row:has(> .cip-toggle--resume) { grid-template-columns: max-content minmax(0, 1fr) max-content auto; }
+.calendar-in-progress .cip-row > .cip-icon.cip-toggle--resume { width: auto; min-height: 40px; padding: 0 10px; gap: 6px; white-space: nowrap; font-size: 12px; }
+@media (max-width: 680px) {
+  .calendar-in-progress .cip-row:has(> .cip-toggle--resume) { grid-template-columns: max-content minmax(0, 1fr) auto; }
+}
+.calendar-focus .calendar-in-progress .cip-row:has(> .cip-toggle--resume) { grid-template-columns: max-content minmax(0, 1fr); }

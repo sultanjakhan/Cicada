@@ -295,12 +295,16 @@ test('the widget keeps exact seconds through pause and resume after the task lis
   data.blocks = [{ id:21, source_type:'note', source_id:'draft', date:TODAY, start_time:'10:58:30', completion_date:TODAY, is_active:true, created_at:'1', pauseDurationSeconds:90 }];
   const x = await mount(t, data);
   assert.equal(x.row('note:draft').querySelector('.cip-time').textContent, '01:30', 'the current run starts with ninety exact seconds');
+  assert.equal(x.control('note:draft', 'toggle').querySelector('.cip-resume-label'), null, 'running Pause stays an icon');
 
   x.control('note:draft', 'toggle').click(); await settle();
   assert.equal(x.data.blocks[0].duration_seconds, 90, 'pause stores the exact duration');
+  assert.equal(x.control('note:draft', 'toggle').querySelector('.cip-resume-label').textContent, 'Продолжить');
+  assert.equal(x.control('note:draft', 'toggle').getAttribute('aria-label'), 'Продолжить: Черновик отчёта');
   assert.equal(x.row('note:draft').querySelector('.cip-time').textContent, '01:30', 'one minute in the list does not replace ninety seconds');
 
   x.control('note:draft', 'toggle').click(); await settle();
+  assert.equal(x.control('note:draft', 'toggle').querySelector('.cip-resume-label'), null, 'resumed work returns to Pause');
   data.now = new Date(data.now.getTime() + 30_000);
   await new Promise(resolve => setTimeout(resolve, 1100));
   assert.equal(x.row('note:draft').querySelector('.cip-time').textContent, '02:00', 'closed ninety seconds plus thirty active seconds');

@@ -126,7 +126,12 @@ export function mountCalendarDashboardTasks(element, dependencies) {
     today.replaceChildren();
     if (!expanded) {
       if (slice.length) today.append(taskList(slice, 'today'));
-      else empty(today, current.key ? 'Других задач на сегодня нет.' : 'На сегодня задач нет. Можно выбрать задачу во вкладке «Все».');
+      else {
+        empty(today, current.key ? 'Других задач на сегодня нет.' : 'На сегодня задач нет.');
+        const choose = document.createElement('button'); choose.type = 'button'; choose.className = 'cto-execute';
+        choose.dataset.overviewShowAll = ''; choose.textContent = 'Открыть все задачи';
+        today.append(choose);
+      }
     }
     groups.replaceChildren();
     if (expanded) {
@@ -184,9 +189,14 @@ export function mountCalendarDashboardTasks(element, dependencies) {
       if (!disposed && request === revision) { loading = false; if (!canCommit || canCommit()) render(); }
     }
   }
+  const showAll = () => { if (embedded) dependencies.onShowAll?.(); else if (!expanded) { expanded = true; page = 0; render(); } };
   const onClick = event => {
     const button = event.target.closest('button'); if (!button || !element.contains(button) || button.disabled) return;
     if (!embedded && (button === toggle || button === todayFilter)) { expanded = button === toggle; page = 0; render(); }
+    else if (!embedded && 'overviewShowAll' in button.dataset) {
+      showAll();
+      (all.querySelector('[data-overview-task]') || toggle).focus({preventScroll:true});
+    }
     else if (!embedded && button === retry) void refresh();
     else if (!embedded && (button === query('prev') || button === query('next'))) { page += button === query('prev') ? -1 : 1; render(); title.focus(); }
     else if ('overviewExecute' in button.dataset) {
@@ -251,7 +261,7 @@ export function mountCalendarDashboardTasks(element, dependencies) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value)) || date === value) return;
     date = value; followToday = value === localDate(now()); page = 0; render();
   };
-  dispose.showAll = () => { if (embedded) dependencies.onShowAll?.(); else if (!expanded) { expanded = true; page = 0; render(); } };
+  dispose.showAll = showAll;
   dispose.showToday = () => { if (embedded) dependencies.onShowToday?.(); else if (expanded) { expanded = false; page = 0; render(); } };
   dispose.onCount = listener => { countListener = typeof listener === 'function' ? listener : null; if (countListener && rows) { const all = embedded && date !== localDate(now()) ? [] : ordered().filter(row => row.date === date); countListener({ visible: all.filter(listedToday).length, currentKey: current.key, currentState: current.state }); } return () => { if (countListener === listener) countListener = null; }; };
   return dispose;

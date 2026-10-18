@@ -6,10 +6,11 @@ import { mountCalendarDashboardTasks } from '../src/hanni/js/calendar-dashboard-
 const task = (id, values = {}) => ({ source_type:'note', source_id:id, title:`Задача ${id}`, status_extra:'task', date:'2026-09-12', duration_minutes:30, ...values });
 async function mount(t, rows, now = () => new Date('2026-09-12T12:00:00')) {
   const dom = new JSDOM('<main></main>'), host = dom.window.document.querySelector('main');
-  const dispose = mountCalendarDashboardTasks(host, { invoke:async () => rows, now });
+  const calls = [];
+  const dispose = mountCalendarDashboardTasks(host, { invoke:async name => { calls.push(name); return rows; }, now });
   t.after(() => { dispose(); dom.window.close(); });
   await new Promise(resolve => setImmediate(resolve));
-  return { host, dispose, window:dom.window, q:name => host.querySelector(`[data-overview-${name}]`) };
+  return { host, dispose, calls, window:dom.window, q:name => host.querySelector(`[data-overview-${name}]`) };
 }
 
 test('unchanged background reads preserve the mounted task choice and its focus', async t => {
@@ -47,6 +48,25 @@ test('an unchanged embedded Today list preserves its task controls during refres
   assert.equal(host.querySelector('[data-overview-task="note:same"]'), null);
 });
 
+test('empty embedded Today has no standalone action and delegates showAll without moving caller focus', async t => {
+  const dom = new JSDOM('<button type="button">Выбрать задачу</button><main></main>');
+  const host = dom.window.document.querySelector('main'), trigger = dom.window.document.querySelector('button');
+  let opened = 0;
+  const dispose = mountCalendarDashboardTasks(host, { embedded:true, invoke:async () => [], onShowAll:() => { opened++; } });
+  t.after(() => { dispose(); dom.window.close(); });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(host.querySelector('[data-overview-show-all]'), null, 'embedded render never creates the standalone button');
+  trigger.onclick = () => dispose.showAll();
+  trigger.focus(); trigger.disabled = true; trigger.click();
+  assert.equal(opened, 0);
+  trigger.disabled = false; trigger.click();
+  assert.equal(opened, 1);
+  assert.equal(dom.window.document.activeElement, trigger);
+  host.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key:'Escape', bubbles:true }));
+  assert.equal(opened, 1, 'embedded keyboard events do not dereference standalone controls');
+  assert.equal(dom.window.document.activeElement, trigger);
+});
+
 test('Today shows all five other tasks; All includes current and other dates without duplicate visible lists', async t => {
   const rows = [task('current'), ...Array.from({length:5},(_,i) => task(String(i))), task('later',{date:'2026-09-13'}), task('undated',{date:null}), task('done',{completed:true}), task('archived',{archived:true}), task('event',{source_type:'event'}), task('readonly',{readonly:true})];
   const x = await mount(t,rows); x.dispose.setCurrentTask({key:'note:current',state:'recommendation'});
@@ -64,6 +84,33 @@ test('Today shows all five other tasks; All includes current and other dates wit
   x.q('today-filter').click();
   assert.equal(x.q('today').hidden,false);
   assert.equal(x.q('all').hidden,true);
+});
+
+test('empty Today opens existing All tasks without starting work and moves focus into the list', async t => {
+  const x = await mount(t, [task('later', { date: '2026-09-13' })]);
+  const open = x.q('show-all');
+  assert.ok(open, 'empty Today needs a direct next action');
+  assert.equal(open.tagName, 'BUTTON');
+  assert.equal(open.type, 'button');
+  assert.equal(open.textContent, 'Открыть все задачи');
+  open.focus(); open.click();
+  assert.equal(x.q('today').hidden, true);
+  const choice = x.q('all').querySelector('[data-overview-task="note:later"]');
+  assert.equal(x.window.document.activeElement, choice);
+  x.window.document.activeElement.dispatchEvent(new x.window.KeyboardEvent('keydown', { key:'Escape', bubbles:true }));
+  assert.equal(x.q('today').hidden, false);
+  assert.equal(x.window.document.activeElement, x.q('today-filter'));
+  assert.deepEqual(x.calls, ['get_calendar_tasks'], 'navigation must not write records or start timers');
+});
+
+test('empty All focuses its filter; nonempty Today has no empty-state action', async t => {
+  const empty = await mount(t, []);
+  empty.q('show-all').click();
+  assert.equal(empty.q('all').hidden, false);
+  assert.equal(empty.window.document.activeElement, empty.q('toggle'));
+  const filled = await mount(t, [task('today')]);
+  assert.equal(filled.q('show-all'), null);
+  assert.equal(filled.q('today').querySelectorAll('li').length, 1);
 });
 
 test('important badge is limited to native note tasks and appears in Today and All', async t => {
