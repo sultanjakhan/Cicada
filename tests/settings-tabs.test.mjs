@@ -57,6 +57,24 @@ afterEach(() => {
   windows.clear();
 });
 
+test('manual focus draft belongs to Connections, survives calendar Save and needs explicit discard', async () => {
+  const x = await boot({section: 'connections'});
+  const input = x.modal.querySelector('[data-focus-field="sites"]');
+  input.value = 'example.com'; input.dispatchEvent(new x.dom.window.Event('input', {bubbles: true}));
+  await tick();
+  x.modal.querySelector('#calendar-settings-tab-calendar').click();
+  x.modal.querySelector('[data-key="first_day"] [data-value="sun"]').click();
+  x.modal.querySelector('button[type="submit"]').click(); await tick();
+  assert.equal(x.modal.open, true);
+  assert.equal(input.value, 'example.com');
+  assert.equal(x.modal.querySelector('[data-settings-status]').hidden, false);
+  assert.equal(x.modal.querySelector('#calendar-settings-tab-connections').getAttribute('aria-selected'), 'true');
+  assert.equal(x.writes.includes('cicada_focus_adapter_local_v1'), false);
+  document.dispatchEvent(new x.dom.window.KeyboardEvent('keydown', {key: 'Escape', bubbles: true, cancelable: true}));
+  assert.equal(x.modal.open, true);
+  assert.equal(x.modal.querySelector('[data-close-confirmation]').hidden, false);
+});
+
 async function boot({ failPreferenceSave = false, failPreferenceLoad = false, delayPreferenceLoad = false, deferProcessSave = false, initialPreferences = null, initialDataSources = null, section = 'next-action', recommendationsOnly = false, lang = 'ru', theme = 'light' } = {}) {
   const dom = new JSDOM('<button id="settings">Настройки</button>', { url: 'http://cicada.local', pretendToBeVisual: true });
   windows.add(dom.window);
