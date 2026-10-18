@@ -232,7 +232,7 @@
 .ct-view-tabs-list button:hover:not(:disabled), .ct-view-tabs-list button:focus-visible { color: var(--text-primary); }
 .ct-view-tabs-actions, .ct-view-editor { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .ct-view-tabs-actions button, .ct-view-editor button { min-height: 32px; padding: 4px 9px; border: 0; border-radius: 0; background: transparent; color: var(--text-secondary); font-size: 12.5px; cursor: pointer; }
-.ct-view-tabs-actions button:first-child, .ct-view-editor [data-task-view-save], .ct-view-editor [data-task-view-confirm-remove] { color: var(--text-primary); text-decoration: underline; text-underline-offset: 3px; }
+.ct-view-tabs-actions button:first-child, .ct-view-editor [data-task-view-save], .ct-view-editor [data-task-view-confirm-remove] { color: var(--text-primary); font-weight: 600; }
 .ct-view-tabs-actions button:hover:not(:disabled), .ct-view-tabs-actions button:focus-visible, .ct-view-editor button:hover:not(:disabled), .ct-view-editor button:focus-visible { color: var(--text-primary); text-decoration: underline; text-underline-offset: 3px; }
 .ct-view-tabs button:disabled { opacity: .5; cursor: default; }
 .ct-view-editor { padding: 10px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-card); }
