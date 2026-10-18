@@ -67,7 +67,7 @@ pub(crate) fn start(app:tauri::AppHandle,_root:&Path,endpoint_root:&Path)->Resul
             let reply=if matches!(frame,Ok(Ok(()))){
                 let handle=app.clone();let result=tauri::async_runtime::spawn_blocking(move||{
                     let request=crate::agent_access::parse(&bytes)?;
-                    let changed=request.action=="begin"||request.action=="report"||(request.action=="task-command"&&request.body["command"].as_str().is_some_and(|c|!["snapshot","get","operation"].contains(&c)));
+                    let changed=request.action=="personal-template-confirm"||request.action=="begin"||request.action=="report"||(request.action=="task-command"&&request.body["command"].as_str().is_some_and(|c|!["snapshot","get","operation"].contains(&c)));
                     let state=handle.state::<crate::AppState>();let mut conn=state.0.lock().map_err(|_|"agent_database_busy".to_string())?;
                     let result=crate::agent_access::execute(&mut conn,request)?;drop(conn);
                     if changed{let _=handle.emit("mvp-sync-updated",json!({"views_changed":true}));}

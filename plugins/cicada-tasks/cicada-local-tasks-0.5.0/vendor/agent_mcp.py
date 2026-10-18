@@ -120,6 +120,8 @@ def tools_for(app):
     if app == 'cicada':
         return [
             {'name':'cicada_list_tasks','description':'Read-only personal tasks. Empty arguments retain the legacy first page. For complete traversal pass pageSize (1-100), then nextCursor as cursor until null; restart if the queue changes. No corporate records.', 'inputSchema':schema({'pageSize':{'type':'integer','minimum':1,'maximum':100},'cursor':{'type':'string','pattern':'^v1:[0-9a-f]{2,160}$','maxLength':163}},[])},
+            {'name':'cicada_personal_template_preview','description':'Metadata-only eligibility/version for one exact user-selected template UUID. Never reveals title/content or enumerates unclassified tasks.', 'inputSchema':schema({'taskId':TEXT},['taskId'])},
+            {'name':'cicada_personal_template_confirm','description':'Explicitly classify one user-confirmed educational template as personal. Preserve content, tags and workflow; requires exact UUID/version and personalTemplateConfirmed true. Retry identical operationId/payload after unknown outcome.', 'inputSchema':schema({'operationId':IDENTITY,'taskId':TEXT,'expectedVersion':{'type':'integer','minimum':1},'personalTemplateConfirmed':{'const':True}},['operationId','taskId','expectedVersion','personalTemplateConfirmed'])},
             {'name':'cicada_read_task','description':'Read-only snapshot of one exact personal native task UUID.', 'inputSchema':schema({'taskId':TEXT},['taskId'])},
             {'name':'cicada_begin_ai_work','description':'Register work the user has authorized and the calling AI is already performing. Reuse an existing task UUID when known; a null taskId may create one only within that authorization. Atomically writes a binding and observed running report; it does not launch a model, start a human timer, or complete the task. Keep operationId after timeout.',
              'inputSchema':schema({'operationId':IDENTITY,'title':TEXT,'content':TEXT,'taskId':{'type':['string','null']},'expectedVersion':{'type':['integer','null']},'projects':{'type':'array','items':TEXT},'report':REPORT},['operationId','title','content','taskId','expectedVersion','projects','report'])},
@@ -166,7 +168,7 @@ def invoke(app, bridge, name, args):
         if name == 'cicada_task_command':
             return bridge.call({'version':1,'operation_id':op,'action':'task-command',
                                 'body':{'command':body['command'],'arguments':body['arguments']}})
-        action = {'cicada_list_tasks':'list','cicada_read_task':'get','cicada_begin_ai_work':'begin','cicada_report_ai_work':'report'}[name]
+        action = {'cicada_personal_template_preview':'personal-template-preview','cicada_personal_template_confirm':'personal-template-confirm','cicada_list_tasks':'list','cicada_read_task':'get','cicada_begin_ai_work':'begin','cicada_report_ai_work':'report'}[name]
         return bridge.call({'version':1,'operation_id':op,'action':action,'body':body})
     from urllib.parse import urlencode
     if name == 'agent_city_read_shared_tasks': path = '/api/task-sync'; body = None

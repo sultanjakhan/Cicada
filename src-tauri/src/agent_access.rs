@@ -176,8 +176,64 @@ fn list_page(conn:&Connection,body:Value)->Result<Value,String> {
     let next=if has_more {Some(format!("v1:{}",hex::encode(selected.last().unwrap().as_bytes())))}else{None};
     Ok(json!({"tasks":rows,"hasMore":has_more,"nextCursor":next}))
 }
+// Exact, explicitly authorized classification; never enumerate ambiguous content.
+fn template_metadata(c:&Connection,id:&str)->Result<(String,i64,bool),String> {
+    if Uuid::parse_str(id).ok().is_none_or(|u|u.to_string()!=id){return Err(err())}
+    let (kind,tags,archived,completed,version):(String,String,i64,i64,i64)=c.query_row(
+        "SELECT kind,tags,archived,completed,version FROM items WHERE id=?1",[id],
+        |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).map_err(|_|"personal_template_not_eligible")?;
+    let tokens=tags.split(',').map(str::trim).collect::<Vec<_>>();
+    if kind!="task"||archived!=0||completed!=0||tokens.iter().any(|t|{
+        let t=t.to_ascii_lowercase();
+        t.starts_with("jira")||t.starts_with("investlink")||t.starts_with("personal-import")||
+        t.strip_prefix("task-sphere:").is_some_and(|v|!["home","health","growth","personal"].contains(&v))
+    }){return Err("personal_template_not_eligible".into())}
+    let active:i64=c.query_row("SELECT count(*) FROM timeline_blocks WHERE source_type='note' AND source_id=?1 AND is_active=1",[id],|r|r.get(0)).map_err(|_|err())?;
+    let review_table:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='local_review_state')",[],|r|r.get(0)).map_err(|_|err())?;
+    let rework=if review_table {c.query_row("SELECT EXISTS(SELECT 1 FROM local_review_state WHERE task_id=?1 AND state IN ('awaiting_dispatch','running'))",[id],|r|r.get::<_,bool>(0)).map_err(|_|err())?}else{false};
+    if active!=0||rework{return Err("personal_template_not_eligible".into())}
+    let confirmed=tokens.contains(&"personal-template")&&tokens.contains(&"task-sphere:personal");
+    Ok((tags,version,confirmed))
+}
+fn personal_template(c:&mut Connection,req:Request)->Result<Value,String> {
+    #[derive(Deserialize)]#[serde(rename_all="camelCase",deny_unknown_fields)]struct Preview{task_id:String}
+    #[derive(Deserialize)]#[serde(rename_all="camelCase",deny_unknown_fields)]struct Confirm{task_id:String,expected_version:i64,personal_template_confirmed:bool}
+    if req.action=="personal-template-preview" {
+        let p:Preview=serde_json::from_value(req.body).map_err(|_|err())?;
+        let tx=c.transaction().map_err(|_|err())?;
+        let (_,version,confirmed)=template_metadata(&tx,&p.task_id)?;
+        return Ok(json!({"taskId":p.task_id,"version":version,"eligible":true,"alreadyConfirmed":confirmed}));
+    }
+    let p:Confirm=serde_json::from_value(req.body.clone()).map_err(|_|err())?;
+    if !p.personal_template_confirmed||p.expected_version<1||p.expected_version>=9_007_199_254_740_991{return Err(err())}
+    let digest=hex::encode(Sha256::digest(json!({"action":req.action,"body":req.body}).to_string().as_bytes()));
+    let tx=c.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_|err())?;
+    let (tags,version,confirmed)=template_metadata(&tx,&p.task_id)?;
+    tx.execute_batch("CREATE TABLE IF NOT EXISTS agent_personal_template_operations(operation_id TEXT PRIMARY KEY,task_id TEXT NOT NULL,digest TEXT NOT NULL,receipt TEXT NOT NULL)").map_err(|_|err())?;
+    let old:Option<(String,String,String)>=tx.query_row("SELECT task_id,digest,receipt FROM agent_personal_template_operations WHERE operation_id=?1",[&req.operation_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(|_|err())?;
+    if let Some((id,d,r))=old {
+        if id!=p.task_id||d!=digest{return Err("operation_payload_conflict".into())}
+        if !confirmed{return Err("personal_template_not_eligible".into())}
+        return serde_json::from_str(&r).map_err(|_|err());
+    }
+    let count:i64=tx.query_row("SELECT count(*) FROM agent_personal_template_operations",[],|r|r.get(0)).map_err(|_|err())?;
+    if count>=500{return Err("personal_template_operation_capacity".into())}
+    if version!=p.expected_version{return Err("task_version_conflict".into())}
+    if confirmed{return Err("personal_template_already_confirmed".into())}
+    let mut next=tags.clone();
+    for tag in ["task-sphere:personal","personal-template"] {
+        if !tags.split(',').any(|t|t.trim()==tag){if !next.is_empty()&&!next.ends_with(','){next.push(',')}next.push_str(tag)}
+    }
+    let n=tx.execute("UPDATE items SET tags=?1,version=version+1,updated_at=?2 WHERE id=?3 AND version=?4",rusqlite::params![next,chrono::Utc::now().to_rfc3339(),p.task_id,p.expected_version]).map_err(|_|err())?;
+    if n!=1{return Err("task_version_conflict".into())}
+    let result=json!({"taskId":p.task_id,"version":version+1,"personalTemplateConfirmed":true});
+    tx.execute("INSERT INTO agent_personal_template_operations VALUES(?1,?2,?3,?4)",rusqlite::params![req.operation_id,p.task_id,digest,result.to_string()]).map_err(|_|err())?;
+    tx.commit().map_err(|_|err())?;Ok(result)
+}
+
 pub(crate) fn execute(conn:&mut Connection,mut req:Request)->Result<Value,String> {
     if req.version!=1||!token(&req.operation_id,8,100){return Err(err())}
+    if ["personal-template-preview","personal-template-confirm"].contains(&req.action.as_str()){return personal_template(conn,req)}
     if req.action=="task-command" {
         if req.body.as_object().is_none_or(|b|b.len()!=2||!b.contains_key("command")||!b.contains_key("arguments")){return Err(err())}
         let command=req.body["command"].as_str().ok_or_else(err)?;
@@ -292,6 +348,48 @@ pub(crate) fn parse(raw:&[u8])->Result<Request,String>{
         assert_eq!(c.query_row("SELECT count(*) FROM timeline_blocks",[],|r|r.get::<_,i64>(0)).unwrap(),0);
         for body in [json!([17,null]),json!({"pageSize":0}),json!({"pageSize":101}),json!({"pageSize":true}),json!({"cursor":"v1:00"}),json!({"unknown":1})] {
             assert!(call(&mut c,"page-invalid-001","list",body).is_err());
+        }
+    }
+    #[test]fn explicit_template_confirmation_is_targeted_revisioned_and_replayable(){
+        let mut c=conn();
+        let id=crate::calendar_compat::create_note_in_transaction(&c,"Fictional education template","Fictional body","custom:keep,task-sphere:growth","task",&None,None).unwrap().id;
+        assert!(personal(&c,&id).is_err(),"legacy privacy boundary must still reject implicit personal scope");
+        write(&c,"fictional-template-workflow",&json!({"steps":["keep"],"stage":"fixture"})).unwrap();
+        let preview=call(&mut c,"template-preview-001","personal-template-preview",json!({"taskId":id})).unwrap();
+        assert_eq!(preview,json!({"taskId":id,"version":1,"eligible":true,"alreadyConfirmed":false}));
+        let body=json!({"taskId":id,"expectedVersion":1,"personalTemplateConfirmed":true});
+        let mut denied=body.clone();denied["personalTemplateConfirmed"]=json!(false);
+        assert!(call(&mut c,"template-denied-001","personal-template-confirm",denied).is_err());
+        let mut stale=body.clone();stale["expectedVersion"]=json!(2);
+        assert_eq!(call(&mut c,"template-stale-001","personal-template-confirm",stale).unwrap_err(),"task_version_conflict");
+        let confirmed=call(&mut c,"template-confirm-001","personal-template-confirm",body.clone()).unwrap();
+        assert_eq!(confirmed,json!({"taskId":id,"version":2,"personalTemplateConfirmed":true}));
+        assert_eq!(call(&mut c,"template-confirm-001","personal-template-confirm",body.clone()).unwrap(),confirmed);
+        let task=personal(&c,&id).unwrap();assert_eq!(task["title"],"Fictional education template");assert_eq!(task["content"],"Fictional body");assert_eq!(task["version"],2);
+        let tags:String=c.query_row("SELECT tags FROM items WHERE id=?1",[&id],|r|r.get(0)).unwrap();
+        assert_eq!(tags,"custom:keep,task-sphere:growth,task-sphere:personal,personal-template");
+        assert_eq!(read(&c,"fictional-template-workflow").unwrap(),Some(json!({"steps":["keep"],"stage":"fixture"})));
+        let mut changed=body.clone();changed["expectedVersion"]=json!(2);
+        assert_eq!(call(&mut c,"template-confirm-001","personal-template-confirm",changed).unwrap_err(),"operation_payload_conflict");
+        c.execute("UPDATE items SET tags='task-sphere:work' WHERE id=?1",[&id]).unwrap();
+        assert!(call(&mut c,"template-confirm-001","personal-template-confirm",body).is_err(),"replay must recheck current scope");
+    }
+    #[test]fn template_preview_and_confirm_reject_foreign_or_active_records(){
+        for reason in ["work","jira","investlink","import","unknown","archived","completed","timer","rework"] {
+            let mut c=conn();
+            let tags=match reason {"work"=>"task-sphere:work","jira"=>"JIRA:fictional","investlink"=>"InvestLink:fictional","import"=>"personal-import:fixture","unknown"=>"task-sphere:unknown",_=>""};
+            let id=crate::calendar_compat::create_note_in_transaction(&c,"Fictional template","Fictional body",tags,"task",&None,None).unwrap().id;
+            match reason {
+                "archived"=>{c.execute("UPDATE items SET archived=1 WHERE id=?1",[&id]).unwrap();}
+                "completed"=>{c.execute("UPDATE items SET completed=1 WHERE id=?1",[&id]).unwrap();}
+                "timer"=>{c.execute("INSERT INTO timeline_blocks(source_type,source_id,date,start_time,is_active,created_at,updated_at) VALUES('note',?1,'2026-01-01','09:00',1,'fixture','fixture')",[&id]).unwrap();}
+                "rework"=>{c.execute_batch("CREATE TABLE IF NOT EXISTS local_review_state(task_id TEXT PRIMARY KEY,result_version INTEGER,state TEXT,intent_id TEXT)").unwrap();c.execute("INSERT INTO local_review_state VALUES(?1,1,'awaiting_dispatch','fictional-intent')",[&id]).unwrap();}
+                _=>{}
+            }
+            assert!(call(&mut c,"template-preview-deny","personal-template-preview",json!({"taskId":id})).is_err(),"{reason}");
+            assert!(call(&mut c,"template-confirm-deny","personal-template-confirm",json!({"taskId":id,"expectedVersion":1,"personalTemplateConfirmed":true})).is_err(),"{reason}");
+            let row:(String,String,i64)=c.query_row("SELECT title,notes,version FROM items WHERE id=?1",[&id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
+            assert_eq!(row,("Fictional template".into(),"Fictional body".into(),1));
         }
     }
     #[test]fn automatic_unbound_chat_metadata_does_not_create_work(){
