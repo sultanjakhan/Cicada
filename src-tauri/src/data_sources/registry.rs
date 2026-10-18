@@ -49,8 +49,9 @@ impl Grants {
   self.entries.insert(grant_id.clone(),Grant{owner:owner.into(),path:path.into(),identity,created:Instant::now()});
   Ok(Selection{grant_id,file_name:path.file_name().and_then(|s|s.to_str()).unwrap_or("snapshot.json").to_owned()})
  }
- fn read(&mut self,owner:&str,id:&str,expected:Option<&str>)->Result<SnapshotRead,String>{
-  let result:Result<SnapshotRead,String>=(||{
+ fn read(&mut self,owner:&str,id:&str,expected:Option<&str>)->Result<SnapshotRead,String>{self.read_locked(owner,id,expected).map(|(snapshot,_)|snapshot)}
+ fn read_locked(&mut self,owner:&str,id:&str,expected:Option<&str>)->Result<(SnapshotRead,File),String>{
+  let result:Result<(SnapshotRead,File),String>=(||{
    let g=self.entries.get(id).filter(|g|g.owner==owner&&g.created.elapsed()<Duration::from_secs(600)).ok_or("source_grant_unavailable")?;
    let mut file=safe_open(&g.path)?;if fingerprint(&file)?!=g.identity{return Err("source_selection_changed".into());}
    let mut bytes=Vec::new();(&mut file).take(MAX_BYTES+1).read_to_end(&mut bytes).map_err(|_|"source_read_denied")?;
@@ -59,7 +60,7 @@ impl Grants {
    let raw=String::from_utf8(bytes).map_err(|_|"source_utf8_required")?;
    let value:Value=serde_json::from_str(&raw).map_err(|_|"source_json_required")?;
    if value["schemaVersion"]!=1||value["kind"]!="work-registry-snapshot"||value["tasks"].as_array().is_none_or(|v|v.len()>1000)||value["projects"].as_array().is_none_or(|v|v.len()>100){return Err("source_snapshot_bounds".into());}
-   Ok(SnapshotRead{grant_id:id.into(),digest,raw,read_at:chrono::Utc::now().to_rfc3339()})
+   Ok((SnapshotRead{grant_id:id.into(),digest,raw,read_at:chrono::Utc::now().to_rfc3339()},file))
   })();
   if result.is_err()&&self.entries.get(id).is_some_and(|g|g.owner==owner){self.entries.remove(id);}
   result
@@ -130,7 +131,7 @@ fn validate_selected_snapshot(s:&Value)->Result<(),String>{
  Ok(())
 }
 fn commit(grants:&mut Grants,owner:&str,id:&str,digest:&str,value:&str,expected:&str,expected_sources:&str,conn:&rusqlite::Connection)->Result<(),String>{
- let selected=grants.read(owner,id,Some(digest))?;
+ let (selected,_read_lease)=grants.read_locked(owner,id,Some(digest))?;
  if value.len()>4*1024*1024{return Err("registry_storage_limit".into());}
  let tx=conn.unchecked_transaction().map_err(|_|"source_config_unavailable")?;
  if crate::mvp_sync_db::read_ui(&tx,SOURCES)?.unwrap_or_default()!=expected_sources{return Err("source_config_changed".into());}
@@ -173,6 +174,7 @@ mod tests {
  #[test]
  fn registry_source_confirmation_is_exact_projection_cas_and_preserves_source_and_native_data(){
   let dir=tempfile::tempdir().unwrap();let path=file(dir.path());let original=std::fs::read(&path).unwrap();let mut grants=Grants::default();let s=grants.select("owner",&path).unwrap();let read=grants.read("owner",&s.grant_id,None).unwrap();
+  #[cfg(windows)] {let (_,lease)=grants.read_locked("owner",&s.grant_id,Some(&read.digest)).unwrap();assert!(std::fs::write(&path,&original).is_err(),"confirmation read lease excludes writers");drop(lease);}
   let conn=rusqlite::Connection::open_in_memory().unwrap();crate::init_schema(&conn).unwrap();
   let value=serde_json::json!({"owned:00000000-0000-0000-0000-000000000001":fixture()}).to_string();
   let counts=||->(i64,i64){(conn.query_row("SELECT count(*) FROM items",[],|r|r.get(0)).unwrap(),conn.query_row("SELECT count(*) FROM timeline_blocks",[],|r|r.get(0)).unwrap())};let before=counts();
