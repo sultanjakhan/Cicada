@@ -18,6 +18,9 @@ mod checkpoint;
 mod pending;
 #[path = "mvp_sync_compat.rs"]
 mod compat;
+#[cfg(target_os = "macos")]
+#[path = "mvp_sync_private_restore.rs"]
+pub(super) mod private_restore;
 pub(super) const CHECKPOINT_SCHEMA: &str = "hanni-mvp-checkpoint-v1";
 
 const DOMAIN: &str = "hanni-mvp-content-v1";

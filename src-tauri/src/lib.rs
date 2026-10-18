@@ -694,6 +694,7 @@ pub fn run() {
         .manage(app_updates::UpdateState::default())
         .manage(compact_window::CompactWindow::default())
         .setup(move |app| {
+            let mut completed_recovery = false;
             let initialized = (|| -> Result<(), Box<dyn std::error::Error>> {
                 let source_dir = app_data_dir(app.handle())?;
                 let production_profile = !isolated && !cfg!(debug_assertions);
@@ -703,7 +704,9 @@ pub fn run() {
                 let standard_instance_lock = acquire_instance_lock(&standard_dir)?;
                 let same_directory = standard_dir.canonicalize()? == source_dir.canonicalize()?;
                 let source_instance_lock = if same_directory { None } else { Some(acquire_instance_lock(&source_dir)?) };
-                if production_profile && data_location::apply_pending(&standard_dir, &source_dir).is_err() {
+                // Provision the currently locked profile without a pre-selection credential read.
+                // A pending data move is preserved for the next ordinary startup.
+                if production_profile && !startup_options.is_file_provisioning() && data_location::apply_pending(&standard_dir, &source_dir).is_err() {
                     data_location::record_failure(&standard_dir)?;
                 }
                 let data_dir = app_data_dir(app.handle())?;
@@ -717,12 +720,28 @@ pub fn run() {
                 #[cfg(windows)]
                 let endpoint_root = data_location::endpoint_source(&standard_dir, &data_dir, isolated, cfg!(debug_assertions));
                 let database_was_present = data_dir.join("calendar.db").try_exists()?;
-                let connection = Connection::open(data_dir.join("calendar.db"))
+                let opened = if startup_options.is_content_restore() {
+                    Connection::open_with_flags(data_dir.join("calendar.db"),rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)
+                } else { Connection::open(data_dir.join("calendar.db")) };
+                let mut connection = opened
                     .map_err(|e| fail(format!("open calendar database: {e}")))?;
-                connection.pragma_update(None, "journal_mode", "WAL")?;
                 connection.busy_timeout(Duration::from_secs(5))?;
+                if startup_options.is_content_restore() {
+                    app.manage(instance_lock);
+                    let result = startup_options.restore_before_start(&mut connection,&data_dir.join("calendar.db"));
+                    completed_recovery = true;
+                    desktop_launch::finish_recovery(app.handle(),result);
+                    return Ok(());
+                }
+                connection.pragma_update(None, "journal_mode", "WAL")?;
                 init_schema(&connection)?;
                 data_sources::mark_new_profile(&connection, database_was_present)?;
+                if let Some(receipt) = startup_options.prepare_sync_file(&connection, &data_dir.join("calendar.db"))? {
+                    app.manage(instance_lock);
+                    completed_recovery = true;
+                    desktop_launch::finish_recovery(app.handle(),Ok(receipt));
+                    return Ok(());
+                }
                 app.manage(AppState(Mutex::new(connection)));
                 app.manage(instance_lock);
                 #[cfg(windows)]
@@ -741,8 +760,10 @@ pub fn run() {
                 }
                 if !isolated && !startup_options.is_update_background() {
                     mvp_sync::start(app.handle(), data_dir.join("calendar.db"));
-                    app_updates::start(app.handle().clone());
-                    app_updates::enroll_desktop_task(app.handle().clone());
+                    if !startup_options.is_recovery_provisioning() {
+                        app_updates::start(app.handle().clone());
+                        app_updates::enroll_desktop_task(app.handle().clone());
+                    }
                 }
                 if isolated {
                     let root = isolated_test::root(app.handle()).ok_or("isolated_root_unavailable")?;
@@ -765,7 +786,7 @@ pub fn run() {
                 }
                 return Err(error);
             }
-            startup_options.after_setup(app.handle());
+            if !completed_recovery { startup_options.after_setup(app.handle()); }
             Ok(())
         })
         .invoke_handler(move |invoke| {

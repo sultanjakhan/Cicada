@@ -288,7 +288,8 @@ fn copy_tree_inner(source: &Path, target: &Path, active_root: bool) -> Result<()
                 || name == "calendar.db"
                 || name == "calendar.db-wal"
                 || name == "calendar.db-shm"
-                || name == "mvp-sync.credentials")
+                || name == "mvp-sync.credentials"
+                || (cfg!(target_os = "macos") && (name == ".cicada-sync-private" || name == ".cicada-sync-backend.json")))
         {
             continue;
         }
@@ -548,6 +549,45 @@ mod tests {
         );
         assert_eq!(fs::read(source.join("mvp-sync.credentials")).unwrap(), old);
         assert_ne!(fs::read(target.join("mvp-sync.credentials")).unwrap(), old);
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn actual_private_file_relocation_recreates_private_storage_after_database_publication() {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64, Engine};
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let root = tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let source = root.join("profile");
+        fs::create_dir(&source).unwrap();
+        let database = source.join("calendar.db");
+        let conn = rusqlite::Connection::open(&database).unwrap();
+        crate::init_schema(&conn).unwrap();
+        let task = crate::calendar_compat::create_note_in_transaction(&conn,"Synthetic relocation task","","task-sphere:personal","task",&None,None).unwrap();
+        let input = root.join("input.json");
+        let raw = serde_json::json!({"v":1,"profile":"hanni-mvp-content-v1","endpoint":"https://example.invalid/",
+            "device_id":"synthetic-mac","key_id":"synthetic-group","token":B64.encode([1;32]),"key":B64.encode([2;32]),"enabled":true}).to_string();
+        fs::write(&input, raw).unwrap();
+        fs::set_permissions(&input, fs::Permissions::from_mode(0o600)).unwrap();
+        crate::mvp_sync::configure_private_file(&conn, &database, &input).unwrap();
+        let before = crate::mvp_sync::read_migration_credentials(&database).unwrap();
+        let source_marker = fs::read(source.join(".cicada-sync-backend.json")).unwrap();
+        drop(conn);
+        let target = root.join("moved");
+        prepare(&source, &target).unwrap();
+        apply_pending(&source, &source).unwrap();
+        assert_eq!(resolve(&source).unwrap(), target);
+        assert_eq!(crate::mvp_sync::read_migration_credentials(&target.join("calendar.db")).unwrap(), before);
+        assert_eq!(crate::mvp_sync::read_migration_credentials(&database).unwrap(), before);
+        assert_eq!(fs::metadata(target.join(".cicada-sync-private")).unwrap().mode() & 0o7777, 0o700);
+        for leaf in [".cicada-sync-private/pairing.json", ".cicada-sync-backend.json"] {
+            let m = fs::metadata(target.join(leaf)).unwrap();
+            assert_eq!(m.mode() & 0o7777, 0o600); assert_eq!(m.nlink(), 1);
+        }
+        assert_eq!(fs::read(source.join(".cicada-sync-backend.json")).unwrap(), source_marker);
+        assert_ne!(fs::read(target.join(".cicada-sync-backend.json")).unwrap(), source_marker);
+        let moved = rusqlite::Connection::open(target.join("calendar.db")).unwrap();
+        assert_eq!(moved.query_row("SELECT title FROM items WHERE id=?1", [&task.id], |r| r.get::<_,String>(0)).unwrap(), "Synthetic relocation task");
     }
     #[test]
     fn rejects_nonempty_and_preserves_pointer_on_failure() {

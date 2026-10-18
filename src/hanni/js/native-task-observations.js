@@ -2,17 +2,26 @@ import {createWorkflowStore} from './task-workflow.js';
 import {createRegistryStore,freshness} from './work-registry.js';
 import {createTaskRunExchange,stableTaskBinding} from './task-run-exchange.js';
 const same=(a,b)=>a&&b&&['sourceNamespace','sourceType','sourceId','taskKey'].every(k=>a[k]===b[k]);
+const nativeSourceId=/^[A-Za-z0-9_-]{1,80}$/;
 export const nativeTaskKey=row=>`${row.source_type}:${row.source_id}`;
 export function nativeTaskTags(row){return [...new Set((typeof row.tags==='string'?row.tags.split(','):[]).map(t=>t.trim()).filter(t=>t&&!t.startsWith('task-')))];}
+// Agent bindings belong to existing personal native tasks only.
+// Jira/InvestLink rows can be editable-looking projections without a readonly flag.
+const isNativeAgentBindingEligible=row=>{
+ const rawTags=typeof row?.tags==='string'?row.tags.split(',').map(tag=>tag.trim()):[];
+ const personal=row?.sphere==='personal'||rawTags.includes('task-sphere:personal');
+ const foreign=rawTags.some(tag=>/^(?:jira|investlink)/i.test(tag)||tag.toLowerCase()==='task-sphere:work');
+ return row?.source_type==='note'&&!row?.readonly&&typeof row?.source_id==='string'&&nativeSourceId.test(row.source_id)&&personal&&!foreign;
+};
 // Read-only join onto native rows; never imports tasks, completes them or guesses title matches.
 export async function readNativeTaskObservations(rows,invoke,{readReview=null,previousContexts=new Map()}={}){
  const [registry,exchange]=await Promise.allSettled([createRegistryStore(invoke).load(),createTaskRunExchange(invoke).load()]);
  const contexts=new Map(),unbound=[];
  const all=registry.status==='fulfilled'?Object.values(registry.value):[],state=exchange.status==='fulfilled'?exchange.value:null;
  for(const row of rows){
-  const tags=nativeTaskTags(row),ctx={sources:[{id:'native',label:'Задачи Cicada'}],projects:tags.filter(t=>t.startsWith('project:')).map(t=>({id:t,label:t.slice(8)})),tags,observations:[],reports:[],review:null,reviewAvailable:!!readReview};
+  const eligible=isNativeAgentBindingEligible(row),tags=nativeTaskTags(row),ctx={sources:[{id:'native',label:'Задачи Cicada'}],projects:tags.filter(t=>t.startsWith('project:')).map(t=>({id:t,label:t.slice(8)})),tags,observations:[],reports:[],review:null,reviewAvailable:!!readReview};
   if(!row.readonly){try{ctx.workflow=await createWorkflowStore(row,invoke).load();}catch{ctx.workflowReadError=true;}}
-  const expected=state&&!row.readonly?await stableTaskBinding(state.sourceNamespace,row):null;
+  const expected=state&&eligible?await stableTaskBinding(state.sourceNamespace,row):null;
   const bound=expected&&same(state.bindings[expected.taskKey],expected)?expected:null;
   if(bound){
    ctx.binding=bound;

@@ -14,6 +14,8 @@ pub(crate) enum Options {
     #[default]
     Interactive,
     ConfigureSync(PathBuf),
+    ConfigureSyncFile(PathBuf),
+    RestoreSyncContentFile(PathBuf),
     SyncCheck,
     UpdateBackground,
     Background,
@@ -41,7 +43,15 @@ impl Options {
             if args.next().is_some() || !root.is_absolute() { return Err("mvp_launch_invalid_options"); }
             return Ok(Self::IsolatedTest { root, background });
         }
-        let mode = if flag == "--configure-sync" {
+        let mode = if flag == "--restore-sync-content-file" && cfg!(target_os = "macos") {
+            let path = PathBuf::from(args.next().ok_or("mvp_launch_invalid_options")?);
+            if !path.is_absolute() { return Err("mvp_launch_invalid_options"); }
+            Self::RestoreSyncContentFile(path)
+        } else if flag == "--configure-sync-file" && cfg!(target_os = "macos") {
+            let path = PathBuf::from(args.next().ok_or("mvp_launch_invalid_options")?);
+            if !path.is_absolute() { return Err("mvp_launch_invalid_options"); }
+            Self::ConfigureSyncFile(path)
+        } else if flag == "--configure-sync" {
             let path = args.next().ok_or("mvp_launch_invalid_options")?;
             if path.is_empty() || path.to_string_lossy().starts_with("--") {
                 return Err("mvp_launch_invalid_options");
@@ -67,7 +77,7 @@ impl Options {
     pub(crate) fn is_one_shot(&self) -> bool {
         matches!(
             self,
-            Self::ConfigureSync(_) | Self::SyncCheck | Self::UpdateBackground
+            Self::ConfigureSync(_) | Self::ConfigureSyncFile(_) | Self::RestoreSyncContentFile(_) | Self::SyncCheck | Self::UpdateBackground
         )
     }
 
@@ -75,6 +85,28 @@ impl Options {
 
     pub(crate) fn is_update_background(&self) -> bool {
         *self == Self::UpdateBackground
+    }
+
+    pub(crate) fn is_file_provisioning(&self) -> bool { self.is_recovery_provisioning() }
+    pub(crate) fn is_recovery_provisioning(&self) -> bool { matches!(self, Self::ConfigureSyncFile(_) | Self::RestoreSyncContentFile(_)) }
+    pub(crate) fn is_content_restore(&self) -> bool { matches!(self, Self::RestoreSyncContentFile(_)) }
+
+    pub(crate) fn restore_before_start(&self, conn: &mut rusqlite::Connection, database: &Path) -> Result<Value,String> {
+        #[cfg(target_os = "macos")]
+        if let Self::RestoreSyncContentFile(input) = self { return crate::mvp_sync::restore_private_content(conn,database,input); }
+        let _ = (conn,database);
+        Err("mvp_launch_invalid_options".into())
+    }
+
+    // Called only after acquiring the native profile lock and before starting sync.
+    pub(crate) fn prepare_sync_file(&self, conn: &rusqlite::Connection, database: &Path) -> Result<Option<Value>, String> {
+        #[cfg(target_os = "macos")]
+        if let Self::ConfigureSyncFile(input) = self {
+            crate::mvp_sync::configure_private_file(conn, database, input)?;
+            return crate::mvp_sync::private_file_disabled_receipt(conn,database);
+        }
+        let _ = (conn, database);
+        Ok(None)
     }
 
     pub(crate) fn apply_context<R: tauri::Runtime>(&self, context: &mut tauri::Context<R>) {
@@ -314,6 +346,11 @@ fn write_output(value: &Value) -> std::io::Result<()> {
     output.flush()
 }
 
+pub(crate) fn finish_recovery(app: &tauri::AppHandle, result: Result<Value,String>) {
+    let (value, code) = match result { Ok(value) => (value,0), Err(error) => (json!({"ok":false,"error":error}),1) };
+    let written = write_output(&value).is_ok();
+    app.exit(if written { code } else { 1 });
+}
 pub(crate) fn fail_and_exit() -> ! {
     let _ = write_output(&json!({"ok": false, "error": "mvp_launch_failed"}));
     std::process::exit(1);
@@ -336,6 +373,18 @@ mod tests {
             Ok(Options::UpdateBackground)
         );
         assert_eq!(parse(&["--background"]), Ok(Options::Background));
+        #[cfg(target_os = "macos")]
+        assert_eq!(parse(&["--configure-sync-file", "/private/synthetic/pairing.json"]), Ok(Options::ConfigureSyncFile("/private/synthetic/pairing.json".into())));
+        #[cfg(target_os = "macos")]
+        assert_eq!(parse(&["--restore-sync-content-file", "/private/synthetic/snapshot.json"]), Ok(Options::RestoreSyncContentFile("/private/synthetic/snapshot.json".into())));
+        assert!(parse(&["--restore-sync-content-file", "relative.json"]).is_err());
+        assert!(parse(&["--restore-sync-content-file", "/private/synthetic/snapshot.json", "--sync-check"]).is_err());
+        #[cfg(not(target_os = "macos"))]
+        assert!(parse(&["--restore-sync-content-file", "/private/synthetic/snapshot.json"]).is_err());
+        assert_eq!(parse(&["--configure-sync-file", "relative.json"]), Err("mvp_launch_invalid_options"));
+        assert_eq!(parse(&["--configure-sync-file", "/private/synthetic/pairing.json", "--sync-check"]), Err("mvp_launch_invalid_options"));
+        #[cfg(not(target_os = "macos"))]
+        assert!(parse(&["--configure-sync-file", "/private/synthetic/pairing.json"]).is_err());
         #[cfg(target_os = "macos")]
         assert_eq!(parse(&["--minimized"]), Ok(Options::Minimized));
         assert_eq!(
@@ -361,6 +410,8 @@ mod tests {
         for mode in [
             Options::SyncCheck,
             Options::ConfigureSync("pairing.json".into()),
+            Options::ConfigureSyncFile("/private/synthetic/pairing.json".into()),
+            Options::RestoreSyncContentFile("/private/synthetic/snapshot.json".into()),
             Options::UpdateBackground,
         ] {
             let mut context = tauri::test::mock_context::<tauri::test::MockRuntime, _>(
