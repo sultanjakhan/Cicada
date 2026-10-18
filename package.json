@@ -1,7 +1,7 @@
 {
   "name": "cicada",
-  "version": "0.5.6",
-  "cicadaBuildId": "20261018-archive-receipt-056.1",
+  "version": "0.5.7",
+  "cicadaBuildId": "20261018-goals-text-actions-057.1",
   "private": true,
   "type": "module",
   "scripts": {
