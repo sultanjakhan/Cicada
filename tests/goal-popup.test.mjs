@@ -266,3 +266,50 @@ test('linked skill task opens the existing task and restores its goal after clos
   assert.equal(x.events.opened[0].row.source_id, 't1');
   x.events.opened[0].restore(); assert.equal(x.events.goals.at(-1).id, 'g1');
 });
+
+test('sync during editing preserves the draft and refreshes parent relationships after cancel', async t => {
+  const data = backend(), x = await open(t, data, 'g1');
+  x.action('edit').click(); await settle();
+  const editor = document.querySelector('[data-goal-create]');
+  editor.querySelector('[name=title]').value = 'Несохранённый результат';
+  data.goals[1].parent_goal_id = null;
+  data.goals[1].title = 'Изменено на другом устройстве';
+  data.goals[2].parent_goal_id = 'g0';
+  window.dispatchEvent(new window.CustomEvent('hanni:calendar-refresh', { detail: { remoteSync: true, canCommit: () => true } }));
+  await settle();
+  assert.equal(editor.querySelector('[name=title]').value, 'Несохранённый результат');
+  assert.equal(editor.querySelector('[name=parent_goal_id]').value, 'g0', 'refresh must not rewrite the open draft');
+  editor.querySelector('[data-dialog-close]').click(); await settle();
+  assert.equal(x.modal.querySelector('h2').textContent, 'Изменено на другом устройстве');
+  assert.equal(x.field('path'), null);
+  assert.equal(x.field('subgoals'), null);
+  x.action('edit').click(); await settle();
+  const reopened = document.querySelector('[data-goal-create]');
+  assert.equal(reopened.querySelector('[name=parent_goal_id]').value, '', 'the next edit must not restore the old parent');
+  assert.equal(data.count('save_calendar_goal'), 0);
+  reopened.querySelector('[name=title]').value = 'Проверенный результат';
+  reopened.querySelector('form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle();
+  const saved = data.calls.find(call => call.command === 'save_calendar_goal');
+  assert.equal(saved.args.parentGoalId, null, 'saving the next edit must preserve the synced top-level relationship');
+  assert.equal(saved.args.title, 'Проверенный результат');
+});
+
+test('a late popup refresh cannot commit after the workspace switches targets', async t => {
+  let current = true;
+  const data = backend();
+  const original = data.goals[1].title;
+  let resolveGoals;
+  const snapshot = structuredClone(data.goals);
+  snapshot[1].title = 'Устаревший ответ';
+  const invoke = data.invoke;
+  let hold = false;
+  data.invoke = (command, args) => command === 'get_goals' && hold
+    ? new Promise(resolve => { resolveGoals = resolve; }) : invoke(command, args);
+  const x = await open(t, data, 'g1', { isCurrent: () => current });
+  hold = true;
+  const pending = x.popup.refresh();
+  current = false;
+  resolveGoals(snapshot); await pending;
+  assert.equal(x.modal.querySelector('h2').textContent, original);
+});

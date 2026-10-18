@@ -33,7 +33,7 @@ export function mountProcessSettings(element, { invoke, setPending = () => {} })
     const loaded = !!saved;
     q('save').disabled = busy || !dirty(); q('cancel').disabled = busy || !dirty();
     q('add').hidden = !loaded; q('add').disabled = busy || draft.length >= PROCESS_LIMITS.processes;
-    q('retry').hidden = !failed || loaded;
+    q('retry').hidden = !failed || loaded; q('retry').disabled = busy;
   }
   function button(className, label, text, name, disabled = false) {
     const value = node('button', className, text); value.type = 'button'; value.dataset.control = name;
@@ -110,19 +110,28 @@ export function mountProcessSettings(element, { invoke, setPending = () => {} })
     if (target) { target.setAttribute('aria-invalid', 'true'); target.focus(); }
   }
   async function load() {
-    failed = false; status.textContent = copy("Загружаем процессы…"); showError(''); updateActions();
+    if (disposed || busy) return false;
+    const notifyPending = !!saved;
+    busy = true; failed = false;
+    status.textContent = copy("Загружаем процессы…"); showError(''); if (notifyPending) setPending(true); render();
     try {
       const value = await readProcessState(invoke);
-      if (disposed) return;
+      if (disposed) return false;
       saved = value; draft = clone(value.state.processes);
       status.textContent = `${draft.length === 1 ? copy("Один процесс") : `${copy("Процессов: ")}${draft.length}`}.`;
+      return true;
     } catch (cause) {
-      if (disposed) return;
-      failed = true; saved = null; draft = [];
+      if (disposed) return false;
+      // A failed discard must retain both the draft and its CAS baseline.
+      // Updating only the baseline would let a retry overwrite remote edits.
+      failed = true;
       status.textContent = '';
       showError(copy(cause?.message) || copy("Не удалось загрузить процессы."));
+      return false;
+    } finally {
+      busy = false;
+      if (!disposed) { if (notifyPending) setPending(false); render(); }
     }
-    render();
   }
   /** Validates the draft; an error is shown at its field, which gets focus. */
   function check() {
@@ -174,7 +183,7 @@ export function mountProcessSettings(element, { invoke, setPending = () => {} })
   // The buttons are disabled once saved: focus moves to the confirmation.
   status.tabIndex = -1;
   q('save').addEventListener('click', () => { void save().then(ok => { if (ok && !disposed) status.focus({ preventScroll: true }); }); });
-  q('cancel').addEventListener('click', () => { void load().then(() => { if (!disposed) { status.textContent = copy("Изменения отменены."); element.querySelector('[data-control="process-title"]')?.focus(); } }); });
+  q('cancel').addEventListener('click', () => { void load().then(ok => { if (ok && !disposed) { status.textContent = copy("Изменения отменены."); element.querySelector('[data-control="process-title"]')?.focus(); } }); });
   q('retry').addEventListener('click', () => void load());
   void load();
   return { dispose() { disposed = true; }, isDirty: dirty, check: () => !!check(), save, get ready() { return !!saved; } };

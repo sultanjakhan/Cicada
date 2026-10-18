@@ -38,12 +38,17 @@ export function openCalendarTaskDetails(record, dependencies) {
   const window = document.defaultView;
   const language = document.documentElement.lang || 'ru';
   const text = (ru, en) => language.toLowerCase().startsWith('en') ? en : ru;
+  const taskId = String(record.source_id);
+  let stageDraft = null;
   let current = { ...record }, processes = [], goals = [], activeBlocks = [], closedSeconds = 0;
   let stageState = null, historyStop = null, workflowStop = null, sharedControlsStop = null, clockTimer = null, disposed = false, pending = false, loadFailed = false, activeStatusKnown = false, timeAvailable = false, loadRevision = 0, editHandoff = null;
   const live = () => !disposed && api.modal.isConnected && isCurrent();
   const api = createCalendarDialog({
     document, title: current.title, hint: text('Задача', 'Task'), returnFocus, isCurrent,
-    beforeClose: () => workflowStop?.beforeClose?.(),
+    beforeClose: () => {
+      if (stageDraft) throw new Error(text('Этап не сохранён. Повтори сохранение или выбери прежний этап.', 'Stage is unsaved. Retry saving or select the previous stage.'));
+      return workflowStop?.beforeClose?.();
+    },
     onClose: () => { disposed = true; loadRevision++; historyStop?.(); workflowStop?.(); sharedControlsStop?.(); if (clockTimer) window.clearInterval(clockTimer); },
   });
   const modal = api.modal;
@@ -169,7 +174,7 @@ export function openCalendarTaskDetails(record, dependencies) {
   }
   function setPending(value) {
     pending = value; api.setPending(value);
-    edit.disabled = value || loadFailed; execute.disabled = value || loadFailed;
+    edit.disabled = value || loadFailed || !!stageDraft; execute.disabled = value || loadFailed || !!stageDraft;
     stageSelect.disabled = value || loadFailed || !stageState || !!current.completed || ['done', 'skipped', 'missed'].includes(current.status_extra);
   }
   function setLoading(value) {
@@ -208,7 +213,8 @@ export function openCalendarTaskDetails(record, dependencies) {
         readActiveBlocks(invoke),
       ]);
       if (!live() || request !== loadRevision) return;
-      current = { ...current, ...detail, goal_id: detail?.goal_id ?? current.goal_id };
+      if (detail?.source_id != null && String(detail.source_id) !== taskId) throw new Error(text('Ответ относится к другой задаче.', 'Response belongs to another task.'));
+      current = { ...current, ...detail, source_type: 'note', source_id: taskId, goal_id: detail?.goal_id ?? current.goal_id };
       processes = processList; goals = Array.isArray(goalResult.value) ? goalResult.value : [];
       const links = linksResult.value;
       if (!current.goal_id && Array.isArray(links)) current.goal_id = links.find(link => link.source_type === 'note' && String(link.source_id) === String(current.source_id))?.goal_id;
@@ -235,32 +241,48 @@ export function openCalendarTaskDetails(record, dependencies) {
       }
     }
   }
-  api.retry.addEventListener('click', () => void loadData({ retry: true }));
+  api.retry.addEventListener('click', () => { if (pending) return; void (stageDraft ? saveStageDraft() : loadData({ retry: true })); });
 
-  stageSelect.addEventListener('change', async () => {
-    if (pending || !live() || !stageState) return;
-    const next = stageSelect.value;
-    if (next === (stageState.stage || '')) return;
-    const previous = stageState.stage || '';
+  async function saveStageDraft() {
+    if (pending || !live() || !stageDraft) return;
+    const draft = stageDraft;
     setPending(true); api.showError('');
     try {
-      const updated = await invoke('set_calendar_task_stage', { id: String(current.source_id), stage: next, waiting: null });
+      // Keep the original version on every retry. A concurrent edit must never
+      // be silently rebased, including when a write succeeded but its reply failed.
+      if (!Number.isSafeInteger(draft.version)) throw new Error(text('Версия задачи недоступна. Закрой и открой задачу снова.', 'Task version unavailable. Reopen the task.'));
+      await invoke('save_calendar_task', {
+        id: taskId, title: draft.title, dueDate: draft.date || null,
+        estimateMinutes: draft.duration_minutes ?? null, goalId: draft.goal_id ?? null,
+        expectedVersion: draft.version, stage: draft.stage,
+      });
       if (!live()) return;
-      current = { ...current, ...updated, stage: typeof updated?.stage === 'string' ? updated.stage : next, waiting: typeof updated?.waiting === 'boolean' ? updated.waiting : !!current.waiting };
-      syncStageOptions(); syncSummary();syncMetadata(); remountHistory();
+      current = { ...current, stage: draft.stage, version: draft.version + 1 };
+      stageDraft = null;
+      syncStageOptions(); syncSummary(); syncMetadata(); remountHistory();
+      api.retry.hidden = true;
       announcement.textContent = `${text('Этап', 'Stage')}: ${stageState?.label || text('Без этапа', 'No stage')}.`;
       onChanged?.();
     } catch (error) {
       if (live()) {
-        stageSelect.value = previous;
-        api.showError(errorText(error) || text('Не удалось изменить этап. Выбери его и повтори.', 'Could not change the stage. Select it and try again.'));
-        stageSelect.focus({ preventScroll: true });
+        stageSelect.value = draft.stage;
+        api.showError(errorText(error) || text('Не удалось сохранить этап. Повтори.', 'Could not save the stage. Retry.'));
+        api.retry.hidden = false;
       }
     } finally { if (live()) setPending(false); }
+  }
+  stageSelect.addEventListener('change', () => {
+    if (pending || !live() || !stageState) return;
+    const next = stageSelect.value;
+    if (next === (stageState.stage || '')) {
+      stageDraft = null; api.showError(''); api.retry.hidden = true; setPending(false); return;
+    }
+    stageDraft = { ...current, stage: next };
+    void saveStageDraft();
   });
 
   edit.addEventListener('click', () => {
-    if (pending || editHandoff || !live()) return;
+    if (pending || stageDraft || editHandoff || !live()) return;
     const latest = { ...current };
     const intent = {
       cancel() {
@@ -286,7 +308,7 @@ export function openCalendarTaskDetails(record, dependencies) {
   });
 
   execute.addEventListener('click', async () => {
-    if (pending || !live() || typeof executeAction !== 'function') return;
+    if (pending || stageDraft || !live() || typeof executeAction !== 'function') return;
     setPending(true); api.showError('');
     let activeReadSucceeded = false;
     try {
@@ -307,7 +329,7 @@ export function openCalendarTaskDetails(record, dependencies) {
         invoke('get_calendar_task', { id: String(current.source_id) }), readActiveBlocks(invoke), readSeconds(),
       ]);
       if (!live()) return;
-      if (freshResult.status === 'fulfilled') current = { ...current, ...freshResult.value };
+      if (freshResult.status === 'fulfilled') current = { ...current, ...freshResult.value, source_type: 'note', source_id: taskId };
       if (instant && !current.completed && current.status !== 'done' && current.status_extra !== 'done') {
         current.completed = true; current.status = 'done'; current.status_extra = 'done';
       }

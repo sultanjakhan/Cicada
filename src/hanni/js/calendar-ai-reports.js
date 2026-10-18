@@ -44,20 +44,31 @@ export function mountCalendarAiReports(host, { invoke, listen = null, window: wi
       const context = contexts.get(nativeTaskKey(row));
       if (!context?.binding || !context.reports.length) continue;
       const report = context.reports.reduce((latest, item) => !latest || item.receivedOrder > latest.receivedOrder ? item : latest, null);
+      if (context.latestRun && !context.latestRun.report && context.latestRun.receivedOrder > report?.receivedOrder) {
+        items.push({ nativeTaskId:String(row.source_id), title:row.title, runId:context.latestRun.runId, report:null, order:context.latestRun.receivedOrder });
+        continue;
+      }
       if (report && STATUS_LABELS[report.status]) items.push({ nativeTaskId:String(row.source_id), title:row.title, report, order:report.receivedOrder });
     }
     items.sort((a, b) => b.order - a.order);
     if (!items.length) { section.hidden = false; message(uiCopy('Нет связанных отчётов о работе ИИ. Регистрация задачи не означает запуск.'), 'empty'); return; }
     section.hidden = false;
-    const signature = `items:${uiCopy.locale}:${JSON.stringify(items.map(item => [item.nativeTaskId, item.title, item.report]))}`;
+    const signature = `items:${uiCopy.locale}:${JSON.stringify(items.map(item => [item.nativeTaskId, item.title, item.runId, item.report]))}`;
     if (renderedSignature === signature && content.querySelector('ul')) return;
     const list = host.ownerDocument.createElement('ul');
     for (const item of items) {
       const row = host.ownerDocument.createElement('li');
       row.dataset.nativeTaskId = item.nativeTaskId;
+      row.dataset.runId = item.runId ?? item.report.runId;
       const title = host.ownerDocument.createElement('strong');
       title.textContent = item.title;
       const status = host.ownerDocument.createElement('p');
+      if (!item.report) {
+        status.textContent = uiCopy('Нет связанных отчётов о работе ИИ. Регистрация задачи не означает запуск.');
+        row.append(title, status);
+        list.append(row);
+        continue;
+      }
       const who = uiCopy(AGENT_LABELS[item.report.agent]);
       status.textContent = uiCopy.format('По последнему отчёту{0}: исполнитель {1}.', who ? ` (${who})` : '', uiCopy(STATUS_LABELS[item.report.status]));
       const facts = host.ownerDocument.createElement('p');

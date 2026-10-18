@@ -38,9 +38,10 @@ async function setup(t, { realEditor = false, fixtureRows = null } = {}) {
     { id: 5, title: 'Other', content: 'Не в календаре', tab_name: 'other', status: 'note', updated_at: 'other-v1' },
   ];
   for (const row of rows) row.version ??= 1;
-  const before = new Map(), calls = [], editors = []; let editorFailure = false, version = 0;
+  const responses = new Map(), before = new Map(), calls = [], editors = []; let editorFailure = false, version = 0;
   const invoke = async (name, args) => {
     calls.push({ name, args: structuredClone(args) }); if (before.has(name)) await before.get(name)(args);
+    if (responses.has(name)) return structuredClone(responses.get(name));
     if (name === 'get_notes') return structuredClone(rows);
     if (name === 'get_note') { const row = rows.find(row => String(row.id) === String(args.id)); if (!row) throw new Error('missing'); return structuredClone(row); }
     if (name === 'create_note') { const id = 100 + rows.length; rows.push({ id, title: args.title, content: args.content, tags: args.tags, tab_name: args.tabName, status: args.status, updated_at: 'created' }); return id; }
@@ -73,7 +74,8 @@ async function setup(t, { realEditor = false, fixtureRows = null } = {}) {
   const save = async modal => { modal.querySelector('form').dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true })); await tick(); };
   const close = async modal => { modal.dispatchEvent(new w.Event('cancel', { cancelable: true })); await tick(); };
   const remount = async () => { dispose(); root.replaceChildren(); dispose = await module.mountCalendarNotes(root, { invoke, initBlockEditor: createEditor }); await tick(); };
-  return { w, root, rows, before, calls, editors, open, set, save, close, remount, dispose: () => dispose(), failEditor: () => { editorFailure = true; } };
+  const mountOther = async () => { const other = w.document.createElement('main'); w.document.body.append(other); const cleanup = await module.mountCalendarNotes(other, { invoke, initBlockEditor: createEditor }); t.after(cleanup); return { root: other, cleanup }; };
+  return { mountOther, w, root, rows, responses, before, calls, editors, open, set, save, close, remount, dispose: () => dispose(), failEditor: () => { editorFailure = true; } };
 }
 
 test('catalog uses one complete IPC result at 199/200/201 notes without a false truncation warning', async t => {
@@ -324,4 +326,40 @@ test('archive fails closed when the reviewed native version is unavailable', asy
   modal.querySelector('[data-archive]').click(); await tick();
   assert.equal(x.calls.some(c => c.name === 'toggle_note_archive'), false);
   assert.equal(x.rows[0].archived, false); assert.equal(modal.isConnected, true);
+});
+
+ test('opening a different source response preserves the requested note draft', async t => {
+  const x = await setup(t); let modal = await x.open(1);
+  x.set(modal, 'content', 'Draft belongs to one'); await x.close(modal);
+  x.responses.set('get_note', x.rows[1]);
+  await x.open(1);
+  assert.equal(x.w.document.querySelector('dialog[open]'), null);
+  assert.equal(x.root.querySelector('[data-open-retry]').hidden, false);
+  x.responses.delete('get_note'); modal = await x.open(1);
+  assert.equal(modal.querySelector('[name=content]').value, 'Draft belongs to one');
+});
+
+test('a stale successful save cannot clear a newer draft from another mounted editor', async t => {
+  const x = await setup(t); const first = await x.open(1);
+  const other = await x.mountOther(); other.root.querySelector('[data-note-id="1"]').click(); await tick();
+  const second = [...x.w.document.querySelectorAll('dialog[open]')].find(modal => modal !== first);
+  x.set(first, 'content', 'Submitted snapshot'); const gate = deferred();
+  x.before.set('update_note', () => gate.promise); await x.save(first);
+  x.set(second, 'content', 'Newer draft');
+  gate.resolve(); await tick();
+  await x.open(1);
+  const reopened = [...x.w.document.querySelectorAll('dialog[open]')].find(modal => modal !== second);
+  assert.equal(reopened.querySelector('[name=content]').value, 'Newer draft');
+  assert.equal(reopened.querySelector('[type=submit]').disabled, true, 'original source version remains attached');
+});
+
+test('failed save and refresh preserve text through switching to another note', async t => {
+  const x = await setup(t); let modal = await x.open(1);
+  x.set(modal, 'content', 'Keep after failure');
+  x.before.set('update_note', () => { throw new Error('offline'); }); await x.save(modal);
+  x.w.dispatchEvent(new x.w.CustomEvent('hanni:calendar-refresh', { detail: { remoteSync: true } })); await tick();
+  await x.open(2); modal = await x.open(1);
+  assert.equal(modal.querySelector('[name=content]').value, 'Keep after failure');
+  x.before.delete('update_note'); await x.save(modal);
+  assert.equal(x.rows[0].content, 'Keep after failure');
 });

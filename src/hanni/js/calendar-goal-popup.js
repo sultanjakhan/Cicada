@@ -23,7 +23,7 @@ export function openCalendarGoalPopup({ document, invoke, goal, selection = {}, 
   const window = document.defaultView;
   const goalId = String(goal.id);
   let current = goal, goals = [goal], links = [], tasks = [], primaryId = primaryGoalId === undefined ? undefined : primaryGoalId == null ? null : String(primaryGoalId);
-  let loaded = false, missing = false, revision = 0, development = null, child = null, leaving = false, closed = false, afterClose = null;
+  let loaded = false, missing = false, revision = 0, development = null, child = null, leaving = false, closed = false, afterClose = null, refreshAfterChild = false;
   const dialog = createCalendarDialog({ document, title: goal.title || 'Цель', isCurrent, returnFocus: () => { if (!leaving) returnFocus?.(); },
     onClose: () => { closed = true; revision++; child?.dispose(); development?.dispose(); window.removeEventListener('task-state-changed', onExternal); window.removeEventListener('hanni:calendar-refresh', onExternal); onClose?.(); const run = afterClose; afterClose = null; if (isCurrent()) run?.(); } });
   dialog.modal.classList.add('calendar-development-dialog', 'calendar-goal-popup');
@@ -131,14 +131,14 @@ export function openCalendarGoalPopup({ document, invoke, goal, selection = {}, 
     dialog.body.querySelector('[data-goal-popup-jump="development"]').hidden = !isGoal();
   }
   async function load(canCommit = null) {
-    if (closed || (canCommit && !canCommit())) return;
+    if (closed || !isCurrent() || (canCommit && !canCommit())) return;
     const own = ++revision;
     try {
       const [loadedGoals, loadedLinks, loadedTasks, raw] = await Promise.all([
         invoke('get_goals', { tabName: null }), invoke('get_calendar_task_goals'), invoke('get_calendar_tasks', { includeCompleted: true }),
         primaryGoalId === undefined ? invoke('get_ui_state', { key: 'calendar_now_v1' }).catch(() => null) : null,
       ]);
-      if (closed || own !== revision || (canCommit && !canCommit())) return;
+      if (closed || !isCurrent() || own !== revision || (canCommit && !canCommit())) return;
       const fresh = loadedGoals.find(item => String(item.id) === goalId);
       goals = loadedGoals; links = loadedLinks; tasks = Array.isArray(loadedTasks) ? loadedTasks : []; loaded = true;
       if (primaryGoalId === undefined) { try { const saved = raw ? JSON.parse(raw) : null; primaryId = saved?.goalId == null ? null : String(saved.goalId); } catch { primaryId = null; } }
@@ -148,9 +148,10 @@ export function openCalendarGoalPopup({ document, invoke, goal, selection = {}, 
         dialog.body.querySelector('[data-goal-development]').hidden = true; return;
       }
       current = fresh; renderOverview(); await development?.refresh();
+      if (closed || !isCurrent() || own !== revision || (canCommit && !canCommit())) return;
       status.textContent = current.goal_metadata_error ? 'Не удалось прочитать состояние и этапы цели. Данные цели доступны, сохранение этапов остановлено.' : '';
     } catch {
-      if (closed || own !== revision) return;
+      if (closed || !isCurrent() || own !== revision || (canCommit && !canCommit())) return;
       if (!loaded) overview.innerHTML = '<p class="goal-popup__muted" role="alert">Не удалось загрузить подробности цели. Закрой окно и открой его снова.</p>';
       overview.setAttribute('aria-busy', 'false');
     }
@@ -173,9 +174,15 @@ export function openCalendarGoalPopup({ document, invoke, goal, selection = {}, 
   }
   // Local task and goal changes, or a remote sync; quiet health refreshes change nothing shown here.
   const onExternal = event => {
-    if (child || missing || (event.type === 'hanni:calendar-refresh' && !event.detail?.remoteSync)) return;
+    if (closed || !isCurrent() || missing || (event.type === 'hanni:calendar-refresh' && !event.detail?.remoteSync)) return;
+    // Keep the editor's draft intact, then reread relationships even on Cancel.
+    if (child) { refreshAfterChild = true; return; }
     void load(event.detail?.remoteSync ? event.detail.canCommit : null);
   };
+  function childClosed() {
+    child = null;
+    if (refreshAfterChild) { refreshAfterChild = false; void load(); }
+  }
   function openStatusEditor(target) {
     if (child || missing) return;
     const achieved = current.status === 'achieved', captured = current;
@@ -185,7 +192,7 @@ export function openCalendarGoalPopup({ document, invoke, goal, selection = {}, 
     const editor = createCalendarDialog({ document, title: achieved ? 'Вернуть цель в работу?' : 'Цель достигнута?',
       hint: achieved ? 'Сохранённый результат останется в цели.' : 'Сверь результат с критериями. Статус меняется по твоему решению.',
       submitLabel: achieved ? 'Вернуть в работу' : 'Отметить достигнутой', returnFocus: refocus(target),
-      onClose: () => { child = null; if (!closed) void load(); } });
+      onClose: () => { child = null; refreshAfterChild = false; if (!closed) void load(); } });
     child = editor;
     editor.body.innerHTML = `${captured.criteria ? `<p class="goal-popup__text">${escapeHtml(captured.criteria)}</p>` : '<p>Критерии пока не заданы.</p>'}
       ${pendingTasks || pendingGoals ? `<p class="goal-popup__muted">Остались открытые задачи: ${pendingTasks}; подцели в работе: ${pendingGoals}. Их статус не изменится.</p>` : ''}
@@ -220,10 +227,10 @@ export function openCalendarGoalPopup({ document, invoke, goal, selection = {}, 
     else if (action === 'edit' || action === 'subgoal') {
       if (child) return;
       child = openCalendarGoalEditor({ document, invoke, goal: action === 'edit' ? current : null, parent: action === 'subgoal' ? current : null, goals,
-        returnFocus: refocus(target), onClose: () => { child = null; }, onSaved: () => load() });
+        returnFocus: refocus(target), onClose: childClosed, onSaved: () => load() });
     } else if (action === 'delete') {
       if (child) return;
-      child = openCalendarGoalDeletion({ document, invoke, goal: current, returnFocus: refocus(target), onClose: () => { child = null; },
+      child = openCalendarGoalDeletion({ document, invoke, goal: current, returnFocus: refocus(target), onClose: childClosed,
         onDeleted: () => { missing = true; dialog.close(); } });
     } else if (target.dataset.goalPopupSubgoal || target.dataset.goalPopupParent) {
       const nextId = target.dataset.goalPopupSubgoal || target.dataset.goalPopupParent;

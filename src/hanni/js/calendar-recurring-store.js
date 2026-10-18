@@ -113,9 +113,12 @@ export function createRecurringStore(invoke,{now=()=>new Date(),uuid=()=>crypto.
     }); },
     ensureRun(id,date=dateKey(now())) { return update(state=>{
       if (!validDate(date) || date>dateKey(now())) throw Error('Запустить можно только наступившее занятие.');
+      const previous=state.days[date]?.[id];
+      // A saved occurrence selected explicitly keeps its identity, even when
+      // another device has left a different day unfinished.
+      if(previous?.run && previous.status==='pending')return {id,date};
       const unfinished=Object.entries(state.days).find(([,records])=>records[id]?.run&&records[id].status==='pending');
       if(unfinished)return {id,date:unfinished[0]};
-      const previous=state.days[date]?.[id];
       if(previous?.run || previous && previous.status!=='pending') throw Error('Это выполнение уже отмечено. История сохранена.');
       if(date!==dateKey(now()))throw Error('Новое выполнение начинается сегодня.');
       const plan=state.plans.find(item=>item.id===id);

@@ -262,8 +262,10 @@ export function mountTaskFilterTabs(host, { invoke, state, onApply }) {
         message = '';
       }
       if (selected && !['all','active'].includes(selected) && !viewById(selected)) {
-        selected = null;
-        state.taskViewId = null;
+        // Keep the identity as well as the filter snapshot. On a later Tasks
+        // mount, a missing ID would make a saved Review choice look like a
+        // legacy transient filter and allow the calendar to fall back to Active.
+        // A refresh cannot stand in for the user's explicit choice of a tab.
         if (!editor) message = uiCopy("Выбранная подборка удалена. Текущие фильтры сохранены на экране.");
       }
     } catch (error) {

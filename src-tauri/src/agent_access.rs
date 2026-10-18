@@ -25,6 +25,13 @@ struct Report {
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 struct Counter { server: String, tool: String, calls: u64 }
+// The automatic chat registration title identifies a conversation, not user work.
+// Keep title-only user tasks valid, and allow existing bindings/receipt replay.
+fn unbound_chat_metadata(input:&Begin)->bool {
+    input.task_id.is_none() && input.report.agent=="codex" && input.content.trim().is_empty() &&
+        input.title.strip_prefix("Codex · чат ").is_some_and(|id|
+            id.len()==8 && id.bytes().all(|b|b.is_ascii_hexdigit()))
+}
 fn err() -> String { "agent_request_rejected".into() }
 pub(crate) fn token(s:&str, min:usize, max:usize)->bool { (min..=max).contains(&s.len()) && s.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'_'||b==b'-') }
 fn label(value:&Option<String>, limit:usize)->bool { value.as_ref().is_none_or(|s|!s.trim().is_empty()&&s.chars().count()<=limit&&!s.chars().any(char::is_control)) }
@@ -200,6 +207,7 @@ pub(crate) fn execute(conn:&mut Connection,mut req:Request)->Result<Value,String
     let (task,input)=if req.action=="begin" {
         let input:Begin=serde_json::from_value(req.body).map_err(|_|err())?;
         if input.report.status!="running"||input.report.sequence!=1||input.content.len()>16000||input.projects.len()>10||input.projects.iter().any(|p|!token(p,1,80)){return Err(err())}
+        if unbound_chat_metadata(&input){return Err("explicit_task_registration_required".into())}
         let id=if let Some(id)=input.task_id { let task=personal(&tx,&id)?;if task["completed"]==true{return Err("task_already_completed".into())}if input.expected_version!=task["version"].as_i64(){return Err("task_version_conflict".into())}id }else{
             if input.expected_version.is_some(){return Err(err())}
             let tags=format!("task-sphere:personal,source:ai,{}",input.projects.iter().map(|p|format!("project:{p}")).collect::<Vec<_>>().join(","));
@@ -285,6 +293,37 @@ pub(crate) fn parse(raw:&[u8])->Result<Request,String>{
         for body in [json!([17,null]),json!({"pageSize":0}),json!({"pageSize":101}),json!({"pageSize":true}),json!({"cursor":"v1:00"}),json!({"unknown":1})] {
             assert!(call(&mut c,"page-invalid-001","list",body).is_err());
         }
+    }
+    #[test]fn automatic_unbound_chat_metadata_does_not_create_work(){
+        let mut c=conn();
+        for (n,title) in ["Codex · чат deadbeef","  Codex · чат A12b34Cd  "].iter().enumerate() {
+            let body=json!({"title":title,"content":" \n\t","taskId":null,"projects":[],"report":report("chat-run-001","running",1)});
+            assert_eq!(call(&mut c,&format!("chat-reject-{n:03}"),"begin",body).unwrap_err(),"explicit_task_registration_required");
+        }
+        assert_eq!(c.query_row("SELECT count(*) FROM items",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+        assert!(read(&c,OPERATIONS).unwrap().is_none());
+        let state=exchange(&c).unwrap();
+        assert!(state["bindings"].as_object().unwrap().is_empty());
+        assert!(state["runs"].as_object().unwrap().is_empty());
+        assert_eq!(c.query_row("SELECT count(*) FROM timeline_blocks",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+    }
+    #[test]fn concise_tasks_explicit_context_and_bound_chat_history_remain_valid(){
+        let mut c=conn();
+        for (n,title,content) in [(0,"Позвонить", ""),(1,"Codex · чат deadbeef","Fix the queue registration bug")] {
+            let body=json!({"title":title,"content":content,"taskId":null,"projects":[],"report":report(&format!("valid-run-{n:03}"),"running",1)});
+            let op=format!("valid-begin-{n:03}");
+            let a=call(&mut c,&op,"begin",body.clone()).unwrap();
+            assert_eq!(call(&mut c,&op,"begin",body).unwrap(),a);
+        }
+        // An already-existing placeholder must remain addressable; no cleanup or renaming.
+        let id=crate::calendar_compat::create_note_in_transaction(&c,"Codex · чат deadbeef","","task-sphere:personal,source:ai","task",&None,None).unwrap().id;
+        let body=json!({"title":"Codex · чат deadbeef","content":"","taskId":id,"expectedVersion":1,"projects":[],"report":report("bound-chat-run-001","running",1)});
+        let a=call(&mut c,"bound-chat-begin-001","begin",body.clone()).unwrap();
+        assert_eq!(call(&mut c,"bound-chat-begin-001","begin",body).unwrap(),a);
+        call(&mut c,"bound-chat-report-001","report",json!({"taskId":id,"expectedVersion":1,"report":report("bound-chat-run-001","done",2)})).unwrap();
+        let task=personal(&c,&id).unwrap();
+        assert_eq!(task["title"],"Codex · чат deadbeef");assert_eq!(task["content"],"");assert_eq!(task["completed"],false);
+        assert_eq!(c.query_row("SELECT count(*) FROM items",[],|r|r.get::<_,i64>(0)).unwrap(),3);
     }
     #[test]fn begin_is_atomic_replay_and_compatible_with_native_exchange(){
         let mut c=conn();let a=begin(&mut c);let b=begin(&mut c);assert_eq!(a,b);
