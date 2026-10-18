@@ -20,20 +20,20 @@ function setupRefresh(t, initialRevision='9007199254740993', { initiallyHidden =
   return {dom,changes,statuses,setStatus:value=>{status=value;},failNext:()=>{failedReads++;},fireInterval:()=>interval(),emit:value=>received({payload:value}),get wakes(){return wakes;},get unlistened(){return unlistened;}};
 }
 
-test('initial revision is a baseline; a no-change 30s wake syncs and checks status without invalidating views', async t => {
+test('initial revision is a baseline; idle ticks check status without waking network sync', async t => {
   const x=setupRefresh(t); await tick();
   assert.equal(x.wakes,1); assert.deepEqual(x.statuses,[{revision:'9007199254740993'}]);
   x.fireInterval(); await tick();
-  assert.equal(x.wakes,2); assert.equal(x.statuses.length,2); assert.deepEqual(x.changes,[]);
+  assert.equal(x.wakes,1); assert.equal(x.statuses.length,2); assert.deepEqual(x.changes,[]);
   x.dom.window.dispatchEvent(new x.dom.window.Event('focus')); await tick();
-  assert.equal(x.wakes,3); assert.deepEqual(x.changes,[]);
+  assert.equal(x.wakes,2); assert.deepEqual(x.changes,[]);
 });
 
 test('a changed native receive revision invalidates views after sync completes', async t => {
   const x=setupRefresh(t); await tick();
   x.setStatus({revision:'9007199254740994'});
   x.fireInterval(); await tick();
-  assert.equal(x.wakes,2); assert.deepEqual(x.changes,[{remote:true}]);
+  assert.equal(x.wakes,1); assert.deepEqual(x.changes,[{remote:true}]);
 });
 
 test('an explicit views_changed event refreshes immediately and establishes its revision baseline', async t => {
@@ -87,6 +87,18 @@ test('first-foreground invalidation does not depend on a successful status read'
   Object.defineProperty(x.dom.window.document,'visibilityState',{configurable:true,value:'visible'});
   x.dom.window.dispatchEvent(new x.dom.window.Event('focus')); await tick();
   assert.deepEqual(x.changes,[{remote:true}]);
+});
+
+test('idle status ticks do not force empty exchanges; a reconnect wake still requests sync', async t => {
+  const x = setupRefresh(t); await tick();
+  for (let i = 0; i < 30; i++) { x.fireInterval(); await tick(); }
+  assert.equal(x.wakes, 1, 'the native worker owns idle pulls; renderer ticks only read status');
+  assert.equal(x.statuses.length, 31);
+  x.failNext(); x.dom.window.dispatchEvent(new x.dom.window.Event('focus')); await tick();
+  assert.equal(x.wakes, 2);
+  x.setStatus({revision:'9007199254740994'});
+  x.dom.window.dispatchEvent(new x.dom.window.Event('pageshow')); await tick();
+  assert.equal(x.wakes, 3); assert.deepEqual(x.changes, [{remote:true}]);
 });
 
 test('native invoke schedules sync only for acknowledged writes', async t => {

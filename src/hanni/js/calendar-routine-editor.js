@@ -234,8 +234,9 @@ export function openCalendarRoutineEditor({ document, store, plan = null, kind =
     if (button.hasAttribute('data-cancel-delete')) { deleteConfirm = null; render(); }
   });
 
+  let committed = false;
   dialog.form.addEventListener('submit', async () => {
-    if (dialog.pending) return;
+    if (dialog.pending || committed || !dialog.modal.isConnected || !isCurrent()) return;
     capture();
     if (!title.trim() || title.trim().length > 160) { showFieldError('Название должно содержать от 1 до 160 символов.', body.querySelector('[data-routine-title]')); return; }
     if (layout === 'multi' && (!steps.length || steps.length > 50)) { showFieldError('Добавь от 1 до 50 шагов.', body.querySelector('[data-add-step]')); return; }
@@ -255,11 +256,17 @@ export function openCalendarRoutineEditor({ document, store, plan = null, kind =
     const graphSteps = steps.map(step => ({ title: step.title.trim(), dependsOn: [...step.dependsOn].map(id => steps.findIndex(candidate => candidate.id === id)).filter(index => index >= 0).sort((a, b) => a - b), trackingMode: step.trackingMode, optional: step.optional }));
     const fields = { kind: currentKind, title: title.trim(), weekdays, startsOn, endsOn, time, active, required, mode: savedMode, steps: layout === 'multi' ? (savedMode === 'chain' ? steps.map(step => ({ title: step.title.trim() })) : graphSteps) : [] };
     dialog.setPending(true); dialog.showError('');
+    let result;
     try {
-      const result = await store.savePlan(fields, plan?.id, { expectedPlan: expectedPlan || undefined });
-      onSaved(result.state); document.defaultView.dispatchEvent(new document.defaultView.CustomEvent('hanni:recurring-changed'));
-      dialog.setPending(false); dialog.close();
-    } catch (error) { dialog.setPending(false); dialog.showError(error?.message || String(error)); }
+      result = await store.savePlan(fields, plan?.id, { expectedPlan: expectedPlan || undefined });
+    } catch (error) { dialog.setPending(false); dialog.showError(error?.message || String(error)); return; }
+    // Persistence has acknowledged the save. A failing view observer is not a
+    // failed write and must never leave a new routine available for creation again.
+    committed = true;
+    try {
+      try { onSaved(result.state); } catch { /* The change event lets other views reload persisted state. */ }
+      document.defaultView.dispatchEvent(new document.defaultView.CustomEvent('hanni:recurring-changed'));
+    } finally { dialog.setPending(false); dialog.close(); }
   });
   dialog.form.addEventListener('keydown', event => { if (event.key === 'Enter' && event.target.matches('input:not([type=checkbox]):not([type=date]):not([type=time])')) event.preventDefault(); });
   render(); dialog.open(body.querySelector('[data-routine-title]')); return dialog;

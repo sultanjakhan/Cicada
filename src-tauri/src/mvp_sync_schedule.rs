@@ -19,6 +19,22 @@ impl Status {
     }
 }
 
+// Successful queue pages may continue without an empty one-second poll between
+// them. Yield every page, and return to the normal wait after a bounded burst.
+// Never defeat transport backoff, conflicts, disabled sync or a no-progress page.
+pub(super) fn continue_catch_up(value: &serde_json::Value, consecutive: &mut u8) -> bool {
+    let pending = value["more_pending"] == true || value["pull_more"] == true;
+    let progress = value["uploaded_batches"].as_u64().unwrap_or(0) > 0
+        || value["applied_rows"].as_u64().unwrap_or(0) > 0
+        || value["pull_more"] == true;
+    let ready = value["enabled"] == true
+        && value["error_code"] == "none"
+        && value["retry_after_secs"].as_u64() == Some(0)
+        && pending && progress && *consecutive < 8;
+    if ready { *consecutive += 1; } else { *consecutive = 0; }
+    ready
+}
+
 fn sql<T>(result: rusqlite::Result<T>) -> Result<T, String> {
     result.map_err(|_| "content_sync_database_failed".into())
 }
@@ -74,4 +90,51 @@ pub(super) fn read(conn: &Connection) -> Result<Status, String> {
         pull_not_before,
         initializing: false,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn page() -> serde_json::Value {
+        json!({"enabled":true,"error_code":"none","retry_after_secs":0,
+            "more_pending":true,"pull_more":false,"uploaded_batches":1,"applied_rows":0})
+    }
+
+    #[test]
+    fn progressing_pages_drain_without_idle_polls_and_stop_when_empty() {
+        let mut burst = 0;
+        for _ in 0..3 { assert!(continue_catch_up(&page(), &mut burst)); }
+        assert_eq!(burst, 3);
+        let mut empty = page();
+        empty["more_pending"] = json!(false);
+        empty["uploaded_batches"] = json!(0);
+        assert!(!continue_catch_up(&empty, &mut burst));
+        assert_eq!(burst, 0);
+    }
+
+    #[test]
+    fn disabled_errors_backoff_and_no_progress_never_spin() {
+        for (key, value) in [
+            ("enabled", json!(false)), ("error_code", json!("content_sync_network")),
+            ("error_code", json!("content_sync_conflicts")), ("retry_after_secs", json!(15)),
+            ("retry_after_secs", serde_json::Value::Null), ("uploaded_batches", json!(0)),
+        ] {
+            let mut status = page(); status[key] = value;
+            let mut burst = 3;
+            assert!(!continue_catch_up(&status, &mut burst), "{key}");
+            assert_eq!(burst, 0);
+        }
+    }
+
+    #[test]
+    fn pull_backlog_can_continue_but_each_burst_is_bounded() {
+        let mut status = page(); status["uploaded_batches"] = json!(0); status["pull_more"] = json!(true);
+        let mut burst = 0;
+        for _ in 0..8 { assert!(continue_catch_up(&status, &mut burst)); }
+        assert!(!continue_catch_up(&status, &mut burst));
+        assert_eq!(burst, 0);
+        assert!(continue_catch_up(&status, &mut burst));
+    }
 }

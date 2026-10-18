@@ -395,6 +395,7 @@ pub(crate) fn start(app: &tauri::AppHandle, path: PathBuf) {
         let mut socket_identity = String::new();
         let mut requested = true;
         let mut poll = Instant::now();
+        let mut catch_up_steps = 0;
         loop {
             let worker = runtime.clone();
             let should_poll = Instant::now() >= poll;
@@ -434,6 +435,7 @@ pub(crate) fn start(app: &tauri::AppHandle, path: PathBuf) {
                     result.map(Some)
                 })
                 .await;
+            let mut catch_up = false;
             match output {
                 Ok(Ok(Some(value))) => {
                     if let Ok(Some(cfg)) = runtime.config() {
@@ -450,6 +452,7 @@ pub(crate) fn start(app: &tauri::AppHandle, path: PathBuf) {
                     if value["waiting"] != true {
                         poll = Instant::now() + Duration::from_secs(120);
                         requested = value["pull_more"] == true;
+                        catch_up = schedule::continue_catch_up(&value, &mut catch_up_steps);
                         if let Ok(mut error) = runtime.last_error.lock() {
                             *error = None;
                         }
@@ -470,6 +473,11 @@ pub(crate) fn start(app: &tauri::AppHandle, path: PathBuf) {
                     tokio::time::sleep(Duration::from_secs(15)).await;
                 }
             }
+            if catch_up {
+                tokio::task::yield_now().await;
+                continue;
+            }
+            catch_up_steps = 0;
             tokio::select! {_=runtime.signal.notified()=>{requested=true;},_=tokio::time::sleep(Duration::from_secs(1))=>{}}
         }
     });

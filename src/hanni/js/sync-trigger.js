@@ -9,12 +9,15 @@ export function createSyncTrigger({ invoke, setTimeout, clearTimeout, now = Date
     catch { /* Native status retains the failure; local saves remain acknowledged. */ }
     finally {
       running = false;
-      if (!disposed) afterSync();
-      if (again && !disposed) { again = false; request(); }
+      if (!disposed) {
+        try { afterSync(); } catch { /* A view observer must not discard a queued write wake. */ }
+      }
+      if (again && !disposed) { again = false; void fire(); }
     }
   }
   function request() {
     if (disposed) return;
+    if (running) { again = true; return; }
     if (first === null) first = now();
     if (timer !== null) clearTimeout(timer);
     timer = setTimeout(() => { timer = null; first = null; void fire(); }, Math.min(120, Math.max(0, 150 - (now() - first))));
