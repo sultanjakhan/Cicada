@@ -46,7 +46,7 @@ function syntheticBackend({theme}) {
     if(window.fixtureFocusTrace.length>=200)return;
     window.fixtureFocusSnapshot(type+':capture');
     if(type==='close'){
-      queueMicrotask(()=>window.fixtureFocusSnapshot('close:after-handlers'));
+      queueMicrotask(()=>window.fixtureFocusSnapshot('close:capture-microtask'));
       requestAnimationFrame(()=>window.fixtureFocusSnapshot('close:next-animation-frame'));
     }
   },true);
