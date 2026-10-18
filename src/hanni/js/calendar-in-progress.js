@@ -182,6 +182,10 @@ export function mountCalendarInProgress(element, dependencies) {
     paintTime(row, time, bar);
     const actions = node('div', 'cip-actions');
     const toggle = iconButton(`cip-toggle${row.running ? ' is-running' : ''}`, ICONS[row.running ? 'pause' : 'play'], row.running ? uiCopy("Пауза") : uiCopy("Продолжить"), 'toggle', row);
+    if (!row.running) {
+      toggle.classList.add('cip-toggle--resume');
+      toggle.append(node('span', 'cip-resume-label', uiCopy("Продолжить")));
+    }
     const finish = iconButton('cip-finish', ICONS.check, uiCopy("Готово"), 'finish', row);
     const more = iconButton('cip-more', MORE_ICON, uiCopy("Действия"), 'menu', row);
     more.setAttribute('aria-haspopup', 'menu'); more.setAttribute('aria-expanded', String(menu?.key === row.key && menu.control === 'menu'));
