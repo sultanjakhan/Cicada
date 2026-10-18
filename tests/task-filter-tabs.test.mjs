@@ -685,3 +685,49 @@ test(`pending ${operation} populates the live status before focus (${language})`
   if (operation === 'reload') assert.equal(doc.activeElement,control(mounted.host,'reload'));
   assert.ok(db.commands.every(command=>command==='get_ui_state'||command==='set_ui_state'));
 });
+
+// Losing a saved view must not turn its restrictive Review choice into legacy
+// transient state on the next Tasks mount.
+test('unavailable saved view keeps identity and restrictive counts through refresh and remount', async t => {
+  const filters = {...DEFAULT_TASK_FILTERS, filter:'review', sphere:'personal', personal:'health', groupBy:'goal'};
+  const db = store(collection([makeView('saved-review', 'Моя приёмка', filters)]));
+  const dom = new JSDOM('<html lang="ru"><main></main></html>', {pretendToBeVisual:true});
+  t.after(() => dom.window.close());
+  let rows = [{source_type:'note',source_id:'ordinary',title:'Обычная задача',sphere:'health',status_extra:'task',date:null}];
+  const state = {...DEFAULT_TASK_FILTERS};
+  const dependencies = {
+    state, invoke:async (command,args) => command === 'get_calendar_tasks' ? rows
+      : command === 'get_goals' || command === 'get_calendar_task_goals' ? [] : db.invoke(command,args),
+    openTask:()=>{},editDate:()=>{},notifyChange:()=>{},executeAction:()=>{throw Error('Unexpected task mutation');},
+    readTaskObservations:async()=>({available:true,unboundCount:0,contexts:new Map()}),
+  };
+  let host = dom.window.document.querySelector('main');
+  let dispose = mountCalendarTasks(host, dependencies);
+  await flush();
+  host.querySelector('[data-task-view-id="saved-review"]').click();
+  assert.equal(host.querySelector('[data-tasks-count]').textContent, '0');
+  db.raw = collection([]);
+  control(host, 'reload').click();
+  await flush();
+  rows = [...rows,{...rows[0],source_id:'new',title:'Новая задача'}];
+  dom.window.dispatchEvent(new dom.window.Event('hanni:calendar-refresh'));
+  await flush();
+  dispose();
+  const nextHost = dom.window.document.createElement('main');
+  host.replaceWith(nextHost); host = nextHost;
+  dispose = mountCalendarTasks(host, dependencies);
+  t.after(() => dispose());
+  await flush();
+  assert.equal(state.taskViewId, 'saved-review');
+  assert.deepEqual(taskFilters(state), filters);
+  assert.equal(host.querySelector('[data-tasks-count]').textContent, '0');
+  assert.match(host.querySelector('.ct-view-tabs-status').textContent, /Текущие фильтры сохранены/);
+  db.raw = collection([makeView('saved-review', 'Моя приёмка', filters)]);
+  control(host, 'reload').click();
+  await flush();
+  assert.equal(host.querySelector('[data-task-view-id="saved-review"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(db.writes, 0);
+  host.querySelector('[data-task-view-id="active"]').click();
+  assert.equal(host.querySelector('[data-tasks-count]').textContent, '2');
+  assert.equal(state.taskViewId, 'active');
+});

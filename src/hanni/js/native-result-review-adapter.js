@@ -21,6 +21,8 @@ export function createNativeResultReviewAdapter(taskId, invoke) {
       return structuredClone(value);
     },
     async submit(request) {
+      // Pin the caller's intent across both asynchronous native calls.
+      request = structuredClone(request);
       const fields = ['task_id', 'expected_revision', 'result_version', 'operation_id', 'action', ...(request?.action === 'rework' ? ['comment'] : [])];
       if (!request || request.task_id !== taskId || !['accept','rework'].includes(request.action) || Object.keys(request).some(key => !fields.includes(key)) || fields.some(key => !Object.hasOwn(request, key))) throw Error('Invalid native review request');
       const queued = await invoke('enqueue_task_result_review', { input: structuredClone(request) });
@@ -28,7 +30,17 @@ export function createNativeResultReviewAdapter(taskId, invoke) {
       // Applying a local user decision is not external dispatch and cannot start work.
       const receipt = await invoke('commit_task_result_review', { operationId: request.operation_id });
       if (receipt?.kind !== 'acknowledged' || receipt.operation_id !== request.operation_id) throw Error('Unconfirmed native receipt');
-      projection(receipt.projection, taskId);
+      const acknowledged = projection(receipt.projection, taskId);
+      const revision = request.expected_revision + 1;
+      const decisions = acknowledged.history.filter(entry => entry?.operationId === request.operation_id);
+      const decision = decisions[0];
+      if (acknowledged.resultVersion !== request.result_version || acknowledged.taskRevision !== revision
+        || acknowledged.reviewState !== (request.action === 'accept' ? 'accepted' : 'awaiting_dispatch')
+        || decisions.length !== 1 || decision.action !== request.action
+        || decision.resultVersion !== request.result_version || decision.taskRevision !== revision
+        || (request.action === 'rework' ? decision.comment !== request.comment.trim() : decision.comment != null)) {
+        throw Error('Unconfirmed native decision');
+      }
       // Original retry receipts may be older. Always render a fresh consistent read.
       return { kind: 'acknowledged', operation_id: request.operation_id, projection: (await readBundle('read_task_result_review')).projection };
     },

@@ -14,7 +14,13 @@ export async function readNativeTaskObservations(rows,invoke,{readReview=null,pr
   if(!row.readonly){try{ctx.workflow=await createWorkflowStore(row,invoke).load();}catch{ctx.workflowReadError=true;}}
   const expected=state&&!row.readonly?await stableTaskBinding(state.sourceNamespace,row):null;
   const bound=expected&&same(state.bindings[expected.taskKey],expected)?expected:null;
-  if(bound){ctx.binding=bound;ctx.reports=Object.values(state.runs).filter(r=>r.taskKey===bound.taskKey&&r.report).sort((a,b)=>a.receivedOrder-b.receivedOrder).map(r=>({...r.report,receivedOrder:r.receivedOrder,receivedAt:null,freshness:'unknown'}));}
+  if(bound){
+   ctx.binding=bound;
+   const runs=Object.values(state.runs).filter(r=>r.taskKey===bound.taskKey).sort((a,b)=>a.receivedOrder-b.receivedOrder);
+   // Keep allocation separate from observed execution; a new attempt may have no report.
+   ctx.latestRun=runs.at(-1)??null;
+   ctx.reports=runs.filter(r=>r.report).map(r=>({...r.report,receivedOrder:r.receivedOrder,receivedAt:null,freshness:'unknown'}));
+  }
   for(const snapshot of all)for(const task of snapshot.tasks){
    if(!bound||!same(task.localBinding,bound))continue;
    const source=`published:${snapshot.source.publisherId}:${snapshot.source.sourceNamespace}`,project=snapshot.projects.find(p=>p.id===task.projectId);

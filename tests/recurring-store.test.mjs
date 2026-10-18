@@ -139,3 +139,19 @@ test('stored graph run whose dependencies differ from its snapshot fails closed'
   const source={version:1,plans:[],days:{'2026-09-13':{graph:{snapshot:{...action,id:'graph',mode:'graph',steps:[{title:'A',dependsOn:[]},{title:'B',dependsOn:[0]}]},status:'pending',run:{steps:[{title:'A',dependsOn:[],status:'pending'},{title:'B',dependsOn:[],status:'pending'}]}}}}};
   assert.throws(()=>parseRecurring(JSON.stringify(source)),/Не удалось прочитать/);
 });
+
+test('resuming an explicit saved occurrence keeps its date after reload with another unfinished day', async()=>{
+  const snapshot={...action,id:'fictional-repeat',mode:'chain',active:true,createdOn:'2026-09-13',steps:[{title:'First'},{title:'Second'}]};
+  const occurrence=(firstStatus)=>({snapshot:structuredClone(snapshot),status:'pending',run:{steps:[{title:'First',status:firstStatus},{title:'Second',status:'pending'}],createdAt:'2026-09-13T12:00:00Z'}});
+  for(const dates of [['2026-09-13','2026-09-14'],['2026-09-14','2026-09-13']]){
+    const days=Object.fromEntries(dates.map(day=>[day,{[snapshot.id]:occurrence(day==='2026-09-14'?'done':'pending')} ]));
+    days['2026-09-12']={[snapshot.id]:{snapshot:structuredClone(snapshot),status:'done'}};
+    let raw=JSON.stringify({version:1,plans:[snapshot],days});
+    const before=JSON.parse(raw);
+    const invoke=async(command,args)=>{if(command==='get_ui_state')return raw;assert.equal(args.expectedValue,raw);raw=args.value;};
+    const store=createRecurringStore(invoke,{now:()=>new Date(2026,8,14,12)});
+    const resumed=await store.ensureRun(snapshot.id,'2026-09-14');
+    assert.deepEqual(resumed.result,{id:snapshot.id,date:'2026-09-14'});
+    assert.deepEqual(JSON.parse(raw),before,'resuming preserves both runs, their progress, completion history and definition');
+  }
+});

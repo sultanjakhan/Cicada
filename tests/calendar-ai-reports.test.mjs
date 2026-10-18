@@ -226,3 +226,27 @@ test('locale refresh translates unchanged report, empty and error states while r
   dom.window.document.documentElement.lang='en';dom.window.dispatchEvent(new dom.window.Event('task-state-changed'));await awaitText(host,'Could not read reports. Previous data is hidden.');
   assert.equal(host.querySelector('section > p').textContent,'Freshness is unknown: reading reports failed.');assert.equal(host.querySelector('section').getAttribute('aria-label'),'AI work');assertReadOnly(data);
 });
+
+test('a newly registered attempt does not present the previous done report as its execution', async t => {
+  const data=await fixture(),dom=new JSDOM('<main></main>'),host=dom.window.document.querySelector('main');
+  t.after(()=>dom.window.close());
+  const exchange=await data.invoke('get_ui_state',{key:TASK_RUN_KEY});
+  exchange.runs['run-last-0001'].report.status='done';
+  exchange.order=4;
+  exchange.runs['run-new-00001']={runId:'run-new-00001',taskKey:data.binding.taskKey,agent:'codex',provider:null,model:null,report:null,receivedOrder:4};
+  data.setExchange(exchange);
+  const dispose=mountCalendarAiReports(host,{invoke:data.invoke,window:dom.window});t.after(dispose);
+  await waitForReports(host);
+  assert.doesNotMatch(host.textContent,/сообщил о завершении/);
+  assert.equal(host.querySelector('li').dataset.nativeTaskId,'task-primary');
+  assert.equal(host.querySelector('li').dataset.runId,'run-new-00001');
+  assert.match(host.textContent,/Регистрация задачи не означает запуск/);
+  exchange.order=5;
+  exchange.runs['run-new-00001'].receivedOrder=5;
+  exchange.runs['run-new-00001'].report=report('run-new-00001',data.binding.taskKey,'running');
+  data.setExchange(exchange);dom.window.dispatchEvent(new dom.window.Event('task-state-changed'));
+  await waitForReports(host);
+  assert.equal(host.querySelector('li').dataset.runId,'run-new-00001');
+  assert.match(host.textContent,/сообщил, что работает/);
+  assert.equal(data.rows[0].completed,false);assertReadOnly(data);
+});

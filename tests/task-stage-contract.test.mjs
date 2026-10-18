@@ -83,7 +83,7 @@ function detailsFixture(t, { instant = false } = {}) {
   window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   window.HTMLDialogElement.prototype.close = function () { this.open = false; this.dispatchEvent(new window.Event('close')); };
   const route = instant ? detailProcess.stages[1].id : 'requirements';
-  const record = { source_type: 'note', source_id: 'detail-105', id: 'detail-105', title: instant ? 'Instant retained tags' : 'Stage selector', date: '2026-10-08', sphere: 'work', process: 'p-105', stage: route, waiting: true, stage_log: [{ stage: route, at: at(-20) }], goal_id: 'goal-105', has_work: true, ...(instant ? { task_kind: 'instant', duration_minutes: 25 } : {}) };
+  const record = { version: 1, source_type: 'note', source_id: 'detail-105', id: 'detail-105', title: instant ? 'Instant retained tags' : 'Stage selector', date: '2026-10-08', sphere: 'work', process: 'p-105', stage: route, waiting: true, stage_log: [{ stage: route, at: at(-20) }], goal_id: 'goal-105', has_work: true, ...(instant ? { task_kind: 'instant', duration_minutes: 25 } : {}) };
   const parallelBlocks = [
     { id: 'parallel-a', source_type: 'note', source_id: 'detail-105', created_at: '2026-10-08T08:45:00.000Z', date: '2026-10-08', start_time: '08:45:00', is_active: true },
     { id: 'parallel-b', source_type: 'note', source_id: 'parallel-105', created_at: '2026-10-08T08:50:00.000Z', date: '2026-10-08', start_time: '08:50:00', is_active: true },
@@ -97,11 +97,11 @@ function detailsFixture(t, { instant = false } = {}) {
     if (command === 'get_calendar_task_goals') return [];
     if (command === 'get_calendar_task_seconds') return 90;
     if (command === 'get_active_blocks') return structuredClone(parallelBlocks);
-    if (command === 'set_calendar_task_stage') {
-      assert.deepEqual(Object.keys(args).sort(), ['id', 'stage', 'waiting']); assert.equal(args.id, 'detail-105'); assert.equal(args.waiting, null);
+    if (command === 'save_calendar_task') {
+      assert.equal(args.id, 'detail-105'); assert.equal(args.expectedVersion, current.version);
       if (failNext) { failNext = false; throw new Error('synthetic stage write failure'); }
-      current = { ...current, stage: args.stage, waiting: current.waiting, stage_log: [...current.stage_log, { stage: args.stage, at: at(0) }] };
-      return structuredClone(current);
+      current = { ...current, version: current.version + 1, stage: args.stage, waiting: current.waiting, stage_log: [...current.stage_log, { stage: args.stage, at: at(0) }] };
+      return current.source_id;
     }
     throw new Error(`unexpected mutation: ${command}`);
   };
@@ -115,7 +115,7 @@ test('stage select supports forward, backward and jump writes, preserves task id
   for (const target of ['analysis', 'requirements', 'acceptance']) { select.value = target; select.dispatchEvent(new x.window.Event('change', { bubbles: true })); await settle(); assert.equal(select.value, target); }
   const beforeFailure = { row: structuredClone(x.current), stageLog: structuredClone(x.current.stage_log), blocks: structuredClone(x.parallelBlocks) };
   x.failNext = true; select.value = 'requirements'; select.dispatchEvent(new x.window.Event('change', { bubbles: true })); await settle();
-  assert.equal(select.value, 'acceptance', 'failed write restores the confirmed stage'); assert.match(x.window.document.querySelector('.calendar-editor-error').textContent, /synthetic stage write failure/);
+  assert.equal(select.value, 'requirements', 'failed write retains the unsaved stage'); assert.match(x.window.document.querySelector('.calendar-editor-error').textContent, /synthetic stage write failure/);
   assert.deepEqual(x.current, beforeFailure.row, 'failed write leaves the confirmed row untouched');
   assert.deepEqual(x.current.stage_log, beforeFailure.stageLog, 'failed write appends no history entry');
   assert.deepEqual(x.parallelBlocks, beforeFailure.blocks, 'failed write leaves parallel blocks untouched');
@@ -123,11 +123,11 @@ test('stage select supports forward, backward and jump writes, preserves task id
   select.value = 'requirements'; select.dispatchEvent(new x.window.Event('change', { bubbles: true })); await settle(); assert.equal(select.value, 'requirements');
   assert.deepEqual(x.current.stage_log.map(entry => entry.stage), ['requirements', 'analysis', 'requirements', 'acceptance', 'requirements']);
   assert.equal(x.current.waiting, true);
-  assert.deepEqual(x.calls.filter(([command]) => command === 'set_calendar_task_stage').map(([, args]) => args), [
-    { id: 'detail-105', stage: 'analysis', waiting: null }, { id: 'detail-105', stage: 'requirements', waiting: null }, { id: 'detail-105', stage: 'acceptance', waiting: null }, { id: 'detail-105', stage: 'requirements', waiting: null }, { id: 'detail-105', stage: 'requirements', waiting: null },
+  assert.deepEqual(x.calls.filter(([command]) => command === 'save_calendar_task').map(([, {id, stage, expectedVersion}]) => ({id, stage, expectedVersion})), [
+    { id: 'detail-105', stage: 'analysis', expectedVersion: 1 }, { id: 'detail-105', stage: 'requirements', expectedVersion: 2 }, { id: 'detail-105', stage: 'acceptance', expectedVersion: 3 }, { id: 'detail-105', stage: 'requirements', expectedVersion: 4 }, { id: 'detail-105', stage: 'requirements', expectedVersion: 4 },
   ]);
   const mutations = x.calls.filter(([command]) => !['get_calendar_task', 'get_ui_state', 'get_goals', 'get_calendar_task_goals', 'get_calendar_task_seconds', 'get_active_blocks'].includes(command)).map(([command]) => command);
-  assert.deepEqual(mutations, ['set_calendar_task_stage', 'set_calendar_task_stage', 'set_calendar_task_stage', 'set_calendar_task_stage', 'set_calendar_task_stage']);
+  assert.deepEqual(mutations, Array(5).fill('save_calendar_task'));
   for (const forbidden of ['cancel_task_block', 'pause_task_block', 'start_task_block', 'set_calendar_task_goal', 'archive_calendar_task']) assert.equal(mutations.includes(forbidden), false, 'stage selection must not call ' + forbidden);
   assert.deepEqual(x.current && { id: x.current.id, source_id: x.current.source_id, goal_id: x.current.goal_id, date: x.current.date }, { id: 'detail-105', source_id: 'detail-105', goal_id: 'goal-105', date: '2026-10-08' });
   assert.deepEqual(x.parallelBlocks, [

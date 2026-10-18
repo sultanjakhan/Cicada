@@ -383,6 +383,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
     summary.textContent = `Длительность: ${duration} мин`;
   };
   const shiftEnd = () => {
+    if (kind !== 'event') return;
     const end = rangeEnd(dateInput.value, timeInput.value, Number(durInput.value));
     if (end) { endDateInput.value = end.date; endTimeInput.value = end.time; }
     updateRangeHint();
@@ -472,9 +473,16 @@ export async function showEventModal(eventId = null, initialDate = null, options
     fields.disabled = pending || !recordReady;
     updateTiming();
   };
+  // The date control is shared, but returning to a previously edited target
+  // must restore its draft rather than move the hidden event interval.
+  const dateDrafts = new Map();
   overlay.querySelectorAll('[data-editor-type]').forEach(button => button.addEventListener('click', () => {
     if (pending || savedEventId != null || kind === button.dataset.editorType) return;
-    kind = button.dataset.editorType; showError(''); updateEditorType();
+    if (SCHEDULE_TYPES.includes(kind)) dateDrafts.set(kind, dateInput.value);
+    kind = button.dataset.editorType;
+    if (dateDrafts.has(kind)) dateInput.value = dateDrafts.get(kind);
+    else if (kind === 'event') shiftEnd();
+    showError(''); updateEditorType();
   }));
   const setPending = value => {
     pending = value;

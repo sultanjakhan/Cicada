@@ -4,7 +4,7 @@ import { JSDOM } from 'jsdom';
 import { openCalendarTaskDetails } from '../src/hanni/js/calendar-task-details.js';
 
 const record = {
-  source_type: 'note', source_id: 'n-1', title: 'Подготовить схему', date: '2026-09-27',
+  version: 1, source_type: 'note', source_id: 'n-1', title: 'Подготовить схему', date: '2026-09-27',
   sphere: 'work', stage: 'requirements', waiting: true, has_work: true, goal_id: 'g-1',
 };
 
@@ -148,8 +148,8 @@ test('shows process route and shared controls only for a personal task without i
 test('stage change is immediate, preserves waiting and exposes an error before allowing retry', async t => {
   let attempts = 0;
   const f = fixture({ invoke: async (command, args, baseInvoke, calls) => {
-    if (command === 'set_calendar_task_stage' && ++attempts === 1) throw new Error('Сервер недоступен');
-    if (command === 'set_calendar_task_stage') { calls.push([command, args]); return { ...record, stage: args.stage, waiting: true }; }
+    if (command === 'save_calendar_task' && ++attempts === 1) throw new Error('Сервер недоступен');
+    if (command === 'save_calendar_task') { calls.push([command, args]); return 'n-1'; }
     return baseInvoke(command, args);
   } });
   t.after(() => { f.dispose(); f.dom.window.close(); });
@@ -158,12 +158,12 @@ test('stage change is immediate, preserves waiting and exposes an error before a
   select.value = 'analysis'; select.dispatchEvent(new f.window.Event('change', { bubbles: true }));
   await settle();
   assert.match(f.window.document.querySelector('.calendar-editor-error').textContent, /Сервер недоступен/);
-  assert.equal(select.value, 'requirements');
+  assert.equal(select.value, 'analysis');
   assert.equal(select.disabled, false);
   select.value = 'analysis'; select.dispatchEvent(new f.window.Event('change', { bubbles: true }));
   await settle();
-  const update = f.calls.find(([command]) => command === 'set_calendar_task_stage');
-  assert.deepEqual(update[1], { id: 'n-1', stage: 'analysis', waiting: null });
+  const update = f.calls.find(([command]) => command === 'save_calendar_task');
+  assert.equal(update[1].id, 'n-1'); assert.equal(update[1].expectedVersion, 1);
   assert.equal(select.value, 'analysis');
   assert.equal(f.window.document.querySelector('.task-details-waiting').hidden, false);
   assert.equal(f.window.document.querySelector('.calendar-editor-error').hidden, true);
@@ -334,4 +334,56 @@ test('card shows confirmed workflow progress independently of inactive timer', a
 
 test('active timer and blocked workflow remain separate visible states',async t=>{
  const f=fixture({task:{...record,waiting:false},activeBlocks:[{source_type:'note',source_id:'n-1',date:'2026-10-03',start_time:'00:00:00'}],invoke:async(command,args,fallback)=>command==='get_ui_state'&&args.key.startsWith('calendar_task_workflow_v1:')?JSON.stringify({version:1,taskId:'cicada:note:n-1',steps:[{id:'step',title:'Wait for person',status:'blocked'}],result:'',run:null}):fallback(command,args)});t.after(()=>{f.dispose();f.dom.window.close();});await settle();const hint=f.window.document.querySelector('.calendar-editor-header p').textContent;assert.match(hint,/Ждёт ответа/);assert.match(hint,/Таймер идёт/);
+});
+
+
+test('failed stage save retains draft and retries the original version without executing', async t => {
+  const writes = []; let fail = true;
+  const f = fixture({ invoke: async (command, args, fallback) => {
+    if (command === 'save_calendar_task') { writes.push(args); if (fail) throw new Error('task changed elsewhere or was deleted'); return 'n-1'; }
+    return fallback(command, args);
+  } });
+  t.after(() => { f.dispose(); f.dom.window.close(); }); await settle();
+  const dialog = f.window.document.querySelector('dialog'), select = dialog.querySelector('.task-details-stage');
+  select.value = 'analysis'; select.dispatchEvent(new f.window.Event('change')); await settle();
+  assert.equal(select.value, 'analysis');
+  assert.equal(dialog.querySelector('.task-details-execute').disabled, true);
+  assert.equal(dialog.querySelector('.task-details-edit').disabled, true);
+  dialog.querySelector('[data-dialog-close]').click(); await settle(); assert.equal(dialog.open, true);
+  dialog.querySelector('[data-dialog-retry]').click(); await settle();
+  assert.equal(writes.length, 2); assert.equal(writes[0].expectedVersion, 1); assert.deepEqual(writes[1], writes[0]);
+  fail = false; dialog.querySelector('[data-dialog-retry]').click(); await settle();
+  assert.equal(dialog.querySelector('.task-details-execute').disabled, false);
+  assert.equal(select.value, 'analysis');
+});
+
+test('concurrent stored revision survives every explicit retry of a stale stage draft', async t => {
+  let stored = { ...record, version: 2, stage: 'description', title: 'Newer title' }, attempts = 0;
+  const f = fixture({ invoke: async (command, args, fallback) => {
+    if (command === 'save_calendar_task') {
+      attempts++;
+      if (args.expectedVersion !== stored.version) throw new Error('task changed elsewhere or was deleted');
+      stored = { ...stored, stage: args.stage, title: args.title, version: stored.version + 1 }; return 'n-1';
+    }
+    return fallback(command, args);
+  } });
+  t.after(() => { f.dispose(); f.dom.window.close(); }); await settle();
+  const dialog = f.window.document.querySelector('dialog'), select = dialog.querySelector('.task-details-stage');
+  select.value = 'analysis'; select.dispatchEvent(new f.window.Event('change')); await settle();
+  dialog.querySelector('[data-dialog-retry]').click(); await settle();
+  assert.equal(attempts, 2); assert.equal(stored.stage, 'description'); assert.equal(stored.title, 'Newer title');
+  assert.equal(select.value, 'analysis');
+  select.value = 'requirements'; select.dispatchEvent(new f.window.Event('change')); await settle();
+  assert.equal(dialog.querySelector('.task-details-execute').disabled, false);
+  assert.equal(dialog.querySelector('[data-dialog-retry]').hidden, true);
+});
+
+test('mismatched fetched task identity disables execution and edit handoff', async t => {
+  const executed = [];
+  const f = fixture({ invoke: (command, args, fallback) => command === 'get_calendar_task' ? { ...record, source_id: 'other-task' } : fallback(command, args), executeAction: (...args) => executed.push(args) });
+  t.after(() => { f.dispose(); f.dom.window.close(); }); await settle();
+  const dialog = f.window.document.querySelector('dialog');
+  assert.equal(dialog.querySelector('.task-details-execute').disabled, true);
+  dialog.querySelector('.task-details-execute').click(); assert.equal(executed.length, 0);
+  assert.match(dialog.querySelector('[data-dialog-error]').textContent, /другой задаче/);
 });

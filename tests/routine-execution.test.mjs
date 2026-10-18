@@ -40,7 +40,7 @@ function setup(t,{other=null,mode='chain',graphSteps=null,changingForeignSchedul
   };
   function updateRunStatus(){const statuses=record.run.steps.map(step=>step.status);record.status=statuses.includes('pending')?'pending':statuses.includes('skipped')?'skipped':'done';}
   const host=dom.window.document.querySelector('main');
-  return {document:dom.window.document,host,invoke,id,date,calls,record,open:(start=false)=>openRecurringRun({document:dom.window.document,invoke,id,date,start}),mountInline:(onClose,start=false,onTerminal)=>mountRecurringRun(host,{document:dom.window.document,invoke,id,date,start,onClose,onTerminal}),race:fn=>{onRead=fn;},fail:value=>{fail=value;},clear:()=>{state.days={};},setTerminal(status){record.status=status;record.run.steps.forEach(step=>{step.status=status;});},deferRead:()=>{holdRead=true;},releaseRead:()=>releaseRead?.(),deferWrite:()=>{holdWrite=true;},releaseWrite:()=>releaseWrite?.()};
+  return {document:dom.window.document,host,invoke,id,date,calls,record,open:(start=false)=>openRecurringRun({document:dom.window.document,invoke,id,date,start}),mountInline:(onClose,start=false,onTerminal)=>mountRecurringRun(host,{document:dom.window.document,invoke,id,date,start,onClose,onTerminal}),race:fn=>{onRead=fn;},fail:value=>{fail=value;},clear:()=>{state.days={};},addOccurrence:day=>{state.days[day]={[id]:structuredClone(record)};},setTerminal(status){record.status=status;record.run.steps.forEach(step=>{step.status=status;});},deferRead:()=>{holdRead=true;},releaseRead:()=>releaseRead?.(),deferWrite:()=>{holdWrite=true;},releaseWrite:()=>releaseWrite?.()};
 }
 test('inline runner reuses the routine steps and leaves a running step alive on return to recommendation',async t=>{
   const other={id:9,source_type:'note',source_id:'unrelated',is_active:true};
@@ -308,4 +308,17 @@ test('a failed initial read can be retried without implicitly starting the timer
   assert.equal(x.document.querySelector('[data-dialog-retry]').hidden,true);
   assert.ok(x.document.querySelector('[data-run-action=start]'));
   assert.equal(x.calls.some(call=>call.name==='start_task_block'),false);
+});
+
+
+test('retry after removal never switches an observed run to another occurrence',async t=>{
+  const x=setup(t);const dispose=x.mountInline(()=>{});await settle();
+  x.clear();x.addOccurrence('2020-01-01');
+  x.document.defaultView.dispatchEvent(new x.document.defaultView.Event('hanni:calendar-refresh'));await settle();
+  assert.match(x.host.querySelector('[role=alert]').textContent,/больше недоступно/);
+  x.host.querySelector('[data-run-retry]').click();await settle();
+  assert.match(x.host.querySelector('[role=alert]')?.textContent||'',/больше недоступно/);
+  assert.equal(x.host.querySelector('[data-run-action]'),null,'another occurrence must not become actionable in the old surface');
+  assert.equal(x.calls.some(call=>call.name==='set_ui_state'||call.name==='start_task_block'),false);
+  dispose();
 });

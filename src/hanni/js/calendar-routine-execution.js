@@ -234,13 +234,14 @@ export function mountRecurringRun(element, { document = element.ownerDocument, i
       if (disposed) return;
       let created = false;
       if (!state.days[origin]?.[id]?.run) {
+        // Once displayed, an occurrence stays pinned even if another run exists.
+        if (observedRun) throw Error('Выполнение больше недоступно. Закрой его и выбери рутину заново.');
         const existing = unfinishedRun(state, id);
         if (existing) { origin = existing.date; observedRun = true; }
         else if (createRunOnRetry && !observedRun) {
           const result = await store.ensureRun(id, origin); origin = result.result.date; created = true;
           if (disposed) { notify(); return; }
         }
-        else if (observedRun) throw Error('Выполнение больше недоступно. Закрой его и выбери рутину заново.');
         else throw Error('Выполнение ещё не начато. Закрой окно и нажми «Начать» у рутины.');
       } else observedRun = true;
       loaded = await refresh();

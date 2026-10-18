@@ -9,6 +9,7 @@ const drafts = new Map(), pendingDrafts = new Map(), retainedEditors = new Map()
 // Closed editors may still own an unsaved window-local draft.
 export const hasUnsavedCalendarNoteDrafts = () => drafts.size > 0 || pendingDrafts.size > 0 || retainedEditors.size > 0;
 const keyOf = id => id == null ? 'new' : String(id);
+const matchesSource = (note, id) => isCalendarNote(note) && note.id != null && String(note.id) === String(id);
 const blockSignature = data => JSON.stringify((data?.blocks || []).map(({ id, ...block }) => block));
 export function isCalendarNote(note) {
   const calendar = note && (note.tab_name === 'calendar' || (!note.tab_name && String(note.tags || '').split(',').some(tag => tag.trim().toLowerCase() === 'calendar')));
@@ -165,7 +166,7 @@ export async function mountCalendarNotes(element, dependencies = {}) {
       if (retainedEditors.has(key)) await retainedEditors.get(key).retry();
       const note = id == null ? null : await api('get_note', { id: String(id) });
       if (disposed || request !== opening) return;
-      if (id != null && !isCalendarNote(note)) throw new Error('Not a calendar note');
+      if (id != null && !matchesSource(note, id)) throw new Error('Not a calendar note');
       retryOpen = undefined; element.querySelector('[data-open-retry]').hidden = true;
       await showEditor(note, options);
     } catch { if (!disposed && request === opening) { retryOpen = id; message.textContent = 'Не удалось открыть заметку или прочитать её черновик. Последний ввод сохранён для повторной попытки.'; element.querySelector('[data-open-retry]').hidden = false; } }
@@ -176,7 +177,7 @@ export async function mountCalendarNotes(element, dependencies = {}) {
     try {
       const fresh = value.note ? await api('get_note', { id: value.note.id }) : null;
       if (!current(value)) return;
-      if (fresh && !isCalendarNote(fresh)) throw new Error('changed');
+      if (value.note && !matchesSource(fresh, value.note.id)) throw new Error('changed');
       drafts.delete(value.key); value.committed = true; setBusy(value, false);
       value.dialog.close({ skipBeforeClose: true, restoreFocus: false });
       await showEditor(fresh);
@@ -193,14 +194,16 @@ export async function mountCalendarNotes(element, dependencies = {}) {
         if (!title && !content.trim()) { if (current(value)) { setBusy(value, false); value.dialog.showError('Добавь мысль или название заметки.', value.content); } return; }
         if (value.title.value.trim().length > 500) { if (current(value)) { setBusy(value, false); value.dialog.showError('Сократи название до 500 символов.', value.title); } return; }
         if (!current(value)) return;
+        const savedDraft = drafts.get(value.key);
         let id = value.note?.id;
         if (value.note) {
           const fresh = await api('get_note', { id });
           if (!current(value)) return;
-          if (!isCalendarNote(fresh) || fresh.archived || fresh.updated_at !== value.baseUpdatedAt) { value.conflict = true; throw new Error('changed'); }
+          if (!matchesSource(fresh, id) || fresh.archived || fresh.updated_at !== value.baseUpdatedAt) { value.conflict = true; throw new Error('changed'); }
           await api('update_note', { id, title, content, tags: fresh.tags || '', pinned: null, archived: null, tabName: null, status: null, dueDate: null, reminderAt: null, contentBlocks: value.rich ? JSON.stringify(value.output) : null, priority: null, expectedVersion: fresh.version ?? null });
         } else id = await api('create_note', { title, content, tags: '', tabName: 'calendar', status: 'note', dueDate: null, reminderAt: null, priority: null });
-        value.committed = true; drafts.delete(value.key);
+        value.committed = true;
+        if (drafts.get(value.key) === savedDraft) drafts.delete(value.key);
         if (current(value)) { setBusy(value, false); value.dialog.close({ skipBeforeClose: true }); await refresh('Заметка сохранена.'); }
         window.dispatchEvent(new window.Event('task-state-changed'));
       } catch (error) {
@@ -222,7 +225,7 @@ export async function mountCalendarNotes(element, dependencies = {}) {
       if (value) { await capture(value); if (!current(value)) return; if (drafts.has(value.key)) throw new Error('draft'); }
       const fresh = await api('get_note', { id });
       if (disposed || (value && !current(value))) return;
-      if (!isCalendarNote(fresh) || (value ? !!fresh.archived !== !!value.note.archived || fresh.updated_at !== value.baseUpdatedAt : !fresh.archived)) throw new Error('changed');
+      if (!matchesSource(fresh, id) || (value ? !!fresh.archived !== !!value.note.archived || fresh.updated_at !== value.baseUpdatedAt : !fresh.archived)) throw new Error('changed');
       if (!Number.isSafeInteger(fresh.version) || fresh.version < 1) throw new Error('changed');
       const isArchived = await api('toggle_note_archive', { id, expectedVersion: fresh.version }); lastArchived = isArchived ? id : null;
       if (value) { value.committed = true; setBusy(value, false); value.dialog.close({ skipBeforeClose: true }); }
