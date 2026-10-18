@@ -1,7 +1,7 @@
 {
   "name": "cicada",
-  "version": "0.5.9",
-  "cicadaBuildId": "20261018-start-resume-controls-059.1",
+  "version": "0.5.10",
+  "cicadaBuildId": "20261019-home-reports-0510.1",
   "private": true,
   "type": "module",
   "scripts": {

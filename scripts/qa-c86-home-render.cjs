@@ -25,10 +25,12 @@ const backend=new Function('return function(options){('+base+')({theme:options.t
  window.__TAURI__.core.invoke=async(command,args={})=>{
   window.c86Calls.push({command,args:structuredClone(args)});
   if(command==='get_calendar_tasks')return structuredClone((await prepared).rows);
-  if(command==='get_ui_state'&&args.key==='calendar_task_run_exchange_v1'){if(window.c86FailReports)throw Error('Synthetic disconnected report read');return structuredClone((await prepared).exchange);}
+  if(command==='get_ui_state'&&args.key==='calendar_task_run_exchange_v1'){if(window.c86FailReports)throw Error('Synthetic disconnected report read');const exchange=structuredClone((await prepared).exchange);if(window.c86Unreported){const older=exchange.runs['synthetic-run-0000'];exchange.order=25;exchange.runs['synthetic-unreported-run']={...older,runId:'synthetic-unreported-run',report:null,receivedOrder:25};}return exchange;}
   if(command==='get_calendar_task'){const row=(await prepared).rows.find(row=>row.source_id===args.id);if(row)return structuredClone(row);}
   if(command==='shared_task_command'&&args.input?.command==='get'&&args.input.arguments.taskId.startsWith('synthetic-report-task-')){
    const id=args.input.arguments.taskId,index=Number(id.split('-').at(-1));
+   if(window.c86ReviewBoundary&&index===0)return {isError:true,status:403,code:'review_prototype_disabled'};
+   if(window.c86ReviewBoundary&&index===1)return {id,version:7,binding:{sourceId:id},review:null,results:[],history:[]};
    return {id,version:7,binding:{sourceId:id},review:{state:index%4===0?'awaiting_review':'running',resultVersion:2,intentId:'synthetic-review-intent'},results:[{version:1,content:'Previous synthetic result'},{version:2,content:'Current synthetic result'}],history:[{action:'rework',resultVersion:1,comment:'Preserved synthetic history'}]};
   }
   return original(command,args);
@@ -72,6 +74,27 @@ async function main(){assert.equal(process.platform,'linux');assert.ok(process.e
    await page.evaluate(()=>{window.c86FailReports=true;window.dispatchEvent(new Event('task-state-changed'));});await page.waitForFunction(()=>document.querySelector('.calendar-ai-reports summary').textContent.includes('Не удалось прочитать отчёты'));
    assert.equal(await page.locator('.calendar-ai-reports li').count(),0);assert.equal(await page.locator('.calendar-ai-reports details').evaluate(n=>n.open),false);await summary.scrollIntoViewIfNeeded();await page.screenshot({path:path.join(output,name+'-read-error.png')});
    await page.evaluate(()=>{window.c86FailReports=false;window.dispatchEvent(new Event('task-state-changed'));});await page.waitForFunction(()=>document.querySelector('.calendar-ai-reports')?.querySelectorAll('li').length===24);assert.match(await summary.innerText(),/на приёмке: 6/);
+   if(width===760&&theme==='dark'){
+    await page.evaluate(()=>{window.c86ReviewBoundary=true;window.dispatchEvent(new Event('task-state-changed'));});
+    await page.waitForFunction(()=>document.querySelector('.calendar-ai-reports summary').textContent.includes('приёмка неизвестна: 1'));
+    assert.match(await summary.innerText(),/на приёмке: 5/);
+    const unavailable=page.locator('.calendar-ai-reports [data-native-task-id="synthetic-report-task-0"]');
+    assert.match(await unavailable.innerText(),/Состояние приёмки не обновлено/);
+    assert.doesNotMatch(await page.locator('.calendar-ai-reports [data-native-task-id="synthetic-report-task-1"]').innerText(),/Состояние приёмки не обновлено/);
+    await page.evaluate(()=>{window.c86ReviewBoundary=false;window.c86Unreported=true;window.dispatchEvent(new Event('task-state-changed'));});
+    await page.waitForFunction(()=>document.querySelector('.calendar-ai-reports [data-native-task-id="synthetic-report-task-0"]')?.dataset.runId==='synthetic-unreported-run');
+    assert.equal(await unavailable.getAttribute('data-result-version'),'2');
+    assert.match(await unavailable.innerText(),/Регистрация задачи не означает запуск/);assert.match(await unavailable.innerText(),/На приёмке · результат v2/);
+    assert.match(await summary.innerText(),/на приёмке: 6/);assert.doesNotMatch(await summary.innerText(),/приёмка неизвестна/);
+    await summary.click();await unavailable.locator('button').click();await page.locator('dialog[open]').waitFor();
+    await page.waitForFunction(()=>document.querySelector('.task-result-review')?.textContent.includes('Current synthetic result'));
+    assert.match(await page.locator('dialog[open]').innerText(),/Preserved synthetic history/);
+    await page.keyboard.press('Escape');await page.locator('dialog[open]').waitFor({state:'detached'});
+    await page.waitForFunction(()=>document.activeElement?.closest('li')?.dataset.nativeTaskId==='synthetic-report-task-0');
+    await page.screenshot({path:path.join(output,name+'-unreported-review.png')});await summary.click();
+    await page.evaluate(()=>{window.c86Unreported=false;window.dispatchEvent(new Event('task-state-changed'));});
+    await page.waitForFunction(()=>document.querySelector('.calendar-ai-reports [data-native-task-id="synthetic-report-task-0"]')?.dataset.runId==='synthetic-run-0000');
+   }
   }
   assert.equal(await page.evaluate(()=>JSON.stringify(window.c86Data)===window.c86OriginalData),true,'task/run/report data unchanged');
   const writes=await page.evaluate(()=>window.c86Calls.filter(c=>!c.command.startsWith('get_')&&!c.command.startsWith('mvp_sync_')&&c.command!=='read_calendar_day'&&!(c.command==='shared_task_command'&&c.args.input.command==='get')));assert.deepEqual(writes,[],'no task/result/timer/storage writes');

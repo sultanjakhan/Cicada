@@ -133,13 +133,13 @@ export function mountCalendarAiReports(host, { invoke, listen = null, readTaskRe
       const nativeRows = await invoke('get_calendar_tasks', {});
       if (!Array.isArray(nativeRows)) throw new Error('Invalid task response');
       const rows = nativeRows.filter(row => row?.source_type === 'note' && !row.archived && !row.readonly && row.status_extra === 'task');
-      // The shared join treats disabled review authority like an absent result.
+      // The shared join treats disabled/missing authority like an absent result.
       // This summary must distinguish that unavailable authority from a known 404 absence.
       const unavailableReviews = new Set();
       const readReview = readTaskReview && (async id => {
         try { return await readTaskReview(id); }
         catch (error) {
-          if (error?.status === 403 && error?.code === 'review_prototype_disabled') unavailableReviews.add(id);
+          if (!(error?.status === 404 && error?.code === 'no_review_result')) unavailableReviews.add(id);
           throw error;
         }
       });

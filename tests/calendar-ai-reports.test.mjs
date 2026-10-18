@@ -300,6 +300,10 @@ test('disabled review authority is unknown while a genuine missing result is kno
   await waitForReports(host);
   assert.match(host.querySelector('summary').textContent,/приёмка неизвестна: 1/);
   assert.match(host.querySelector('li').textContent,/Состояние приёмки не обновлено/);
+  failure={status:404,code:'shared_task_not_found'};
+  dom.window.dispatchEvent(new dom.window.Event('task-state-changed'));await waitForReports(host);
+  assert.match(host.querySelector('summary').textContent,/приёмка неизвестна: 1/);
+  assert.match(host.querySelector('li').textContent,/Состояние приёмки не обновлено/);
   failure={status:404,code:'no_review_result'};
   dom.window.dispatchEvent(new dom.window.Event('task-state-changed'));await waitForReports(host);
   assert.match(host.querySelector('summary').textContent,/на приёмке: 0/);
