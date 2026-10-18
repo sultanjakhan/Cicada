@@ -87,6 +87,8 @@ async function main(){assert.equal(process.platform,'linux');assert.ok(process.e
     await summary.click();await unavailable.waitFor({state:'visible'});
     assert.equal(await page.locator('.calendar-ai-reports details').evaluate(n=>n.open),true);
     assert.match(await unavailable.innerText(),/Состояние приёмки не обновлено/);
+    const visibleError=unavailable.locator('p').last();await visibleError.scrollIntoViewIfNeeded();
+    const errorBounds=await visibleError.boundingBox();assert.ok(errorBounds&&errorBounds.y>=0&&errorBounds.y+errorBounds.height<=height,'unavailable review error is visible in the viewport');
     await page.screenshot({path:path.join(output,name+'-disabled-review.png')});
     assert.doesNotMatch(await page.locator('.calendar-ai-reports [data-native-task-id="synthetic-report-task-1"]').innerText(),/Состояние приёмки не обновлено/);
     await page.evaluate(()=>{window.c86ReviewBoundary=false;window.c86Unreported=true;window.dispatchEvent(new Event('task-state-changed'));});
