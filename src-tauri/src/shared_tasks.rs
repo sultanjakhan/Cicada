@@ -14,7 +14,14 @@ const EXCHANGE: &str = "calendar_task_run_exchange_v1";
 struct Error(u16, &'static str);
 type Result<T> = std::result::Result<T, Error>;
 fn sql<T>(v: rusqlite::Result<T>) -> Result<T> {
-    v.map_err(|_| Error(500, "shared_storage_failure"))
+    v.map_err(|error| match error {
+        rusqlite::Error::SqliteFailure(code, _)
+            if code.code == rusqlite::ErrorCode::DiskFull =>
+        {
+            Error(507, "shared_storage_full")
+        }
+        _ => Error(500, "shared_storage_failure"),
+    })
 }
 fn exact(v: &Value, fields: &[&str]) -> Result<()> {
     if v.as_object()
@@ -397,14 +404,9 @@ fn perform(c: &mut Connection, op: &str, command: &str, args: Value) -> Result<V
         }
         return serde_json::from_str(&receipt).map_err(|_| Error(500, "invalid_shared_record"));
     }
-    let count: i64 = sql(
-        tx.query_row("SELECT count(*) FROM shared_task_operations", [], |r| {
-            r.get(0)
-        }),
-    )?;
-    if count >= 5000 {
-        return Err(Error(409, "shared_operation_capacity"));
-    }
+    // Receipts are an indexed durable journal, not a lifetime mutation budget.
+    // Keep every identity for replay/conflict checks; SQLite storage failures
+    // still abort the same transaction as the task mutation and receipt insert.
     let id = if command == "create" {
         exact(&args, &["title", "content"])?;
         let title = text(&args["title"], 500, false)?;
@@ -727,7 +729,12 @@ pub(crate) fn execute(c: &mut Connection, op: &str, command: &str, args: Value) 
             } else {
                 None
             };
-            json!({"isError":true,"status":status,"code":code,"error":code,"current":current})
+            let message = if code == "shared_storage_full" {
+                "Storage is full. Free disk space, then retry the same operation ID and payload."
+            } else {
+                code
+            };
+            json!({"isError":true,"status":status,"code":code,"error":message,"current":current})
         }
     }
 }
@@ -753,6 +760,131 @@ mod tests {
         let c = Connection::open_in_memory().unwrap();
         crate::init_schema(&c).unwrap();
         c
+    }
+    fn operation_count(c: &Connection) -> i64 {
+        c.query_row("SELECT count(*) FROM shared_task_operations", [], |r| r.get(0))
+            .unwrap()
+    }
+    // Seed a coherent history of successful title patches over one personal
+    // task. No live requests, production database, or invalid/unknown identities.
+    fn seed_receipt_lifetime(c: &mut Connection) -> Value {
+        let first = create(c);
+        let id = first["task"]["id"].as_str().unwrap();
+        let tx = c.transaction().unwrap();
+        {
+            let mut insert = tx.prepare("INSERT INTO shared_task_operations VALUES(?1,?2,?3,?4)").unwrap();
+            for version in 1..5000 {
+                let op = format!("history-patch-{version:04}");
+                let title = format!("Historical title {version}");
+                let args = json!({"taskId":id,"expectedVersion":version,"patch":{"title":title}});
+                let digest = hex::encode(Sha256::digest(
+                    json!({"command":"patch","arguments":args}).to_string().as_bytes(),
+                ));
+                let mut receipt = first.clone();
+                receipt["operationId"] = json!(op);
+                receipt["task"]["version"] = json!(version + 1);
+                receipt["task"]["title"] = json!(title);
+                insert.execute(params![op, id, digest, receipt.to_string()]).unwrap();
+            }
+        }
+        tx.execute("UPDATE items SET version=5000,title='Historical title 4999' WHERE id=?1", [id]).unwrap();
+        tx.commit().unwrap();
+        assert_eq!(operation_count(c), 5000);
+        first
+    }
+    #[test]
+    fn receipt_lifetime_allows_mutations_review_and_replay_after_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("synthetic-receipt-lifetime.db");
+        let mut c = Connection::open(&path).unwrap();
+        crate::init_schema(&c).unwrap();
+        let old = seed_receipt_lifetime(&mut c);
+        let old_id = old["task"]["id"].as_str().unwrap().to_owned();
+        let created = call(&mut c, "after-boundary-create", "create",
+            json!({"title":"New synthetic task","content":"Preserved draft"}));
+        assert_eq!(created["acknowledged"], true, "{created}");
+        let id = created["task"]["id"].as_str().unwrap().to_owned();
+        let patched = call(&mut c, "after-boundary-patch", "patch",
+            json!({"taskId":id,"expectedVersion":1,"patch":{"title":"Changed title"}}));
+        assert_eq!(patched["task"]["version"], 2, "{patched}");
+        observed(&mut c, &id, 2, "boundary-run-one");
+        let result = call(&mut c, "after-boundary-result", "submit_result",
+            json!({"taskId":id,"expectedVersion":2,"runId":"boundary-run-one","content":"First result"}));
+        assert_eq!(result["task"]["review"]["state"], "awaiting_review", "{result}");
+        let rework = call(&mut c, "after-boundary-rework", "review",
+            json!({"taskId":id,"expectedVersion":3,"resultVersion":1,"decision":"rework","comment":"Keep feedback"}));
+        assert_eq!(rework["task"]["review"]["state"], "awaiting_dispatch", "{rework}");
+        let ack = call(&mut c, "after-boundary-ack", "acknowledge",
+            json!({"taskId":id,"expectedVersion":4,"intentId":"after-boundary-rework","report":report("boundary-run-two","running",1)}));
+        assert_eq!(ack["task"]["review"]["state"], "running", "{ack}");
+        finish(&mut c, &id, 5, "boundary-run-two");
+        let fixed = call(&mut c, "after-boundary-fixed", "submit_result",
+            json!({"taskId":id,"expectedVersion":5,"runId":"boundary-run-two","content":"Fixed result"}));
+        assert_eq!(fixed["task"]["version"], 6, "{fixed}");
+        let accepted = call(&mut c, "after-boundary-accept", "review",
+            json!({"taskId":id,"expectedVersion":6,"resultVersion":2,"decision":"accept"}));
+        assert_eq!(accepted["task"]["review"]["state"], "accepted", "{accepted}");
+        assert_eq!(accepted["task"]["results"][0]["content"], "First result");
+        assert_eq!(accepted["task"]["results"][1]["content"], "Fixed result");
+        let archived = call(&mut c, "after-boundary-archive", "archive",
+            json!({"taskId":id,"expectedVersion":7}));
+        assert_eq!(archived["acknowledged"], true, "{archived}");
+        let before = operation_count(&c);
+        assert_eq!(before, 5008);
+        drop(c);
+        let mut c = Connection::open(&path).unwrap();
+        crate::init_schema(&c).unwrap();
+        assert_eq!(create_replay(&mut c), old);
+        assert_eq!(call(&mut c, "old-receipt-lookup", "operation",
+            json!({"operationId":"create-shared-001"}))["receipt"], old);
+        let historical_args = json!({"taskId":old_id,"expectedVersion":1,"patch":{"title":"Historical title 1"}});
+        let historical = call(&mut c, "history-patch-0001", "patch", historical_args);
+        assert_eq!(historical["task"]["version"], 2);
+        assert_eq!(historical["task"]["title"], "Historical title 1");
+        let conflict = call(&mut c, "history-patch-0001", "patch",
+            json!({"taskId":old_id,"expectedVersion":1,"patch":{"title":"Different payload"}}));
+        assert_eq!(conflict["code"], "operation_payload_conflict");
+        assert_eq!(projection(&c, &old_id).unwrap()["version"], 5000);
+        assert_eq!(operation_count(&c), before, "replays/conflicts never append another receipt");
+        c.execute("UPDATE items SET tags='task-sphere:personal,JIRA:fixture' WHERE id=?1", [&old_id]).unwrap();
+        assert_eq!(create_replay(&mut c)["status"], 404);
+        let denied = call(&mut c, "revoked-old-receipt", "operation",
+            json!({"operationId":"history-patch-0001"}));
+        assert_eq!(denied["status"], 404);
+        assert!(denied.get("receipt").is_none());
+        assert_eq!(call(&mut c, "revoked-new-patch", "patch",
+            json!({"taskId":old_id,"expectedVersion":5000,"patch":{"title":"Denied"}}))["status"], 404);
+        assert_eq!(operation_count(&c), before);
+    }
+    #[test]
+    fn receipt_lifetime_storage_full_rolls_back_task_and_receipt_then_retries() {
+        let mut c = db();
+        let first = seed_receipt_lifetime(&mut c);
+        let id = first["task"]["id"].as_str().unwrap().to_owned();
+        let before = projection(&c, &id).unwrap();
+        // A real SQLITE_FULL at receipt insertion, after the native task update.
+        // This synthetic-only trigger forces page allocation in the same transaction.
+        c.execute_batch("CREATE TABLE synthetic_space_probe(payload BLOB);
+            CREATE TRIGGER synthetic_receipt_full BEFORE INSERT ON shared_task_operations
+            BEGIN INSERT INTO synthetic_space_probe VALUES(zeroblob(1048576)); END;").unwrap();
+        let pages: i64 = c.query_row("PRAGMA page_count", [], |r| r.get(0)).unwrap();
+        c.pragma_update(None, "max_page_count", pages).unwrap();
+        let args = json!({"taskId":id,"expectedVersion":5000,"patch":{"title":"Retry after storage recovery"}});
+        let failed = call(&mut c, "storage-full-patch", "patch", args.clone());
+        assert_eq!(failed["status"], 507, "{failed}");
+        assert_eq!(failed["code"], "shared_storage_full");
+        assert!(failed["error"].as_str().unwrap().contains("retry the same operation ID"));
+        assert_eq!(projection(&c, &id).unwrap(), before, "task/version rollback is atomic with receipt insertion");
+        assert_eq!(operation_count(&c), 5000);
+        assert_eq!(c.query_row("SELECT count(*) FROM synthetic_space_probe", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+        assert_eq!(call(&mut c, "failed-operation-lookup", "operation",
+            json!({"operationId":"storage-full-patch"}))["known"], false);
+        c.pragma_update(None, "max_page_count", pages + 1024).unwrap();
+        c.execute_batch("DROP TRIGGER synthetic_receipt_full;").unwrap();
+        let retried = call(&mut c, "storage-full-patch", "patch", args.clone());
+        assert_eq!(retried["task"]["version"], 5001, "{retried}");
+        assert_eq!(call(&mut c, "storage-full-patch", "patch", args), retried);
+        assert_eq!(operation_count(&c), 5001);
     }
     #[test]
     fn empty_namespace_is_stable() {
