@@ -4,9 +4,13 @@ on:
   pull_request:
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   privacy:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,6 +34,7 @@ jobs:
           retention-days: 3
   mac:
     runs-on: macos-latest
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
         with:
@@ -57,6 +62,7 @@ jobs:
           shared-key: cicada-tauri
       - run: npm ci
       - run: npm test
+        timeout-minutes: 5
       - run: npm audit --audit-level=low
       - run: npm run check:privacy
       - run: npm run build
@@ -68,12 +74,14 @@ jobs:
       - run: npm ci
         working-directory: sync-relay
       - run: npm test
+        timeout-minutes: 5
         working-directory: sync-relay
       - run: npm audit --audit-level=low
         working-directory: sync-relay
       - run: npm ci
         working-directory: update-service
       - run: npm test
+        timeout-minutes: 5
         working-directory: update-service
       - run: npm audit --audit-level=low
         working-directory: update-service
@@ -95,6 +103,7 @@ jobs:
           retention-days: 14
   test:
     runs-on: windows-latest
+    timeout-minutes: 35
     env:
       HANNI_MVP_UPDATES_URL: ${{ secrets.MVP_UPDATES_URL }}
       HANNI_MVP_UPDATES_TOKEN: ${{ secrets.MVP_UPDATES_TOKEN }}
@@ -132,17 +141,20 @@ jobs:
       - run: npm.cmd audit --audit-level=low
       - run: .\scripts\audit-rust.ps1
       - run: npm.cmd test
+        timeout-minutes: 5
       - run: npm.cmd run check:privacy
       - run: npm.cmd run build
       - run: npm.cmd ci
         working-directory: sync-relay
       - run: npm.cmd test
+        timeout-minutes: 5
         working-directory: sync-relay
       - run: npm.cmd audit --audit-level=low
         working-directory: sync-relay
       - run: npm.cmd ci
         working-directory: update-service
       - run: npm.cmd test
+        timeout-minutes: 5
         working-directory: update-service
       - run: npm.cmd audit --audit-level=low
         working-directory: update-service
