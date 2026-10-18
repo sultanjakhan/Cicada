@@ -138,13 +138,14 @@ export function mountCalendarWishes(element, dependencies = {}) {
   }
   function confirmDelete(wish, restore) {
     if (dialog || disposed) return;
+    const original = structuredClone(wish);
     const editor = createCalendarDialog({ document, title: 'Удалить желание?', hint: wish.goalId ? 'Созданная из него цель останется.' : 'Желание исчезнет со всех устройств.', submitLabel: 'Удалить', isCurrent: () => !disposed && element.isConnected,
       returnFocus: () => (findWish(wish.id) ? restore?.() : fallbackFocus()), onClose: () => { dialog = null; } });
     dialog = editor; editor.modal.dataset.wishDelete = ''; editor.body.textContent = wish.title;
     editor.form.addEventListener('submit', async event => {
       event.preventDefault(); if (editor.pending || disposed) return;
       editor.showError(''); editor.setPending(true);
-      try { await deleteWish(wish.id, { invoke }); editor.setPending(false); await refresh(); editor.close(); if (!disposed) say('Желание удалено.'); }
+      try { await deleteWish(wish.id, { invoke, original }); editor.setPending(false); await refresh(); editor.close(); if (!disposed) say('Желание удалено.'); }
       catch (cause) { if (!disposed && editor.modal.isConnected) { editor.setPending(false); editor.showError(cause?.message || 'Не удалось удалить желание. Попробуй ещё раз.'); } }
     });
     editor.open(editor.modal.querySelector('[data-dialog-close]'));

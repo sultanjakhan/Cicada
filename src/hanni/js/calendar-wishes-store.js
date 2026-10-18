@@ -149,8 +149,19 @@ export async function setWishStatus(id, status, { invoke, now = () => new Date()
   });
   return result;
 }
-export async function deleteWish(id, { invoke } = {}) {
-  await mutateWishes(invoke, state => { state.wishes = state.wishes.filter(wish => wish.id !== String(id)); });
+const DELETE_STALE_MESSAGE = 'Это желание изменено на другом устройстве. Закрой подтверждение и открой желание заново перед удалением.';
+export async function deleteWish(id, { invoke, original = null } = {}) {
+  try {
+    await mutateWishes(invoke, state => {
+      const current = state.wishes.find(wish => wish.id === String(id));
+      if (!current) throw missing();
+      if (original && JSON.stringify(current) !== JSON.stringify(original)) throw new Error(DELETE_STALE_MESSAGE);
+      state.wishes = state.wishes.filter(wish => wish.id !== String(id));
+    });
+  } catch (cause) {
+    if (errorText(cause) === WISH_STALE_MESSAGE) throw new Error(DELETE_STALE_MESSAGE);
+    throw cause;
+  }
 }
 /** Records the goal created from a wish; the wish itself stays as the source. */
 export async function markWishConverted(id, goalId, { invoke, now = () => new Date() } = {}) {

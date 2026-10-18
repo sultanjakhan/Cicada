@@ -198,6 +198,60 @@ test('wish deletion asks first and a remote change refreshes only when it may co
   assert.equal(x.host.querySelector('[data-wish-id="remote"] .cp-wish-row__title').textContent, 'С телефона');
 });
 
+test('deletion confirmation blocks an unseen target edit without writing', async t => {
+  const x = await mountList(t, { version: 1, wishes: [wish('a', { future: { revision: 1 } }), wish('b')] });
+  await x.menu('a', 'delete');
+  const modal = document.querySelector('dialog[data-wish-delete]');
+  const changed = { version: 1, wishes: [wish('a', { title: 'Changed elsewhere', future: { revision: 2 } }), wish('b')] };
+  x.data.raw = JSON.stringify(changed);
+  await x.submit(modal);
+  assert.equal(x.data.writes(), 0, 'an unseen edit is rejected before CAS');
+  assert.deepEqual(JSON.parse(x.data.raw), changed);
+  assert.equal(modal.isConnected, true);
+  assert.match(modal.textContent, /изменено.*удален/);
+});
+
+test('deleting an unchanged target preserves an unrelated edit and unknown fields', async t => {
+  const x = await mountList(t, { version: 1, wishes: [wish('a'), wish('b')] });
+  await x.menu('a', 'delete');
+  const modal = document.querySelector('dialog[data-wish-delete]');
+  const other = wish('b', { note: 'Remote note', future: { nested: ['kept'] } });
+  x.data.raw = JSON.stringify({ version: 1, futureState: { retained: true }, wishes: [wish('a'), other] });
+  await x.submit(modal);
+  assert.equal(x.data.writes(), 1);
+  assert.equal(modal.isConnected, false);
+  assert.equal(x.data.wishes().length, 1);
+  assert.deepEqual(x.data.wishes()[0], normalizeWishState({ version: 1, wishes: [other] }).wishes[0]);
+  assert.deepEqual(JSON.parse(x.data.raw).futureState, { retained: true });
+});
+
+test('deletion CAS rejection preserves the concurrent record and shows deletion-specific feedback', async t => {
+  const x = await mountList(t, { version: 1, wishes: [wish('a'), wish('b')] });
+  await x.menu('a', 'delete');
+  const modal = document.querySelector('dialog[data-wish-delete]');
+  const changed = { version: 1, wishes: [wish('a', { note: 'Concurrent edit' }), wish('b')] };
+  x.data.before.set('set_ui_state', () => { x.data.raw = JSON.stringify(changed); });
+  await x.submit(modal);
+  assert.equal(x.data.writes(), 1, 'the single CAS attempt is rejected');
+  assert.deepEqual(JSON.parse(x.data.raw), changed);
+  assert.equal(modal.isConnected, true);
+  assert.match(modal.textContent, /изменено.*удален/);
+  assert.doesNotMatch(modal.textContent, /Текст остался в форме/);
+});
+
+test('a target removed while confirmation is open is reported without a write', async t => {
+  const x = await mountList(t, { version: 1, wishes: [wish('a'), wish('b')] });
+  await x.menu('a', 'delete');
+  const modal = document.querySelector('dialog[data-wish-delete]');
+  const changed = { version: 1, wishes: [wish('b')] };
+  x.data.raw = JSON.stringify(changed);
+  await x.submit(modal);
+  assert.equal(x.data.writes(), 0);
+  assert.deepEqual(JSON.parse(x.data.raw), changed);
+  assert.equal(modal.isConnected, true);
+  assert.match(modal.textContent, /уже удалено/);
+});
+
 test('a wish saved by another Create surface appears in the open list', async t => {
   const x = await mountList(t, null);
   await createWish({ title: 'Из общей кнопки Создать', category: 'experience' }, { invoke: x.data.invoke });
