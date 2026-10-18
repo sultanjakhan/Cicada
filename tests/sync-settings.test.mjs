@@ -15,6 +15,21 @@ test('blocked Keychain access is not presented as an unpaired device or retried 
   assert.equal(x.q('now').disabled, true);
   assert.equal(x.calls.length, 1);
 });
+test('explicit file storage discloses plaintext and never offers Keychain recovery on file failure', async t => {
+  const state = {...initial(), configured:true, enabled:true, credential_store:'private_file'};
+  const x = mount(t, () => state); await tick();
+  assert.equal(x.q('store').hidden, false);
+  assert.match(x.q('store').textContent, /открытым текстом/);
+  assert.match(x.q('store').textContent, /не защита Keychain/);
+  for (const last_error of ['mvp_sync_private_file_unavailable','mvp_sync_private_file_invalid']) {
+    x.dom.window.dispatchEvent(new x.dom.window.CustomEvent('hanni:sync-status', {detail:{...state, configured:false, last_error}}));
+    assert.match(x.q('status').textContent, /приостановлена/);
+    assert.match(x.q('error').textContent, /Файл подключения/);
+    assert.doesNotMatch(x.q('error').textContent, /хранилищу ключей/);
+    assert.equal(x.q('now').disabled, true);
+  }
+  assert.equal(x.calls.length, 1);
+});
 function mount(t, transport = null) {
   const dom = new JSDOM('<div id="host"></div>', { url:'https://fixture.invalid',pretendToBeVisual:true }), calls = [], busy = [];
   const host = dom.window.document.querySelector('#host'), q = name => host.querySelector(`[data-sync-${name}]`);

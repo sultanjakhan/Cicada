@@ -1,6 +1,79 @@
 use super::*;
 use crate::mvp_sync_db;
 
+#[cfg(target_os = "macos")]
+fn private_config() -> String {
+    json!({"v":1,"profile":"hanni-mvp-content-v1","endpoint":"https://example.invalid/",
+        "device_id":"synthetic-mac","key_id":"synthetic-group","token":B64.encode([1;32]),
+        "key":B64.encode([2;32]),"enabled":true}).to_string()
+}
+#[cfg(target_os = "macos")]
+fn private_profile() -> (tempfile::TempDir, PathBuf, Connection, PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let physical = root.path().canonicalize().unwrap();
+    let database = physical.join("calendar.db");
+    let conn = Connection::open(&database).unwrap();
+    crate::init_schema(&conn).unwrap();
+    let input = physical.join("input.json");
+    std::fs::write(&input, private_config()).unwrap();
+    std::fs::set_permissions(&input, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let scope = transport::derive_config(&RelayConfig::parse(&private_config()).unwrap()).unwrap();
+    let hash = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(serde_json::to_vec(&json!([scope.endpoint,scope.device_id,scope.key_id,scope.key])).unwrap()));
+    conn.execute_batch("CREATE TABLE content_sync_state(id INTEGER PRIMARY KEY,scope TEXT,receive_seq INTEGER);").unwrap();
+    conn.execute("INSERT INTO content_sync_state VALUES(1,?1,123)", [hash]).unwrap();
+    (root, database, conn, input)
+}
+#[cfg(target_os = "macos")]
+#[test]
+fn wrong_scope_invalid_config_and_unsafe_file_cannot_partially_select_private_storage() {
+    use std::os::unix::fs::PermissionsExt;
+    for change in ["sender", "group", "key", "endpoint", "unknown-field", "unsafe"] {
+        let (root, database, conn, input) = private_profile();
+        let before = db::get_setting_checked(&conn, "content_sync_enabled").unwrap();
+        let mut value: Value = serde_json::from_str(&private_config()).unwrap();
+        match change {
+            "sender" => value["device_id"] = json!("another-sender"),
+            "group" => value["key_id"] = json!("another-group"),
+            "key" => value["key"] = json!(B64.encode([9;32])),
+            "endpoint" => value["endpoint"] = json!("https://another.invalid/"),
+            "unknown-field" => value["unexpected"] = json!(true),
+            "unsafe" => std::fs::set_permissions(&input, std::fs::Permissions::from_mode(0o644)).unwrap(),
+            _ => unreachable!(),
+        }
+        std::fs::write(&input, value.to_string()).unwrap();
+        assert!(configure_private_file(&conn, &database, &input).is_err(), "{change}");
+        assert!(!root.path().join(".cicada-sync-backend.json").exists());
+        assert!(!root.path().join(".cicada-sync-private").exists());
+        assert_eq!(db::get_setting_checked(&conn, "content_sync_enabled").unwrap(), before);
+        assert_eq!(conn.query_row("SELECT receive_seq FROM content_sync_state", [], |r| r.get::<_, i64>(0)).unwrap(), 123);
+    }
+}
+#[cfg(target_os = "macos")]
+#[test]
+fn private_configuration_and_relocation_keep_the_same_sender_scope_and_queues() {
+    use std::os::unix::fs::DirBuilderExt;
+    let (root, database, conn, input) = private_profile();
+    configure_private_file(&conn, &database, &input).unwrap();
+    assert_eq!(secrets::storage_kind(&database).unwrap(), "private_file");
+    assert_eq!(RelayConfig::parse(&secrets::read(&database).unwrap().unwrap()).unwrap().device_id, "synthetic-mac");
+    assert_eq!(conn.query_row("SELECT receive_seq FROM content_sync_state", [], |r| r.get::<_, i64>(0)).unwrap(), 123);
+    let expected = secrets::read(&database).unwrap();
+    drop(conn);
+    let target = tempfile::tempdir().unwrap();
+    let target_db = target.path().join("calendar.db");
+    std::fs::copy(&database, &target_db).unwrap();
+    std::fs::copy(root.path().join(".cicada-sync-backend.json"), target.path().join(".cicada-sync-backend.json")).unwrap();
+    std::fs::DirBuilder::new().mode(0o700).create(target.path().join(".cicada-sync-private")).unwrap();
+    std::fs::copy(root.path().join(".cicada-sync-private/pairing.json"), target.path().join(".cicada-sync-private/pairing.json")).unwrap();
+    assert!(private_file::selected(&target_db).is_err(), "a copied source marker is not a target binding");
+    relocate_credentials(&database, &target_db).unwrap();
+    assert_eq!(secrets::read(&target_db).unwrap(), expected);
+    assert_eq!(secrets::storage_kind(&target_db).unwrap(), "private_file");
+    let moved = Connection::open(&target_db).unwrap();
+    assert_eq!(moved.query_row("SELECT receive_seq FROM content_sync_state", [], |r| r.get::<_, i64>(0)).unwrap(), 123);
+}
+
 fn fixture() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
     crate::init_schema(&conn).unwrap();

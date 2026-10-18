@@ -14,6 +14,7 @@ pub(crate) enum Options {
     #[default]
     Interactive,
     ConfigureSync(PathBuf),
+    ConfigureSyncFile(PathBuf),
     SyncCheck,
     UpdateBackground,
     Background,
@@ -41,7 +42,11 @@ impl Options {
             if args.next().is_some() || !root.is_absolute() { return Err("mvp_launch_invalid_options"); }
             return Ok(Self::IsolatedTest { root, background });
         }
-        let mode = if flag == "--configure-sync" {
+        let mode = if flag == "--configure-sync-file" && cfg!(target_os = "macos") {
+            let path = PathBuf::from(args.next().ok_or("mvp_launch_invalid_options")?);
+            if !path.is_absolute() { return Err("mvp_launch_invalid_options"); }
+            Self::ConfigureSyncFile(path)
+        } else if flag == "--configure-sync" {
             let path = args.next().ok_or("mvp_launch_invalid_options")?;
             if path.is_empty() || path.to_string_lossy().starts_with("--") {
                 return Err("mvp_launch_invalid_options");
@@ -67,7 +72,7 @@ impl Options {
     pub(crate) fn is_one_shot(&self) -> bool {
         matches!(
             self,
-            Self::ConfigureSync(_) | Self::SyncCheck | Self::UpdateBackground
+            Self::ConfigureSync(_) | Self::ConfigureSyncFile(_) | Self::SyncCheck | Self::UpdateBackground
         )
     }
 
@@ -75,6 +80,18 @@ impl Options {
 
     pub(crate) fn is_update_background(&self) -> bool {
         *self == Self::UpdateBackground
+    }
+
+    pub(crate) fn is_file_provisioning(&self) -> bool { matches!(self, Self::ConfigureSyncFile(_)) }
+
+    // Called only after acquiring the native profile lock and before starting sync.
+    pub(crate) fn prepare_sync_file(&self, conn: &rusqlite::Connection, database: &Path) -> Result<(), String> {
+        #[cfg(target_os = "macos")]
+        if let Self::ConfigureSyncFile(input) = self {
+            return crate::mvp_sync::configure_private_file(conn, database, input);
+        }
+        let _ = (conn, database);
+        Ok(())
     }
 
     pub(crate) fn apply_context<R: tauri::Runtime>(&self, context: &mut tauri::Context<R>) {
@@ -337,6 +354,12 @@ mod tests {
         );
         assert_eq!(parse(&["--background"]), Ok(Options::Background));
         #[cfg(target_os = "macos")]
+        assert_eq!(parse(&["--configure-sync-file", "/private/synthetic/pairing.json"]), Ok(Options::ConfigureSyncFile("/private/synthetic/pairing.json".into())));
+        assert_eq!(parse(&["--configure-sync-file", "relative.json"]), Err("mvp_launch_invalid_options"));
+        assert_eq!(parse(&["--configure-sync-file", "/private/synthetic/pairing.json", "--sync-check"]), Err("mvp_launch_invalid_options"));
+        #[cfg(not(target_os = "macos"))]
+        assert!(parse(&["--configure-sync-file", "/private/synthetic/pairing.json"]).is_err());
+        #[cfg(target_os = "macos")]
         assert_eq!(parse(&["--minimized"]), Ok(Options::Minimized));
         assert_eq!(
             parse(&["--configure-sync", "pairing with spaces.json"]),
@@ -361,6 +384,7 @@ mod tests {
         for mode in [
             Options::SyncCheck,
             Options::ConfigureSync("pairing.json".into()),
+            Options::ConfigureSyncFile("/private/synthetic/pairing.json".into()),
             Options::UpdateBackground,
         ] {
             let mut context = tauri::test::mock_context::<tauri::test::MockRuntime, _>(

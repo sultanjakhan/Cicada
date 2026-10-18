@@ -9,6 +9,7 @@ export function mountSyncSettings(element, { invoke, setPending = () => {} }) {
   element.innerHTML = `<h3>${copy("Синхронизация")}</h3>
     <p data-sync-status role="status">${copy("Загружаем состояние…")}</p><p data-sync-counts></p><p data-sync-success></p>
     <p class="calendar-sync-hint" data-sync-hint>${copy("Состояние этого устройства. Другое устройство получит изменения после своего подключения.")}</p>
+    <p data-sync-store class="calendar-sync-hint" hidden></p>
     <p data-sync-error role="alert" hidden></p>
     <details data-sync-connect><summary>${copy("Код подключения")}</summary><label>${copy("Вставь код подключения устройства")}<input type="password" data-sync-code autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="${copy("Код подключения устройства")}"></label><button type="button" data-sync-reveal aria-pressed="false">${copy("Показать код")}</button></details>
     <label class="calendar-settings-toggle"><input type="checkbox" data-sync-enabled disabled> ${copy("Синхронизация включена")}</label>
@@ -16,8 +17,9 @@ export function mountSyncSettings(element, { invoke, setPending = () => {} }) {
     <details data-sync-conflicts><summary>${copy("Разобрать сохранённые версии")}</summary><div data-sync-conflicts-host></div></details>`;
   const q = name => element.querySelector(`[data-sync-${name}]`);
   const code = q('code'), enabled = q('enabled'), error = q('error');
-  const credentialError = copy("Нет доступа к сохранённому ключу синхронизации. Локальные данные сохранены. После восстановления доступа к хранилищу ключей перезапусти Cicada.");
-  const credentialUnavailable = value => ['mvp_sync_credentials_unavailable', 'mvp_sync_credentials_write_failed'].includes(value);
+  const fileError = value => ['mvp_sync_private_file_invalid', 'mvp_sync_private_file_unavailable'].includes(value);
+  const credentialError = value => fileError(value) || status?.credential_store === 'private_file' ? copy("Файл подключения недоступен или не прошёл проверку безопасности. Локальные данные сохранены. Восстанови файл подключения и перезапусти Cicada.") : copy("Нет доступа к сохранённому ключу синхронизации. Локальные данные сохранены. После восстановления доступа к хранилищу ключей перезапусти Cicada.");
+  const credentialUnavailable = value => fileError(value) || ['mvp_sync_credentials_unavailable', 'mvp_sync_credentials_write_failed'].includes(value);
   const updatePending = () => setPending(busy || conflictBusy);
   function clearCode() { code.value = ''; code.type = 'password'; q('reveal').textContent = copy("Показать код"); q('reveal').setAttribute('aria-pressed', 'false'); }
   function render() {
@@ -36,11 +38,13 @@ export function mountSyncSettings(element, { invoke, setPending = () => {} }) {
     q('counts').textContent = status ? `${copy("Ожидают отправки: ")}${status.pending ?? 0}${copy(" · Конфликты: ")}${status.conflicts ?? 0}` : '';
     const errors = { content_sync_network_unavailable:copy("Сеть недоступна. Повторим обмен после подключения."), content_sync_http_401:copy("Код подключения больше не принят сервером."), content_sync_http_403:copy("Устройство не имеет доступа к обмену."), content_sync_http_426:copy("Для продолжения синхронизации обнови Cicada на этом устройстве."), content_sync_http_429:copy("Сервер просит повторить попытку позже."), content_sync_http_507:copy("На сервере не хватает места для изменений."), mvp_sync_pairing_changed:copy("Подключение изменилось. Повтори обмен с текущим подключением."), mvp_sync_invalid_config:copy("Проверь код подключения."), mvp_sync_backup_failed:copy("Не удалось создать резервную копию перед включением синхронизации."), mvp_sync_background_schedule_failed:copy("Не удалось включить фоновую синхронизацию. Повтори включение синхронизации.") };
     const statusError = status?.last_error || status?.background_error;
-    if (statusError && (error.hidden || errorFromStatus)) { error.textContent = credentialUnavailable(statusError) ? credentialError : errors[statusError] || copy("Последний обмен завершился ошибкой. Локальные изменения сохранены."); error.hidden = false; errorFromStatus = true; }
+    if (statusError && (error.hidden || errorFromStatus)) { error.textContent = credentialUnavailable(statusError) ? credentialError(statusError) : errors[statusError] || copy("Последний обмен завершился ошибкой. Локальные изменения сохранены."); error.hidden = false; errorFromStatus = true; }
     else if (!statusError && errorFromStatus) { error.hidden = true; errorFromStatus = false; }
     const success = status?.last_success ? new Date(status.last_success) : null;
     q('success').textContent = success && !Number.isNaN(success.getTime()) ? `${copy("Последний успешный обмен: ")}${success.toLocaleString(copy.locale)}` : copy("Успешный обмен ещё не подтверждён.");
     const blocked = busy || conflictBusy;
+    q('store').hidden = status?.credential_store !== 'private_file' && !fileError(status?.last_error);
+    q('store').textContent = copy("Выбран файловый режим: ключ подключения хранится открытым текстом в частном файле этого профиля. Это не защита Keychain.");
     enabled.disabled = blocked || !status;
     q('save').disabled = blocked || !status || !dirty;
     q('cancel').disabled = blocked || !dirty;
@@ -78,7 +82,7 @@ export function mountSyncSettings(element, { invoke, setPending = () => {} }) {
       accept(next);
       window.dispatchEvent(new window.Event('hanni:sync-check-status'));
     } catch (cause) {
-      if (!disposed) { errorFromStatus = false; error.textContent = credentialUnavailable(typeof cause === 'string' ? cause : cause?.message) ? credentialError : save ? copy("Не удалось сохранить подключение. Проверь код и повтори попытку.") : copy("Не удалось завершить обмен. Локальные изменения сохранены; повтори попытку при доступной сети."); error.hidden = false; }
+      if (!disposed) { const code = typeof cause === 'string' ? cause : cause?.message; errorFromStatus = false; error.textContent = credentialUnavailable(code) ? credentialError(code) : save ? copy("Не удалось сохранить подключение. Проверь код и повтори попытку.") : copy("Не удалось завершить обмен. Локальные изменения сохранены; повтори попытку при доступной сети."); error.hidden = false; }
     } finally { configJson = undefined; busy = false; if (!disposed) { updatePending(); render(); } }
   }
   const conflicts = mountSyncConflicts(q('conflicts-host'), { invoke, isBlocked:() => busy, setPending:value => { conflictBusy = value; if (!disposed) { updatePending(); render(); } } });

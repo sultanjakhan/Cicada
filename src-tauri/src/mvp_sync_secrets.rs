@@ -6,6 +6,25 @@ use std::path::Path;
 const SERVICE: &str = "app.hanni.mvp.relay";
 const LIMIT: usize = 4096;
 
+pub(super) fn storage_kind(database_path: &Path) -> Result<&'static str, String> {
+    #[cfg(target_os = "macos")]
+    return super::private_file::selected(database_path).map(|selected| if selected { "private_file" } else { "keychain" });
+    #[cfg(not(target_os = "macos"))]
+    { let _ = database_path; Ok("system") }
+}
+
+#[cfg(target_os = "macos")]
+fn read_with_default(database_path: &Path, default: impl FnOnce() -> Result<Option<String>, String>) -> Result<Option<String>, String> {
+    match super::private_file::read_selected(database_path)? {
+        Some(raw) => Ok(Some(raw)),
+        None => default(),
+    }
+}
+#[cfg(target_os = "macos")]
+fn write_with_default(database_path: &Path, raw: &str, default: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+    if super::private_file::write_selected(database_path, raw)? { Ok(()) } else { default() }
+}
+
 fn account(database_path: &Path) -> Result<String, String> {
     let canonical = database_path
         .canonicalize()
@@ -56,6 +75,13 @@ fn forbid_keychain_dialogs() -> Result<(), String> {
 }
 
 pub(crate) fn read(database_path: &Path) -> Result<Option<String>, String> {
+    #[cfg(target_os = "macos")]
+    return read_with_default(database_path, || read_default(database_path));
+    #[cfg(not(target_os = "macos"))]
+    read_default(database_path)
+}
+
+fn read_default(database_path: &Path) -> Result<Option<String>, String> {
     let slot = account(database_path)?;
     #[cfg(target_os = "macos")]
     forbid_keychain_dialogs()?;
@@ -96,6 +122,13 @@ pub(crate) fn write(database_path: &Path, raw: &str) -> Result<(), String> {
     if raw.len() > LIMIT {
         return Err("mvp_sync_credentials_invalid".into());
     }
+    #[cfg(target_os = "macos")]
+    return write_with_default(database_path, raw, || write_default(database_path, raw));
+    #[cfg(not(target_os = "macos"))]
+    write_default(database_path, raw)
+}
+
+fn write_default(database_path: &Path, raw: &str) -> Result<(), String> {
     let slot = account(database_path)?;
     #[cfg(target_os = "macos")]
     {
@@ -194,6 +227,37 @@ fn write_file(database_path: &Path, stored: &[u8]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn selected_and_broken_private_files_never_call_keychain() {
+        let root = tempfile::tempdir().unwrap();
+        let database = root.path().join("calendar.db");
+        std::fs::write(&database, b"synthetic").unwrap();
+        assert_eq!(read_with_default(&database, || Ok(Some("synthetic-default".into()))).unwrap().as_deref(), Some("synthetic-default"));
+        super::super::private_file::install(&database, "synthetic-private-payload").unwrap();
+        for _ in 0..2 {
+            assert_eq!(read_with_default(&database, || panic!("Keychain must never be called")).unwrap().unwrap(), "synthetic-private-payload");
+        }
+        write_with_default(&database, "synthetic-private-payload", || panic!("Keychain must never be called")).unwrap();
+        std::fs::remove_file(root.path().join(".cicada-sync-private/pairing.json")).unwrap();
+        assert!(read_with_default(&database, || panic!("Keychain must never be called")).is_err());
+        std::fs::remove_file(root.path().join(".cicada-sync-backend.json")).unwrap();
+        assert!(read_with_default(&database, || panic!("Keychain must never be called")).is_err());
+        assert!(write_with_default(&database, "synthetic-private-payload", || panic!("Keychain must never be called")).is_err());
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn deleting_the_entire_payload_directory_keeps_keychain_unreachable() {
+        let root = tempfile::tempdir().unwrap();
+        let database = root.path().join("calendar.db");
+        std::fs::write(&database, b"synthetic").unwrap();
+        super::super::private_file::install(&database, "synthetic-private-payload").unwrap();
+        std::fs::remove_file(root.path().join(".cicada-sync-private/pairing.json")).unwrap();
+        std::fs::remove_dir(root.path().join(".cicada-sync-private")).unwrap();
+        assert!(read_with_default(&database, || panic!("Keychain must never be called")).is_err());
+        assert!(write_with_default(&database, "synthetic-private-payload", || panic!("Keychain must never be called")).is_err());
+    }
 
     #[cfg(target_os = "macos")]
     #[test]

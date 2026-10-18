@@ -21,6 +21,9 @@ use tokio_tungstenite::tungstenite::{
 mod schedule;
 #[path = "mvp_sync_secrets.rs"]
 mod secrets;
+#[cfg(target_os = "macos")]
+#[path = "mvp_sync_private_file.rs"]
+mod private_file;
 #[path = "mvp_sync_transport.rs"]
 mod transport;
 #[cfg(any(target_os = "android", test))]
@@ -29,6 +32,20 @@ mod background;
 
 const PROFILE: &str = "hanni-mvp-content-v1";
 pub(crate) fn relocate_credentials(source: &std::path::Path, target: &std::path::Path) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        if private_file::selected(source)? {
+            let raw = private_file::read_selected(source)?.ok_or("mvp_sync_private_file_unavailable")?;
+            let cfg = RelayConfig::parse(&raw)?;
+            let conn = open_existing(target.to_str().ok_or("mvp_sync_database_path")?)?;
+            transport::validate_scope(&conn, &transport::derive_config(&cfg)?)?;
+            private_file::install_relocated(source, target, &raw)?;
+            if private_file::read_selected(target)?.as_deref() != Some(raw.as_str()) { return Err("mvp_sync_credentials_verify_failed".into()); }
+            return Ok(());
+        }
+        // An explicit file destination must never trigger a source Keychain read.
+        if private_file::selected(target)? { return Err("mvp_sync_pairing_changed".into()); }
+    }
     if let Some(raw) = secrets::read(source)? {
         secrets::write(target, &raw)?;
         if secrets::read(target)?.as_deref() != Some(raw.as_str()) {
@@ -42,7 +59,7 @@ pub(crate) fn relocate_credentials(source: &std::path::Path, target: &std::path:
 pub(crate) fn seed_migration_credentials(path: &std::path::Path, raw: &str) -> Result<(), String> {
     secrets::write(path, raw)
 }
-#[cfg(all(test, windows))]
+#[cfg(all(test, any(windows, target_os = "macos")))]
 pub(crate) fn read_migration_credentials(path: &std::path::Path) -> Result<Option<String>, String> {
     secrets::read(path)
 }
@@ -106,6 +123,16 @@ impl RelayConfig {
             && self.key_id == other.key_id
             && self.key == other.key
     }
+}
+#[cfg(target_os = "macos")]
+pub(crate) fn configure_private_file(conn: &Connection, database: &std::path::Path, input: &std::path::Path) -> Result<(), String> {
+    let cfg = RelayConfig::parse(&private_file::read_external(input)?)?;
+    // Pin the existing sender/group scope before creating a file or changing settings.
+    transport::validate_scope(conn, &transport::derive_config(&cfg)?)?;
+    backup_before_enable_path(conn, database, cfg.enabled)?;
+    let raw = serde_json::to_string(&cfg).map_err(|_| "mvp_sync_invalid_config")?;
+    private_file::install(database, &raw)?;
+    enabled(conn, cfg.enabled)
 }
 fn encrypt_bytes(key: &[u8; 32], aad: &[u8], plain: &[u8]) -> Result<Vec<u8>, String> {
     crate::mvp_sync_crypto::seal(key, aad, plain)
@@ -187,7 +214,7 @@ fn status(conn: &Connection, runtime: &Runtime) -> Result<Value, String> {
                 .map(str::to_owned)
         });
     Ok(
-        json!({"configured":configured,"enabled":native["enabled"],"pending":native["pending_keys"].as_i64().unwrap_or(0),"conflicts":native["conflict_count"].as_i64().unwrap_or(0)+conflicts,"last_success":last_success,"last_error":error,"background_error":runtime.background_error.lock().map_err(|_| "mvp_sync_status_failed")?.clone(),"running":runtime.running.load(Ordering::SeqCst),"pull_more":runtime.pull_more.load(Ordering::SeqCst),"revision":native["revision"].as_str().unwrap_or("0")}),
+        json!({"configured":configured,"credential_store":secrets::storage_kind(&runtime.path).unwrap_or("unavailable"),"enabled":native["enabled"],"pending":native["pending_keys"].as_i64().unwrap_or(0),"conflicts":native["conflict_count"].as_i64().unwrap_or(0)+conflicts,"last_success":last_success,"last_error":error,"background_error":runtime.background_error.lock().map_err(|_| "mvp_sync_status_failed")?.clone(),"running":runtime.running.load(Ordering::SeqCst),"pull_more":runtime.pull_more.load(Ordering::SeqCst),"revision":native["revision"].as_str().unwrap_or("0")}),
     )
 }
 #[tauri::command]
@@ -205,8 +232,11 @@ fn enabled(conn: &Connection, value: bool) -> Result<(), String> {
     Ok(())
 }
 fn backup_before_enable(conn: &Connection, runtime: &Runtime, value: bool) -> Result<(), String> {
+    backup_before_enable_path(conn, &runtime.path, value)
+}
+fn backup_before_enable_path(conn: &Connection, path: &std::path::Path, value: bool) -> Result<(), String> {
     if value && db::get_setting_checked(conn, "content_sync_enabled")?.as_deref() != Some("true") {
-        crate::backup(conn, runtime.path.parent().ok_or("mvp_sync_database_path")?)
+        crate::backup(conn, path.parent().ok_or("mvp_sync_database_path")?)
             .map_err(|_| "mvp_sync_backup_failed")?;
     }
     Ok(())

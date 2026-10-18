@@ -703,7 +703,9 @@ pub fn run() {
                 let standard_instance_lock = acquire_instance_lock(&standard_dir)?;
                 let same_directory = standard_dir.canonicalize()? == source_dir.canonicalize()?;
                 let source_instance_lock = if same_directory { None } else { Some(acquire_instance_lock(&source_dir)?) };
-                if production_profile && data_location::apply_pending(&standard_dir, &source_dir).is_err() {
+                // Provision the currently locked profile without a pre-selection credential read.
+                // A pending data move is preserved for the next ordinary startup.
+                if production_profile && !startup_options.is_file_provisioning() && data_location::apply_pending(&standard_dir, &source_dir).is_err() {
                     data_location::record_failure(&standard_dir)?;
                 }
                 let data_dir = app_data_dir(app.handle())?;
@@ -723,6 +725,7 @@ pub fn run() {
                 connection.busy_timeout(Duration::from_secs(5))?;
                 init_schema(&connection)?;
                 data_sources::mark_new_profile(&connection, database_was_present)?;
+                startup_options.prepare_sync_file(&connection, &data_dir.join("calendar.db"))?;
                 app.manage(AppState(Mutex::new(connection)));
                 app.manage(instance_lock);
                 #[cfg(windows)]
