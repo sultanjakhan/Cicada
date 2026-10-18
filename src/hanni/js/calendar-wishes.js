@@ -173,8 +173,9 @@ export function mountCalendarWishes(element, dependencies = {}) {
   async function changeStatus(select) {
     const wish = findWish(select.dataset.wishStatus); if (!wish || busy) return;
     const next = select.value; if (next === wish.status) return;
+    const original = structuredClone(wish);
     busy = true; select.disabled = true;
-    try { await setWishStatus(wish.id, next, { invoke }); await refresh(); say(`«${wish.title}»: ${wishStatusLabel(next).toLowerCase()}.`); }
+    try { await setWishStatus(wish.id, next, { invoke, original }); await refresh(); say(`«${wish.title}»: ${wishStatusLabel(next).toLowerCase()}.`); }
     catch (cause) { select.value = wish.status; say(cause?.message || 'Не удалось сменить статус. Повтори.', true); }
     finally {
       busy = false;
