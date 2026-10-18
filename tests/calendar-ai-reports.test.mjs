@@ -14,7 +14,7 @@ async function waitForReports(host) {
     await tick();
   }
 }
-const task = (source_id, title) => ({ source_type:'note', source_id, title, tags:'', status_extra:'task', completed:false, archived:false, readonly:false });
+const task = (source_id, title) => ({ source_type:'note', source_id, title, tags:'task-sphere:personal', sphere:'personal', status_extra:'task', completed:false, archived:false, readonly:false });
 const report = (runId, taskKey, status, sequence = 1, agent = 'codex') => ({ runId, sequence, taskKey, agent, model:null, provider:null, stage:null, status, skillIds:[], mcpCalls:null, inputTokens:null, outputTokens:null });
 
 async function fixture() {
