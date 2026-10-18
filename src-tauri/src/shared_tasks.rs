@@ -1238,7 +1238,7 @@ mod tests {
         assert!(crate::remove(&mut c, &id, 4).is_err(), "ordinary deletion must preserve active rework");
         let app = mock_builder().manage(AppState(std::sync::Mutex::new(c)))
             .build(mock_context(noop_assets())).unwrap();
-        assert!(crate::calendar_compat::toggle_note_archive(id.clone(), app.state()).is_err(),
+        assert!(crate::calendar_compat::toggle_note_archive(id.clone(), None, app.state()).is_err(),
             "ordinary archive must preserve active rework");
         let state = app.state::<AppState>();
         let mut c = state.0.lock().unwrap();

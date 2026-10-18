@@ -37,6 +37,7 @@ async function setup(t, { realEditor = false, fixtureRows = null } = {}) {
     { id: 4, title: 'Archived', content: 'Архив', tab_name: 'calendar', status: 'note', archived: true, updated_at: 'archive-v1' },
     { id: 5, title: 'Other', content: 'Не в календаре', tab_name: 'other', status: 'note', updated_at: 'other-v1' },
   ];
+  for (const row of rows) row.version ??= 1;
   const before = new Map(), calls = [], editors = []; let editorFailure = false, version = 0;
   const invoke = async (name, args) => {
     calls.push({ name, args: structuredClone(args) }); if (before.has(name)) await before.get(name)(args);
@@ -47,7 +48,7 @@ async function setup(t, { realEditor = false, fixtureRows = null } = {}) {
       const row = rows.find(row => String(row.id) === String(args.id)); Object.assign(row, { title: args.title, content: args.content, tags: args.tags, updated_at: 'saved' + ++version });
       if (args.contentBlocks != null) row.content_blocks = args.contentBlocks; return;
     }
-    if (name === 'toggle_note_archive') { const row = rows.find(row => String(row.id) === String(args.id)); row.archived = !row.archived; row.updated_at = 'archive' + ++version; return row.archived; }
+    if (name === 'toggle_note_archive') { const row = rows.find(row => String(row.id) === String(args.id)); if (!row || (args.expectedVersion != null && row.version !== args.expectedVersion)) throw new Error('note changed elsewhere or was deleted'); row.archived = !row.archived; row.version++; row.updated_at = 'archive' + ++version; return row.archived; }
     throw new Error('Unexpected IPC ' + name);
   };
   const createEditor = (id, output, onChange, options) => {
@@ -286,4 +287,41 @@ test('disposing during fresh-read validation prevents a late update against anot
   const x = await setup(t), modal = await x.open(1), gate = deferred(); x.set(modal, 'content', 'Не отправлять после ухода'); x.before.set('get_note', () => gate.promise);
   modal.querySelector('[type=submit]').click(); await tick(); x.dispose(); x.before.delete('get_note'); gate.resolve(); await tick();
   assert.equal(x.calls.some(call => call.name === 'update_note'), false); assert.equal(x.rows[0].content, 'Исходный текст');
+});
+
+test('archive rejects a remote archive racing after the reviewed read', async t => {
+  const x = await setup(t), modal = await x.open(1);
+  let remote;
+  x.before.set('toggle_note_archive', () => { Object.assign(x.rows[0], {archived:true,version:2,updated_at:'remote-archive',content:'Remote content'}); remote=structuredClone(x.rows[0]); });
+  modal.querySelector('[data-archive]').click(); await tick();
+  assert.deepEqual(x.rows[0], remote, 'the local archive must not restore the remote archive or change its content');
+  assert.equal(x.calls.find(c => c.name === 'toggle_note_archive').args.expectedVersion, 1);
+  assert.equal(modal.isConnected, true);
+  assert.match(modal.querySelector('[data-dialog-error]').textContent, /могла измениться/);
+});
+
+for (const undo of [false, true]) test(`${undo ? 'undo' : 'restore'} rejects a remote restore racing after its read`, async t => {
+  const x = await setup(t);
+  let modal;
+  if (undo) {
+    modal = await x.open(1); modal.querySelector('[data-archive]').click(); await tick();
+    assert.equal(x.rows[0].archived, true);
+  } else modal = await x.open(4);
+  const row = x.rows[undo ? 0 : 3], reviewedVersion = row.version;
+  let remote;
+  x.before.set('toggle_note_archive', () => { Object.assign(row, {archived:false,version:reviewedVersion+1,updated_at:'remote-restore',content:'Remote content'}); remote=structuredClone(row); });
+  if (undo) x.root.querySelector('[data-undo]').click(); else modal.querySelector('[data-archive]').click();
+  await tick();
+  assert.deepEqual(row, remote, 'stale restore/undo must not rearchive the remote result');
+  assert.equal(x.calls.filter(c => c.name === 'toggle_note_archive').at(-1).args.expectedVersion, reviewedVersion);
+  if (!undo) assert.equal(modal.isConnected, true);
+  assert.match(undo ? x.root.textContent : modal.querySelector('[data-dialog-error]').textContent, /могла измениться/);
+});
+
+test('archive fails closed when the reviewed native version is unavailable', async t => {
+  const x = await setup(t), modal = await x.open(1);
+  x.before.set('get_note', () => { delete x.rows[0].version; });
+  modal.querySelector('[data-archive]').click(); await tick();
+  assert.equal(x.calls.some(c => c.name === 'toggle_note_archive'), false);
+  assert.equal(x.rows[0].archived, false); assert.equal(modal.isConnected, true);
 });
