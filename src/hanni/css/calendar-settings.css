@@ -391,3 +391,11 @@
 
 .calendar-settings-dialog--recommendations { width:min(500px,calc(100vw - 24px)); }
 .calendar-settings-dialog--recommendations .calendar-setting-hint { margin-top:0; }
+
+/* Fixed v1 bindings and bounded source preview inside the existing Connections panel. */
+.registry-source-settings { min-width:0; overflow-wrap:anywhere; }
+.registry-source-settings textarea { width:100%; min-height:120px; box-sizing:border-box; }
+.registry-field-map { width:100%; table-layout:fixed; border-collapse:collapse; font-size:12px; }
+.registry-field-map th, .registry-field-map td { padding:6px; text-align:left; vertical-align:top; overflow-wrap:anywhere; border-bottom:1px solid var(--border-default); }
+.registry-source-settings > button { min-height:48px; margin:4px 8px 4px 0; }
+.registry-source-settings :is(button,textarea,summary):focus-visible { outline:2px solid var(--text-primary); outline-offset:3px; }

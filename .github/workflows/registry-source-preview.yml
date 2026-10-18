@@ -1,0 +1,61 @@
+name: Selected registry source cloud checks
+on:
+  workflow_dispatch:
+  push:
+    branches: [work/5a617775-source-preview-01a14f82]
+permissions:
+  contents: read
+jobs:
+  dom:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: |
+          set -e
+          date -u +%FT%TZ
+          uname -s
+          pwd
+          git rev-parse HEAD HEAD^{tree}
+          python3 -B scripts/check-private-data.py
+          python3 -B scripts/check-public-history.py
+          npm install --prefix "$RUNNER_TEMP/registry-tools" --no-save --package-lock=false jsdom@29.1.1 playwright@1.62.1
+      - name: Strict registry and selected-source UI checks
+        env:
+          NODE_PATH: ${{ runner.temp }}/registry-tools/node_modules
+        run: node --test tests/work-registry.test.mjs tests/work-registry-view.test.mjs tests/registry-source-selection.test.mjs tests/imported-copy-onboarding.test.mjs
+      - name: Existing Connections component render
+        env:
+          NODE_PATH: ${{ runner.temp }}/registry-tools/node_modules
+        run: |
+          set -e
+          export REGISTRY_CHROME="$(command -v google-chrome)"
+          "$REGISTRY_CHROME" --version
+          node scripts/qa-registry-source-render.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: registry-source-${{ github.sha }}
+          path: .local/registry-source-render/
+          if-no-files-found: warn
+          retention-days: 3
+  native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        with:
+          workspaces: src-tauri -> target
+      - name: Existing Tauri Linux build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - name: Exact-file grant, bounds, revocation and confirmation checks
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked registry_source_ -- --nocapture

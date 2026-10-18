@@ -91,3 +91,35 @@ with task detail showing hierarchy, imported timestamp/source, freshness,
 operation/wait/check/decision and result. Bound calendar task cards can show
 the same read-only projection. No new top-level navigation or Settings
 dashboard is required. This placement awaits the navigation review.
+
+## Explicit selected-file preview
+
+The existing imported-registry section can select one published v1 JSON file.
+The Windows owned file chooser is the only production entry to content access;
+pasted paths and saved folder preferences are never read capabilities. Other
+platform choosers are unavailable until their own supported adapter exists.
+Selection creates one opaque, window-scoped, in-memory grant for at most ten
+minutes. Cancel creates no grant. Selecting another file revokes the old grant;
+explicit revoke and closing the settings section also release it. Grants are
+never saved or restored across restart.
+
+The reader rejects links/reparse points, changed/replaced identities, denied
+reads, non-regular files, invalid UTF-8/JSON, more than 1 MiB, 100 projects or
+1000 tasks. All reads recheck the exact selection. Confirmation rereads the
+content digest while holding the grant ordering through the existing registry
+CAS and checks both previewed projection and source-preference revisions.
+Failure preserves the editable JSON draft and does not change native tasks,
+timers or reviews. Refresh after revocation/restart requires a new selection.
+
+Bindings are fixed by v1: tasks.id, tasks.title, tasks.status, tasks.projectId,
+projects.id and source.sourceNamespace. IDs/namespaces are never generated or
+matched by title. Required fields have no inferred default; explicit unknown
+status remains unknown, and an observed done never accepts a native result.
+The preview shows at most 20 records with total count and bounded field/index
+errors. Confirmation retains the full validated projection. Existing pasted
+v1 JSON import remains a separate explicit manual action in the same component.
+
+A saved publisher/namespace snapshot is the persisted connection/projection,
+not a live file subscription or lasting filesystem grant. Current read success,
+read error, last successful read and observation freshness are separate from
+saved state. If this session has never read the file, last read is unknown.
