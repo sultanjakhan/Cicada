@@ -27,7 +27,7 @@ function runGate(payload, overrides = {}) {
         GITHUB_EVENT_NAME: 'workflow_run', GITHUB_REF: 'refs/heads/main', GITHUB_SHA: tip, ...overrides },
     });
     let outputs = '';
-    try { outputs = readFileSync(output, 'utf8'); } catch {}
+    try { outputs = readFileSync(output, 'utf8').replace(/\r\n/g, '\n'); } catch {}
     return { ...result, outputs };
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
