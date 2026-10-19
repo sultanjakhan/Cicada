@@ -1,7 +1,7 @@
 {
   "name": "cicada",
-  "version": "0.5.13",
-  "cicadaBuildId": "20261019-source-preview-0513.2",
+  "version": "0.5.14",
+  "cicadaBuildId": "20261019-goal-stale-save-0514.1",
   "private": true,
   "type": "module",
   "scripts": {
