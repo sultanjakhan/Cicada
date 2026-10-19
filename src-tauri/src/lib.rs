@@ -19,6 +19,9 @@ mod update_background;
 #[cfg(target_os = "macos")]
 mod update_macos;
 mod update_journal;
+mod update_control;
+#[cfg(windows)]
+mod update_control_pipe;
 mod calendar_compat;
 mod calendar_day_lifecycle;
 mod calendar_goal_lifecycle;
@@ -725,6 +728,12 @@ pub fn run() {
                 data_sources::mark_new_profile(&connection, database_was_present)?;
                 app.manage(AppState(Mutex::new(connection)));
                 app.manage(instance_lock);
+                #[cfg(windows)]
+                if !startup_options.is_one_shot() && production_profile {
+                    if update_control_pipe::start(app.handle().clone(), endpoint_root).is_err() {
+                        eprintln!("Cicada guarded update control unavailable");
+                    }
+                }
                 #[cfg(windows)]
                 if !startup_options.is_one_shot() {
                     if agent_pipe::start(app.handle().clone(), &data_dir, endpoint_root).is_err() {
