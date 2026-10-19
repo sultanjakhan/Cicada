@@ -21,7 +21,7 @@ var sw = Stopwatch.StartNew();
 var psi = new ProcessStartInfo(client, name) { UseShellExecute = false, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
 using var process = Process.Start(psi)!;
 using var stdioDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-await process.StandardInput.WriteAsync(Encoding.UTF8.GetString(frame), stdioDeadline.Token);
+await process.StandardInput.WriteAsync(Encoding.UTF8.GetString(frame).AsMemory(), stdioDeadline.Token);
 await process.StandardInput.FlushAsync(stdioDeadline.Token);
 process.StandardInput.Close();
 var outputTask = process.StandardOutput.ReadToEndAsync();
