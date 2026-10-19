@@ -16,6 +16,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+from urllib.parse import urlsplit, urlunsplit, quote
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -90,6 +91,25 @@ def ensure_asset_limit(*assets: Path) -> None:
         require(asset.is_file(), f'Missing update asset: {asset}')
         require(asset.stat().st_size <= MAX_ASSET_BYTES,
                 f'Update asset exceeds 25 MiB limit: {asset.name}')
+
+
+def runtime_descriptor(manifest: dict, build_id: str, feed: str) -> dict:
+    """Exact native Candidate serialization: version then Package field order."""
+    parsed = urlsplit(feed)
+    require(parsed.scheme == 'https' and parsed.hostname and not parsed.username and not parsed.password
+            and not parsed.query and not parsed.fragment, 'Invalid descriptor feed identity.')
+    require(manifest['platform'] == 'windows-x86_64', 'Only Windows control descriptors are supported.')
+    require(len(manifest['source']) == 40 and all(c in '0123456789abcdef' for c in manifest['source']), 'Invalid descriptor source.')
+    require(bool(build_id) and len(build_id) <= 128 and all(c.isascii() and (c.isalnum() or c in '._-') for c in build_id), 'Invalid compiled build ID.')
+    url = urlunsplit((parsed.scheme, parsed.netloc, '/releases/' + quote(manifest['asset']), '', ''))
+    candidate = {'version': manifest['version'], 'package': {
+        'url': url, 'signature': manifest['signature'], 'sha256': manifest['sha256'],
+        'size': manifest['size'], 'version_code': None,
+    }}
+    prepared_id = hashlib.sha256(json.dumps(candidate, separators=(',', ':'), ensure_ascii=False).encode()).hexdigest()
+    return {'schema_version': 1, 'identifier': 'app.hanni.mvp', 'platform': manifest['platform'],
+            'version': manifest['version'], 'source_commit': manifest['source'], 'build_id': build_id,
+            'prepared_id': prepared_id, 'installer_sha256': manifest['sha256'], 'installer_size': manifest['size']}
 
 
 def build_windows(commit: str, version: str) -> Path:
@@ -181,6 +201,15 @@ def main() -> None:
     }
     if version_code is not None:
         manifest['version_code'] = version_code
+    if args.platform == 'windows':
+        build_id = json.loads((ROOT / 'package.json').read_text(encoding='utf-8'))['cicadaBuildId']
+        descriptor = payload.with_name(payload.name + '.identity.json')
+        descriptor.write_text(json.dumps(runtime_descriptor(manifest, build_id, environment['HANNI_MVP_UPDATES_URL']), separators=(',', ':')) + '\n', encoding='utf-8', newline='\n')
+        descriptor_signature = sign(descriptor, environment)
+        require(descriptor.stat().st_size <= 16384 and descriptor_signature.stat().st_size <= 4096, 'Control descriptor exceeds native limits.')
+        manifest.update(control_descriptor_file=descriptor.name,
+                        control_descriptor_signature_file=descriptor_signature.name,
+                        control_descriptor_sha256=sha256(descriptor), build_id=build_id)
     manifest_path = destination_dir / 'manifest.json'
     manifest_path.write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
     ensure_asset_limit(manifest_path)

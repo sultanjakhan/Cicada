@@ -13,6 +13,7 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager, State};
 
 const PUBLIC_KEY: &str = include_str!("../update-public-key.txt");
+pub(crate) const CONTROL_PUBLIC_KEY: &str = PUBLIC_KEY;
 const MAX_PACKAGE: u64 = 160 * 1024 * 1024;
 const MAX_MANIFEST: u64 = 64 * 1024;
 const UPDATE_URL: Option<&str> = option_env!("HANNI_MVP_UPDATES_URL");
@@ -83,6 +84,13 @@ impl UiLease {
         now.saturating_duration_since(self.since) >= Duration::from_secs(30)
             && now.saturating_duration_since(self.reported_at) <= Duration::from_secs(90)
     }
+}
+fn consume_control_lease(lease: &mut Option<UiLease>, now: Instant) -> Result<(), String> {
+    if lease.as_ref().is_none_or(|lease| !lease.eligible_at(now)) {
+        return Err("control_fresh_safe_lease_required".into());
+    }
+    *lease = None;
+    Ok(())
 }
 struct Busy<'a>(&'a AtomicBool);
 impl Drop for Busy<'_> {
@@ -282,6 +290,9 @@ fn verify(bytes: &[u8], package: &Package, key: &str) -> Result<(), String> {
     {
         return Err("Пакет повреждён. Установка отменена.".into());
     }
+    verify_detached(bytes,&package.signature,key)
+}
+pub(crate) fn verify_detached(bytes: &[u8], signature: &str, key: &str) -> Result<(),String> {
     let decode = |s: &str| -> Result<String, String> {
         String::from_utf8(
             base64::engine::general_purpose::STANDARD
@@ -292,7 +303,7 @@ fn verify(bytes: &[u8], package: &Package, key: &str) -> Result<(), String> {
     };
     let key = minisign_verify::PublicKey::decode(&decode(key)?)
         .map_err(|_| "Некорректный ключ обновлений.")?;
-    let signature = minisign_verify::Signature::decode(&decode(&package.signature)?)
+    let signature = minisign_verify::Signature::decode(&decode(signature)?)
         .map_err(|_| "Некорректная подпись обновления.")?;
     key.verify(bytes, &signature, true)
         .map_err(|_| "Подпись обновления не прошла проверку. Установка отменена.".into())
@@ -680,6 +691,15 @@ fn auto_install_allowed(app: &AppHandle, state: &UpdateState) -> Result<(), Stri
     Ok(())
 }
 
+fn control_window_allowed(app: &AppHandle) -> Result<(), String> {
+    let window = app.get_webview_window("main").ok_or("control_interactive_renderer_required")?;
+    if window.is_focused().map_err(|_| "control_window_unknown")?
+        || (window.is_visible().map_err(|_| "control_window_unknown")? && !window.is_minimized().map_err(|_| "control_window_unknown")?) {
+        return Err("control_window_active".into());
+    }
+    Ok(())
+}
+
 /// Preserve the old IPC name, but never let an old renderer install silently.
 #[tauri::command(rename_all = "camelCase")]
 pub async fn mvp_update_auto_install<R: tauri::Runtime>(
@@ -756,6 +776,87 @@ pub(crate) async fn install_update(
     if automatic {
         return Err("Установка обновления требует твоего действия в Cicada.".into());
     }
+    install_authorized(app, state, expected_version, InstallAuthority::ExplicitUi).await
+}
+
+enum InstallAuthority<'a> {
+    ExplicitUi,
+    AuthorizedControl { operation_id: &'a str, prepared_id: &'a str },
+}
+
+pub(crate) fn control_production_allowed(app: &AppHandle) -> Result<(), String> {
+    if !crate::is_production_profile(app)? { return Err("control_production_profile_required".into()); }
+    #[cfg(windows)]
+    if installed_windows_binary().is_none() { return Err("control_installed_executable_required".into()); }
+    // First control transport is Windows-only. No unvalidated portable copy,
+    // closed-app runner or isolated profile inherits this capability.
+    #[cfg(not(windows))]
+    return Err("control_platform_unsupported".into());
+    #[cfg(windows)]
+    Ok(())
+}
+fn candidate_identity(candidate: &Candidate) -> Result<String, String> {
+    Ok(hex::encode(Sha256::digest(serde_json::to_vec(candidate).map_err(|_| "control_invalid_candidate")?)))
+}
+fn read_control_descriptor(app: &AppHandle, candidate: &Candidate) -> Result<crate::update_runtime_identity::StoredDescriptor,String> {
+    let (_,meta)=prepared_paths(app,&candidate.version)?;
+    let read=|path: std::path::PathBuf,limit:u64| -> Result<String,String> {
+        use std::io::Read;
+        let file=std::fs::File::open(path).map_err(|_| "control_signed_descriptor_required")?;
+        if file.metadata().map_err(|_| "control_descriptor_unavailable")?.len()>limit {return Err("control_descriptor_oversized".into());}
+        let mut bytes=Vec::new();file.take(limit+1).read_to_end(&mut bytes).map_err(|_| "control_descriptor_unavailable")?;
+        if bytes.len() as u64>limit {return Err("control_descriptor_oversized".into());}
+        String::from_utf8(bytes).map_err(|_| "control_descriptor_invalid".into())
+    };
+    let stored=crate::update_runtime_identity::StoredDescriptor{raw:read(meta.with_file_name("control-descriptor.json"),16384)?,signature:read(meta.with_file_name("control-descriptor.json.sig"),4096)?};
+    validate_control_descriptor(candidate,&stored)?;Ok(stored)
+}
+fn validate_control_descriptor(candidate: &Candidate, stored: &crate::update_runtime_identity::StoredDescriptor) -> Result<(),String> {
+    let d=crate::update_runtime_identity::verify(&stored.raw,&stored.signature,PUBLIC_KEY)?;
+    if d.version!=candidate.version || d.prepared_id!=candidate_identity(candidate)? || d.installer_sha256!=candidate.package.sha256 || d.installer_size!=candidate.package.size {return Err("control_descriptor_package_mismatch".into());}
+    Ok(())
+}
+pub(crate) async fn prepare_control_descriptor(app: AppHandle) -> Result<(),String> {
+    control_production_allowed(&app)?;
+    let state=app.state::<UpdateState>();let _busy=state.acquire()?;
+    let candidate=state.candidate.lock().map_err(|_| "control_state_busy")?.clone().ok_or("control_candidate_required")?;
+    read_prepared(&app,&candidate)?.ok_or("control_prepared_package_required")?;
+    let (feed,token)=config()?;
+    let url=package_url(&feed,&format!("{}.identity.json",candidate.package.url))?;
+    let sig_url=package_url(&feed,&format!("{}.identity.json.sig",candidate.package.url))?;
+    let raw=String::from_utf8(fetch(url,token.clone(),16384,|_|{}).await?).map_err(|_| "control_descriptor_invalid")?;
+    let signature=String::from_utf8(fetch(sig_url,token,4096,|_|{}).await?).map_err(|_| "control_descriptor_invalid")?;
+    let stored=crate::update_runtime_identity::StoredDescriptor{raw,signature};validate_control_descriptor(&candidate,&stored)?;
+    let (_,meta)=prepared_paths(&app,&candidate.version)?;
+    crate::update_journal::atomic_write(&meta.with_file_name("control-descriptor.json"),stored.raw.as_bytes())?;
+    crate::update_journal::atomic_write(&meta.with_file_name("control-descriptor.json.sig"),stored.signature.as_bytes())?;
+    Ok(())
+}
+pub(crate) fn control_status(app: &AppHandle) -> Result<serde_json::Value, String> {
+    let state = app.state::<UpdateState>();
+    let status = state.snapshot(app);
+    let candidate = state.candidate.lock().map_err(|_| "control_state_busy")?.clone();
+    let prepared = candidate.as_ref().and_then(|c| {
+        (matches!(read_prepared(app,c),Ok(Some(_))) && read_control_descriptor(app,c).is_ok()).then(|| candidate_identity(c).ok()).flatten()
+    });
+    // No feed access token, profile, signed URL, release notes or personal data.
+    Ok(serde_json::json!({"installed_version":status.installed_version,"phase":status.phase,
+        "version":status.version,"prepared_id":prepared,"configured":status.configured}))
+}
+pub(crate) async fn control_install(app: AppHandle, operation_id: &str, expected_version: &str, prepared_id: &str) -> Result<UpdateStatus,String> {
+    control_production_allowed(&app)?;
+    if app.get_webview_window("main").is_none() { return Err("control_interactive_renderer_required".into()); }
+    auto_install_allowed(&app,app.state::<UpdateState>().inner())?;
+    install_authorized(app.clone(),app.state(),expected_version.into(),InstallAuthority::AuthorizedControl { operation_id, prepared_id }).await
+}
+
+async fn install_authorized(
+    app: AppHandle,
+    state: State<'_, UpdateState>,
+    expected_version: String,
+    authority: InstallAuthority<'_>,
+) -> Result<UpdateStatus, String> {
+    let automatic = matches!(authority, InstallAuthority::AuthorizedControl { .. });
     let _busy = state.acquire()?;
     let candidate = state
         .candidate
@@ -765,6 +866,16 @@ pub(crate) async fn install_update(
         .ok_or("Сначала проверь обновления.")?;
     if candidate.version != expected_version {
         return Err("Доступная версия изменилась. Повтори проверку.".into());
+    }
+    if let InstallAuthority::AuthorizedControl { prepared_id, .. } = &authority {
+        control_production_allowed(&app)?;
+        auto_install_allowed(&app,state.inner())?;
+        if candidate_identity(&candidate)? != *prepared_id { return Err("control_prepared_identity_changed".into()); }
+        // Unlike explicit UI, control never silently downloads/replaces a cache.
+        read_prepared(&app,&candidate)?.ok_or("control_prepared_package_required")?;
+        read_control_descriptor(&app,&candidate)?;
+        let journal = crate::update_control::Journal::open(&crate::update_control::journal_path(&app)?)?;
+        if journal.install_committed()? { return Err("control_install_outcome_unknown".into()); }
     }
     #[cfg(target_os = "macos")]
     let macos_target = crate::update_macos::capture_install_target(&app)?;
@@ -791,7 +902,9 @@ pub(crate) async fn install_update(
             s.error = None;
             s.downloaded = 0;
         });
-        let bytes = if let Ok(Some(bytes)) = read_prepared(&app, &candidate) {
+        let prepared = read_prepared(&app, &candidate);
+        if automatic && !matches!(&prepared,Ok(Some(_))) { return Err("control_prepared_package_required".into()); }
+        let bytes = if let Ok(Some(bytes)) = prepared {
             state.change(&app, |s| s.downloaded = candidate.package.size);
             bytes
         } else {
@@ -879,7 +992,7 @@ pub(crate) async fn install_update(
                 .await
                 .map_err(|_| "Не удалось подтвердить выпуск.")?
                 .ok_or("Выпуск изменился. Повтори проверку.")?;
-            let update = update.restart_after_install(!automatic);
+            let update = update.restart_after_install(true);
             if automatic {
                 auto_install_allowed(&app, state.inner())?;
             }
@@ -898,9 +1011,35 @@ pub(crate) async fn install_update(
             )?;
             #[cfg(target_os = "macos")]
             crate::update_macos::revalidate_install_target(&app, &macos_target)?;
+            // No await after this point. Hold native timeline + renderer locks
+            // until the existing synchronous installer accepts the signed bytes.
+            // A consumed lease cannot authorize a second install operation.
+            let control_state = app.state::<crate::AppState>();
+            let mut control_lease = None;
+            let mut control_database = None;
+            if let InstallAuthority::AuthorizedControl { operation_id, prepared_id } = &authority {
+                control_production_allowed(&app)?;
+                auto_install_allowed(&app,state.inner())?;
+                control_database = Some(control_state.0.lock().map_err(|_| "control_timeline_busy")?);
+                let active: bool = control_database.as_ref().unwrap().query_row("SELECT EXISTS(SELECT 1 FROM timeline_blocks WHERE is_active=1)",[],|r|r.get(0)).map_err(|_| "control_timeline_unavailable")?;
+                if active { return Err("control_active_timeline".into()); }
+                control_lease = Some(state.ui_safe.lock().map_err(|_| "control_lease_unavailable")?);
+                if control_lease.as_ref().unwrap().as_ref().is_none_or(|lease| !lease.eligible_at(Instant::now())) { return Err("control_fresh_safe_lease_required".into()); }
+                // Repeat full package identity/hash/signature validation at commit.
+                if candidate_identity(&candidate)? != *prepared_id { return Err("control_prepared_identity_changed".into()); }
+                let fresh = read_prepared(&app,&candidate)?.ok_or("control_prepared_package_required")?;
+                if fresh != bytes { return Err("control_prepared_package_changed".into()); }
+                control_window_allowed(&app)?;
+                if control_lease.as_ref().unwrap().as_ref().is_none_or(|lease| !lease.eligible_at(Instant::now())) { return Err("control_fresh_safe_lease_required".into()); }
+                let mut journal = crate::update_control::Journal::open(&crate::update_control::journal_path(&app)?)?;
+                let descriptor=read_control_descriptor(&app,&candidate)?;
+                journal.commit_install(operation_id,&candidate.version,prepared_id,&descriptor)?;
+                consume_control_lease(control_lease.as_mut().unwrap(),Instant::now())?;
+            }
             update
                 .install(&bytes)
                 .map_err(|_| "Не удалось запустить установку. Повтори попытку.")?;
+            drop(control_lease); drop(control_database);
             #[cfg(target_os = "macos")]
             {
                 let _ =
@@ -992,6 +1131,20 @@ mod tests {
         assert!(app.state::<super::UpdateState>().candidate.lock().unwrap().is_none());
     }
     use super::*;
+    #[test]
+    fn authorized_control_consumes_only_continuously_safe_fresh_renderer_lease() {
+        let now=Instant::now();
+        let mut lease=Some(UiLease {since:now,reported_at:now});
+        assert!(consume_control_lease(&mut lease,now+Duration::from_secs(29)).is_err());
+        assert!(consume_control_lease(&mut lease,now+Duration::from_secs(30)).is_ok());
+        assert!(consume_control_lease(&mut lease,now+Duration::from_secs(30)).is_err());
+        lease=Some(UiLease {since:now,reported_at:now});
+        assert!(consume_control_lease(&mut lease,now+Duration::from_secs(91)).is_err());
+        let state=UpdateState::default();
+        state.report_activity(UpdateActivity{safe_to_install:true,hidden:true},now);
+        state.report_activity(UpdateActivity{safe_to_install:false,hidden:true},now+Duration::from_secs(31));
+        assert!(consume_control_lease(&mut state.ui_safe.lock().unwrap(),now+Duration::from_secs(32)).is_err());
+    }
     #[test]
     fn returning_to_editor_or_missing_heartbeat_restarts_safe_wait() {
         let state = UpdateState::default();

@@ -1,0 +1,77 @@
+name: pipe-client-timeout-fixture
+on:
+  push:
+    paths:
+      - 'tools/local-pipe-client/**'
+jobs:
+  windows-fixture:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.101'
+      - name: Prepare baseline source
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force baseline | Out-Null
+          Copy-Item tools/local-pipe-client/Program.cs baseline/Program.cs
+          (Get-Content baseline/Program.cs -Raw).Replace('args[0].StartsWith("CicadaAgent-", StringComparison.Ordinal) ? 15000 : 3000','3000') | Set-Content baseline/Program.cs -Encoding utf8
+          Copy-Item tools/local-pipe-client/LocalPipeClient.csproj baseline/LocalPipeClient.csproj
+      - name: Build clients and fixture
+        run: |
+          dotnet build baseline/LocalPipeClient.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet build tools/local-pipe-client/LocalPipeClient.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet build tools/local-pipe-client/tests/PipeFixture.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run synthetic busy-pipe checks
+        shell: pwsh
+        run: |
+          dotnet run --project tools/local-pipe-client/tests/PipeFixture.csproj -c Release --no-build -- baseline/bin/Release/net10.0-windows/LocalPipeClient.exe baseline
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet run --project tools/local-pipe-client/tests/PipeFixture.csproj -c Release --no-build -- tools/local-pipe-client/bin/Release/net10.0-windows/LocalPipeClient.exe fixed
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet run --project tools/local-pipe-client/tests/PipeFixture.csproj -c Release --no-build -- tools/local-pipe-client/bin/Release/net10.0-windows/LocalPipeClient.exe agentcity AgentCityAgent
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify prefix-specific timeout policy
+        shell: pwsh
+        run: |
+          $source = Get-Content tools/local-pipe-client/Program.cs -Raw
+          if ($source -notmatch 'StartsWith\("CicadaAgent-".*15000.*3000' -or $source -notmatch '\(CicadaAgent\|AgentCityAgent\)-') { throw 'prefix timeout policy changed' }
+      - name: Run buffered frame and adversarial checks
+        shell: pwsh
+        run: |
+          dotnet run --project tools/local-pipe-client/tests/PipeFixture.csproj -c Release --no-build -- tools/local-pipe-client/bin/Release/net10.0-windows/LocalPipeClient.exe frames
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Create SHA256 manifest
+        shell: pwsh
+        run: |
+          $files = @(
+            'tools/local-pipe-client/bin/Release/net10.0-windows/LocalPipeClient.exe',
+            'tools/local-pipe-client/bin/Release/net10.0-windows/LocalPipeClient.dll',
+            'tools/local-pipe-client/bin/Release/net10.0-windows/LocalPipeClient.deps.json',
+            'tools/local-pipe-client/bin/Release/net10.0-windows/LocalPipeClient.runtimeconfig.json',
+            'tools/local-pipe-client/Program.cs')
+          $entries = foreach ($file in $files) {
+            $hash = (Get-FileHash -Algorithm SHA256 $file).Hash
+            [pscustomobject]@{ path = $file; sha256 = $hash }
+          }
+          [pscustomobject]@{ commit = (git rev-parse HEAD).Trim(); files = @($entries) } |
+            ConvertTo-Json -Depth 4 | Set-Content tools/local-pipe-client/SHA256-manifest.json -Encoding utf8
+      - name: Upload candidate and manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: pc-api-timeout-repair-candidate
+          path: |
+            tools/local-pipe-client/bin/Release/net10.0-windows/LocalPipeClient.exe
+            tools/local-pipe-client/bin/Release/net10.0-windows/LocalPipeClient.dll
+            tools/local-pipe-client/bin/Release/net10.0-windows/LocalPipeClient.deps.json
+            tools/local-pipe-client/bin/Release/net10.0-windows/LocalPipeClient.runtimeconfig.json
+            tools/local-pipe-client/Program.cs
+            tools/local-pipe-client/SHA256-manifest.json
+
