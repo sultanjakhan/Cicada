@@ -81,3 +81,8 @@
 .calendar-day-lifecycle [data-day-status]:empty { display:none; }
 .calendar-day-lifecycle [data-day-plan-today] { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; }
 .calendar-day-lifecycle [data-day-plan-today] h3 { margin:8px 0; font-size:13px; }
+
+/* Keep the appearance action beside Today, outside the ellipsized date. */
+.calendar-day-banner .today-date { display:flex; align-items:center; gap:8px; }
+.calendar-day-banner .today-date h2 { min-width:0; }
+.calendar-day-banner .today-date .calendar-theme-control { flex:0 0 40px; width:40px; min-height:40px; padding:0; margin-left:0; }
