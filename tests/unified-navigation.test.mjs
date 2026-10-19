@@ -27,3 +27,21 @@ test('pane replacement retains focus on the selected Tasks/Routines button and p
   }
   dom.window.close();
 });
+
+test('Dashboard Today control and every other pane fallback remain exclusive through remounts',async()=>{
+ const {mountCalendarDayBanner}=await import('../src/hanni/js/calendar-day-banner.js');
+ for(const mobile of [false,true]){
+  const dom=new JSDOM('<div id="mobile-header"></div><main></main>',{url:'https://fixture.invalid',pretendToBeVisual:true}),d=dom.window.document,host=d.querySelector('main');
+  const source=fs.readFileSync(new URL('../src/hanni/js/unified-layout.js',import.meta.url),'utf8').replace(/^\uFEFF/,'').replace(/^import .*;\r?\n/gm,'').replace(/export /g,'');
+  const state={theme:'light'},setTheme=value=>{state.theme=value;dom.window.localStorage.setItem('hanni_theme',value);dom.window.dispatchEvent(new dom.window.Event('hanni:theme-changed'));};
+  const render=new Function('S','invoke','TAB_ICONS','escapeHtml','document','window','localStorage','mountThemeControl','setTheme','IS_MOBILE',source+'\nreturn renderUnifiedLayout;')(state,async()=>null,{},x=>x,d,dom.window,dom.window.localStorage,mountThemeControl,setTheme,mobile);
+  let dispose;const config={themeInToday:true,beforeRender:()=>{dispose?.();dispose=null;},panes:['dash','tasks','goals','routines','notes','table'].map(id=>({id,label:id})),renderDash:p=>{dispose=mountCalendarDayBanner(p,{invoke:async()=>null,theme:{getTheme:()=>state.theme,setTheme}});}};
+  for(const id of ['dash','tasks','goals','routines','notes','table','dash','tasks','dash']){
+   state._unifiedPane={calendar:id};await render(host,'calendar',config);
+   const buttons=d.querySelectorAll('[data-home-theme]');assert.equal(buttons.length,1,`${mobile} ${id}`);
+   const button=buttons[0];assert.equal(button.parentElement,id==='dash'?host.querySelector('.today-date'):mobile?d.querySelector('#mobile-header'):host.querySelector('.uni-header'));
+   button.focus();assert.equal(d.activeElement,button);button.click();assert.equal(button.getAttribute('aria-pressed'),String(state.theme==='dark'));assert.equal(dom.window.localStorage.getItem('hanni_theme'),state.theme);
+  }
+  dispose?.();dom.window.close();
+ }
+});

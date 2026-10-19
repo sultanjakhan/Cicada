@@ -727,6 +727,7 @@ export async function loadCalendarWorkspace(el, { nativeReview = true } = {}) {
         onCurrentTaskChange: value => disposeRecurring?.setCurrentTask(value),
       });
     },
+    themeInToday: true,
     panes: [{id:'dash',label:uiCopy("Дашборд")}, {id:'table',label:uiCopy("Календарь")}, {id:'tasks',label:uiCopy("Задачи")}, {id:'routines',label:uiCopy("Рутины")}, {id:'notes',label:uiCopy("Заметки")}, {id:'goals',label:uiCopy("Цели")}],
     renderDash: (pane) => {
       pane.innerHTML = `<section class="calendar-today" aria-label="${uiCopy("Сегодня")}">
