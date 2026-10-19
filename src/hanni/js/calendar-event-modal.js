@@ -9,7 +9,7 @@ import { createCalendarDialog } from './calendar-dialog.js';
 import { CREATE_TYPES, SCHEDULE_TYPES, createType, createTypeButtons } from './calendar-create-types.js';
 import { TASK_SPHERES, PERSONAL_SPHERES } from './task-model.js';
 import { DELETED_STAGE_LABEL, findProcess, loadProcesses, mountStageTime, taskProcessId } from './task-processes.js';
-import { readEventCreateAttempt, writeEventCreateAttempt, clearEventCreateAttempt, recoverEventCreateAttempt, readCreatedEvent, matchesCreatedEvent } from './calendar-event-create-attempt.js';
+import { readEventCreateAttempt, writeEventCreateAttempt, clearEventCreateAttempt, activateSeparateEventAttempt, recoverEventCreateAttempt, readCreatedEvent, matchesCreatedEvent } from './calendar-event-create-attempt.js';
 // Default time is the exact current local minute. Rounding made a modal opened
 // at 08:09 misleadingly show 08:10 even though "Создать и начать" starts now.
 function currentLocalTime() {
@@ -149,6 +149,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
   let importantChanged = false;
   let eventAttempt = null, attemptReadError = null, restoredEventDraft = false, restoreEventDraft = () => {};
   let acknowledgedEventPayload = null;
+  let knownEventOutcome = null, reconcileButton = null, reconciliationDialog = null;
   if (!isEdit) {
     try { eventAttempt = readEventCreateAttempt(window.localStorage); }
     catch (error) { attemptReadError = error; }
@@ -302,6 +303,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
   }, { signal: keyCtl.signal });
   new MutationObserver((_, obs) => {
     if (!document.body.contains(overlay)) {
+      reconciliationDialog?.dispose();
       keyCtl.abort(); obs.disconnect();
       if (document.activeElement === document.body) {
         if (options.returnFocus) options.returnFocus();
@@ -494,6 +496,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
   }));
   const setPending = value => {
     pending = value;
+    if (reconcileButton) reconcileButton.disabled = value;
     overlay.querySelector('#evm-form').setAttribute('aria-busy', String(value));
     overlay.querySelectorAll('#evm-save, #evm-start-now, #evm-del, #evm-close, #evm-cancel').forEach(btn => { btn.disabled = value; });
     if (changed) overlay.querySelector('#evm-cancel').textContent = 'Закрыть';
@@ -615,6 +618,51 @@ export async function showEventModal(eventId = null, initialDate = null, options
       return true;
     } catch { showError('Не удалось сохранить черновик запроса. Форма осталась открытой; новое событие не отправлено.'); return false; }
   }
+  function offerSeparateEvent(outcome) {
+    knownEventOutcome = outcome; reconcileButton.hidden = false; setPending(false);
+    showError(outcome.state === 'missing'
+      ? 'Прежнее сохранение подтверждено, но событие удалено или архивировано. Черновик остался в форме. Можно явно создать отдельное событие.'
+      : 'Прежнее сохранение подтверждено, но событие изменилось. Оно не будет перезаписано. Черновик остался в форме; можно явно создать отдельное событие.');
+  }
+  reconcileButton = document.createElement('button');
+  reconcileButton.type = 'button'; reconcileButton.className = 'btn-secondary'; reconcileButton.dataset.eventCreateSeparate = '';
+  reconcileButton.hidden = true; reconcileButton.textContent = 'Создать отдельное событие…';
+  overlay.querySelector('#evm-error').after(reconcileButton);
+  reconcileButton.addEventListener('click', () => {
+    if (pending || reconciliationDialog || !knownEventOutcome || !eventAttempt || eventAttempt.nextIntent) return;
+    if (!rememberEventDraft()) return;
+    setPending(true);
+    const confirmation = createCalendarDialog({ document, title: 'Создать отдельное событие?',
+      hint: 'Текущий черновик станет отдельным новым событием. Прежнее событие, его связи и таймеры не изменятся.',
+      submitLabel: 'Подтвердить новый запрос',
+      returnFocus: () => reconcileButton.focus(),
+      onClose: () => { reconciliationDialog = null; setPending(false); rememberEventDraft(); } });
+    reconciliationDialog = confirmation; confirmation.modal.dataset.eventCreateConfirm = '';
+    const summary = document.createElement('p'); summary.textContent = eventDraft().title; confirmation.body.append(summary);
+    confirmation.form.addEventListener('submit', async event => {
+      event.preventDefault(); if (confirmation.pending) return;
+      confirmation.setPending(true); confirmation.showError('');
+      try {
+        const current = readEventCreateAttempt(window.localStorage);
+        if (!current || current.operationId !== eventAttempt.operationId) throw Error('event_create_other_attempt');
+        // Recheck authority at confirmation; a failed read must never authorize rotation.
+        const outcome = await recoverEventCreateAttempt(invoke, current);
+        if (!overlay.isConnected || !confirmation.modal.isConnected || options.isCurrent?.() === false) throw Error('event_create_editor_closed');
+        if (!outcome || (outcome.state === 'available' && matchesCreatedEvent(outcome.event, current.payload))) throw Error('event_create_review_again');
+        current.draft = eventDraft();
+        current.nextIntent = { operationId: current.nextIntent?.operationId || window.crypto.randomUUID(), receiptId: outcome.id };
+        writeEventCreateAttempt(window.localStorage, current); eventAttempt = current;
+        knownEventOutcome = null; reconcileButton.hidden = true;
+        confirmation.setPending(false); confirmation.close();
+        showError('Отдельный новый запрос подтверждён. Черновик сохранён. Проверь данные и нажми «Создать событие» или «Создать и начать сейчас».');
+      } catch {
+        knownEventOutcome = null; reconcileButton.hidden = true;
+        confirmation.setPending(false);
+        confirmation.showError('Не удалось подтвердить прежнее сохранение. Запрос и черновик сохранены; новый запрос не подготовлен. Закрой это окно и повтори проверку.');
+      }
+    });
+    confirmation.open();
+  });
   restoreEventDraft = () => {
     restoredEventDraft = true;
     if (attemptReadError) { showError('Не удалось прочитать прежний запрос. Новое событие не создаётся.'); return; }
@@ -625,11 +673,18 @@ export async function showEventModal(eventId = null, initialDate = null, options
     untimed.checked = draft.untimed; overlay.querySelector('#evm-desc').value = draft.description;
     const category = overlay.querySelector('#evm-cat');
     if (![...category.options].some(option => option.value === draft.category)) category.add(new Option(draft.category, draft.category));
-    category.value = draft.category;
+    category.value = draft.category; category.dataset.prev = draft.category;
     overlay.querySelector('.evm-priority').dataset.evmPriority = String(draft.priority);
     overlay.querySelectorAll('[data-pri]').forEach(button => { const selected = Number(button.dataset.pri) === draft.priority; button.classList.toggle('active', selected); button.setAttribute('aria-pressed', String(selected)); });
-    goalDraft = draft.goalId; endDateExpanded = draft.endDate !== draft.date;
-    showError('Предыдущее сохранение не подтверждено. Черновик восстановлен; повторная попытка сначала проверит тот же запрос.');
+    goalDraft = draft.goalId;
+    if (goalsReady) {
+      if (goalDraft && ![...goalSelect.options].some(option => option.value === goalDraft)) goalSelect.add(new Option('Выбранная цель недоступна', goalDraft));
+      goalSelect.value = goalDraft || ''; updateGoalPath();
+    }
+    endDateExpanded = draft.endDate !== draft.date;
+    showError(eventAttempt.nextIntent
+      ? 'Отдельный новый запрос подтверждён. Черновик восстановлен; нажми «Создать событие» или «Создать и начать сейчас».'
+      : 'Предыдущее сохранение не подтверждено. Черновик восстановлен; повторная попытка сначала проверит тот же запрос.');
   };
   overlay.addEventListener('input', rememberEventDraft);
   overlay.addEventListener('change', rememberEventDraft);
@@ -795,7 +850,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
       } finally { setPending(false); }
       if (!overlay.isConnected || options.isCurrent?.() === false || categoryRefreshFailed) return;
     }
-    const now = startNow ? (eventAttempt?.startNow ? { date: eventAttempt.payload.date, time: eventAttempt.payload.time, value: new Date(`${eventAttempt.payload.date}T12:00:00`) } : localNowParts()) : null;
+    const now = startNow ? (eventAttempt?.startNow && !eventAttempt.nextIntent ? { date: eventAttempt.payload.date, time: eventAttempt.payload.time, value: new Date(`${eventAttempt.payload.date}T12:00:00`) } : localNowParts()) : null;
     const date = now?.date || dateInput.value;
     const time = now?.time || (untimed.checked ? '' : timeInput.value);
     const dur = untimed.checked ? (startNow ? Number(durInput.value) : 0) : readDuration();
@@ -810,6 +865,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
     const catColor = (isEdit && cat === initCat ? event.color : null) || cats.find(c => c.name === cat)?.color || '#9B9B9B';
     const payload = { title, description: desc, date, time, durationMinutes: dur, category: cat, color: catColor, priority: pri };
     setPending(true);
+    knownEventOutcome = null; reconcileButton.hidden = true;
 
     try {
       if (savedEventId != null) {
@@ -828,10 +884,15 @@ export async function showEventModal(eventId = null, initialDate = null, options
         if (attemptReadError) throw Error('event_create_invalid_attempt');
         let attempt = readEventCreateAttempt(window.localStorage), recovered = null;
         const draft = eventDraft();
+        if (attempt?.nextIntent) {
+          const separate = { version: 1, operationId: attempt.nextIntent.operationId, payload, originalDraft: draft, draft, startNow, startAttempted: false };
+          attempt = activateSeparateEventAttempt(window.localStorage, attempt, separate); eventAttempt = attempt;
+        }
         if (attempt) {
           eventAttempt = attempt; attempt.draft = draft; writeEventCreateAttempt(window.localStorage, attempt);
-          recovered = await recoverEventCreateAttempt(invoke, attempt);
-          if (recovered && !matchesCreatedEvent(recovered, attempt.payload)) throw Error('event_create_changed');
+          const outcome = await recoverEventCreateAttempt(invoke, attempt);
+          if (outcome && (outcome.state === 'missing' || !matchesCreatedEvent(outcome.event, attempt.payload))) { offerSeparateEvent(outcome); return; }
+          recovered = outcome?.event || null;
           if (JSON.stringify(attempt.originalDraft) !== JSON.stringify(draft) || attempt.startNow !== startNow) {
             if (!recovered) throw Error('event_create_payload_changed');
             savedEventId = recovered.id; savedVersion = recovered.version; acknowledgedEventPayload = attempt.payload; changed = true;
@@ -843,8 +904,10 @@ export async function showEventModal(eventId = null, initialDate = null, options
           attempt = { version: 1, operationId: window.crypto.randomUUID(), payload, originalDraft: draft, draft, startNow, startAttempted: false };
           writeEventCreateAttempt(window.localStorage, attempt); eventAttempt = attempt;
         }
-        const confirmed = recovered || await readCreatedEvent(invoke, await invoke('create_event', { ...attempt.payload, operationId: attempt.operationId }));
-        if (!matchesCreatedEvent(confirmed, attempt.payload)) throw Error('event_create_changed');
+        const outcome = recovered ? { id: recovered.id, state: 'available', event: recovered }
+          : await readCreatedEvent(invoke, await invoke('create_event', { ...attempt.payload, operationId: attempt.operationId }));
+        if (outcome.state === 'missing' || !matchesCreatedEvent(outcome.event, attempt.payload)) { offerSeparateEvent(outcome); return; }
+        const confirmed = outcome.event;
         savedEventId = confirmed.id; savedVersion = confirmed.version; acknowledgedEventPayload = attempt.payload;
       }
       changed = true;

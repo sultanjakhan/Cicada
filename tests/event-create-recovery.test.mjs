@@ -8,7 +8,9 @@ async function fixture(t) {
   const dom = new JSDOM('<body></body>', { url:'http://localhost', pretendToBeVisual:true }), w=dom.window;
   for (const name of ['window','document','localStorage','MutationObserver','AbortController','CustomEvent','Event','FormData','Option']) globalThis[name]=name==='window'?w:w[name];
   globalThis.marked={Marked:class { use() {} parse(value) { return value; } }};
-  const state={events:[],receipts:new Map(),calls:[],links:[],active:[],loseCreate:0,failRecovery:0,failReadback:0,failLink:0,loseStart:0};
+  w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};
+  w.HTMLDialogElement.prototype.close=function(){this.open=false;this.dispatchEvent(new w.Event('close'));};
+  const state={events:[],nextEventId:1,receipts:new Map(),calls:[],links:[],active:[],loseCreate:0,failRecovery:0,failReadback:0,failLink:0,loseStart:0};
   w.__TAURI__={core:{invoke:async(command,args={})=>{
     state.calls.push({command,args:structuredClone(args)});
     if(command==='list_event_categories')return [{id:'general',name:'general',color:'#999'}];
@@ -22,7 +24,7 @@ async function fixture(t) {
       const receipt=state.receipts.get(operationId);
       if(receipt){if(JSON.stringify(receipt.payload)!==JSON.stringify(payload))throw Error('event_create_operation_conflict');return receipt.id;}
       if(recoverOnly)return null;
-      const id=`event-${state.events.length+1}`;
+      const id=`event-${state.nextEventId++}`;
       state.events.push({id,title:payload.title,description:payload.description,date:payload.date,time:payload.time,duration_minutes:payload.durationMinutes,category:payload.category,color:payload.color,priority:payload.priority,version:1});
       if(operationId)state.receipts.set(operationId,{id,payload:structuredClone(payload)});
       if(state.loseCreate-->0)throw Error('acknowledgement lost after commit');
@@ -48,13 +50,14 @@ async function fixture(t) {
   }}};
   t.after(()=>w.close());
   (await import('../src/hanni/js/calendar-categories.js')).invalidateCategoriesCache();
-  const {showEventModal}=await import('../src/hanni/js/calendar-event-modal.js');
+  const {showEventModal,showCalendarCreateModal}=await import('../src/hanni/js/calendar-event-modal.js');
   const q=selector=>w.document.querySelector(selector);
   const open=async()=>{await showEventModal(null,'2026-11-03',{kind:'event',types:['event'],initialTime:'23:30'});await settle();};
+  const openShared=async()=>{await showCalendarCreateModal('2026-11-03');await settle();q('[data-editor-type="event"]').click();await settle();};
   const field=(selector,value)=>{q(selector).value=value;q(selector).dispatchEvent(new w.Event('input',{bubbles:true}));};
   const submit=async(start=false)=>{if(start)q('#evm-start-now').click();else q('#evm-form').dispatchEvent(new w.Event('submit',{cancelable:true}));await settle();};
   const calls=command=>state.calls.filter(call=>call.command===command);
-  return {w,q,state,open,field,submit,calls};
+  return {w,q,state,open,openShared,field,submit,calls};
 }
 
 test('lost event-create acknowledgement recovers one UUID through repeated unavailable retries',async t=>{
@@ -113,10 +116,81 @@ test('lost create/link/start acknowledgements keep one event and one timer acros
   assert.deepEqual(x.state.links,[{source_type:'event',source_id:id,goal_id:'g'}]);assert.equal(x.q('#evm-form'),null);
 });
 
-test('receipt readback failure or deleted event retains UNKNOWN and never recreates the event',async t=>{
+test('receipt readback failure stays UNKNOWN and a deleted receipt event is never implicitly recreated',async t=>{
   const x=await fixture(t);await x.open();x.field('#evm-title','Owned missing readback');x.state.failReadback=1;
   await x.submit();assert.equal(x.state.events.length,1);assert.ok(x.q('#evm-form'));
   x.state.events=[];await x.submit();await x.submit();
   assert.equal(x.state.events.length,0);assert.equal(x.calls('create_event').filter(call=>!call.args.recoverOnly).length,1);
   assert.ok(x.w.localStorage.getItem(EVENT_CREATE_PENDING_KEY));assert.equal(x.q('#evm-title').value,'Owned missing readback');
+});
+
+for(const mode of ['deleted','archived','changed']) test(`committed ${mode} event supports only explicitly confirmed separate intent with full draft through reopen`,async t=>{
+  const x=await fixture(t);await x.open();x.field('#evm-title','Owned original');x.state.loseCreate=1;await x.submit();
+  const old=JSON.parse(x.w.localStorage.getItem(EVENT_CREATE_PENDING_KEY));
+  const oldReceipt=structuredClone(x.state.receipts.get(old.operationId)),oldId=oldReceipt.id;
+  if(mode==='deleted')x.state.events=[];
+  else if(mode==='archived')x.state.events[0].archived=true;
+  else x.state.events[0].description='External newer description';
+  const oldEvents=structuredClone(x.state.events);
+  x.state.links=[{source_type:'event',source_id:oldId,goal_id:'old-goal'}];
+  x.state.active=[{id:90,source_type:'event',source_id:oldId}];
+  x.field('#evm-title','Separate current draft');x.field('#evm-desc','Keep all current details');
+  x.field('#evm-end-date','2026-11-04');x.field('#evm-end-time','01:15');x.field('#evm-goal','g');x.q('[data-pri="4"]').click();
+  await x.submit();
+  const reconcile=x.q('[data-event-create-separate]');assert.ok(reconcile && !reconcile.hidden,'known outcome offers explicit event-only reconciliation');
+  assert.match(x.q('#evm-error').textContent,/Прежнее сохранение подтверждено/);
+  const draft=JSON.parse(x.w.localStorage.getItem(EVENT_CREATE_PENDING_KEY)).draft;
+  reconcile.click();await settle();
+  let dialog=x.q('[data-event-create-confirm]');assert.ok(dialog);
+  if(mode==='changed')dialog.dispatchEvent(new x.w.Event('cancel',{cancelable:true}));
+  else dialog.querySelector('[data-dialog-close]').click();await settle();
+  let stored=JSON.parse(x.w.localStorage.getItem(EVENT_CREATE_PENDING_KEY));
+  assert.equal(stored.operationId,old.operationId);assert.equal(stored.nextIntent,undefined);assert.deepEqual(stored.draft,draft);
+  assert.equal(x.calls('create_event').filter(c=>!c.args.recoverOnly).length,1);
+  x.q('#evm-close').click();await settle();await x.openShared();
+  assert.equal(x.q('#evm-title').value,draft.title);assert.equal(x.q('#evm-desc').value,draft.description);
+  assert.equal(x.q('#evm-end-date').value,draft.endDate);assert.equal(x.q('#evm-end-time').value,draft.endTime);
+  assert.equal(x.q('.evm-priority').dataset.evmPriority,'4');assert.equal(x.q('#evm-goal').value,'g');
+  await x.submit();x.q('[data-event-create-separate]').click();await settle();dialog=x.q('[data-event-create-confirm]');
+  dialog.querySelector('form').dispatchEvent(new x.w.Event('submit',{cancelable:true}));await settle();
+  stored=JSON.parse(x.w.localStorage.getItem(EVENT_CREATE_PENDING_KEY));assert.equal(stored.operationId,old.operationId);
+  const nextId=stored.nextIntent.operationId;assert.notEqual(nextId,old.operationId);assert.deepEqual(stored.draft,draft);
+  assert.equal(x.calls('create_event').filter(c=>!c.args.recoverOnly).length,1,'confirmation prepares intent without sending creation');
+  // A failed durable activation must keep the confirmed intent and draft, without a native create.
+  const setItem=x.w.Storage.prototype.setItem;let failWrite=true;
+  x.w.Storage.prototype.setItem=function(key,value){if(key===EVENT_CREATE_PENDING_KEY&&failWrite){failWrite=false;throw Error('synthetic storage unavailable');}return setItem.call(this,key,value);};
+  const startSeparate=mode==='archived';
+  await x.submit(startSeparate);x.w.Storage.prototype.setItem=setItem;
+  stored=JSON.parse(x.w.localStorage.getItem(EVENT_CREATE_PENDING_KEY));assert.equal(stored.nextIntent.operationId,nextId);assert.deepEqual(stored.draft,draft);
+  assert.equal(x.calls('create_event').filter(c=>!c.args.recoverOnly).length,1);
+  x.state.loseCreate=1;await x.submit(startSeparate);
+  stored=JSON.parse(x.w.localStorage.getItem(EVENT_CREATE_PENDING_KEY));assert.equal(stored.operationId,nextId);
+  assert.equal(stored.previousAttempt.operationId,old.operationId);assert.deepEqual(stored.previousAttempt.payload,old.payload);
+  assert.equal(stored.previousAttempt.receiptId,oldId);assert.deepEqual(stored.draft,draft);
+  const newReceipt=x.state.receipts.get(nextId);assert.notEqual(newReceipt.id,oldId);
+  x.q('#evm-close').click();await settle();await x.openShared();await x.submit(startSeparate);
+  assert.equal(x.calls('create_event').filter(c=>!c.args.recoverOnly).length,2,'new uncertain acknowledgement recovers the same new intent');
+  assert.equal(x.state.events.filter(e=>e.id===newReceipt.id).length,1);
+  const created=x.state.events.find(e=>e.id===newReceipt.id);assert.equal(created.title,draft.title);assert.equal(created.description,draft.description);
+  assert.equal(created.duration_minutes,105);assert.equal(created.category,draft.category);assert.equal(created.priority,4);
+  assert.deepEqual(x.state.receipts.get(old.operationId),oldReceipt);assert.deepEqual(x.state.events.filter(e=>e.id===oldId),oldEvents);
+  assert.deepEqual(x.state.active.filter(block=>block.source_id===oldId),[{id:90,source_type:'event',source_id:oldId}]);
+  assert.equal(x.calls('start_task_block').length,startSeparate?1:0);
+  assert.equal(x.state.active.filter(block=>block.source_id===newReceipt.id).length,startSeparate?1:0);
+  assert.ok(x.state.links.some(link=>link.source_id===oldId&&link.goal_id==='old-goal'));
+  assert.ok(x.state.links.some(link=>link.source_id===newReceipt.id&&link.goal_id==='g'));
+});
+
+test('transport UNKNOWN cannot offer or confirm rotation even after a prior known event outcome',async t=>{
+  const x=await fixture(t);await x.open();x.field('#evm-title','Owned uncertain');x.state.loseCreate=1;await x.submit();
+  const old=JSON.parse(x.w.localStorage.getItem(EVENT_CREATE_PENDING_KEY));x.state.events=[];await x.submit();
+  assert.ok(!x.q('[data-event-create-separate]').hidden);
+  x.q('[data-event-create-separate]').click();await settle();const dialog=x.q('[data-event-create-confirm]');
+  x.state.failRecovery=1;dialog.querySelector('form').dispatchEvent(new x.w.Event('submit',{cancelable:true}));await settle();
+  assert.match(dialog.querySelector('[data-dialog-error]').textContent,/не подтверждено|Не удалось/);
+  let stored=JSON.parse(x.w.localStorage.getItem(EVENT_CREATE_PENDING_KEY));assert.equal(stored.operationId,old.operationId);assert.equal(stored.nextIntent,undefined);
+  dialog.querySelector('[data-dialog-close]').click();await settle();x.state.failReadback=1;await x.submit();
+  assert.equal(x.q('[data-event-create-separate]').hidden,true);stored=JSON.parse(x.w.localStorage.getItem(EVENT_CREATE_PENDING_KEY));
+  assert.equal(stored.operationId,old.operationId);assert.equal(stored.nextIntent,undefined);
+  assert.equal(x.calls('create_event').filter(c=>!c.args.recoverOnly).length,1);
 });
