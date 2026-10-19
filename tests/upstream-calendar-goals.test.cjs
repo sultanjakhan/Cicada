@@ -36,7 +36,11 @@ async function setup(t, { dependencies = {}, ui: initialUi = {} } = {}) {
     if (name === 'get_active_block') return active;
     if (name === 'save_calendar_goal') { const id = goals.length + 1; const values = { id: args.id || id, title: args.title, deadline: args.deadline, goal_kind: args.goalKind, description: args.description, criteria: args.criteria, target_value: args.targetValue, unit: args.unit, parent_goal_id: args.clearParent ? null : args.parentGoalId, current_value: args.currentValue, numeric_progress: args.numericProgress };
       if (args.id) Object.assign(goals.find(goal => goal.id === args.id), values); else goals.push(values); return id; }
-    if (name === 'delete_goal') { goals.splice(goals.findIndex(goal => goal.id === args.id), 1); return; }
+    if (name === 'delete_goal') {
+      const index = goals.findIndex(goal => goal.id === args.id);
+      if (index < 0 || JSON.stringify(goals[index]) !== JSON.stringify(args.expectedGoal)) throw new Error('calendar_goal_stale');
+      goals.splice(index, 1); return;
+    }
     throw new Error('Unexpected IPC ' + name);
   };
   const root = w.document.querySelector('main');
@@ -248,6 +252,36 @@ test('goal deletion requires confirmation; cancellation preserves the goal and f
   assert.equal(x.root.querySelector('[data-goal-menu="9"]'), null);
   assert.equal(x.w.document.activeElement, x.root.querySelector('[data-goals-view="goals"]'));
   assert.equal(x.calls.some(call => /delete_note|delete_event|delete_schedule/.test(call.name)), false);
+});
+
+test('catalog stale deletion blocks repeated confirmation until explicit fresh review and reconfirmation', async t => {
+  const x = await setup(t);
+  x.goals.push({ id: 9, title: 'Цель A', target_value: 10, current_value: 2, unit: 'страниц', criteria: 'Критерий A' });
+  await x.refresh();
+  const modal = await x.menu('[data-goal-menu="9"]', 'delete');
+  const captured = structuredClone(x.goals[0]);
+  Object.assign(x.goals[0], { title: 'Цель B', criteria: 'Новый критерий', numeric_progress: true });
+  await x.submit(modal);
+  assert.deepEqual(x.calls.find(call => call.name === 'delete_goal').args.expectedGoal, captured);
+  assert.equal(x.goals.length, 1); assert.equal(modal.isConnected, true);
+  assert.match(modal.querySelector('[data-dialog-error]').textContent, /Цель изменилась/);
+  assert.equal(modal.querySelector('[type=submit]').disabled, true);
+  const deletes = () => x.calls.filter(call => call.name === 'delete_goal').length;
+  await x.submit(modal); assert.equal(deletes(), 1, 'programmatic stale resubmit is blocked too');
+  const review = modal.querySelector('[data-goal-delete-review]');
+  x.before.set('get_goals', () => { throw Error('offline'); });
+  review.click(); await tick();
+  assert.equal(modal.querySelector('[type=submit]').disabled, true);
+  assert.match(modal.querySelector('[data-dialog-error]').textContent, /Не удалось перечитать/);
+  x.before.delete('get_goals'); review.click(); await tick();
+  assert.match(modal.querySelector('[data-goal-delete-summary]').textContent, /Цель B.*Новый критерий/);
+  assert.equal(deletes(), 1, 'review is not deletion');
+  assert.equal(modal.querySelector('[type=submit]').disabled, false);
+  x.goals[0].current_value = 3;
+  await x.submit(modal); assert.equal(x.goals.length, 1, 'another change after review conflicts again');
+  await x.submit(modal); assert.equal(deletes(), 2);
+  review.click(); await tick(); await x.submit(modal);
+  assert.equal(x.goals.length, 0); assert.equal(modal.isConnected, false);
 });
 
 // #98 level 2: compact rows; the popup (level 3) opens from the row.

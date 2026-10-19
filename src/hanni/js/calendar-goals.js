@@ -166,19 +166,57 @@ export function openCalendarGoalEditor({ document, invoke, goal = null, parent =
 export function openCalendarGoalDeletion({ document, invoke, goal, returnFocus, isCurrent = () => true, onDeleted, onSavingChange, onClose } = {}) {
   const uiCopy = createUiCopy(document);
   const window = document.defaultView;
-  let deleting = false;
+  const goalId = goal.id;
+  let deleting = false, needsReview = false, expectedGoal = structuredClone(goal);
   const editor = createCalendarDialog({ document, title: uiCopy("Удалить цель?"), submitLabel: uiCopy("Удалить цель"),
     hint: uiCopy("Связанные задачи и события сохранятся без этой цели."), isCurrent, returnFocus, onClose });
-  editor.modal.dataset.goalDelete = ''; editor.body.textContent = goal.title;
+  editor.modal.dataset.goalDelete = '';
+  const summary = document.createElement('p'), review = document.createElement('button');
+  summary.dataset.goalDeleteSummary = ''; summary.setAttribute('role', 'status'); summary.textContent = goal.title;
+  review.type = 'button'; review.dataset.goalDeleteReview = ''; review.hidden = true;
+  review.textContent = uiCopy('Проверить актуальную цель');
+  editor.body.append(summary, review);
+  review.addEventListener('click', async () => {
+    if (deleting) return;
+    deleting = true; needsReview = true; editor.setPending(true); editor.showError('');
+    try {
+      const latest = await invoke('get_goals', { tabName: null });
+      if (!editor.modal.isConnected) return;
+      const current = latest.find(item => String(item.id) === String(goalId));
+      if (!current) {
+        editor.showError(uiCopy('Цель уже удалена. Закрой это окно: повторное удаление не требуется.'));
+        return;
+      }
+      summary.textContent = [uiCopy('Актуальная цель: ') + current.title,
+        uiCopy('Желаемый результат: ') + (current.description || '—'), uiCopy('Критерии: ') + (current.criteria || '—'),
+        uiCopy('Срок: ') + (current.deadline || '—'), uiCopy('Прогресс: ') + (current.current_value ?? '—') + ' / ' + current.target_value + ' ' + (current.unit || ''),
+        uiCopy('Тип: ') + uiCopy(current.goal_kind === 'daily_norm' ? 'Ежедневная норма' : 'Долгосрочная цель'),
+        uiCopy('Числовой прогресс: ') + uiCopy((current.goal_kind === 'daily_norm' || (current.numeric_progress ?? !!(current.unit || Number(current.target_value) !== 1 || Number(current.current_value) > 0))) ? 'Да' : 'Нет'),
+        uiCopy('Статус: ') + uiCopy(current.status === 'achieved' ? 'Достигнута' : 'В работе'),
+        uiCopy('Полученный результат: ') + (current.achievement || '—'),
+        uiCopy('Родительская цель: ') + (latest.find(item => String(item.id) === String(current.parent_goal_id))?.title || '—')].join(' · ');
+      expectedGoal = structuredClone(current); needsReview = false;
+      editor.showError(uiCopy('Проверь актуальные данные выше. Для удаления подтверди ещё раз.'));
+    } catch { if (editor.modal.isConnected) editor.showError(uiCopy('Не удалось перечитать цель. Удаление заблокировано — попробуй проверить ещё раз.')); }
+    finally {
+      deleting = false;
+      if (editor.modal.isConnected) { editor.setPending(false); editor.submit.disabled = needsReview; }
+    }
+  });
   editor.form.addEventListener('submit', async event => {
-    event.preventDefault(); if (deleting) return;
+    event.preventDefault(); if (deleting || needsReview) return;
     deleting = true; onSavingChange?.(true); editor.showError(''); editor.setPending(true);
     try {
-      await invoke('delete_goal', { id: goal.id });
+      await invoke('delete_goal', { id: goalId, expectedGoal });
       editor.setPending(false); editor.close();
       window.dispatchEvent(new window.Event('task-state-changed'));
-      await onDeleted?.(goal.id);
-    } catch { if (editor.modal.isConnected) { editor.setPending(false); editor.showError(uiCopy("Не удалось удалить цель. Попробуй ещё раз.")); } }
+      await onDeleted?.(goalId);
+    } catch (error) { if (editor.modal.isConnected) {
+      const stale = /calendar_goal_stale|goal not found/.test(String(error));
+      if (stale) { needsReview = true; review.hidden = false; }
+      editor.setPending(false); editor.submit.disabled = needsReview;
+      editor.showError(uiCopy(stale ? 'Цель изменилась или удалена. Проверь актуальную цель перед повторным подтверждением.' : 'Не удалось удалить цель. Попробуй ещё раз.'));
+    } }
     finally { deleting = false; onSavingChange?.(false); }
   });
   editor.open(editor.modal.querySelector('[data-dialog-close]'));

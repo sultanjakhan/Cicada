@@ -2821,3 +2821,93 @@ fn goal_editor_exact_base_is_atomic_across_connections_and_recovery() {
     let mut update=payload("Legacy update");update["id"]=legacy.clone();
     assert_eq!(call(&view,"save_calendar_goal",update).unwrap(),legacy);
 }
+
+#[test]
+fn goal_delete_exact_base_preserves_newer_goal_links_children_and_metadata_across_connections() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("owned-goal-delete.db");
+    let (app, view) = fixture_with_connection(Connection::open(&path).unwrap());
+    let (_other, writer) = fixture_with_connection(Connection::open(&path).unwrap());
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        seed_goal_tree(&conn);
+        conn.execute("INSERT INTO calendar_task_goals(source_type,source_id,goal_id,created_at) VALUES('event','event-a','goal-a','original')", []).unwrap();
+    }
+    let read = || call(&view, "get_goals", json!({"tabName":null})).unwrap();
+    let find = |all: &Value| all.as_array().unwrap().iter().find(|g| g["id"] == "goal-a").unwrap().clone();
+    let snapshot = || mutation_snapshot(&app.state::<AppState>().0.lock().unwrap());
+    let metadata = || call(&view, "get_ui_state", json!({"key":"calendar_development_v1"})).unwrap();
+    let changes = || app.state::<AppState>().0.lock().unwrap().total_changes();
+    let captured = find(&read());
+    call(&writer, "save_calendar_goal", json!({"id":"goal-a","title":"Newer delete target","targetValue":10,"currentValue":4,"unit":"pages","deadline":"2027-01-01","goalKind":"goal","description":"Keep newer result","criteria":"Keep newer criteria","parentGoalId":null,"clearParent":false,"numericProgress":true})).unwrap();
+    let before = snapshot();
+    let before_metadata = metadata();
+    let before_changes = changes();
+    for _ in 0..2 {
+        assert_eq!(call(&view, "delete_goal", json!({"id":"goal-a","expectedGoal":captured})).unwrap_err(), json!("calendar_goal_stale"));
+    }
+    assert_eq!(snapshot(), before, "stale delete changes no goal/link/child/item/timer row");
+    assert_eq!(metadata(), before_metadata);
+    assert_eq!(changes(), before_changes, "stale delete performs no SQL or sync writes");
+
+    // Numeric mode lives outside the SQL goal row and must still invalidate the review.
+    let numeric_base = find(&read());
+    let raw = metadata();
+    let mut development: Value = serde_json::from_str(raw.as_str().unwrap()).unwrap();
+    development["goals"]["goal-a"]["numericProgress"] = json!(false);
+    call(&writer, "set_ui_state", json!({"key":"calendar_development_v1","value":development.to_string(),"expectedValue":raw})).unwrap();
+    assert_eq!(find(&read())["updated_at"], numeric_base["updated_at"]);
+    let numeric_snapshot = snapshot();
+    let numeric_metadata = metadata();
+    let numeric_changes = changes();
+    assert_eq!(call(&view, "delete_goal", json!({"id":"goal-a","expectedGoal":numeric_base})).unwrap_err(), json!("calendar_goal_stale"));
+    assert_eq!(snapshot(), numeric_snapshot);
+    assert_eq!(metadata(), numeric_metadata);
+    assert_eq!(changes(), numeric_changes);
+
+    let fresh = find(&read());
+    // An unrelated goal edit does not invalidate a fresh per-goal review.
+    save_goal(&writer, json!("goal-b"), "Unrelated newer goal", "goal").unwrap();
+    let before_retry = snapshot();
+    {
+        let state = app.state::<AppState>();
+        state.0.lock().unwrap().execute_batch("CREATE TRIGGER reject_owned_goal_delete BEFORE DELETE ON calendar_goals WHEN OLD.id='goal-a' BEGIN SELECT RAISE(ABORT,'synthetic delete failure'); END;").unwrap();
+    }
+    assert!(call(&view, "delete_goal", json!({"id":"goal-a","expectedGoal":fresh})).is_err());
+    assert_eq!(snapshot(), before_retry, "a failed fresh deletion rolls links and child detachment back");
+    assert_eq!(metadata(), numeric_metadata);
+    {
+        let state = app.state::<AppState>();
+        state.0.lock().unwrap().execute_batch("DROP TRIGGER reject_owned_goal_delete").unwrap();
+    }
+    call(&view, "delete_goal", json!({"id":"goal-a","expectedGoal":fresh})).unwrap();
+    let after = snapshot();
+    assert_eq!(after[0], before_retry[0], "actual linked tasks and events survive");
+    assert_eq!(after[4], before_retry[4], "timeline blocks survive");
+    assert_eq!(metadata(), numeric_metadata, "existing numeric metadata behavior is preserved");
+    let goals = read();
+    let rows = goals.as_array().unwrap();
+    assert!(!rows.iter().any(|g| g["id"] == "goal-a"));
+    assert_eq!(rows.iter().find(|g| g["id"] == "child").unwrap()["parent_goal_id"], Value::Null);
+    assert_eq!(rows.iter().find(|g| g["id"] == "grandchild").unwrap()["parent_goal_id"], "child");
+    assert_eq!(rows.iter().find(|g| g["id"] == "other-child").unwrap()["parent_goal_id"], "goal-b");
+    let links = call(&view, "get_calendar_task_goals", json!({})).unwrap();
+    let links = links.as_array().unwrap();
+    assert_eq!(links.len(), 2);
+    assert!(links.iter().all(|link| link["goal_id"] != "goal-a"));
+    assert!(links.iter().any(|link| link["source_id"] == "event-b" && link["goal_id"] == "goal-b"));
+    assert!(links.iter().any(|link| link["source_id"] == "child-task" && link["goal_id"] == "child"));
+
+    // The guarded UI treats missing/replayed confirmation as stale, with zero effects.
+    let missing_snapshot = snapshot();
+    let missing_changes = changes();
+    for _ in 0..2 {
+        assert_eq!(call(&view, "delete_goal", json!({"id":"goal-a","expectedGoal":fresh})).unwrap_err(), json!("calendar_goal_stale"));
+    }
+    assert_eq!(snapshot(), missing_snapshot);
+    assert_eq!(changes(), missing_changes);
+    // Explicitly retained pre-CAS compatibility: ID-only missing deletion is idempotent.
+    call(&view, "delete_goal", json!({"id":"goal-a"})).unwrap();
+    assert_eq!(snapshot(), missing_snapshot);
+}
