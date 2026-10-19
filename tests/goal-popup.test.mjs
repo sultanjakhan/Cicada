@@ -60,7 +60,11 @@ function backend() {
       else state.goals.push({ id: `new-${state.goals.length}`, title: args.title, goal_kind: 'goal', target_value: 1, unit: '', parent_goal_id: args.parentGoalId });
       return args.id || `new-${state.goals.length - 1}`;
     }
-    if (command === 'delete_goal') { state.goals = state.goals.filter(item => item.id !== args.id); return null; }
+    if (command === 'delete_goal') {
+      const goal = state.goals.find(item => item.id === args.id);
+      if (!goal || JSON.stringify(goal) !== JSON.stringify(args.expectedGoal)) throw Error('calendar_goal_stale');
+      state.goals = state.goals.filter(item => item.id !== args.id); return null;
+    }
     throw new Error('Unexpected IPC ' + command);
   };
   state.count = command => state.calls.filter(call => call.command === command).length;
@@ -216,6 +220,45 @@ test('refreshes keep keyboard focus on a task link and ignore quiet health refre
   window.dispatchEvent(new window.Event('task-state-changed')); await settle();
   assert.equal(document.activeElement.dataset.goalPopupTask, 'note:t2');
   assert.match(document.activeElement.textContent, /ремешок/);
+});
+
+test('popup deletion preserves a newer goal until fresh review and a separate confirmation', async t => {
+  const data = backend(), x = await open(t, data, 'g1');
+  x.action('delete').click(); await settle();
+  const modal = document.querySelector('[data-goal-delete]');
+  const captured = structuredClone(data.goals.find(goal => goal.id === 'g1'));
+  Object.assign(data.goals.find(goal => goal.id === 'g1'), { title: 'Новый результат', criteria: 'Проверить новый критерий', current_value: null, numeric_progress: true });
+  window.dispatchEvent(new window.Event('task-state-changed')); await settle();
+  assert.equal(modal.querySelector('[data-goal-delete-summary]').textContent, captured.title);
+  const submit = async () => { modal.querySelector('form').dispatchEvent(new window.Event('submit', { cancelable: true })); await settle(); };
+  await submit();
+  assert.deepEqual(data.calls.find(call => call.command === 'delete_goal').args.expectedGoal, captured);
+  assert.equal(x.modal.isConnected, true); assert.equal(modal.isConnected, true);
+  assert.match(modal.querySelector('[data-dialog-error]').textContent, /Цель изменилась/);
+  assert.equal(modal.querySelector('[type=submit]').disabled, true);
+  await submit(); assert.equal(data.count('delete_goal'), 1);
+  modal.querySelector('[data-goal-delete-review]').click(); await settle();
+  assert.match(modal.querySelector('[data-goal-delete-summary]').textContent, /Новый результат.*Проверить новый критерий/s);
+  assert.match(modal.querySelector('[data-goal-delete-summary]').textContent, /Числовой прогресс: Да/);
+  assert.equal(data.count('delete_goal'), 1); assert.equal(modal.querySelector('[type=submit]').disabled, false);
+  await submit();
+  assert.equal(data.goals.some(goal => goal.id === 'g1'), false);
+  assert.equal(x.modal.isConnected, false); assert.equal(modal.isConnected, false);
+});
+
+test('popup deletion of an already missing goal stays blocked after review and remains cancellable', async t => {
+  const data = backend(), x = await open(t, data, 'g1');
+  x.action('delete').click(); await settle();
+  const modal = document.querySelector('[data-goal-delete]');
+  data.goals = data.goals.filter(goal => goal.id !== 'g1');
+  const submit = async () => { modal.querySelector('form').dispatchEvent(new window.Event('submit', { cancelable: true })); await settle(); };
+  await submit();
+  modal.querySelector('[data-goal-delete-review]').click(); await settle();
+  assert.match(modal.querySelector('[data-dialog-error]').textContent, /Цель уже удалена/);
+  assert.equal(modal.querySelector('[type=submit]').disabled, true);
+  await submit(); assert.equal(data.count('delete_goal'), 1);
+  modal.querySelector('[data-dialog-close]').click(); await settle();
+  assert.equal(modal.isConnected, false); assert.equal(data.count('delete_goal'), 1);
 });
 
 test('a goal deleted elsewhere turns the popup into a notice instead of stale details', async t => {

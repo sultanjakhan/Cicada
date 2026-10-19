@@ -1473,12 +1473,25 @@ pub fn save_calendar_goal(
     transaction.commit().map_err(|e| fail(e.to_string()))?;
     Ok(id)
 }
-#[tauri::command]
-pub fn delete_goal(id: String, state: State<'_, AppState>) -> Result<(), String> {
+// Existing ID-only callers keep idempotent deletion, including an already missing ID.
+// Catalog/popup confirmations always supply their exact reviewed get_goals snapshot.
+#[tauri::command(rename_all = "camelCase")]
+pub fn delete_goal(
+    id: String,
+    expected_goal: Option<GoalEditBase>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let mut conn = lock(&state)?;
     let transaction = conn
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|e| fail(e.to_string()))?;
+    // Compare under the write lock BEFORE links, children, goals or sync triggers change.
+    // A guarded missing goal is stale too: this confirmation cannot authorize a retry.
+    if let Some(expected) = expected_goal.as_ref() {
+        if goal_edit_base(&transaction, &id)?.as_ref() != Some(expected) {
+            return Err(fail("calendar_goal_stale"));
+        }
+    }
     transaction
         .execute("DELETE FROM calendar_task_goals WHERE goal_id=?1", [&id])
         .map_err(|e| fail(e.to_string()))?;
