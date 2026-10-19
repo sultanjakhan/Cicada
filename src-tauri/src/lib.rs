@@ -20,6 +20,7 @@ mod update_background;
 mod update_macos;
 mod update_journal;
 mod update_control;
+mod update_runtime_identity;
 #[cfg(windows)]
 mod update_control_pipe;
 mod calendar_compat;

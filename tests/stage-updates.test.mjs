@@ -87,3 +87,36 @@ test('stages matching candidates and rejects traversal, source mismatch and tamp
     await rm(temporary, { recursive: true, force: true });
   }
 });
+
+test('signed control descriptor binds exact installer tuple and compiled source identity', async () => {
+  const temporary=await mkdtemp(path.join(tmpdir(),'cicada-control-descriptor-'));
+  try {
+    const keys=keyMaterial(), windows=await candidate(temporary,'windows',keys), android=await candidate(temporary,'android',keys), macos=await candidate(temporary,'macos',keys);
+    const manifest=JSON.parse(await readFile(path.join(windows,'manifest.json')));
+    const tuple={version:manifest.version,package:{url:`https://hanni-mvp-updates-v1.hanni-services.workers.dev/releases/${manifest.asset}`,
+      signature:manifest.signature,sha256:manifest.sha256,size:manifest.size,version_code:null}};
+    const descriptor={schema_version:1,identifier:'app.hanni.mvp',platform:'windows-x86_64',version:manifest.version,
+      source_commit:manifest.source,build_id:'fictional-control-build',prepared_id:createHash('sha256').update(JSON.stringify(tuple)).digest('hex'),
+      installer_sha256:manifest.sha256,installer_size:manifest.size};
+    async function save(value, signer=keys) {
+      const raw=Buffer.from(JSON.stringify(value)+'\n');
+      manifest.build_id=descriptor.build_id;
+      manifest.control_descriptor_file=manifest.asset+'.identity.json';manifest.control_descriptor_signature_file=manifest.control_descriptor_file+'.sig';
+      manifest.control_descriptor_sha256=createHash('sha256').update(raw).digest('hex');
+      await writeFile(path.join(windows,manifest.control_descriptor_file),raw);
+      await writeFile(path.join(windows,manifest.control_descriptor_signature_file),tauriSignature(raw,signer));
+      await writeFile(path.join(windows,'manifest.json'),JSON.stringify(manifest));
+    }
+    const options={windows,android,macos,root:temporary,publicKeyText:keys.publicText};
+    await save(descriptor);
+    const staged=await stageUpdates(options);
+    assert.equal(await readFile(path.join(staged.output,'releases',manifest.control_descriptor_file),'utf8'),JSON.stringify(descriptor)+'\n');
+    for(const change of [{source_commit:'b'.repeat(40)},{build_id:'different-build'},{prepared_id:'c'.repeat(64)},
+      {installer_sha256:'d'.repeat(64)},{installer_size:manifest.size+1},{unexpected:true}]) {
+      await save({...descriptor,...change});await assert.rejects(stageUpdates(options));
+    }
+    await save(descriptor,keyMaterial());await assert.rejects(stageUpdates(options));
+    await save(descriptor);await writeFile(path.join(windows,manifest.control_descriptor_file),JSON.stringify({...descriptor,build_id:'tampered'}));
+    await assert.rejects(stageUpdates(options));
+  } finally {await rm(temporary,{recursive:true,force:true});}
+});

@@ -60,7 +60,7 @@ impl Journal {
     pub fn open(path: &Path) -> Result<Self, String> {
         let conn = Connection::open(path).map_err(|_| "control_journal_unavailable")?;
         conn.busy_timeout(std::time::Duration::from_secs(2)).map_err(|_| "control_journal_unavailable")?;
-        conn.execute_batch("PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY,digest TEXT NOT NULL,receipt TEXT NOT NULL,receipt_sha256 TEXT NOT NULL); CREATE TABLE IF NOT EXISTS install_commit(singleton INTEGER PRIMARY KEY CHECK(singleton=1),operation_id TEXT NOT NULL,version TEXT NOT NULL,prepared_id TEXT NOT NULL);").map_err(|_| "control_journal_corrupt")?;
+        conn.execute_batch("PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY,digest TEXT NOT NULL,receipt TEXT NOT NULL,receipt_sha256 TEXT NOT NULL); CREATE TABLE IF NOT EXISTS install_commit(singleton INTEGER PRIMARY KEY CHECK(singleton=1),operation_id TEXT NOT NULL,version TEXT NOT NULL,prepared_id TEXT NOT NULL,descriptor TEXT NOT NULL,descriptor_signature TEXT NOT NULL);").map_err(|_| "control_journal_corrupt")?;
         Ok(Self { conn })
     }
     pub fn read(&self, id: &str) -> Result<Option<Receipt>, String> {
@@ -98,11 +98,11 @@ impl Journal {
     pub fn install_committed(&self) -> Result<bool, String> {
         self.conn.query_row("SELECT EXISTS(SELECT 1 FROM install_commit)", [], |r| r.get(0)).map_err(|_| "control_journal_corrupt".into())
     }
-    pub fn commit_install(&mut self, id: &str, version: &str, prepared_id: &str) -> Result<(), String> {
+    pub fn commit_install(&mut self, id: &str, version: &str, prepared_id: &str, descriptor: &crate::update_runtime_identity::StoredDescriptor) -> Result<(), String> {
         self.read(id)?.ok_or("control_receipt_missing")?;
         let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_| "control_journal_busy")?;
         // No second operation can launch an installer while an outcome is unknown.
-        tx.execute("INSERT INTO install_commit VALUES(1,?1,?2,?3)", params![id, version, prepared_id]).map_err(|_| "control_install_outcome_unknown")?;
+        tx.execute("INSERT INTO install_commit VALUES(1,?1,?2,?3,?4,?5)", params![id, version, prepared_id, descriptor.raw, descriptor.signature]).map_err(|_| "control_install_outcome_unknown")?;
         let raw: String = tx.query_row("SELECT CASE WHEN length(CAST(receipt AS BLOB))<=16384 THEN receipt ELSE NULL END FROM operations WHERE id=?1", [id], |r| r.get(0)).map_err(|_| "control_receipt_missing")?;
         if raw.len() > MAX_RECEIPT { return Err("control_receipt_corrupt".into()); }
         let mut r: Receipt = serde_json::from_str(&raw).map_err(|_| "control_receipt_corrupt")?;
@@ -112,22 +112,25 @@ impl Journal {
         tx.execute("UPDATE operations SET receipt=?2,receipt_sha256=?3 WHERE id=?1", params![id,raw,hex::encode(Sha256::digest(raw.as_bytes()))]).map_err(|_| "control_journal_write")?;
         tx.commit().map_err(|_| "control_journal_write".into())
     }
-    // Reconcile only from the actually running immutable target version, never
-    // from an installer exit code or a caller-supplied success claim.
-    pub fn reconcile(&mut self, installed: &str) -> Result<(), String> {
-        let target: Option<(String,String)> = self.conn.query_row("SELECT operation_id,version FROM install_commit WHERE singleton=1", [], |r| Ok((r.get(0)?,r.get(1)?))).optional().map_err(|_| "control_journal_corrupt")?;
-        if let Some((id, version)) = target {
-            if installed == version {
+    // Reconciliation requires the signed installer tuple AND identity compiled
+    // into the currently executing Rust binary, never just a matching SemVer.
+    pub fn reconcile(&mut self, installed: Option<&crate::update_runtime_identity::CompiledIdentity>) -> Result<(), String> {
+        self.reconcile_with_key(installed,crate::app_updates::CONTROL_PUBLIC_KEY)
+    }
+    fn reconcile_with_key(&mut self, installed: Option<&crate::update_runtime_identity::CompiledIdentity>, key: &str) -> Result<(), String> {
+        let target: Option<(String,String,String,String,String)> = self.conn.query_row("SELECT operation_id,version,prepared_id,CASE WHEN length(CAST(descriptor AS BLOB))<=16384 THEN descriptor ELSE NULL END,CASE WHEN length(CAST(descriptor_signature AS BLOB))<=4096 THEN descriptor_signature ELSE NULL END FROM install_commit WHERE singleton=1", [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional().map_err(|_| "control_journal_corrupt")?;
+        if let Some((id,version,prepared_id,raw,signature))=target {
+            let descriptor=crate::update_runtime_identity::verify(&raw,&signature,key)?;
+            if installed.is_some_and(|actual| crate::update_runtime_identity::matches(&descriptor,actual,&version,&prepared_id)) {
                 self.read(&id)?.ok_or("control_receipt_missing")?;
-                let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_| "control_journal_busy")?;
-                let raw: String = tx.query_row("SELECT CASE WHEN length(CAST(receipt AS BLOB))<=16384 THEN receipt ELSE NULL END FROM operations WHERE id=?1", [&id], |r| r.get(0)).map_err(|_| "control_receipt_missing")?;
-                if raw.len() > MAX_RECEIPT { return Err("control_receipt_corrupt".into()); }
-                let mut receipt: Receipt = serde_json::from_str(&raw).map_err(|_| "control_receipt_corrupt")?;
-                if receipt.operation_id != id || receipt.action != "install" || !["committing","unknown"].contains(&receipt.phase.as_str()) { return Err("control_receipt_corrupt".into()); }
-                receipt.phase = "complete".into(); receipt.result = json!({"outcome":"running_target_version","version":version});
-                let raw = serde_json::to_string(&receipt).unwrap();
-                tx.execute("UPDATE operations SET receipt=?2,receipt_sha256=?3 WHERE id=?1", params![id,raw,hex::encode(Sha256::digest(raw.as_bytes()))]).map_err(|_| "control_journal_write")?;
-                tx.execute("DELETE FROM install_commit WHERE singleton=1", []).map_err(|_| "control_journal_write")?;
+                let tx=self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_| "control_journal_busy")?;
+                let raw:String=tx.query_row("SELECT CASE WHEN length(CAST(receipt AS BLOB))<=16384 THEN receipt ELSE NULL END FROM operations WHERE id=?1",[&id],|r|r.get(0)).map_err(|_| "control_receipt_missing")?;
+                let mut receipt:Receipt=serde_json::from_str(&raw).map_err(|_| "control_receipt_corrupt")?;
+                if receipt.operation_id!=id || receipt.action!="install" || !["committing","unknown"].contains(&receipt.phase.as_str()) {return Err("control_receipt_corrupt".into());}
+                receipt.phase="complete".into();receipt.result=json!({"outcome":"verified_running_target_source","version":version,"prepared_id":prepared_id,"source_commit":descriptor.source_commit,"build_id":descriptor.build_id});
+                let raw=serde_json::to_string(&receipt).unwrap();
+                tx.execute("UPDATE operations SET receipt=?2,receipt_sha256=?3 WHERE id=?1",params![id,raw,hex::encode(Sha256::digest(raw.as_bytes()))]).map_err(|_| "control_journal_write")?;
+                tx.execute("DELETE FROM install_commit WHERE singleton=1",[]).map_err(|_| "control_journal_write")?;
                 tx.commit().map_err(|_| "control_journal_write")?;
             }
         } Ok(())
@@ -141,13 +144,17 @@ pub(crate) fn journal_path(app: &tauri::AppHandle) -> Result<PathBuf,String> {
 pub(crate) async fn execute(app: tauri::AppHandle, request: Request) -> Result<Value,String> {
     crate::app_updates::control_production_allowed(&app)?;
     let mut journal = Journal::open(&journal_path(&app)?)?;
-    journal.reconcile(&app.package_info().version.to_string())?;
+    let runtime_identity=crate::update_runtime_identity::current(app.package_info().version.to_string());
+    journal.reconcile(runtime_identity.as_ref())?;
     if request.action == "status" { return crate::app_updates::control_status(&app); }
     if request.action == "receipt" { return Ok(json!({"receipt": journal.read(&request.operation_id)?})); }
     if let Some(receipt) = journal.begin(&request)? { return Ok(json!({"receipt":receipt})); }
     let result = match request.action.as_str() {
         "check" => crate::app_updates::mvp_update_check(app.clone(),app.state()).await.map(|_| ()),
-        "prepare" => crate::app_updates::mvp_update_prepare(app.clone(),app.state()).await.map(|_| ()),
+        "prepare" => match crate::app_updates::mvp_update_prepare(app.clone(),app.state()).await {
+            Ok(_) => crate::app_updates::prepare_control_descriptor(app.clone()).await,
+            Err(error) => Err(error),
+        },
         "install" => crate::app_updates::control_install(app.clone(), &request.operation_id, request.payload.expected_version.as_deref().unwrap(), request.payload.prepared_id.as_deref().unwrap()).await.map(|_| ()),
         _ => unreachable!(),
     };
@@ -165,6 +172,9 @@ pub(crate) async fn execute(app: tauri::AppHandle, request: Request) -> Result<V
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn descriptor() -> crate::update_runtime_identity::StoredDescriptor {
+        crate::update_runtime_identity::StoredDescriptor{raw:include_str!("../../tests/fixtures/updates/runtime-binding.json").into(),signature:include_str!("../../tests/fixtures/updates/runtime-binding.json.sig").into()}
+    }
     fn request(id: &str) -> Request { parse(format!(r#"{{"version":1,"operation_id":"{id}","action":"install","payload":{{"authorization":"{AUTHORIZATION}","expected_version":"9.0.0","prepared_id":"{}"}}}}"#,"a".repeat(64)).as_bytes()).unwrap() }
     #[test] fn safety_claims_and_missing_authorization_are_rejected() {
         let r = request("operation-a"); let mut v = serde_json::to_value(&r).unwrap();
@@ -173,22 +183,30 @@ mod tests {
     }
     #[test] fn durable_replay_conflict_crash_and_global_install_latch() {
         let dir=tempfile::tempdir().unwrap();let path=dir.path().join("ops.sqlite");let r=request("operation-a");
-        {let mut j=Journal::open(&path).unwrap();assert!(j.begin(&r).unwrap().is_none());j.commit_install(&r.operation_id,"9.0.0",&"a".repeat(64)).unwrap();}
+        {let mut j=Journal::open(&path).unwrap();assert!(j.begin(&r).unwrap().is_none());j.commit_install(&r.operation_id,"9.0.0",&"a".repeat(64),&descriptor()).unwrap();}
         let mut j=Journal::open(&path).unwrap();assert_eq!(j.begin(&r).unwrap().unwrap().phase,"committing");
         let mut changed=r.clone();changed.payload.expected_version=Some("9.0.1".into());assert!(j.begin(&changed).is_err());
-        let separate=request("operation-b");j.begin(&separate).unwrap();assert!(j.commit_install(&separate.operation_id,"9.0.0",&"a".repeat(64)).is_err());
-        j.reconcile("8.0.0").unwrap();assert!(j.install_committed().unwrap());j.reconcile("9.0.0").unwrap();assert!(!j.install_committed().unwrap());assert_eq!(j.read(&r.operation_id).unwrap().unwrap().phase,"complete");
+        let separate=request("operation-b");j.begin(&separate).unwrap();assert!(j.commit_install(&separate.operation_id,"9.0.0",&"a".repeat(64),&descriptor()).is_err());
+        let key=include_str!("../../tests/fixtures/updates/runtime-binding-public-key.txt");
+        j.reconcile_with_key(None,key).unwrap();assert!(j.install_committed().unwrap());
+        let mut actual=crate::update_runtime_identity::CompiledIdentity{version:"9.0.0".into(),source_commit:"2".repeat(40),build_id:"fictional-runtime-v1".into()};
+        j.reconcile_with_key(Some(&actual),key).unwrap();assert!(j.install_committed().unwrap());
+        actual.source_commit="1".repeat(40);actual.build_id="different-build".into();j.reconcile_with_key(Some(&actual),key).unwrap();assert!(j.install_committed().unwrap());
+        j.conn.execute("UPDATE install_commit SET descriptor_signature='corrupt'",[]).unwrap();
+        actual.build_id="fictional-runtime-v1".into();assert!(j.reconcile_with_key(Some(&actual),key).is_err());assert!(j.install_committed().unwrap());
+        j.conn.execute("UPDATE install_commit SET descriptor_signature=?1",[descriptor().signature]).unwrap();
+        actual.build_id="fictional-runtime-v1".into();j.reconcile_with_key(Some(&actual),key).unwrap();assert!(!j.install_committed().unwrap());assert_eq!(j.read(&r.operation_id).unwrap().unwrap().phase,"complete");
     }
     #[test] fn corrupt_and_oversized_receipts_fail_closed() {
         let d=tempfile::tempdir().unwrap();let mut j=Journal::open(&d.path().join("ops.sqlite")).unwrap();let r=request("operation-a");j.begin(&r).unwrap();
-        for raw in ["{".to_string(),"x".repeat(MAX_RECEIPT+1)] {j.conn.execute("UPDATE operations SET receipt=?1",[raw]).unwrap();assert!(j.begin(&r).is_err());assert!(j.commit_install(&r.operation_id,"9.0.0","a").is_err());}
+        for raw in ["{".to_string(),"x".repeat(MAX_RECEIPT+1)] {j.conn.execute("UPDATE operations SET receipt=?1",[raw]).unwrap();assert!(j.begin(&r).is_err());assert!(j.commit_install(&r.operation_id,"9.0.0","a",&descriptor()).is_err());}
         assert!(!j.install_committed().unwrap());
     }
     #[test] fn lost_first_reply_never_launches_twice_and_deferred_replay_is_stable() {
         let d=tempfile::tempdir().unwrap();let path=d.path().join("ops.sqlite");let r=request("operation-a");let mut launches=0;
         for _ in 0..3 {
             let mut j=Journal::open(&path).unwrap();
-            if j.begin(&r).unwrap().is_none() { j.commit_install(&r.operation_id,"9.0.0",&"a".repeat(64)).unwrap(); launches+=1; }
+            if j.begin(&r).unwrap().is_none() { j.commit_install(&r.operation_id,"9.0.0",&"a".repeat(64),&descriptor()).unwrap(); launches+=1; }
         }
         assert_eq!(launches,1);
         let mut j=Journal::open(&path).unwrap();let unsafe_request=request("operation-deferred");j.begin(&unsafe_request).unwrap();

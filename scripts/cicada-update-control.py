@@ -13,6 +13,25 @@ AUTHORIZATION = 'user-authorized-safe-update-v1'
 LIMIT = 32768
 
 
+def decode_reply(raw):
+    if len(raw) >= LIMIT:
+        raise ValueError('control_reply_oversized')
+    def unique(pairs):
+        value = {}
+        for k, v in pairs:
+            if k in value:
+                raise ValueError('control_duplicate_reply_field')
+            value[k] = v
+        return value
+    def invalid_constant(_):
+        raise ValueError('control_invalid_reply_number')
+    reply = json.loads(raw.decode('utf-8', errors='strict'), object_pairs_hook=unique,
+                       parse_constant=invalid_constant)
+    if not isinstance(reply, dict) or not isinstance(reply.get('ok'), bool):
+        raise ValueError('invalid control reply')
+    return reply
+
+
 def request(action, operation_id, authorize=False, version=None, prepared_id=None):
     if action not in ('status', 'receipt', 'check', 'prepare', 'install'):
         raise ValueError('invalid action')
@@ -81,12 +100,16 @@ def native_transport():
         if len(raw)>4096: raise ValueError('control_frame_oversized')
         data=raw+b'\n';written=w.DWORD()
         if not k.WriteFile(pipe,data,len(data),ctypes.byref(written),None) or written.value!=len(data): raise OSError('control_outcome_unknown')
-        output=bytearray();one=ctypes.create_string_buffer(1);count=w.DWORD()
+        output=bytearray();block=ctypes.create_string_buffer(8192);count=w.DWORD()
         while len(output)<LIMIT:
-            if not k.ReadFile(pipe,one,1,ctypes.byref(count),None) or count.value!=1: raise OSError('control_outcome_unknown')
-            if one.raw==b'\n': break
-            output.extend(one.raw)
+            if not k.ReadFile(pipe,block,min(8192,LIMIT-len(output)),ctypes.byref(count),None) or count.value==0: raise OSError('control_outcome_unknown')
+            chunk=block.raw[:count.value];newline=chunk.find(b'\n')
+            if newline>=0:
+                if newline!=len(chunk)-1: raise ValueError('control_extra_frame')
+                output.extend(chunk[:newline]);break
+            output.extend(chunk)
         else: raise ValueError('control_reply_oversized')
+        decode_reply(output)
         k.WriteFile(pipe,b'\x06',1,ctypes.byref(written),None)
         sys.stdout.buffer.write(output)
     finally: k.CloseHandle(pipe)
@@ -100,9 +123,7 @@ def exchange(value):
     result=subprocess.run([sys.executable,str(Path(__file__).resolve()),'--native-transport'],input=raw,
                           capture_output=True,timeout=125,creationflags=subprocess.CREATE_NO_WINDOW)
     if result.returncode or len(result.stdout)>LIMIT: raise OSError('control_outcome_unknown')
-    reply=json.loads(result.stdout)
-    if not isinstance(reply,dict) or not isinstance(reply.get('ok'),bool): raise ValueError('invalid control reply')
-    return reply
+    return decode_reply(result.stdout)
 
 
 def execute(value, transport=exchange):

@@ -121,7 +121,27 @@ async function readCandidate(directory, kind, publicKeyText) {
   } else {
     requireValue(!Object.hasOwn(manifest, 'version_code'), 'Desktop candidate must not define Android version_code.');
   }
-  return { kind, config, directory: source, manifest, asset, signature };
+  let controlDescriptor;
+  if (kind === 'windows' && ['control_descriptor_file', 'control_descriptor_signature_file', 'control_descriptor_sha256'].some(key => Object.hasOwn(manifest,key))) {
+    requireValue(manifest.control_descriptor_file === `${assetName}.identity.json`
+      && manifest.control_descriptor_signature_file === `${assetName}.identity.json.sig`, 'Invalid control descriptor paths.');
+    const raw = await readFile(path.join(source, manifest.control_descriptor_file));
+    const detached = await readFile(path.join(source, manifest.control_descriptor_signature_file), 'utf8');
+    requireValue(raw.length > 0 && raw.length <= 16384 && Buffer.byteLength(detached) <= 4096, 'Control descriptor exceeds native limits.');
+    verifyTauriSignature(raw, detached, publicKeyText);
+    const descriptor = JSON.parse(raw.toString('utf8'));
+    const tuple = { version, package: { url: `${UPDATE_BASE}/releases/${encodeURIComponent(assetName)}`,
+      signature: signature.trim(), sha256: manifest.sha256, size: manifest.size, version_code: null } };
+    requireValue(Object.keys(descriptor).sort().join(',') === ['schema_version','identifier','platform','version','source_commit','build_id','prepared_id','installer_sha256','installer_size'].sort().join(','), 'Invalid control descriptor schema.');
+    requireValue(descriptor.schema_version === 1 && descriptor.identifier === 'app.hanni.mvp' && descriptor.platform === config.platform
+      && descriptor.version === version && descriptor.source_commit === manifest.source
+      && /^[A-Za-z0-9._-]{1,128}$/.test(descriptor.build_id) && descriptor.build_id === manifest.build_id
+      && descriptor.prepared_id === sha256(Buffer.from(JSON.stringify(tuple)))
+      && descriptor.installer_sha256 === manifest.sha256 && descriptor.installer_size === manifest.size
+      && manifest.control_descriptor_sha256 === sha256(raw), 'Control descriptor differs from signed installer/source.');
+    controlDescriptor = { raw, detached };
+  }
+  return { kind, config, directory: source, manifest, asset, signature, controlDescriptor };
 }
 
 async function atomicWrite(destination, contents) {
@@ -166,6 +186,10 @@ export async function stageUpdates({ windows, android, macos, notes = '', publis
     const signaturePath = path.join(release, candidate.manifest.signature_file);
     await preserveAsset(assetPath, candidate.asset);
     await preserveAsset(signaturePath, Buffer.from(candidate.signature, 'utf8'));
+    if (candidate.controlDescriptor) {
+      await preserveAsset(`${assetPath}.identity.json`, candidate.controlDescriptor.raw);
+      await preserveAsset(`${assetPath}.identity.json.sig`, Buffer.from(candidate.controlDescriptor.detached, 'utf8'));
+    }
     platforms[candidate.config.platform] = {
       url: `${UPDATE_BASE}/releases/${encodeURIComponent(candidate.manifest.asset)}`,
       signature: candidate.signature.trim(),

@@ -13,6 +13,7 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager, State};
 
 const PUBLIC_KEY: &str = include_str!("../update-public-key.txt");
+pub(crate) const CONTROL_PUBLIC_KEY: &str = PUBLIC_KEY;
 const MAX_PACKAGE: u64 = 160 * 1024 * 1024;
 const MAX_MANIFEST: u64 = 64 * 1024;
 const UPDATE_URL: Option<&str> = option_env!("HANNI_MVP_UPDATES_URL");
@@ -289,6 +290,9 @@ fn verify(bytes: &[u8], package: &Package, key: &str) -> Result<(), String> {
     {
         return Err("Пакет повреждён. Установка отменена.".into());
     }
+    verify_detached(bytes,&package.signature,key)
+}
+pub(crate) fn verify_detached(bytes: &[u8], signature: &str, key: &str) -> Result<(),String> {
     let decode = |s: &str| -> Result<String, String> {
         String::from_utf8(
             base64::engine::general_purpose::STANDARD
@@ -299,7 +303,7 @@ fn verify(bytes: &[u8], package: &Package, key: &str) -> Result<(), String> {
     };
     let key = minisign_verify::PublicKey::decode(&decode(key)?)
         .map_err(|_| "Некорректный ключ обновлений.")?;
-    let signature = minisign_verify::Signature::decode(&decode(&package.signature)?)
+    let signature = minisign_verify::Signature::decode(&decode(signature)?)
         .map_err(|_| "Некорректная подпись обновления.")?;
     key.verify(bytes, &signature, true)
         .map_err(|_| "Подпись обновления не прошла проверку. Установка отменена.".into())
@@ -794,12 +798,46 @@ pub(crate) fn control_production_allowed(app: &AppHandle) -> Result<(), String> 
 fn candidate_identity(candidate: &Candidate) -> Result<String, String> {
     Ok(hex::encode(Sha256::digest(serde_json::to_vec(candidate).map_err(|_| "control_invalid_candidate")?)))
 }
+fn read_control_descriptor(app: &AppHandle, candidate: &Candidate) -> Result<crate::update_runtime_identity::StoredDescriptor,String> {
+    let (_,meta)=prepared_paths(app,&candidate.version)?;
+    let read=|path: std::path::PathBuf,limit:u64| -> Result<String,String> {
+        use std::io::Read;
+        let file=std::fs::File::open(path).map_err(|_| "control_signed_descriptor_required")?;
+        if file.metadata().map_err(|_| "control_descriptor_unavailable")?.len()>limit {return Err("control_descriptor_oversized".into());}
+        let mut bytes=Vec::new();file.take(limit+1).read_to_end(&mut bytes).map_err(|_| "control_descriptor_unavailable")?;
+        if bytes.len() as u64>limit {return Err("control_descriptor_oversized".into());}
+        String::from_utf8(bytes).map_err(|_| "control_descriptor_invalid".into())
+    };
+    let stored=crate::update_runtime_identity::StoredDescriptor{raw:read(meta.with_file_name("control-descriptor.json"),16384)?,signature:read(meta.with_file_name("control-descriptor.json.sig"),4096)?};
+    validate_control_descriptor(candidate,&stored)?;Ok(stored)
+}
+fn validate_control_descriptor(candidate: &Candidate, stored: &crate::update_runtime_identity::StoredDescriptor) -> Result<(),String> {
+    let d=crate::update_runtime_identity::verify(&stored.raw,&stored.signature,PUBLIC_KEY)?;
+    if d.version!=candidate.version || d.prepared_id!=candidate_identity(candidate)? || d.installer_sha256!=candidate.package.sha256 || d.installer_size!=candidate.package.size {return Err("control_descriptor_package_mismatch".into());}
+    Ok(())
+}
+pub(crate) async fn prepare_control_descriptor(app: AppHandle) -> Result<(),String> {
+    control_production_allowed(&app)?;
+    let state=app.state::<UpdateState>();let _busy=state.acquire()?;
+    let candidate=state.candidate.lock().map_err(|_| "control_state_busy")?.clone().ok_or("control_candidate_required")?;
+    read_prepared(&app,&candidate)?.ok_or("control_prepared_package_required")?;
+    let (feed,token)=config()?;
+    let url=package_url(&feed,&format!("{}.identity.json",candidate.package.url))?;
+    let sig_url=package_url(&feed,&format!("{}.identity.json.sig",candidate.package.url))?;
+    let raw=String::from_utf8(fetch(url,token.clone(),16384,|_|{}).await?).map_err(|_| "control_descriptor_invalid")?;
+    let signature=String::from_utf8(fetch(sig_url,token,4096,|_|{}).await?).map_err(|_| "control_descriptor_invalid")?;
+    let stored=crate::update_runtime_identity::StoredDescriptor{raw,signature};validate_control_descriptor(&candidate,&stored)?;
+    let (_,meta)=prepared_paths(&app,&candidate.version)?;
+    crate::update_journal::atomic_write(&meta.with_file_name("control-descriptor.json"),stored.raw.as_bytes())?;
+    crate::update_journal::atomic_write(&meta.with_file_name("control-descriptor.json.sig"),stored.signature.as_bytes())?;
+    Ok(())
+}
 pub(crate) fn control_status(app: &AppHandle) -> Result<serde_json::Value, String> {
     let state = app.state::<UpdateState>();
     let status = state.snapshot(app);
     let candidate = state.candidate.lock().map_err(|_| "control_state_busy")?.clone();
     let prepared = candidate.as_ref().and_then(|c| {
-        matches!(read_prepared(app,c),Ok(Some(_))).then(|| candidate_identity(c).ok()).flatten()
+        (matches!(read_prepared(app,c),Ok(Some(_))) && read_control_descriptor(app,c).is_ok()).then(|| candidate_identity(c).ok()).flatten()
     });
     // No feed access token, profile, signed URL, release notes or personal data.
     Ok(serde_json::json!({"installed_version":status.installed_version,"phase":status.phase,
@@ -835,6 +873,7 @@ async fn install_authorized(
         if candidate_identity(&candidate)? != *prepared_id { return Err("control_prepared_identity_changed".into()); }
         // Unlike explicit UI, control never silently downloads/replaces a cache.
         read_prepared(&app,&candidate)?.ok_or("control_prepared_package_required")?;
+        read_control_descriptor(&app,&candidate)?;
         let journal = crate::update_control::Journal::open(&crate::update_control::journal_path(&app)?)?;
         if journal.install_committed()? { return Err("control_install_outcome_unknown".into()); }
     }
@@ -993,7 +1032,8 @@ async fn install_authorized(
                 control_window_allowed(&app)?;
                 if control_lease.as_ref().unwrap().as_ref().is_none_or(|lease| !lease.eligible_at(Instant::now())) { return Err("control_fresh_safe_lease_required".into()); }
                 let mut journal = crate::update_control::Journal::open(&crate::update_control::journal_path(&app)?)?;
-                journal.commit_install(operation_id,&candidate.version,prepared_id)?;
+                let descriptor=read_control_descriptor(&app,&candidate)?;
+                journal.commit_install(operation_id,&candidate.version,prepared_id,&descriptor)?;
                 consume_control_lease(control_lease.as_mut().unwrap(),Instant::now())?;
             }
             update
