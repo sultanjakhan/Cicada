@@ -40,3 +40,6 @@
 }
 /* Android: the header names the section and the drawer starts with its items. */
 .mobile .hanni-brand { display:none; }
+
+/* The shell uses the original mark without the packaged icon tile. */
+[data-theme="dark"] .hanni-brand img { filter:invert(1); }

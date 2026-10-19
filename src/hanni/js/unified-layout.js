@@ -1,8 +1,7 @@
 import { createUiCopy } from './ui-copy.js';
 const uiCopy = value => createUiCopy(globalThis.document)(value);
-import { S, invoke, TAB_ICONS, setTheme } from './state.js';
+import { S, invoke, TAB_ICONS, setTheme, IS_MOBILE } from './state.js';
 import { escapeHtml } from './utils.js';
-import { IS_MOBILE } from './state.js';
 
 import { mountThemeControl } from './theme-control.js';
 const themeControls = new WeakMap();
@@ -86,6 +85,7 @@ export async function renderUnifiedLayout(el, tabId, config = {}) {
   const focusedTab = el.ownerDocument.activeElement?.closest('.uni-tab');
   const restoreTabFocus = focusedTab && el.contains(focusedTab) && focusedTab.dataset.pane === activePane;
   themeControls.get(el)?.();
+  themeControls.delete(el);
   el.innerHTML = `
     <div class="uni-header">
       <span class="uni-header-icon${config.headerIcon ? ' uni-header-icon--static' : ''}" ${config.headerIcon ? 'aria-hidden="true"' : 'title="Изменить иконку"'}>${icon}</span>
@@ -96,9 +96,9 @@ export async function renderUnifiedLayout(el, tabId, config = {}) {
     ${config.headerExtra || ''}
     <div class="uni-navigation"><div class="uni-tabs" aria-label="Разделы календаря">${tabsHtml}</div></div>
     <div class="uni-content"><div class="uni-pane" id="uni-pane-${tabId}"></div></div>`;
-  if (tabId === 'calendar') {
-    const themeHost = IS_MOBILE ? el.ownerDocument.getElementById('mobile-header') : el.querySelector('.uni-header');
-    themeControls.set(el, mountThemeControl(themeHost || el.querySelector('.uni-header'), { getTheme: () => S.theme, setTheme }));
+  if (tabId === 'calendar' && !(config.themeInToday && activePane === 'dash')) {
+    const host = IS_MOBILE ? el.ownerDocument.getElementById('mobile-header') : el.querySelector('.uni-header');
+    themeControls.set(el, mountThemeControl(host || el.querySelector('.uni-header'), { getTheme: () => S.theme, setTheme }));
   }
   if (config.editableHeader !== false) wireHeaderEdit(el, tabId, config, meta, defaults, revision);
   if (restoreTabFocus) el.querySelector(`.uni-tab[data-pane="${activePane}"]`)?.focus({preventScroll:true});

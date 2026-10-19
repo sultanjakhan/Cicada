@@ -3,7 +3,7 @@ const uiCopy = value => createUiCopy(globalThis.document)(value);
 uiCopy.format = (...args) => createUiCopy(globalThis.document).format(...args);
 import { createSharedResultReviewAdapter, prepareSharedResultReview } from './shared-result-review-adapter.js';
 import { canRefreshHealthView, mayCommitHealthView, retryHealthViewRefresh, startHealthViewRefresh } from './health-view-refresh.js';
-import { S, invoke, listen, tabLoaders, TAB_ICONS, loadTabSetting, IS_MOBILE } from './state.js';
+import { S, setTheme, invoke, listen, tabLoaders, TAB_ICONS, loadTabSetting, IS_MOBILE } from './state.js';
 import { ICONS } from './icons.js';
 import { escapeHtml } from './utils.js';
 import { renderUnifiedLayout, savePaneState } from './unified-layout.js';
@@ -727,6 +727,7 @@ export async function loadCalendarWorkspace(el, { nativeReview = true } = {}) {
         onCurrentTaskChange: value => disposeRecurring?.setCurrentTask(value),
       });
     },
+    themeInToday: true,
     panes: [{id:'dash',label:uiCopy("Дашборд")}, {id:'table',label:uiCopy("Календарь")}, {id:'tasks',label:uiCopy("Задачи")}, {id:'routines',label:uiCopy("Рутины")}, {id:'notes',label:uiCopy("Заметки")}, {id:'goals',label:uiCopy("Цели")}],
     renderDash: (pane) => {
       pane.innerHTML = `<section class="calendar-today" aria-label="${uiCopy("Сегодня")}">
@@ -736,6 +737,7 @@ export async function loadCalendarWorkspace(el, { nativeReview = true } = {}) {
       pane.querySelector('[data-calendar-now-slot]').replaceWith(nowHost);
       nowHost.hidden = false;
       disposeDayBanner = mountCalendarDayBanner(pane.querySelector('[data-calendar-day-banner]'), {
+        theme: { getTheme: () => S.theme, setTheme },
         invoke, lifecycle:true, onOpenTask:row=>showRecord(calendarRecord(row)),
         onOpenSettings:button => showCalendarSettings(button, {section:'next-action',recommendationsOnly:true,returnFocus:() => button.isConnected ? button.focus({preventScroll:true}) : disposeNextAction?.focus()}),
       });

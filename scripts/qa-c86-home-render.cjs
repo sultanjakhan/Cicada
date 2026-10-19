@@ -4,9 +4,17 @@ const {chromium}=require('playwright');
 const project=path.resolve(__dirname,'..'),root=process.env.C86_SOURCE||project,label=process.env.C86_LABEL||'candidate';
 const output=path.join(project,'.local/c86-render',label);fs.mkdirSync(output,{recursive:true});
 const source=fs.readFileSync(path.join(root,'scripts/qa-goals85-render.cjs'),'utf8');
-const fixture=new Function(source.slice(source.indexOf('const fixture ='),source.indexOf('const server ='))+'return fixture;')();
+const theme946=process.env.C86_THEME946==='1';
+let fixture=new Function(source.slice(source.indexOf('const fixture ='),source.indexOf('const server ='))+'return fixture;')();
+// The exact source shell supplies the logo and its real sidebar container.
+if(theme946){
+ const index=fs.readFileSync(path.join(root,'src/index.html'),'utf8');
+ const shell=index.match(/<div id="tab-bar">.*?<div id="tab-bar-bottom"><\/div><\/div>/);
+ assert.ok(shell,'actual source sidebar');
+ fixture=fixture.replace('<div id="app-body">','<div id="app-body">'+shell[0].replace('src="./','src="/src/'));
+}
 const base=source.slice(source.indexOf('function syntheticBackend'),source.indexOf('async function main()'));
-const backend=new Function('return function(options){('+base+')({theme:options.theme});('+function reports({count}){
+const backend=new Function('return function(options){('+base+')({theme:options.persist?(localStorage.getItem("hanni_theme")||options.theme):options.theme});('+function reports({count}){
  const original=window.__TAURI__.core.invoke,namespace='00000000-0000-0000-0000-000000000001';
  window.c86Calls=[];
  const prepared=(async()=>{
@@ -38,12 +46,46 @@ const backend=new Function('return function(options){('+base+')({theme:options.t
 }.toString()+')(options);} ')();
 const server=http.createServer((req,res)=>{const name=new URL(req.url,'http://fixture').pathname;if(name==='/'){res.setHeader('Content-Type','text/html');res.end(fixture);return;}const file=path.resolve(root,'.'+name);if(!file.startsWith(root+path.sep)||!fs.existsSync(file)||!fs.statSync(file).isFile()){res.writeHead(404);res.end();return;}res.setHeader('Content-Type',({'.js':'text/javascript','.json':'application/json','.css':'text/css','.svg':'image/svg+xml'})[path.extname(file)]||'application/octet-stream');res.end(fs.readFileSync(file));});
 async function main(){assert.equal(process.platform,'linux');assert.ok(process.env.C86_CHROME);await new Promise(r=>server.listen(0,'127.0.0.1',r));const browser=await chromium.launch({headless:true,executablePath:process.env.C86_CHROME}),evidence=[];
- try{for(const [width,height] of [[760,720],[1100,800],[390,844]])for(const theme of ['light','dark'])for(const count of [0,24]){
+ try{for(const [width,height] of [[760,720],[1100,800],[390,844]])for(const theme of ['light','dark'])for(const count of (theme946?[0]:[0,24])){
   const name=width+'-'+theme+'-'+count,page=await browser.newPage({viewport:{width,height}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
-  await page.addInitScript(backend,{theme,count});await page.goto('http://127.0.0.1:'+server.address().port,{waitUntil:'networkidle'});await page.waitForFunction(()=>window.fixtureReady);
+  await page.addInitScript(backend,{theme,count,persist:theme946});await page.goto('http://127.0.0.1:'+server.address().port,{waitUntil:'networkidle'});await page.waitForFunction(()=>window.fixtureReady);
   await page.waitForFunction(n=>{const s=document.querySelector('.calendar-ai-reports');return s&&!s.hasAttribute('aria-busy')&&s.querySelectorAll('li').length===n;},count);
   await page.waitForFunction(()=>document.querySelector('[data-ui="goal-title"]')?.textContent.trim()&&!document.querySelector('[data-calendar-next-action]').textContent.includes('Загружаем'));
   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>{document.querySelector('.uni-content').scrollTop=0;window.scrollTo(0,0);resolve();}))));
+  if(theme946){
+   const control=page.locator('[data-home-theme]');assert.equal(await control.count(),1,'one appearance control');
+   const measure=await page.evaluate(()=>{
+    const rect=n=>{const r=n.getBoundingClientRect();return{x:r.x,y:r.y,right:r.right,bottom:r.bottom,width:r.width,height:r.height};};
+    const button=document.querySelector('[data-home-theme]'),today=document.querySelector('.today-date'),logo=document.querySelector('.hanni-brand img'),flag=document.querySelector('.calendar-now__goal-symbol');
+    return{control:rect(button),today:rect(today),besideToday:button.parentElement===today,overflow:document.documentElement.scrollWidth>innerWidth,logo:{...rect(logo),src:logo.getAttribute('src'),filter:getComputedStyle(logo).filter,background:getComputedStyle(logo.parentElement).backgroundColor},flag:{...rect(flag),svg:flag.innerHTML,color:getComputedStyle(flag).color},theme:document.documentElement.dataset.theme};
+   });
+   if(label!=='baseline'){
+    assert.equal(measure.besideToday,true);assert.ok(measure.control.x>=measure.today.x&&measure.control.right<=measure.today.right+1);
+    assert.equal(measure.overflow,false,'no page horizontal overflow');
+    const logoSource=fs.readFileSync(path.join(root,'src/app-logo.svg'),'utf8');assert.ok(!logoSource.includes('id="icon-background"'));
+   }
+   await control.focus();await page.keyboard.press('Tab');await page.keyboard.press('Shift+Tab');
+   assert.equal(await control.evaluate(n=>n===document.activeElement),true);
+   const focus=await control.evaluate(n=>({visible:n.matches(':focus-visible'),outline:getComputedStyle(n).outlineWidth}));assert.equal(focus.visible,true);
+   await page.screenshot({path:path.join(output,name+'-theme946.png'),fullPage:true});
+   await page.locator('.hanni-brand').screenshot({path:path.join(output,name+'-logo.png')});
+   await page.locator('.calendar-now__goal-symbol').screenshot({path:path.join(output,name+'-flag.png')});
+   await page.keyboard.press('Enter');const toggled=theme==='dark'?'light':'dark';
+   assert.equal(await page.evaluate(()=>localStorage.getItem('hanni_theme')),toggled);
+   for(const pane of ['tasks','goals','routines','notes','table','dash']){
+    await page.locator('.uni-tab[data-pane="'+pane+'"]').click();
+    await page.waitForFunction(id=>document.querySelector('.uni-tab.active')?.dataset.pane===id&&document.querySelectorAll('[data-home-theme]').length===1,pane);
+    const fallback=page.locator('[data-home-theme]');
+    if(label!=='baseline')assert.equal(await fallback.evaluate((n,id)=>id==='dash'?n.parentElement.classList.contains('today-date'):!!n.closest('.uni-header,#mobile-header'),pane),true,'correct pane host');
+    assert.equal(await fallback.getAttribute('aria-pressed'),String(toggled==='dark'));
+    await page.screenshot({path:path.join(output,name+'-pane-'+pane+'.png'),fullPage:true});
+   }
+   // The synthetic backend sets only the initial value, so reload tests real boot persistence.
+   await page.reload({waitUntil:'networkidle'});await page.waitForFunction(()=>window.fixtureReady);
+   assert.equal(await page.locator('[data-home-theme]').count(),1);
+   assert.equal(await page.evaluate(()=>document.documentElement.dataset.theme),toggled);
+   evidence.push({width,height,theme,label,...measure,keyboardFocus:focus,toggled,persistence:true,flagClarity:'requires human image review'});await page.close();continue;
+  }
   const box=async selector=>page.locator(selector).first().evaluate(n=>{const r=n.getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height,bottom:r.bottom};});
   const goalCard=await box('[data-calendar-now]'),goal=await box('[data-ui="goal-title"]'),next=await box('[data-calendar-next-action] [data-next-action-action="start"]'),reports=await box('.calendar-ai-reports');
   const ids=await page.locator('.calendar-ai-reports li').evaluateAll(nodes=>nodes.map(n=>({task:n.dataset.nativeTaskId,run:n.dataset.runId})));

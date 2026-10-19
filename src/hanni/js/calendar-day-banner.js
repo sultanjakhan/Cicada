@@ -1,10 +1,11 @@
+import { mountThemeControl } from './theme-control.js';
 import { mountCalendarDayLifecycle } from './calendar-day-lifecycle.js';
 import { createUiCopy } from './ui-copy.js';
 import { projectDayStarts } from './calendar-day-start.js';
 import { dateKey } from './calendar-recurring-store.js';
 import { ICONS } from './icons.js';
 
-export function mountCalendarDayBanner(element, { invoke, now = () => new Date(), onOpenSettings, lifecycle = false, onOpenTask } = {}) {
+export function mountCalendarDayBanner(element, { invoke, now = () => new Date(), onOpenSettings, lifecycle = false, onOpenTask, theme } = {}) {
   const document = element.ownerDocument, window = document.defaultView;
   const copy = createUiCopy(document);
   let disposed = false, busy = false, loaded = false, day = '', entries = [], revision = 0, pendingRefresh = false, lifecycleClosed = false;
@@ -14,6 +15,7 @@ export function mountCalendarDayBanner(element, { invoke, now = () => new Date()
     ? `<button type="button" class="today-date__settings" data-today-settings aria-label="${copy("Настроить рекомендации на сегодня")}" aria-haspopup="dialog"><span aria-hidden="true">${ICONS.sliders}</span>${copy("Сегодня")}</button>`
     : `<span class="today-date__label">${copy("Сегодня")}</span>`;
   element.innerHTML = `<div class="today-date"><h2>${today}<span class="today-date__day"> · <time></time>, <span data-weekday></span></span></h2></div><button type="button" data-start-day disabled>${copy("Начать день")}</button><p role="alert" hidden></p><button type="button" data-day-retry hidden>${copy("Повторить загрузку")}</button>`;
+  const disposeTheme = theme ? mountThemeControl(element.querySelector('.today-date'), theme) : null;
   const settings = element.querySelector('[data-today-settings]');
   if (settings) settings.onclick = () => { if (!disposed) onOpenSettings(settings); };
   const start = element.querySelector('[data-start-day]'), error = element.querySelector('[role=alert]'), retry = element.querySelector('[data-day-retry]');
@@ -72,6 +74,7 @@ export function mountCalendarDayBanner(element, { invoke, now = () => new Date()
   if (lifecycle) { const host=document.createElement("div");element.append(host);disposeLifecycle=mountCalendarDayLifecycle(host,{invoke,onOpenTask,planning:false,onDayState:closed=>{if(closed!==null){lifecycleClosed=closed;render();}}});host.querySelector('.calendar-day-lifecycle__actions').prepend(start); }
   void refresh();
   return () => {
+    disposeTheme?.();
     disposeLifecycle?.();
     disposed = true; ++revision; window.clearInterval(timer);
     window.removeEventListener('hanni:calendar-refresh', onRefresh); window.removeEventListener('focus', onRefresh);

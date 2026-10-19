@@ -76,3 +76,22 @@ test('Today lifecycle groups Start and End without any tomorrow-plan entry',asyn
  assert.equal(host.querySelector('[data-start-day]').parentElement,host.querySelector('[data-end-day]').parentElement);
  assert.equal(host.querySelector('[data-end-day]').disabled,false);assert.ok(calls.every(c=>['get_ui_state','read_calendar_day'].includes(c)));
 });
+
+test('Today owns one accessible theme switch, preserves preference across remount and cleans listeners', async t => {
+  const dom=new JSDOM('<div id="host"></div>',{url:'http://localhost',pretendToBeVisual:true});
+  t.after(()=>dom.window.close());
+  const {document,localStorage}=dom.window,host=document.querySelector('#host');let writes=0;
+  const theme={getTheme:()=>localStorage.getItem('hanni_theme')||'light',setTheme:value=>{writes++;localStorage.setItem('hanni_theme',value);document.documentElement.dataset.theme=value;dom.window.dispatchEvent(new dom.window.CustomEvent('hanni:theme-changed'));}};
+  const mount=()=>mountCalendarDayBanner(host,{invoke:async()=>null,theme,onOpenSettings:()=>{}});
+  let dispose=mount();const old=host.querySelector('[data-home-theme]');
+  assert.equal(host.querySelectorAll('[data-home-theme]').length,1);
+  assert.equal(old.parentElement,host.querySelector('.today-date'));
+  assert.equal(old.previousElementSibling.tagName,'H2');
+  assert.match(old.getAttribute('aria-label'),/тёмную/);old.click();
+  assert.equal(old.getAttribute('aria-pressed'),'true');assert.equal(writes,1);
+  dispose();assert.equal(old.isConnected,false);
+  dispose=mount();const current=host.querySelector('[data-home-theme]');assert.equal(current.getAttribute('aria-pressed'),'true');
+  theme.setTheme('light');assert.equal(current.getAttribute('aria-pressed'),'false');
+  assert.equal(old.getAttribute('aria-pressed'),'true');
+  assert.equal(host.querySelectorAll('[data-home-theme]').length,1);dispose();
+});
