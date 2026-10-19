@@ -496,8 +496,23 @@ pub fn create_event(
     category: String,
     color: String,
     priority: Option<i64>,
+    operation_id: Option<String>,
+    recover_only: Option<bool>,
     state: State<'_, AppState>,
-) -> Result<String, String> {
+) -> Result<Value, String> {
+    let mut conn = lock(&state)?;
+    create_event_attempt_record(&mut conn, &title, &description, &date, &time,
+        duration_minutes, &category, &color, priority, operation_id.as_deref(), recover_only.unwrap_or(false))
+}
+
+// Optional ordinary-event identity, matching the existing ordinary-note receipt pattern.
+// Local receipt + event are atomic; retries never recreate a deliberately deleted event.
+pub(crate) fn create_event_attempt_record(
+    conn: &mut Connection, title: &str, description: &str, date: &str, time: &str,
+    duration_minutes: i64, category: &str, color: &str, priority: Option<i64>,
+    operation_id: Option<&str>, recover_only: bool,
+) -> Result<Value, String> {
+    use sha2::{Digest, Sha256};
     validate_title(&title)?;
     validate_date(&date)?;
     if !time.is_empty() {
@@ -510,11 +525,96 @@ pub fn create_event(
     } else {
         duration(duration_minutes)?;
     }
-    let conn = lock(&state)?;
+    let identity = if let Some(operation_id) = operation_id {
+        let operation = Uuid::parse_str(operation_id).map_err(|_| fail("event_create_invalid_operation"))?;
+        if operation.to_string() != operation_id { return Err(fail("event_create_invalid_operation")); }
+        let payload = json!([title,description,date,time,duration_minutes,category,color,priority]);
+        let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&payload).map_err(|_|fail("event_create_invalid_payload"))?));
+        Some((format!("calendar_event_create_local_v1:{operation_id}"), digest))
+    } else {
+        if recover_only { return Err(fail("event_create_operation_required")); }
+        None
+    };
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e|fail(e.to_string()))?;
+    if let Some((key, digest)) = identity.as_ref() {
+        let raw: Option<String> = tx.query_row("SELECT value FROM ui_state WHERE key=?1", [key], |r|r.get(0)).optional().map_err(|e|fail(e.to_string()))?;
+        if let Some(raw) = raw {
+            let receipt: Value = serde_json::from_str(&raw).map_err(|_|fail("event_create_invalid_receipt"))?;
+            if receipt["schemaVersion"] != 1 || receipt["payloadDigest"].as_str() != Some(digest.as_str()) { return Err(fail("event_create_operation_conflict")); }
+            let id = receipt["id"].as_str().filter(|id|Uuid::parse_str(id).is_ok()).ok_or_else(||fail("event_create_invalid_receipt"))?;
+            return Ok(json!(id));
+        }
+        if recover_only { return Ok(Value::Null); }
+    }
     let id = Uuid::new_v4().to_string();
     let n = now();
-    conn.execute("INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags) VALUES(?1,'event',?2,?3,?4,?5,?6,0,1,?7,?7,?8,?9,?10,0,'')",params![id,title.trim(),description,date,time,duration_minutes,n,category,color,priority.unwrap_or(0)]).map_err(|e|fail(e.to_string()))?;
-    Ok(id)
+    tx.execute("INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,priority,archived,tags) VALUES(?1,'event',?2,?3,?4,?5,?6,0,1,?7,?7,?8,?9,?10,0,'')",params![id,title.trim(),description,date,time,duration_minutes,n,category,color,priority.unwrap_or(0)]).map_err(|e|fail(e.to_string()))?;
+    if let Some((key, digest)) = identity {
+        let receipt = json!({"schemaVersion":1,"payloadDigest":digest,"id":id});
+        tx.execute("INSERT INTO ui_state(key,value,updated_at) VALUES(?1,?2,?3)",params![key,receipt.to_string(),n]).map_err(|e|fail(e.to_string()))?;
+    }
+    tx.commit().map_err(|e|fail(e.to_string()))?;
+    Ok(json!(id))
+}
+
+#[cfg(test)]
+mod event_create_attempt_tests {
+    use super::*;
+    fn create(conn: &mut Connection, op: &str, title: &str, recover: bool) -> Result<Value, String> {
+        create_event_attempt_record(conn,title,"Owned description","2026-11-03","23:30",105,"general","#123456",Some(4),Some(op),recover)
+    }
+    #[test]
+    fn event_attempt_reopens_recovers_conflicts_and_keeps_deliberate_identical_events() {
+        let dir = tempfile::tempdir().unwrap(); let path = dir.path().join("owned-events.db");
+        let mut conn = Connection::open(&path).unwrap(); crate::init_schema(&conn).unwrap();
+        let op = Uuid::new_v4().to_string();
+        assert_eq!(create(&mut conn,&op,"Owned event",true).unwrap(),Value::Null);
+        let id = create(&mut conn,&op,"Owned event",false).unwrap(); // First acknowledgement is treated as lost.
+        drop(conn); let mut conn = Connection::open(&path).unwrap();
+        for _ in 0..3 {
+            assert_eq!(create(&mut conn,&op,"Owned event",true).unwrap(),id);
+            assert_eq!(create(&mut conn,&op,"Owned event",false).unwrap(),id);
+        }
+        let before = conn.total_changes();
+        assert!(create(&mut conn,&op,"Changed event",false).unwrap_err().contains("event_create_operation_conflict"));
+        assert_eq!(conn.total_changes(),before);
+        let other = create(&mut conn,&Uuid::new_v4().to_string(),"Owned event",false).unwrap(); assert_ne!(id,other);
+        assert_eq!(conn.query_row("SELECT count(*) FROM items WHERE kind='event'",[],|r|r.get::<_,i64>(0)).unwrap(),2);
+        let event = load(&conn,id.as_str().unwrap()).unwrap();
+        assert_eq!(event["duration_minutes"],105); assert_eq!(event["category"],"general"); assert_eq!(event["priority"],4);
+        let raw: String = conn.query_row("SELECT value FROM ui_state WHERE key=?1",[format!("calendar_event_create_local_v1:{op}")],|r|r.get(0)).unwrap();
+        assert!(!raw.contains("Owned event") && !raw.contains("Owned description"));
+        conn.execute("DELETE FROM items WHERE id=?1",[id.as_str().unwrap()]).unwrap();
+        assert_eq!(create(&mut conn,&op,"Owned event",false).unwrap(),id,"receipt never recreates a deleted event");
+        assert_eq!(conn.query_row("SELECT count(*) FROM items WHERE kind='event'",[],|r|r.get::<_,i64>(0)).unwrap(),1);
+    }
+    #[test]
+    fn event_receipt_failure_is_atomic_and_all_day_and_validation_are_preserved() {
+        let mut conn = Connection::open_in_memory().unwrap(); crate::init_schema(&conn).unwrap(); let op = Uuid::new_v4().to_string();
+        conn.execute_batch("CREATE TRIGGER owned_fail_event_receipt BEFORE INSERT ON ui_state WHEN NEW.key LIKE 'calendar_event_create_local_v1:%' BEGIN SELECT RAISE(ABORT,'owned receipt failure'); END;").unwrap();
+        assert!(create(&mut conn,&op,"Owned event",false).is_err());
+        assert_eq!(conn.query_row("SELECT count(*) FROM items",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+        assert_eq!(create(&mut conn,&op,"Owned event",true).unwrap(),Value::Null);
+        conn.execute_batch("DROP TRIGGER owned_fail_event_receipt").unwrap();
+        let id = create_event_attempt_record(&mut conn,"All day","","2026-11-03","",0,"general","#123456",None,Some(&op),false).unwrap();
+        assert_eq!(load(&conn,id.as_str().unwrap()).unwrap()["time"],"");
+        assert!(create_event_attempt_record(&mut conn,"Invalid","","2026-11-03","10:00",0,"general","#123456",None,None,false).is_err());
+        assert!(create_event_attempt_record(&mut conn,"Invalid","","2026-11-03","25:00",30,"general","#123456",None,None,false).is_err());
+        assert!(create_event_attempt_record(&mut conn,"Invalid","","2026-11-03","10:00",30,"general","#123456",None,None,true).is_err());
+    }
+    #[test]
+    fn event_attempt_two_connections_commit_one_uuid() {
+        use std::sync::{Arc,Barrier};
+        let dir = tempfile::tempdir().unwrap(); let path = dir.path().join("owned-concurrent-events.db");
+        let conn = Connection::open(&path).unwrap(); crate::init_schema(&conn).unwrap(); drop(conn);
+        let op = Uuid::new_v4().to_string(); let barrier = Arc::new(Barrier::new(2));
+        let threads: Vec<_> = (0..2).map(|_| {
+            let path=path.clone(); let op=op.clone(); let barrier=barrier.clone();
+            std::thread::spawn(move || { let mut conn=Connection::open(path).unwrap(); conn.busy_timeout(std::time::Duration::from_secs(5)).unwrap(); barrier.wait(); create(&mut conn,&op,"Owned concurrent event",false).unwrap() })
+        }).collect();
+        let ids: Vec<_> = threads.into_iter().map(|thread|thread.join().unwrap()).collect(); assert_eq!(ids[0],ids[1]);
+        let conn=Connection::open(path).unwrap(); assert_eq!(conn.query_row("SELECT count(*) FROM items WHERE kind='event'",[],|r|r.get::<_,i64>(0)).unwrap(),1);
+    }
 }
 #[tauri::command(rename_all = "camelCase")]
 pub fn update_event(

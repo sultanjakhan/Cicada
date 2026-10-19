@@ -2479,6 +2479,43 @@ fn event_form_accepts_all_day_and_cross_midnight_and_rejects_stale_updates() {
 }
 
 #[test]
+fn ordinary_event_create_ipc_recovers_after_reopen_and_keeps_goal_and_timer_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("owned-event-recovery.db");
+    let (app, view) = fixture_with_connection(Connection::open(&path).unwrap());
+    let operation = uuid::Uuid::new_v4().to_string();
+    let args = json!({"title":"Owned uncertain event","description":"Retained description","date":"2026-11-03","time":"23:30","durationMinutes":105,"category":"general","color":"#123456","priority":4,"operationId":operation});
+    let mut lookup = args.clone(); lookup["recoverOnly"] = json!(true);
+    assert_eq!(call(&view,"create_event",lookup.clone()).unwrap(),Value::Null);
+    let id = call(&view,"create_event",args.clone()).unwrap(); // Discard the first acknowledgement.
+    let goal_id = goal(&view,"Owned event goal",Value::Null);
+    call(&view,"set_calendar_task_goal",json!({"sourceType":"event","sourceId":id,"goalId":goal_id})).unwrap();
+    let block = call(&view,"start_task_block",json!({"sourceType":"event","sourceId":id,"failIfActive":true})).unwrap();
+    drop(view); drop(app);
+    let (app, view) = fixture_with_connection(Connection::open(&path).unwrap());
+    for _ in 0..3 {
+        assert_eq!(call(&view,"create_event",lookup.clone()).unwrap(),id);
+        assert_eq!(call(&view,"create_event",args.clone()).unwrap(),id);
+    }
+    let mut changed = args.clone(); changed["description"] = json!("Changed draft");
+    assert!(call(&view,"create_event",changed).unwrap_err().as_str().unwrap().contains("event_create_operation_conflict"));
+    let all = call(&view,"get_all_events",json!({})).unwrap(); assert_eq!(all.as_array().unwrap().len(),1);
+    let event = &all[0]; assert_eq!(event["id"],id); assert_eq!(event["description"],"Retained description");
+    assert_eq!(event["time"],"23:30"); assert_eq!(event["duration_minutes"],105); assert_eq!(event["category"],"general"); assert_eq!(event["color"],"#123456"); assert_eq!(event["priority"],4);
+    let links = call(&view,"get_calendar_task_goals",json!({})).unwrap();
+    assert_eq!(links.as_array().unwrap().len(),1); assert_eq!(links[0]["source_id"],id); assert_eq!(links[0]["goal_id"],goal_id);
+    let active = call(&view,"get_active_blocks",json!({})).unwrap(); assert_eq!(active.as_array().unwrap().len(),1); assert_eq!(active[0]["id"],block);
+    assert!(call(&view,"start_task_block",json!({"sourceType":"event","sourceId":id,"failIfActive":true})).is_err());
+    assert_eq!(call(&view,"get_active_blocks",json!({})).unwrap(),active);
+    let mut separate = args.clone(); separate["operationId"] = json!(uuid::Uuid::new_v4().to_string());
+    assert_ne!(call(&view,"create_event",separate).unwrap(),id);
+    let state = app.state::<AppState>(); let conn = state.0.lock().unwrap();
+    assert_eq!(conn.query_row("SELECT count(*) FROM items WHERE kind='event'",[],|r|r.get::<_,i64>(0)).unwrap(),2);
+    assert_eq!(conn.query_row("SELECT count(*) FROM timeline_blocks",[],|r|r.get::<_,i64>(0)).unwrap(),1);
+}
+
+
+#[test]
 fn calendar_records_reject_an_inverted_date_range() {
     let (_app, view) = fixture();
     call(
