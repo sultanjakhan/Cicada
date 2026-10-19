@@ -64,7 +64,7 @@ export function calendarGoalPath(goals, goal) {
 export function openCalendarGoalEditor({ document, invoke, goal = null, parent = null, draft = null, goals = [], returnFocus, isCurrent = () => true, onSaved, onSavingChange, onClose } = {}) {
   const uiCopy = createUiCopy(document);
   const window = document.defaultView, prefix = `calendar-goal-editor-${++nextInstance}`;
-  let creating = false;
+  let creating = false, expectedGoal = goal ? structuredClone(goal) : null, reviewedGoal = null;
   const editor = createCalendarDialog({ document, title: goal ? uiCopy("Изменить цель") : parent ? uiCopy("Новая подцель") : uiCopy("Новая цель"), hint: uiCopy("Сохрани то, к чему хочешь прийти. Срок можно добавить позже."), submitLabel: uiCopy("Сохранить цель"),
     isCurrent, returnFocus, onClose });
   editor.modal.dataset.goalCreate = '';
@@ -98,6 +98,35 @@ export function openCalendarGoalEditor({ document, invoke, goal = null, parent =
     fields.target_value.required = numeric;
   };
   editor.form.querySelectorAll('[name=goal_kind]').forEach(input => input.addEventListener('change', updateFields)); fields.numeric_progress.addEventListener('change', updateFields); updateFields();
+  const review = document.createElement('button'), reload = document.createElement('button'), currentSummary = document.createElement('p');
+  review.type = reload.type = 'button'; review.hidden = reload.hidden = true;
+  review.textContent = uiCopy('Проверить актуальную цель');
+  reload.textContent = uiCopy('Заменить черновик актуальными данными');
+  currentSummary.setAttribute('role','status');
+  editor.body.append(review, currentSummary, reload);
+  review.addEventListener('click', async () => {
+    if (creating) return;
+    creating = true; editor.setPending(true); reviewedGoal = null; reload.hidden = true;
+    try {
+      const latest = await invoke('get_goals', {tabName:null});
+      if (!editor.modal.isConnected) return;
+      reviewedGoal = latest.find(item => String(item.id) === String(goal.id));
+      currentSummary.textContent = reviewedGoal ? [uiCopy('Актуальная цель: ') + reviewedGoal.title, uiCopy('Желаемый результат: ') + (reviewedGoal.description || '—'), uiCopy('Критерии: ') + (reviewedGoal.criteria || '—'), uiCopy('Срок: ') + (reviewedGoal.deadline || '—'), uiCopy('Прогресс: ') + (reviewedGoal.current_value ?? '—') + ' / ' + reviewedGoal.target_value + ' ' + reviewedGoal.unit, uiCopy('Родительская цель: ') + (latest.find(item=>String(item.id)===String(reviewedGoal.parent_goal_id))?.title || '—')].join(' · ') : uiCopy('Цель удалена. Черновик сохранён; создать её повторно из этого окна нельзя.');
+      reload.hidden = !reviewedGoal;
+    } catch { if (editor.modal.isConnected) editor.showError(uiCopy('Не удалось перечитать цель. Черновик сохранён.')); }
+    finally { creating = false; if (editor.modal.isConnected) editor.setPending(false); }
+  });
+  reload.addEventListener('click', () => {
+    if (creating || !reviewedGoal) return;
+    goal = structuredClone(reviewedGoal); expectedGoal = structuredClone(goal);
+    fields.title.value=goal.title;fields.deadline.value=goal.deadline||'';fields.goal_kind.value=goal.goal_kind||'';
+    fields.description.value=goal.description||'';fields.criteria.value=goal.criteria||'';
+    fields.target_value.value=goal.target_value;fields.unit.value=goal.unit||'';fields.current_value.value=goal.current_value??'';
+    fields.numeric_progress.checked=goal.goal_kind==='daily_norm'||(goal.numeric_progress??!!(goal.unit||Number(goal.target_value)!==1||Number(goal.current_value)>0));
+    if (goal.parent_goal_id && ![...parentSelect.options].some(option=>option.value===String(goal.parent_goal_id))) parentSelect.add(new window.Option(String(goal.parent_goal_id),String(goal.parent_goal_id)));
+    parentSelect.value=String(goal.parent_goal_id??'');updateFields();
+    reviewedGoal=null;review.hidden=reload.hidden=true;currentSummary.textContent='';editor.showError('');fields.title.focus();
+  });
   editor.form.addEventListener('submit', async event => {
     event.preventDefault(); if (creating) return;
     editor.showError('');
@@ -118,12 +147,16 @@ export function openCalendarGoalEditor({ document, invoke, goal = null, parent =
     if (currentValue != null && (!Number.isFinite(currentValue) || currentValue < 0)) { editor.showError(uiCopy("Укажи неотрицательный прогресс или очисти поле."), fields.current_value); return; }
     creating = true; onSavingChange?.(true); editor.setPending(true);
     try {
-      const id = await invoke('save_calendar_goal', { id: goal?.id || null, title, targetValue, unit: numeric ? fields.unit.value.trim() : (goal?.unit || ''), deadline, goalKind: fields.goal_kind.value || null, description: fields.description.value.trim(), criteria: fields.criteria.value.trim(), parentGoalId: parentSelect.value ? String(parentSelect.value) : null, clearParent: !!goal?.parent_goal_id && !parentSelect.value, currentValue, numericProgress: numeric });
+      const id = await invoke('save_calendar_goal', { id: goal?.id || null, title, targetValue, unit: numeric ? fields.unit.value.trim() : (goal?.unit || ''), deadline, goalKind: fields.goal_kind.value || null, description: fields.description.value.trim(), criteria: fields.criteria.value.trim(), parentGoalId: parentSelect.value ? String(parentSelect.value) : null, clearParent: !!goal?.parent_goal_id && !parentSelect.value, currentValue, numericProgress: numeric, ...(expectedGoal ? { expectedGoal } : {}) });
       // Saving succeeded. Close before rereading: a failed refresh must not offer Create again.
       editor.setPending(false); editor.close();
       window.dispatchEvent(new window.Event('task-state-changed'));
       await onSaved?.(goal?.id ?? id);
-    } catch { if (editor.modal.isConnected) { editor.setPending(false); editor.showError(uiCopy("Не удалось сохранить цель. Текст остался в форме — попробуй ещё раз.")); } }
+    } catch (error) { if (editor.modal.isConnected) { editor.setPending(false);
+      const stale = /calendar_goal_stale|goal not found/.test(String(error));
+      if (stale) { review.hidden=false;reload.hidden=true;reviewedGoal=null; }
+      editor.showError(uiCopy(stale ? 'Цель изменилась или удалена. Черновик сохранён. Проверь актуальную цель перед повторным сохранением.' : 'Не удалось сохранить цель. Текст остался в форме — попробуй ещё раз.'));
+    } }
     finally { creating = false; onSavingChange?.(false); }
   });
   editor.open(fields.title);

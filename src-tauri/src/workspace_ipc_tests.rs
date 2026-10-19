@@ -2770,3 +2770,54 @@ fn ordinary_note_attempt_public_ipc_recovers_exact_identity_and_supported_cleanu
     assert_eq!(call(&view,"create_note",args).unwrap(),id,"receipt never recreates a deliberately deleted note");
     assert!(call(&view,"get_active_blocks",json!({})).unwrap().as_array().unwrap().is_empty());
 }
+
+#[test]
+fn goal_editor_exact_base_is_atomic_across_connections_and_recovery() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("owned-goal-editor.db");
+    let (app, view) = fixture_with_connection(Connection::open(&path).unwrap());
+    let (_other, writer) = fixture_with_connection(Connection::open(&path).unwrap());
+    let id = goal(&view, "Owned base", Value::Null);
+    let child = goal(&view, "Owned child", id.clone());
+    let unrelated = goal(&view, "Owned unrelated", Value::Null);
+    let read = |v: &tauri::WebviewWindow<MockRuntime>| call(v,"get_goals",json!({"tabName":null})).unwrap();
+    let find = |all: &Value| all.as_array().unwrap().iter().find(|g|g["id"]==id).unwrap().clone();
+    let payload = |title: &str| json!({"id":id,"title":title,"targetValue":10,"currentValue":7,"unit":"pages","deadline":"2027-01-01","goalKind":"goal","description":"Owned description","criteria":"Owned criteria","parentGoalId":null,"clearParent":false,"numericProgress":false});
+    let captured = find(&read(&view));
+    call(&writer,"save_calendar_goal",payload("Newer connection")).unwrap();
+    let before = read(&view);
+    let metadata = call(&view,"get_ui_state",json!({"key":"calendar_development_v1"})).unwrap();
+    let changes = app.state::<AppState>().0.lock().unwrap().total_changes();
+    let mut stale = payload("Must not overwrite");
+    stale["goalKind"] = json!("daily_norm"); stale["numericProgress"] = json!(true); stale["expectedGoal"] = captured;
+    for _ in 0..2 { assert_eq!(call(&view,"save_calendar_goal",stale.clone()).unwrap_err(),json!("calendar_goal_stale")); }
+    assert_eq!(read(&view),before);
+    assert_eq!(call(&view,"get_ui_state",json!({"key":"calendar_development_v1"})).unwrap(),metadata);
+    assert_eq!(app.state::<AppState>().0.lock().unwrap().total_changes(),changes,"rejected saves perform no SQL writes, including sync/metadata");
+    assert_eq!(read(&view).as_array().unwrap().iter().find(|g|g["id"]==child).unwrap()["parent_goal_id"],id);
+    // Unrelated goal changes do not invalidate this exact per-goal base.
+    let fresh = find(&read(&view));
+    let mut other_payload=payload("Unrelated updated");other_payload["id"]=unrelated;
+    call(&writer,"save_calendar_goal",other_payload).unwrap();
+    let mut save=payload("Fresh explicit edit");save["expectedGoal"]=fresh;
+    call(&view,"save_calendar_goal",save).unwrap();
+    assert_eq!(find(&read(&view))["title"],"Fresh explicit edit");
+    // A metadata-only numeric change must conflict even if SQL updated_at did not change.
+    let prior=find(&read(&view));
+    let raw=call(&writer,"get_ui_state",json!({"key":"calendar_development_v1"})).unwrap();
+    let mut development:Value=serde_json::from_str(raw.as_str().unwrap()).unwrap();
+    development["goals"][id.as_str().unwrap()]["numericProgress"]=json!(true);
+    call(&writer,"set_ui_state",json!({"key":"calendar_development_v1","value":development.to_string(),"expectedValue":raw})).unwrap();
+    let mut numeric_stale=payload("Old numeric draft");numeric_stale["expectedGoal"]=prior;
+    assert_eq!(call(&view,"save_calendar_goal",numeric_stale).unwrap_err(),json!("calendar_goal_stale"));
+    assert_eq!(find(&read(&view))["numeric_progress"],true);
+    let deleted_base=find(&read(&view));call(&writer,"delete_goal",json!({"id":id})).unwrap();
+    let mut deleted=payload("Do not recreate");deleted["expectedGoal"]=deleted_base;
+    assert_eq!(call(&view,"save_calendar_goal",deleted).unwrap_err(),json!("calendar_goal_stale"));
+    assert!(call(&view,"save_calendar_goal",payload("Legacy missing ID")).is_err());
+    assert!(!read(&view).as_array().unwrap().iter().any(|g|g["id"]==id));
+    // Legacy callers omit expectedGoal; ordinary creation and existing updates retain their contract.
+    let legacy=goal(&view,"Legacy create",Value::Null);
+    let mut update=payload("Legacy update");update["id"]=legacy.clone();
+    assert_eq!(call(&view,"save_calendar_goal",update).unwrap(),legacy);
+}
