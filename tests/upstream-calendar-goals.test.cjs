@@ -397,3 +397,17 @@ test('a failed conversion mark keeps the created goal and offers a retry without
   assert.equal(x.root.querySelector('.cp-wish-notice'), null);
   assert.equal(x.calls.filter(call => call.name === 'save_calendar_goal').length, 1);
 });
+
+
+test('Goals list stale save retains every draft field until explicit review and reload', async t => {
+  const x=await setup(t);x.goals.push({id:'owned-goal',title:'Base',target_value:10,current_value:2,unit:'pages',goal_kind:'goal',description:'Base description',criteria:'Base criteria',deadline:'2027-01-01',parent_goal_id:null,numeric_progress:true});await x.refresh();
+  const modal=await x.menu('[data-goal-menu="owned-goal"]','edit'),f=modal.querySelector('form').elements;
+  f.title.value='Local draft';f.description.value='Local description';f.criteria.value='Local criteria';f.deadline.value='2027-03-01';f.target_value.value='20';f.current_value.value='4';f.unit.value='chapters';
+  x.goals[0].title='Newer remote title';x.goals[0].current_value=7;
+  x.before.set('save_calendar_goal',args=>{if(JSON.stringify(args.expectedGoal)!==JSON.stringify(x.goals[0]))throw Error('calendar_goal_stale');});
+  for(let n=0;n<2;n++){await x.submit(modal);assert.equal(modal.isConnected,true);assert.match(modal.textContent,/Цель изменилась или удалена/);assert.equal(f.title.value,'Local draft');assert.equal(f.description.value,'Local description');assert.equal(f.criteria.value,'Local criteria');assert.equal(f.deadline.value,'2027-03-01');assert.equal(f.target_value.value,'20');assert.equal(f.current_value.value,'4');assert.equal(f.unit.value,'chapters');assert.equal(x.goals[0].current_value,7);}
+  const button=text=>[...modal.querySelectorAll('button')].find(b=>b.textContent===text);
+  button('Проверить актуальную цель').click();await tick();assert.equal(f.title.value,'Local draft');assert.match(modal.textContent,/Newer remote title/);
+  button('Заменить черновик актуальными данными').click();assert.equal(f.title.value,'Newer remote title');assert.equal(f.current_value.value,'7');assert.equal(x.w.document.activeElement,f.title);
+  f.description.value='Fresh edit';await x.submit(modal);assert.equal(modal.isConnected,false);assert.equal(x.goals[0].description,'Fresh edit');assert.equal(x.goals[0].current_value,7);
+});

@@ -55,6 +55,7 @@ function backend() {
     }
     if (command === 'save_calendar_goal') {
       const goal = state.goals.find(item => item.id === args.id);
+      if(state.enforceGoalBase && JSON.stringify(goal)!==JSON.stringify(args.expectedGoal))throw Error('calendar_goal_stale');
       if (goal) Object.assign(goal, { title: args.title, description: args.description, criteria: args.criteria, deadline: args.deadline });
       else state.goals.push({ id: `new-${state.goals.length}`, title: args.title, goal_kind: 'goal', target_value: 1, unit: '', parent_goal_id: args.parentGoalId });
       return args.id || `new-${state.goals.length - 1}`;
@@ -312,4 +313,21 @@ test('a late popup refresh cannot commit after the workspace switches targets', 
   current = false;
   resolveGoals(snapshot); await pending;
   assert.equal(x.modal.querySelector('h2').textContent, original);
+});
+
+
+test('popup editor rejects repeated stale save and explicitly reloads without losing the draft on review',async t=>{
+  const data=backend();data.enforceGoalBase=true;const x=await open(t,data,'g1');x.action('edit').click();await settle();
+  const editor=document.querySelector('[data-goal-create]'),f=editor.querySelector('form').elements;f.title.value='Popup local draft';f.criteria.value='Local criteria';
+  data.goals[1].title='Newer popup title';data.goals[1].current_value=17;
+  const submit=async()=>{editor.querySelector('form').dispatchEvent(new window.Event('submit',{bubbles:true,cancelable:true}));await settle();};
+  for(let n=0;n<2;n++){await submit();assert.equal(editor.isConnected,true);assert.equal(f.title.value,'Popup local draft');assert.equal(f.criteria.value,'Local criteria');assert.match(editor.textContent,/Цель изменилась или удалена/);assert.equal(data.goals[1].current_value,17);}
+  const button=text=>[...editor.querySelectorAll('button')].find(b=>b.textContent===text);
+  button('Проверить актуальную цель').click();await settle();assert.equal(f.title.value,'Popup local draft');assert.match(editor.textContent,/Newer popup title/);
+  button('Заменить черновик актуальными данными').click();assert.equal(f.title.value,'Newer popup title');await submit();assert.equal(editor.isConnected,false);assert.equal(data.goals[1].current_value,17);
+});
+test('deleted goal conflict keeps the popup editor draft and cannot reload or recreate it',async t=>{
+  const data=backend();data.enforceGoalBase=true;const x=await open(t,data,'g1');x.action('edit').click();await settle();const editor=document.querySelector('[data-goal-create]');editor.querySelector('[name=title]').value='Retained deleted draft';data.goals=data.goals.filter(g=>g.id!=='g1');
+  editor.querySelector('form').dispatchEvent(new window.Event('submit',{bubbles:true,cancelable:true}));await settle();
+  [...editor.querySelectorAll('button')].find(b=>b.textContent==='Проверить актуальную цель').click();await settle();assert.match(editor.textContent,/Цель удалена/);assert.equal(editor.querySelector('[name=title]').value,'Retained deleted draft');assert.equal([...editor.querySelectorAll('button')].find(b=>b.textContent==='Заменить черновик актуальными данными').hidden,true);assert.equal(data.goals.some(g=>g.id==='g1'),false);
 });

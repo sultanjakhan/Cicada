@@ -1352,6 +1352,33 @@ pub fn get_goals(
     drop(s);
     Ok(rows)
 }
+/// Exact editor read base. Optional only for documented pre-CAS callers.
+#[derive(Debug, Clone, serde::Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct GoalEditBase {
+    id: String, title: String, target_value: f64, current_value: Option<f64>,
+    unit: String, deadline: Option<String>, goal_kind: String, description: String,
+    criteria: String, parent_goal_id: Option<String>, updated_at: String,
+    status: String, goal_metadata_error: bool, achieved_at: Value,
+    achievement: String, numeric_progress: Option<bool>,
+}
+fn goal_edit_base(conn: &Connection, id: &str) -> Result<Option<GoalEditBase>, String> {
+    let (_, metadata) = crate::calendar_goal_lifecycle::read(conn)?;
+    let meta = &metadata["goals"][id];
+    conn.query_row(
+        "SELECT id,title,target_value,current_value,unit,deadline,goal_kind,description,criteria,parent_goal_id,updated_at FROM calendar_goals WHERE id=?1",
+        [id], |r| Ok(GoalEditBase {
+            id:r.get(0)?,title:r.get(1)?,target_value:r.get(2)?,current_value:r.get(3)?,
+            unit:r.get(4)?,deadline:r.get(5)?,goal_kind:r.get(6)?,description:r.get(7)?,
+            criteria:r.get(8)?,parent_goal_id:r.get(9)?,updated_at:r.get(10)?,
+            status:meta["goalStatus"].as_str().unwrap_or("active").into(),
+            goal_metadata_error:false,achieved_at:meta["achievedAt"].clone(),
+            achievement:meta["achievement"].as_str().unwrap_or("").into(),
+            numeric_progress:meta["numericProgress"].as_bool(),
+        })
+    ).optional().map_err(|e| fail(e.to_string()))
+}
+
 #[tauri::command(rename_all = "camelCase")]
 pub fn save_calendar_goal(
     id: Option<String>,
@@ -1366,6 +1393,7 @@ pub fn save_calendar_goal(
     clear_parent: bool,
     current_value: Option<f64>,
     numeric_progress: Option<bool>,
+    expected_goal: Option<GoalEditBase>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     date(&deadline)?;
@@ -1383,6 +1411,12 @@ pub fn save_calendar_goal(
     let transaction = conn
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|e| fail(e.to_string()))?;
+    // The write lock and exact base check precede ALL goal/child/metadata writes.
+    if let Some(expected) = expected_goal.as_ref() {
+        if !existing || goal_edit_base(&transaction, &id)?.as_ref() != Some(expected) {
+            return Err(fail("calendar_goal_stale"));
+        }
+    }
     let previous_kind = if existing {
         Some(
             transaction
