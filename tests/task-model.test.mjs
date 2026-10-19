@@ -16,17 +16,25 @@ function useWindow(t, handlers = {}) {
   const dom = new JSDOM('<body></body>', { url: 'http://localhost', pretendToBeVisual: true }), w = dom.window;
   for (const name of ['window', 'document', 'localStorage', 'MutationObserver', 'AbortController', 'CustomEvent', 'Event', 'FormData', 'Option']) globalThis[name] = name === 'window' ? w : w[name];
   globalThis.marked = { Marked: class { use() {} parse(value) { return value; } } };
-  const calls = [], all = { list_event_categories: [{ id: 'general', name: 'general', color: '#999' }], get_goals: [{ id: 'g', title: 'Fictional goal', goal_kind: 'goal' }], get_calendar_task_goals: [], ...handlers };
+  const calls = [], createdEvents = new Map(), eventReceipts = new Map();
+  const all = { list_event_categories: [{ id: 'general', name: 'general', color: '#999' }], get_goals: [{ id: 'g', title: 'Fictional goal', goal_kind: 'goal' }], get_calendar_task_goals: [], get_all_events: () => [...createdEvents.values()], ...handlers };
   w.__TAURI__ = { core: { invoke: async (command, args) => {
     calls.push({ command, args });
+    if (command === 'create_event' && args.recoverOnly) return eventReceipts.get(args.operationId) || null;
     if (!(command in all)) throw new Error(`Unexpected IPC: ${command}`);
-    return typeof all[command] === 'function' ? all[command](args) : all[command];
+    const result = typeof all[command] === 'function' ? await all[command](args) : all[command];
+    if (command === 'create_event') {
+      eventReceipts.set(args.operationId, result);
+      createdEvents.set(result, { id: result, title: args.title, description: args.description, date: args.date, time: args.time,
+        duration_minutes: args.durationMinutes, category: args.category, color: args.color, priority: args.priority, version: 1 });
+    }
+    return result;
   } } };
   t.after(() => w.close());
   const q = selector => w.document.querySelector(selector);
   const shown = selector => { const el = q(selector); return !!el && !el.closest('[hidden]'); };
   const key = (selector, key, extra = {}) => q(selector).dispatchEvent(new w.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extra }));
-  const saved = command => calls.filter(call => call.command === command).map(call => call.args);
+  const saved = command => calls.filter(call => call.command === command && !(command === 'create_event' && call.args.recoverOnly)).map(call => call.args);
   return { w, q, shown, key, saved, calls };
 }
 const modal = () => import('../src/hanni/js/calendar-event-modal.js');
@@ -692,6 +700,7 @@ test('failed event save keeps its overnight draft when the create target changes
   change('#evm-end-date', '2026-10-05');
   x.q('#evm-save').click(); await settle();
   assert.equal(x.saved('create_event').length, 2);
+  assert.ok(x.calls.some(call => call.command === 'create_event' && call.args.recoverOnly), 'retry checks the durable operation receipt first');
   assert.deepEqual(x.saved('create_event')[1], x.saved('create_event')[0], 'retry sends the original event draft');
   resolveSave('event-new'); await settle();
   assert.equal(x.q('#evm-form'), null, 'successful retry closes the preserved draft');

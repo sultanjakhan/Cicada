@@ -9,6 +9,7 @@ import { createCalendarDialog } from './calendar-dialog.js';
 import { CREATE_TYPES, SCHEDULE_TYPES, createType, createTypeButtons } from './calendar-create-types.js';
 import { TASK_SPHERES, PERSONAL_SPHERES } from './task-model.js';
 import { DELETED_STAGE_LABEL, findProcess, loadProcesses, mountStageTime, taskProcessId } from './task-processes.js';
+import { readEventCreateAttempt, writeEventCreateAttempt, clearEventCreateAttempt, recoverEventCreateAttempt, readCreatedEvent, matchesCreatedEvent } from './calendar-event-create-attempt.js';
 // Default time is the exact current local minute. Rounding made a modal opened
 // at 08:09 misleadingly show 08:10 even though "Создать и начать" starts now.
 function currentLocalTime() {
@@ -146,6 +147,12 @@ export async function showEventModal(eventId = null, initialDate = null, options
   let availableGoalIds = new Set();
   let goalDraft = options.goalId == null ? null : String(options.goalId);
   let importantChanged = false;
+  let eventAttempt = null, attemptReadError = null, restoredEventDraft = false, restoreEventDraft = () => {};
+  let acknowledgedEventPayload = null;
+  if (!isEdit) {
+    try { eventAttempt = readEventCreateAttempt(window.localStorage); }
+    catch (error) { attemptReadError = error; }
+  }
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay evm-overlay';
@@ -266,7 +273,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
     window.dispatchEvent(new CustomEvent('hanni:calendar-refresh'));
     window.dispatchEvent(new CustomEvent('task-state-changed'));
   };
-  const close = () => { if (!pending) { overlay.remove(); if (changed) notifyChange(); } };
+  const close = () => { if (!pending) { if (!rememberEventDraft()) return; overlay.remove(); if (changed) notifyChange(); } };
   const isTopModal = () => [...document.querySelectorAll('.modal-overlay')].at(-1) === overlay;
   overlay.addEventListener('mousedown', e => { if (e.target === overlay && isTopModal()) close(); });
   overlay.querySelector('#evm-cancel').addEventListener('click', close);
@@ -452,6 +459,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
     input.addEventListener('change', clearRangeValidation);
   }
   const updateEditorType = () => {
+    if (kind === 'event' && !restoredEventDraft) restoreEventDraft();
     const other = SCHEDULE_TYPES.includes(kind) ? null : createType(kind);
     overlay.querySelector('.calendar-editor-shell').dataset.editorKind = kind;
     overlay.querySelector('#evm-heading').textContent = other ? other.heading : isEdit ? (kind === 'task' ? 'Изменить задачу' : 'Редактировать событие') : (kind === 'task' ? 'Новая задача' : 'Новое событие');
@@ -592,6 +600,40 @@ export async function showEventModal(eventId = null, initialDate = null, options
     overlay.querySelector('#evm-stage-time').hidden = selectedTaskKind() === 'instant';
   };
   new MutationObserver((_, observer) => { if (!overlay.isConnected) { stopStageTime?.(); observer.disconnect(); } }).observe(document.body, { childList: true });
+  function eventDraft() {
+    return { title: titleInput.value, date: dateInput.value, time: timeInput.value, endDate: endDateInput.value,
+      endTime: endTimeInput.value, duration: durInput.value, untimed: untimed.checked,
+      description: overlay.querySelector('#evm-desc').value, category: overlay.querySelector('#evm-cat').value,
+      priority: Number(overlay.querySelector('.evm-priority').dataset.evmPriority),
+      goalId: goalsReady ? (goalSelect.value || null) : goalDraft };
+  }
+  function rememberEventDraft() {
+    if (isEdit || kind !== 'event' || !eventAttempt) return true;
+    try {
+      eventAttempt.draft = eventDraft();
+      writeEventCreateAttempt(window.localStorage, eventAttempt);
+      return true;
+    } catch { showError('Не удалось сохранить черновик запроса. Форма осталась открытой; новое событие не отправлено.'); return false; }
+  }
+  restoreEventDraft = () => {
+    restoredEventDraft = true;
+    if (attemptReadError) { showError('Не удалось прочитать прежний запрос. Новое событие не создаётся.'); return; }
+    if (!eventAttempt) return;
+    const draft = eventAttempt.draft;
+    titleInput.value = draft.title; dateInput.value = draft.date; timeInput.value = draft.time;
+    endDateInput.value = draft.endDate; endTimeInput.value = draft.endTime; durInput.value = draft.duration;
+    untimed.checked = draft.untimed; overlay.querySelector('#evm-desc').value = draft.description;
+    const category = overlay.querySelector('#evm-cat');
+    if (![...category.options].some(option => option.value === draft.category)) category.add(new Option(draft.category, draft.category));
+    category.value = draft.category;
+    overlay.querySelector('.evm-priority').dataset.evmPriority = String(draft.priority);
+    overlay.querySelectorAll('[data-pri]').forEach(button => { const selected = Number(button.dataset.pri) === draft.priority; button.classList.toggle('active', selected); button.setAttribute('aria-pressed', String(selected)); });
+    goalDraft = draft.goalId; endDateExpanded = draft.endDate !== draft.date;
+    showError('Предыдущее сохранение не подтверждено. Черновик восстановлен; повторная попытка сначала проверит тот же запрос.');
+  };
+  overlay.addEventListener('input', rememberEventDraft);
+  overlay.addEventListener('change', rememberEventDraft);
+  overlay.addEventListener('click', event => { if (event.target.closest('[data-pri]')) rememberEventDraft(); });
   updateScope(); showRecordState(); updateEditorType(); showStageTime();
   if (isTopModal() && !overlay.contains(document.activeElement)) {
     (recordReady ? (options.initialFocus === 'date' ? (dateInput.disabled ? noDate : dateInput) : titleInput) : recordRetry).focus();
@@ -753,7 +795,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
       } finally { setPending(false); }
       if (!overlay.isConnected || options.isCurrent?.() === false || categoryRefreshFailed) return;
     }
-    const now = startNow ? localNowParts() : null;
+    const now = startNow ? (eventAttempt?.startNow ? { date: eventAttempt.payload.date, time: eventAttempt.payload.time, value: new Date(`${eventAttempt.payload.date}T12:00:00`) } : localNowParts()) : null;
     const date = now?.date || dateInput.value;
     const time = now?.time || (untimed.checked ? '' : timeInput.value);
     const dur = untimed.checked ? (startNow ? Number(durInput.value) : 0) : readDuration();
@@ -766,10 +808,12 @@ export async function showEventModal(eventId = null, initialDate = null, options
     const pri = parseInt(overlay.querySelector('.evm-priority')?.dataset.evmPriority || '0', 10);
     const desc = overlay.querySelector('#evm-desc')?.value || '';
     const catColor = (isEdit && cat === initCat ? event.color : null) || cats.find(c => c.name === cat)?.color || '#9B9B9B';
+    const payload = { title, description: desc, date, time, durationMinutes: dur, category: cat, color: catColor, priority: pri };
     setPending(true);
 
     try {
       if (savedEventId != null) {
+        if (!acknowledgedEventPayload || JSON.stringify(acknowledgedEventPayload) !== JSON.stringify(payload)) {
         await invoke('update_event', {
           id: savedEventId,
           title, description: desc, date, time,
@@ -778,12 +822,30 @@ export async function showEventModal(eventId = null, initialDate = null, options
           expectedVersion: savedVersion,
         });
         if (savedVersion != null) savedVersion++;
+        acknowledgedEventPayload = payload;
+        }
       } else {
-        savedEventId = await invoke('create_event', {
-          title, description: desc, date, time,
-          durationMinutes: dur, category: cat, color: catColor, priority: pri,
-        });
-        savedVersion = 1;
+        if (attemptReadError) throw Error('event_create_invalid_attempt');
+        let attempt = readEventCreateAttempt(window.localStorage), recovered = null;
+        const draft = eventDraft();
+        if (attempt) {
+          eventAttempt = attempt; attempt.draft = draft; writeEventCreateAttempt(window.localStorage, attempt);
+          recovered = await recoverEventCreateAttempt(invoke, attempt);
+          if (recovered && !matchesCreatedEvent(recovered, attempt.payload)) throw Error('event_create_changed');
+          if (JSON.stringify(attempt.originalDraft) !== JSON.stringify(draft) || attempt.startNow !== startNow) {
+            if (!recovered) throw Error('event_create_payload_changed');
+            savedEventId = recovered.id; savedVersion = recovered.version; acknowledgedEventPayload = attempt.payload; changed = true;
+            setPending(false);
+            showError('Прежнее событие найдено. Изменённый черновик остался в форме. Проверь его и явно сохрани изменения в найденное событие.');
+            return;
+          }
+        } else {
+          attempt = { version: 1, operationId: window.crypto.randomUUID(), payload, originalDraft: draft, draft, startNow, startAttempted: false };
+          writeEventCreateAttempt(window.localStorage, attempt); eventAttempt = attempt;
+        }
+        const confirmed = recovered || await readCreatedEvent(invoke, await invoke('create_event', { ...attempt.payload, operationId: attempt.operationId }));
+        if (!matchesCreatedEvent(confirmed, attempt.payload)) throw Error('event_create_changed');
+        savedEventId = confirmed.id; savedVersion = confirmed.version; acknowledgedEventPayload = attempt.payload;
       }
       changed = true;
       if (desiredGoalId !== persistedGoalId) {
@@ -792,16 +854,21 @@ export async function showEventModal(eventId = null, initialDate = null, options
           persistedGoalId = desiredGoalId;
         } catch (err) {
           setPending(false);
-          showError('Событие сохранено, но связь с целью не обновлена. Повтори сохранение — второе событие не создастся. ' + err, goalSelect);
+          showError('Событие сохранено, но обновление связи с целью не подтверждено. Повтори сохранение — второе событие не создастся. ' + err, goalSelect);
           return;
         }
       }
       if (startNow) {
         try {
-          await invoke('start_task_block', { sourceType: 'event', sourceId: String(savedEventId), failIfActive: true });
+          const active = eventAttempt?.startAttempted ? await invoke('get_active_blocks') : [];
+          const alreadyStarted = active.some(block => block.source_type === 'event' && String(block.source_id) === String(savedEventId));
+          if (!alreadyStarted) {
+            if (eventAttempt) { eventAttempt.startAttempted = true; writeEventCreateAttempt(window.localStorage, eventAttempt); }
+            await invoke('start_task_block', { sourceType: 'event', sourceId: String(savedEventId), failIfActive: true });
+          }
         } catch (err) {
           setPending(false);
-          showError('Событие сохранено, но таймер не запущен. Можно закрыть форму или повторить запуск. ' + err);
+          showError(eventAttempt ? 'Событие сохранено. Запуск таймера не подтверждён; повторная попытка сначала проверит, запущен ли он. ' + err : 'Событие сохранено, но таймер не запущен. Можно закрыть форму или повторить запуск. ' + err);
           return;
         }
         S.selectedCalendarDate = date;
@@ -816,11 +883,13 @@ export async function showEventModal(eventId = null, initialDate = null, options
           btn.classList.toggle('active', btn.dataset.calview === 'day');
         });
       }
+      if (eventAttempt) clearEventCreateAttempt(window.localStorage, eventAttempt);
       overlay.remove();
       notifyChange();
     } catch (err) {
       setPending(false);
-      showError((changed ? 'Предыдущее сохранение выполнено, но новые изменения не сохранены: ' : 'Не удалось сохранить событие: ') + err);
+      rememberEventDraft();
+      showError(!isEdit && eventAttempt ? (/event_create_payload_changed/.test(String(err)) ? 'Запрос изменился. Черновик сохранён; прежнее создание не найдено. Верни исходные данные для повторной попытки.' : /event_create_changed/.test(String(err)) ? 'Найденное событие изменилось. Черновик сохранён; открой сохранённое событие и проверь изменения.' : 'Сохранение не подтверждено. Черновик и запрос сохранены для проверки; новое событие пока не создаётся.') : (changed ? 'Предыдущее сохранение выполнено, но новые изменения не сохранены: ' : 'Не удалось сохранить событие: ') + err);
     }
   };
   overlay.querySelector('#evm-form').addEventListener('submit', e => { e.preventDefault(); submitEvent(false); });
