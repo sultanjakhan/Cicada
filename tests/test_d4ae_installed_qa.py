@@ -79,6 +79,17 @@ class QaGuards(unittest.TestCase):
                 with self.assertRaises(RuntimeError):qa.extract_artifact(archive,out)
             self.assertEqual(list(out.iterdir()),[])
 
+    def test_observation_never_adopts_a_foreign_webview_profile(self):
+        with tempfile.TemporaryDirectory() as temp:
+            expected=Path(temp)/'owned';expected.mkdir()
+            self.assertTrue(qa.profile_is_owned(str(expected),expected))
+            self.assertTrue(qa.profile_is_owned(str(expected/'child'),expected))
+            self.assertFalse(qa.profile_is_owned(str(Path(temp)/'foreign'),expected))
+            self.assertFalse(qa.profile_is_owned(None,expected))
+        self.assertEqual(qa.profile_argument(['browser','--user-data-dir=owned']),'owned')
+        self.assertEqual(qa.profile_argument(['browser','--user-data-dir','owned']),'owned')
+        self.assertIsNone(qa.profile_argument(['browser','--user-data-dir']))
+
     def test_runtime_output_requires_actual_result_not_code_or_partial_progress(self):
         passing={'d4aeOutcome':'passed','assertionCount':30,'assertions':['synthetic parser fixture']}
         result=lambda text:{'content':[{'type':'text','text':text}]}

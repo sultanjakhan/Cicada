@@ -11,6 +11,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+import threading
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -109,6 +110,124 @@ def api(path):
         return json.load(response)
 
 
+def profile_argument(arguments):
+    for index, value in enumerate(arguments):
+        if value.startswith('--user-data-dir='):
+            return value.split('=', 1)[1]
+        if value == '--user-data-dir' and index + 1 < len(arguments):
+            return arguments[index + 1]
+    return None
+
+
+def profile_is_owned(folder, expected):
+    if not folder:
+        return False
+    try:
+        return Path(folder).resolve().is_relative_to(Path(expected).resolve())
+    except (OSError, ValueError):
+        return False
+
+
+class ReadinessObservation:
+    """Observe only this launcher's descendants; never alter launcher policy."""
+    def __init__(self, client_pid):
+        self.client_pid = client_pid
+        self.stop = threading.Event()
+        self.thread = threading.Thread(target=self.observe, daemon=True)
+        self.thread.start()
+
+    def observe(self):
+        import psutil
+        import win32api
+        import win32process
+        expected_exe = (BASE / 'installed/hanni-mvp.exe').resolve()
+        expected_profile = (ROOT / '.local/background-qa' / OPERATION / 'data/webview2').resolve()
+        output = {'client_pid':self.client_pid, 'purpose':'read-only diagnosis of the existing guarded launcher', 'samples':[], 'errors':[]}
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        last = None
+        seen = {}
+        for _ in range(720):
+            if self.stop.is_set():
+                break
+            sample = {'processes':[], 'listeners':[], 'targets':[]}
+            try:
+                client = psutil.Process(self.client_pid)
+                descendants = client.children(recursive=True)
+                apps = [process for process in descendants if process.name().casefold() == 'hanni-mvp.exe' and Path(process.exe()).resolve() == expected_exe]
+                for app in apps:
+                    arguments = app.cmdline()
+                    require('--isolated-test-root' in arguments, 'Observed app has no explicit isolation argument')
+                    position = arguments.index('--isolated-test-root')
+                    require(position + 1 < len(arguments) and Path(arguments[position+1]).resolve() == expected_profile.parent, 'Observed app isolation root differs')
+                    owned = [app, *app.children(recursive=True)]
+                    webviews = {}
+                    for process in owned:
+                        row = {'pid':process.pid,'parent':process.ppid(),'name':process.name(),'status':process.status(),'arguments':process.cmdline()}
+                        if process.pid == app.pid:
+                            handle = win32api.OpenProcess(0x1000, False, process.pid)
+                            try:
+                                row['exit_code'] = win32process.GetExitCodeProcess(handle)
+                            finally:
+                                handle.Close()
+                        sample['processes'].append(row)
+                        folder = profile_argument(row['arguments'])
+                        if row['name'].casefold() == 'msedgewebview2.exe' and profile_is_owned(folder, expected_profile):
+                            webviews[process.pid] = folder
+                    for connection in psutil.net_connections(kind='tcp'):
+                        if connection.status != psutil.CONN_LISTEN or connection.pid not in webviews:
+                            continue
+                        listener = {'pid':connection.pid,'ip':connection.laddr.ip,'port':connection.laddr.port,'profile':webviews[connection.pid]}
+                        sample['listeners'].append(listener)
+                        # Observe only the current app's owned loopback WebView.
+                        # Never query a wildcard or foreign process listener.
+                        if connection.laddr.ip != '127.0.0.1':
+                            continue
+                        for route in ('/json/version','/json/list'):
+                            address = 'http://127.0.0.1:' + str(connection.laddr.port) + route
+                            result = {'pid':connection.pid,'endpoint':address}
+                            try:
+                                with opener.open(address, timeout=0.3) as response:
+                                    raw = response.read(32769)
+                                    require(len(raw) <= 32768, 'Oversized CDP observation')
+                                    result.update(http_status=response.status, payload=json.loads(raw))
+                            except Exception as error:
+                                result['error'] = type(error).__name__ + ': ' + str(error)
+                            sample['targets'].append(result)
+                    seen[app.pid] = app.create_time()
+            except Exception as error:
+                message = type(error).__name__ + ': ' + str(error)
+                if message not in output['errors']:
+                    output['errors'].append(message)
+            encoded = json.dumps(sample, sort_keys=True)
+            if encoded != last:
+                output['samples'].append({'at':datetime.datetime.now(datetime.timezone.utc).isoformat(), **sample})
+                last = encoded
+                write_json(EVIDENCE / 'cdp-readiness-observation.json', output)
+            self.stop.wait(0.25)
+        output['owned_app_pids_seen'] = sorted(seen)
+        write_json(EVIDENCE / 'cdp-readiness-observation.json', output)
+
+    def finish(self):
+        self.stop.set()
+        self.thread.join(timeout=5)
+
+
+def record_fixture_after_launch():
+    database = ROOT / '.local/background-qa' / OPERATION / 'data/calendar.db'
+    if not database.is_file():
+        write_json(EVIDENCE / 'fixture-startup-diagnosis.json', {'database_exists':False})
+        return
+    try:
+        with sqlite3.connect(database.as_uri() + '?mode=ro', uri=True) as conn:
+            value = {'database_exists':True,'user_version':conn.execute('PRAGMA user_version').fetchone()[0],
+                'integrity':conn.execute('PRAGMA integrity_check').fetchone()[0],
+                'tables':conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall(),
+                'synthetic_rows':conn.execute('SELECT id,title,version FROM items ORDER BY id').fetchall()}
+    except Exception as error:
+        value = {'database_exists':True,'error':str(error)}
+    write_json(EVIDENCE / 'fixture-startup-diagnosis.json', value)
+
+
 def command(args, name, timeout=180, credentials=False):
     env = dict(os.environ)
     if not credentials:
@@ -117,7 +236,16 @@ def command(args, name, timeout=180, credentials=False):
                 env.pop(key)
     started = datetime.datetime.now(datetime.timezone.utc).isoformat()
     write_json(EVIDENCE / (name + '.json'), {'argv':[str(a) for a in args], 'started':started, 'state':'started', 'exit':None})
-    result = subprocess.run([str(arg) for arg in args], cwd=ROOT, env=env, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=timeout)
+    process = subprocess.Popen([str(arg) for arg in args], cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               text=True, encoding='utf-8', errors='replace')
+    observation = ReadinessObservation(process.pid) if name == 'actual-installed-runtime' else None
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+        result = subprocess.CompletedProcess(args, process.returncode, stdout, stderr)
+    finally:
+        if observation:
+            observation.finish()
+            record_fixture_after_launch()
     write_json(EVIDENCE / (name + '.json'), {'argv': [str(a) for a in args], 'started': started, 'exit': result.returncode, 'stdout': result.stdout, 'stderr': result.stderr})
     require(result.returncode == 0, name + ' failed, exit ' + str(result.returncode))
     return result.stdout
