@@ -16,6 +16,31 @@ qa = importlib.util.module_from_spec(spec); spec.loader.exec_module(qa)
 
 
 class QaGuards(unittest.TestCase):
+    def test_mcp080_static_tool_contract_refuses_missing_wrong_or_expanded_schema(self):
+        schema={'$schema':'https://json-schema.org/draft/2020-12/schema','type':'object',
+                'properties':{'code':{'type':'string'},'filename':{'type':'string'}},'additionalProperties':False}
+        tool={'name':'browser_run_code_unsafe','inputSchema':schema}
+        qa.validate_mcp_tools([tool])
+        for tools in ([],[{**tool,'name':'browser_run_code'}],[tool,tool],
+                      [{**tool,'inputSchema':{**schema,'additionalProperties':True}}],
+                      [{**tool,'inputSchema':{**schema,'required':['filename']}}],
+                      [{**tool,'inputSchema':{**schema,'properties':{'code':{'type':'number'},'filename':{'type':'string'}}}}],
+                      [{**tool,'inputSchema':{**schema,'properties':{**schema['properties'],'external':{'type':'string'}}}}],
+                      [{**tool,'inputSchema':{**schema,'anyOf':[{}]}}]):
+            with self.subTest(tools=tools),self.assertRaises(RuntimeError):qa.validate_mcp_tools(tools)
+        call=qa.static_runtime_call(ROOT/'.local/background-qa'/qa.OPERATION/'data')
+        self.assertEqual(call['name'],'browser_run_code_unsafe')
+        self.assertEqual(set(call['arguments']),{'code'})
+        code=call['arguments']['code']
+        self.assertLess(code.index("rpc('isolated_test_status')"),code.index("reject('mvp_sync_now'"))
+        self.assertLess(code.index('status.integrationsEnabled===false'),code.index("rpc('create_event'"))
+        with self.assertRaises(RuntimeError):qa.static_runtime_call(ROOT/'foreign-data')
+
+    def test_mcp_contract_role_cannot_admit_launch_policy_or_external_calls(self):
+        for extra in ('--owned-app-policy','--serve-default-desktop','--check-default-desktop','--cleanup-owned-policy','--diagnostic-only'):
+            with self.subTest(extra=extra),mock.patch.object(qa.sys,'argv',['qa','--mcp-contract-only',extra,'--mcp-cli','unused']),self.assertRaisesRegex(RuntimeError,'cannot admit'):
+                qa.main()
+
     class PolicyStore:
         def __init__(self):self.value=None;self.rows=[];self.exchanges=[];self.fail_create=False
         def snapshot(self):

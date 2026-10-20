@@ -48,6 +48,7 @@ POLICY_ROOT = r'Software\Policies\Microsoft\Edge\WebView2'
 POLICY_KEY = POLICY_ROOT + r'\AdditionalBrowserArguments'
 POLICY_OPTIONS = ('BrowserExecutableFolder','ChannelSearchKind','ReleaseChannels','AdditionalBrowserArguments','UserDataFolder','ReleaseChannelPreference')
 POLICY_RECEIPT = 'owned-webview-policy.json'
+MCP_RUN_TOOL = 'browser_run_code_unsafe'  # Actual default core registration in pinned @playwright/mcp 0.0.80.
 # Primary basis: WebView2 Globals/CreateCoreWebView2EnvironmentWithOptions (AppId -> exe -> *),
 # concepts/security (elevated hosts honor HKLM), winprog64/shared-registry-keys
 # (SOFTWARE\Policies shared). Audit both logical views; mutate only HKLM/64/exact exe value.
@@ -899,6 +900,58 @@ def serve_default_desktop(args):
             handles.close()
 
 
+def validate_mcp_tools(tools):
+    matches=[tool for tool in tools if tool.get('name')==MCP_RUN_TOOL]
+    require(len(matches)==1,'Pinned static-code MCP tool missing or duplicated')
+    schema=matches[0].get('inputSchema',{})
+    require(set(schema)<={'$schema','type','properties','additionalProperties','required'}
+            and schema.get('$schema')=='https://json-schema.org/draft/2020-12/schema'
+            and schema.get('type')=='object' and schema.get('additionalProperties') is False
+            and schema.get('required',[])==[] and set(schema.get('properties',{}))=={'code','filename'},
+            'Pinned MCP input schema differs')
+    for field in ('code','filename'):
+        value=schema['properties'][field]
+        require(value.get('type')=='string' and set(value)<={'type','description'},'Pinned MCP string field differs')
+
+
+async def check_mcp_tools(client,receipt):
+    listed=(await client.list_tools()).model_dump(mode='json',by_alias=True)
+    write_json(receipt,listed)  # Preserve actual registration/schema even when validation refuses it.
+    require(not listed.get('nextCursor'),'Unexpected paginated MCP inventory')
+    validate_mcp_tools(listed['tools'])
+
+
+async def preflight_mcp_tools(cli):
+    """Initialize/list only. Pinned coreBundle createServer lists schemas without factory.create/CDP."""
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+    import select
+    cli=cli.resolve(strict=True)
+    require(cli==(ROOT/'.local/d4ae-tools/node_modules/@playwright/mcp/cli.js').resolve(strict=True),'Unexpected MCP CLI path')
+    package=json.loads((cli.parent/'package.json').read_text(encoding='utf-8'))
+    require((package.get('name'),package.get('version'))==('@playwright/mcp','0.0.80'),'Official MCP package pin differs')
+    node=shutil.which('node');require(node,'Node executable unavailable')
+    with socket.socket() as sentinel:
+        sentinel.bind(('127.0.0.1',0));sentinel.listen(1)
+        endpoint='http://127.0.0.1:'+str(sentinel.getsockname()[1])
+        params=StdioServerParameters(command=node,args=[str(cli),'--cdp-endpoint',endpoint])
+        async with stdio_client(params) as (read,write):
+            async with ClientSession(read,write,read_timeout_seconds=datetime.timedelta(seconds=20)) as client:
+                await client.initialize()
+                await check_mcp_tools(client,EVIDENCE/'mcp080-prelaunch-tools.json')
+        require(not select.select([sentinel],[],[],0)[0],'List-only preflight attempted a CDP connection')
+    write_json(EVIDENCE/'mcp080-prelaunch-contract.json',{'package':'@playwright/mcp','version':'0.0.80',
+        'methods':['initialize','tools/list'],'tool':MCP_RUN_TOOL,'cdp_connections':0,'application_launched':False,
+        'policy_admitted':False,'runtime_acceptance':'UNKNOWN'})
+    return 0
+
+
+def static_runtime_call(data):
+    require(data.resolve()==(ROOT/'.local/background-qa'/OPERATION/'data').resolve(),'Unexpected static scenario root')
+    code=RUNTIME_CODE.replace('SHOTS',json.dumps(str((EVIDENCE/'official-mcp').resolve()))).replace('DATA',json.dumps(str(data.resolve())))
+    return {'name':MCP_RUN_TOOL,'arguments':{'code':code}}  # Never pass filename or externally supplied JavaScript.
+
+
 async def check_default_desktop(args):
     validate_host_context(sys.platform,os.environ)
     require(args.release_isolation,'Explicit --release-isolation is mandatory')
@@ -907,10 +960,13 @@ async def check_default_desktop(args):
     launcher = [sys.executable,'-B',str(Path(__file__).resolve()),'--serve-default-desktop','--exe',str(args.exe),
                 '--expected-sha256',args.expected_sha256,'--mcp-cli',str(args.mcp_cli),'--data-root',str(args.data_root),'--release-isolation','--owned-app-policy']
     params = StdioServerParameters(command=launcher[0],args=launcher[1:],env={**os.environ,'PYTHONIOENCODING':'utf-8'})
-    calls = json.loads(args.calls.read_text(encoding='utf-8'))
+    calls = [static_runtime_call(args.data_root)]
+    require(args.calls.resolve()==(EVIDENCE/'runtime-calls.json').resolve()
+            and json.loads(args.calls.read_text(encoding='utf-8'))==calls,'Only the exact trusted static scenario is admitted')
     async with stdio_client(params) as (read,write):
         async with ClientSession(read,write,read_timeout_seconds=datetime.timedelta(seconds=60)) as client:
             await client.initialize()
+            await check_mcp_tools(client,EVIDENCE/'mcp080-runtime-tools.json')
             for index,call in enumerate(calls):
                 result=await client.call_tool(call['name'],call.get('arguments',{}))
                 stored=result.model_dump(mode='json')
@@ -1012,6 +1068,7 @@ def main():
     parser.add_argument('--serve-default-desktop',action='store_true')
     parser.add_argument('--check-default-desktop',action='store_true')
     parser.add_argument('--diagnostic-only',action='store_true',help='Inspect installed resources and current token; never launch the app')
+    parser.add_argument('--mcp-contract-only',action='store_true',help='Initialize/list pinned tools only; no app, policy or tool call')
     parser.add_argument('--owned-app-policy',action='store_true',help='Use only owned exact HKLM executable-name CDP policy')
     parser.add_argument('--cleanup-owned-policy',action='store_true',help='Recover only a durably owned exact policy value; no app launch')
     parser.add_argument('--release-isolation',action='store_true')
@@ -1020,6 +1077,11 @@ def main():
     parser.add_argument('--data-root',type=Path)
     parser.add_argument('--calls',type=Path)
     args = parser.parse_args()
+    if args.mcp_contract_only:
+        require(not any((args.diagnostic_only,args.owned_app_policy,args.cleanup_owned_policy,args.serve_default_desktop,args.check_default_desktop,
+                         args.exe,args.calls,args.data_root)), 'MCP inventory cannot admit app/policy/scenarios')
+        validate_host_context(sys.platform,os.environ)
+        return asyncio.run(preflight_mcp_tools(args.mcp_cli))
     require(not (args.diagnostic_only and (args.owned_app_policy or args.cleanup_owned_policy)), 'Diagnostic mode cannot mutate policy')
     if args.cleanup_owned_policy:
         require(not (args.owned_app_policy or args.serve_default_desktop or args.check_default_desktop), 'Cleanup cannot launch')
@@ -1047,6 +1109,8 @@ def main():
         require(args.diagnostic_only or args.owned_app_policy,'Explicit owned policy route required; no environment-only retry')
         command(['git','diff','--exit-code', SOURCE, '--', 'src', 'src-tauri', 'scripts/qa-launch-policy.py', 'scripts/qa-background.py', 'scripts/qa_files.py', 'scripts/task-workflow-native-qa.py', 'scripts/stage-updates.mjs'], 'unchanged-product-and-helpers')
         if not args.diagnostic_only:
+            command([sys.executable,'-B',Path(__file__).resolve(),'--mcp-contract-only','--mcp-cli',args.mcp_cli.resolve()],
+                    'mcp080-contract-preflight',timeout=30)
             preflight()
         wait_for_artifact()
         candidate = BASE / 'signed-candidate'; candidate.mkdir()
@@ -1069,8 +1133,7 @@ def main():
                          application_launched=False, runtime_assertions_executed=0)
             return 0
         run, data = seed_protected_fixture(exe_hash)
-        code = RUNTIME_CODE.replace('SHOTS', json.dumps(str((EVIDENCE / 'official-mcp').resolve()))).replace('DATA', json.dumps(str(data.resolve())))
-        calls = EVIDENCE / 'runtime-calls.json'; write_json(calls,[{'name':'browser_run_code','arguments':{'code':code}}])
+        calls = EVIDENCE / 'runtime-calls.json'; write_json(calls,[static_runtime_call(data)])
         command([sys.executable,'-B',Path(__file__).resolve(),'--check-default-desktop','--data-root',data.resolve(),'--exe',exe.resolve(),'--expected-sha256',exe_hash,
                  '--mcp-cli',args.mcp_cli.resolve(),'--calls',calls.resolve(),'--release-isolation','--owned-app-policy'], 'actual-installed-runtime', timeout=180)
         policy_receipt=json.loads((EVIDENCE/POLICY_RECEIPT).read_text(encoding='utf-8'))
