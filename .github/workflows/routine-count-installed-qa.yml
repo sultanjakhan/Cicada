@@ -1,0 +1,73 @@
+name: Routine count signed22 installed QA
+on:
+  push:
+    branches: [work/routine-count-installed-qa-v1]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  routine-count-installed:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      QA_PHASE: package-metadata
+      HANNI_SESSION_ID: a085-routine-qa-6ad6d6f5-claim1153
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: d22b18e3fa95cc7bd9dbad2214c5ca381705fd26
+          path: .local/routine-qa-route
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Prepare reviewed metadata reader without MCP or browser tooling
+        if: env.QA_PHASE == 'package-metadata'
+        run: python -X utf8 -m pip install pywin32==311 psutil==7.1.3
+      - name: Prepare exact existing MCP route without browser downloads
+        if: env.QA_PHASE == 'runtime'
+        shell: pwsh
+        run: |
+          python -X utf8 -m pip install pywin32==311 psutil==7.1.3 mcp==1.26.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm.cmd install --prefix .local/d4ae-tools --ignore-scripts --no-audit --no-fund --save-exact @playwright/mcp@0.0.80 playwright@1.63.0-alpha-2026-08-31 playwright-core@1.63.0-alpha-2026-08-31
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Inspect only the exact admitted signed22 package as PE data
+        if: env.QA_PHASE == 'package-metadata'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python -X utf8 -B scripts/routine-count-installed-qa.py --package-inspection-only
+      - name: Audit metadata phase has no app policy or fixture
+        if: always() && env.QA_PHASE == 'package-metadata'
+        run: python -X utf8 -B scripts/routine-count-installed-qa.py --package-inspection-audit
+      - name: Exercise only the exact admitted signed22 routine scenario
+        if: env.QA_PHASE == 'runtime'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python -X utf8 -B scripts/routine-count-installed-qa.py --owned-app-policy --mcp-cli .local/d4ae-tools/node_modules/@playwright/mcp/cli.js
+      - name: Compare and remove only this operation's exact owned policy
+        if: always() && env.QA_PHASE == 'runtime'
+        run: python -X utf8 -B scripts/routine-count-installed-qa.py --cleanup-owned-policy --mcp-cli .local/d4ae-tools/node_modules/@playwright/mcp/cli.js
+      - name: Preserve actual routine scenario evidence including failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: routine-count-installed-qa-${{ github.run_id }}-${{ github.sha }}
+          path: |
+            .local/routine-package-inspection/evidence/**
+            .local/routine-count-installed-qa/evidence/**
+            .local/background-qa/a085-routine-count-installed-qa-20261020-v1/runtime.json
+            .local/background-qa/a085-routine-count-installed-qa-20261020-v1/runtime-calls-*.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
