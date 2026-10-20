@@ -1,0 +1,49 @@
+name: D4AE signed Windows installed runtime QA
+on:
+  push:
+    branches: [work/d4ae-installed-qa-v1]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  signed-installed-runtime:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      HANNI_SESSION_ID: d4ae-installed-qa-20261020-v1
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Prepare only pinned QA tooling, without a browser download
+        shell: pwsh
+        run: |
+          python -m pip install pywin32==311 psutil==7.1.3 mcp==1.26.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm.cmd install --prefix .local/d4ae-tools --ignore-scripts --no-audit --no-fund --save-exact @playwright/mcp@0.0.80
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify and exercise the exact signed production installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python -B scripts/d4ae-installed-qa.py --mcp-cli .local/d4ae-tools/node_modules/@playwright/mcp/cli.js
+      - name: Preserve actual runtime evidence, including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: d4ae-installed-qa-${{ github.run_id }}-${{ github.sha }}
+          path: |
+            .local/d4ae-installed-qa/evidence/**
+            .local/background-qa/d4ae-installed-qa-20261020-v1/runtime.json
+            .local/background-qa/d4ae-installed-qa-20261020-v1/*calls*.json
+            .local/background-qa/d4ae-installed-qa-20261020-v1/*calls*.png
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
