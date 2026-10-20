@@ -562,7 +562,7 @@ RUNTIME_CODE = r"""async (page) => {
   const open=async id=>{
     await page.evaluate(()=>window.dispatchEvent(new CustomEvent('hanni:calendar-refresh')));
     await page.locator('.uni-tab[data-pane="table"]').click();
-    await page.locator('[data-period="day"]').click();
+    await page.locator('button[data-period="day"]').click();
     await page.locator('[data-today]').first().click();
     const row=page.locator(`[data-record-source="event:${id}"]`).first();
     await row.locator('[data-record-menu]').click();
