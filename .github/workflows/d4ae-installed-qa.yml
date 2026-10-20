@@ -1,4 +1,4 @@
-name: D4AE signed Windows installed runtime QA
+name: D4AE signed Windows startup diagnostic only
 on:
   push:
     branches: [work/d4ae-installed-qa-v1]
@@ -30,10 +30,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm.cmd install --prefix .local/d4ae-tools --ignore-scripts --no-audit --no-fund --save-exact @playwright/mcp@0.0.80
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Verify signed20 on the disposable runner Default desktop
+      - name: Inspect signed20 manifest and launcher token without app launch
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python -B scripts/d4ae-installed-qa.py --mcp-cli .local/d4ae-tools/node_modules/@playwright/mcp/cli.js
+        run: python -B scripts/d4ae-installed-qa.py --diagnostic-only --mcp-cli .local/d4ae-tools/node_modules/@playwright/mcp/cli.js
       - name: Preserve actual runtime evidence, including failures
         if: always()
         uses: actions/upload-artifact@v4

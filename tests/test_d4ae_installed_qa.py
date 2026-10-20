@@ -2,6 +2,8 @@
 import subprocess
 import importlib.util
 import json
+import hashlib
+import contextlib
 from pathlib import Path
 import tempfile
 import unittest
@@ -14,6 +16,67 @@ qa = importlib.util.module_from_spec(spec); spec.loader.exec_module(qa)
 
 
 class QaGuards(unittest.TestCase):
+    def test_diagnostic_report_has_only_prospective_webview_values_and_no_runtime_acceptance(self):
+        raw=b'<assembly xmlns="urn:schemas-microsoft-com:asm.v1"><trustInfo><requestedExecutionLevel level="asInvoker" uiAccess="false"/></trustInfo></assembly>'
+        token={'TokenIntegrityLevel':12288,'TokenElevation':1,'TokenElevationType':1}
+        with tempfile.TemporaryDirectory() as temp, contextlib.ExitStack() as stack:
+            base=Path(temp);exe=base/'installed/hanni-mvp.exe';exe.parent.mkdir();exe.write_bytes(b'fixture')
+            stack.enter_context(mock.patch.multiple(qa,BASE=base,EVIDENCE=base))
+            stack.enter_context(mock.patch.object(qa,'validate_host_context'))
+            stack.enter_context(mock.patch.object(qa,'digest',return_value=qa.INSTALLED_EXE_SHA))
+            inspect=stack.enter_context(mock.patch.object(qa,'inspect_windows_manifest_and_token',return_value=(raw,token)))
+            stack.enter_context(mock.patch.dict(qa.os.environ,{'SECRET_SENTINEL':'must-not-be-reported','WEBVIEW2_UNRELATED':'must-not-be-reported'}))
+            qa.diagnostic_only_preflight(exe)
+            report=json.loads((base/'startup-diagnostic-only.json').read_text())
+            self.assertEqual(report['manifest']['requestedExecutionLevel'],[{'level':'asInvoker','uiAccess':'false'}])
+            self.assertEqual((base/'installed-RT_MANIFEST-1.xml').read_bytes(),raw)
+            self.assertEqual(report['launcher_token'],token)
+            self.assertEqual(set(report['intended_webview_values']),{'WEBVIEW2_USER_DATA_FOLDER','WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'})
+            self.assertNotIn('must-not-be-reported',json.dumps(report))
+            self.assertFalse(report['application_launched']);self.assertFalse(report['profile_created'])
+            self.assertEqual(report['runtime_acceptance'],'UNKNOWN')
+            self.assertEqual(report['runtime_assertions_executed'],0)
+            inspect.assert_called_once_with(exe)
+            with mock.patch.object(qa,'digest',return_value='wrong'),self.assertRaises(RuntimeError):
+                qa.diagnostic_only_preflight(exe)
+            self.assertEqual(inspect.call_count,1)
+
+    def test_diagnostic_main_returns_before_fixture_scenarios_or_application_launch(self):
+        with tempfile.TemporaryDirectory() as temp, contextlib.ExitStack() as stack:
+            base=Path(temp);cli=base/'cli.js';cli.write_text('fixture')
+            binary=b'isolated_test_integration_disabled synthetic unit fixture'
+            binary_hash=hashlib.sha256(binary).hexdigest()
+            stack.enter_context(mock.patch.multiple(qa,BASE=base,EVIDENCE=base/'evidence',INSTALLED_EXE_SHA=binary_hash))
+            stack.enter_context(mock.patch.object(qa.sys,'platform','win32'))
+            stack.enter_context(mock.patch.object(qa.sys,'argv',['qa','--diagnostic-only','--mcp-cli',str(cli)]))
+            stack.enter_context(mock.patch.dict(qa.os.environ,{'GITHUB_ACTIONS':'true','RUNNER_ENVIRONMENT':'github-hosted',
+                'GITHUB_REPOSITORY':qa.REPO,'GITHUB_REF':'refs/heads/work/d4ae-installed-qa-v1',
+                'GITHUB_EVENT_NAME':'push','GITHUB_RUN_ATTEMPT':'1'}))
+            for name in ('wait_for_artifact','download_artifact'):
+                stack.enter_context(mock.patch.object(qa,name))
+            stack.enter_context(mock.patch.object(qa,'validate_candidate',return_value=({'sha256':qa.INSTALLER_SHA},{})))
+            def command(argv,name,**kwargs):
+                if name=='install-signed-runtime':
+                    (base/'installed').mkdir();(base/'installed/hanni-mvp.exe').write_bytes(binary)
+            commands=stack.enter_context(mock.patch.object(qa,'command',side_effect=command))
+            diagnostic=stack.enter_context(mock.patch.object(qa,'diagnostic_only_preflight'))
+            forbidden=[stack.enter_context(mock.patch.object(qa,name,side_effect=AssertionError('No runtime in diagnostic mode')))
+                       for name in ('seed_protected_fixture','preflight','serve_default_desktop','check_default_desktop','parse_runtime_result')]
+            self.assertEqual(qa.main(),0)
+            diagnostic.assert_called_once_with(base/'installed/hanni-mvp.exe')
+            self.assertEqual([call.args[1] for call in commands.call_args_list],
+                             ['unchanged-product-and-helpers','verify-production-signatures','install-signed-runtime'])
+            for function in forbidden:function.assert_not_called()
+            report=json.loads((base/'evidence/operation.json').read_text())
+            self.assertEqual(report['state'],'diagnostic_only_completed')
+            self.assertEqual(report['runtime_acceptance'],'UNKNOWN')
+            self.assertFalse((base/'evidence/runtime-calls.json').exists())
+
+    def test_diagnostic_mode_cannot_be_combined_with_launch_roles(self):
+        for role in ('--serve-default-desktop','--check-default-desktop'):
+            with self.subTest(role=role),mock.patch.object(qa.sys,'argv',['qa','--diagnostic-only',role,'--mcp-cli','unused']),self.assertRaisesRegex(RuntimeError,'cannot launch'):
+                qa.main()
+
     def run_fixture(self):
         repo = {'id':qa.REPO_ID,'full_name':qa.REPO,'fork':False}
         return {'id':qa.SIGNING_RUN,'head_sha':qa.SOURCE,'head_branch':'main','head_commit':{'tree_id':qa.TREE},

@@ -718,17 +718,106 @@ async def check_default_desktop(args):
                 print(json.dumps(stored,ensure_ascii=False),flush=True)
 
 
+def inspect_windows_manifest_and_token(exe):
+    """Read RT_MANIFEST #1 as data, and query this process's token; no execution."""
+    import ctypes
+    from ctypes import wintypes as w
+    import qa_files
+    import win32con
+    import win32file
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    advapi = ctypes.WinDLL('advapi32', use_last_error=True)
+    def api(dll, name, result, *arguments):
+        function = getattr(dll, name); function.restype = result; function.argtypes = arguments
+        return function
+    def checked(value):
+        if not value:
+            raise ctypes.WinError(ctypes.get_last_error())
+        return value
+    load = api(kernel, 'LoadLibraryExW', w.HMODULE, w.LPCWSTR, w.HANDLE, w.DWORD)
+    free = api(kernel, 'FreeLibrary', w.BOOL, w.HMODULE)
+    find = api(kernel, 'FindResourceW', w.HANDLE, w.HMODULE, ctypes.c_void_p, ctypes.c_void_p)
+    size_of = api(kernel, 'SizeofResource', w.DWORD, w.HMODULE, w.HANDLE)
+    load_resource = api(kernel, 'LoadResource', w.HANDLE, w.HMODULE, w.HANDLE)
+    lock = api(kernel, 'LockResource', ctypes.c_void_p, w.HANDLE)
+    with qa_files.pinned_tree(exe.parent, scan=False):
+        binary_handle = qa_files.checked_handle(exe, win32con.GENERIC_READ, win32con.OPEN_EXISTING, share=1)
+        try:
+            binary_size = win32file.GetFileSize(binary_handle)
+            require(0 < binary_size <= 32*1024*1024, 'Invalid installed executable size')
+            require(hashlib.sha256(win32file.ReadFile(binary_handle,binary_size)[1]).hexdigest() == INSTALLED_EXE_SHA,
+                    'Pinned resource executable differs')
+            module = checked(load(str(exe), None, 0x2 | 0x20))  # DATAFILE | IMAGE_RESOURCE: no DLL entry points.
+            try:
+                resource = checked(find(module, 1, 24))  # Executable activation manifest.
+                size = checked(size_of(module, resource)); require(size <= 65536, 'Oversized executable manifest')
+                raw = ctypes.string_at(checked(lock(checked(load_resource(module, resource)))), size)
+            finally:
+                checked(free(module))
+        finally:
+            binary_handle.Close()
+    get_process = api(kernel, 'GetCurrentProcess', w.HANDLE)
+    open_token = api(advapi, 'OpenProcessToken', w.BOOL, w.HANDLE, w.DWORD, ctypes.POINTER(w.HANDLE))
+    info = api(advapi, 'GetTokenInformation', w.BOOL, w.HANDLE, ctypes.c_int, ctypes.c_void_p, w.DWORD, ctypes.POINTER(w.DWORD))
+    close = api(kernel, 'CloseHandle', w.BOOL, w.HANDLE)
+    token = w.HANDLE(); checked(open_token(get_process(), 0x8, ctypes.byref(token)))  # TOKEN_QUERY only.
+    def query(kind):
+        size = w.DWORD()
+        info(token, kind, None, 0, ctypes.byref(size))
+        require(0 < size.value <= 65536, 'Invalid token information size')
+        buffer = ctypes.create_string_buffer(size.value)
+        checked(info(token, kind, buffer, size, ctypes.byref(size)))
+        return buffer
+    try:
+        label = query(25)  # TOKEN_MANDATORY_LABEL starts with SID_AND_ATTRIBUTES.
+        sid = ctypes.cast(label, ctypes.POINTER(ctypes.c_void_p))[0]
+        count = api(advapi, 'GetSidSubAuthorityCount', ctypes.POINTER(ctypes.c_ubyte), ctypes.c_void_p)(sid)
+        checked(count); require(count[0] > 0, 'Empty integrity SID')
+        rid_pointer = api(advapi, 'GetSidSubAuthority', ctypes.POINTER(w.DWORD), ctypes.c_void_p, w.DWORD)(sid, count[0]-1)
+        checked(rid_pointer); rid = rid_pointer[0]
+        elevation = ctypes.cast(query(20), ctypes.POINTER(w.DWORD))[0]
+        elevation_type = ctypes.cast(query(18), ctypes.POINTER(w.DWORD))[0]
+    finally:
+        checked(close(token))
+    return raw, {'pid':os.getpid(), 'TokenIntegrityLevel':rid, 'TokenElevation':elevation,
+                 'TokenElevationType':elevation_type, 'scope':'current QA process only; no child token measured'}
+
+
+def diagnostic_only_preflight(exe):
+    validate_host_context(sys.platform, os.environ)
+    require(exe.resolve() == (BASE / 'installed/hanni-mvp.exe').resolve() and digest(exe) == INSTALLED_EXE_SHA,
+            'Diagnostic executable identity differs')
+    raw, token = inspect_windows_manifest_and_token(exe)
+    import xml.etree.ElementTree as ET
+    document = ET.fromstring(raw)
+    levels = [dict(node.attrib) for node in document.iter() if node.tag.rsplit('}',1)[-1] == 'requestedExecutionLevel']
+    (EVIDENCE / 'installed-RT_MANIFEST-1.xml').write_bytes(raw)
+    # These are prospective values only. No profile, marker, database, socket or process is created.
+    profile = ROOT / '.local/background-qa' / OPERATION / 'data/webview2'
+    write_json(EVIDENCE / 'startup-diagnostic-only.json', {
+        'operation':OPERATION, 'source':SOURCE, 'build':BUILD, 'installed_exe_sha256':INSTALLED_EXE_SHA,
+        'manifest':{'resource_type':24,'resource_id':1,'sha256':hashlib.sha256(raw).hexdigest(),'requestedExecutionLevel':levels},
+        'launcher_token':token, 'intended_webview_values':{
+            'WEBVIEW2_USER_DATA_FOLDER':str(profile.resolve()),
+            'WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS':'--remote-debugging-port=<allocated-at-launch> --remote-debugging-address=127.0.0.1'},
+        'environment_propagation':'NOT_MEASURED; prospective values only, no child launched',
+        'application_launched':False, 'profile_created':False, 'runtime_assertions_executed':0,
+        'runtime_acceptance':'UNKNOWN', 'cleanup':'resource module and TOKEN_QUERY handles closed; no application job created'})
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--mcp-cli', type=Path, required=True)
     parser.add_argument('--serve-default-desktop',action='store_true')
     parser.add_argument('--check-default-desktop',action='store_true')
+    parser.add_argument('--diagnostic-only',action='store_true',help='Inspect installed resources and current token; never launch the app')
     parser.add_argument('--release-isolation',action='store_true')
     parser.add_argument('--exe',type=Path)
     parser.add_argument('--expected-sha256')
     parser.add_argument('--data-root',type=Path)
     parser.add_argument('--calls',type=Path)
     args = parser.parse_args()
+    require(not (args.diagnostic_only and (args.serve_default_desktop or args.check_default_desktop)), 'Diagnostic mode cannot launch an application')
     if args.serve_default_desktop or args.check_default_desktop:
         require(not (args.serve_default_desktop and args.check_default_desktop),'Conflicting launcher roles')
         require(args.exe and args.expected_sha256 and args.data_root,'Incomplete explicit launcher identity')
@@ -748,7 +837,8 @@ def main():
         require(os.environ.get('GITHUB_REPOSITORY') == REPO and os.environ.get('GITHUB_REF') == 'refs/heads/work/d4ae-installed-qa-v1' and os.environ.get('GITHUB_EVENT_NAME') == 'push' and os.environ.get('GITHUB_RUN_ATTEMPT') == '1', 'Wrong operation trigger or duplicate attempt')
         require(args.mcp_cli.is_file(), 'Pinned official MCP CLI unavailable')
         command(['git','diff','--exit-code', SOURCE, '--', 'src', 'src-tauri', 'scripts/qa-launch-policy.py', 'scripts/qa-background.py', 'scripts/qa_files.py', 'scripts/task-workflow-native-qa.py', 'scripts/stage-updates.mjs'], 'unchanged-product-and-helpers')
-        preflight()
+        if not args.diagnostic_only:
+            preflight()
         wait_for_artifact()
         candidate = BASE / 'signed-candidate'; candidate.mkdir()
         download_artifact(candidate)
@@ -764,6 +854,11 @@ def main():
         policy = importlib.util.module_from_spec(spec); spec.loader.exec_module(policy)
         policy.verify_binary(exe.read_bytes(), exe_hash, True)
         write_json(EVIDENCE / 'installed-binary.json', {'path':str(exe.resolve()),'sha256':exe_hash,'installer_sha256':manifest['sha256'],'source':SOURCE,'build':BUILD})
+        if args.diagnostic_only:
+            diagnostic_only_preflight(exe)
+            state.update(state='diagnostic_only_completed', runtime_acceptance='UNKNOWN', installed_exe_sha256=exe_hash,
+                         application_launched=False, runtime_assertions_executed=0)
+            return 0
         run, data = seed_protected_fixture(exe_hash)
         code = RUNTIME_CODE.replace('SHOTS', json.dumps(str((EVIDENCE / 'official-mcp').resolve()))).replace('DATA', json.dumps(str(data.resolve())))
         calls = EVIDENCE / 'runtime-calls.json'; write_json(calls,[{'name':'browser_run_code','arguments':{'code':code}}])
