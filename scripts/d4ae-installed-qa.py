@@ -560,10 +560,17 @@ RUNTIME_CODE = r"""async (page) => {
   const get=async id=>(await records()).find(e=>e.id===id);
   const links=()=>rpc('get_calendar_task_goals');
   const open=async id=>{
-    await page.evaluate(()=>window.dispatchEvent(new CustomEvent('hanni:calendar-refresh')));
+    const host='#uni-pane-calendar [data-calendar-records]';
+    const ready=page.locator(host+':not([aria-busy])');
+    const dayReady=page.locator(host+'[data-period="day"]:not([aria-busy])');
+    await page.evaluate(async()=>{window.dispatchEvent(new CustomEvent('hanni:calendar-refresh'));await Promise.resolve();});
+    if(await page.locator(host).count())await ready.waitFor({state:'visible'});
     await page.locator('.uni-tab[data-pane="table"]').click();
+    await ready.waitFor({state:'visible'});
     await page.locator('button[data-period="day"]').click();
+    await dayReady.waitFor({state:'visible'});
     await page.locator('[data-today]').first().click();
+    await dayReady.waitFor({state:'visible'});
     const row=page.locator(`[data-record-source="event:${id}"]`).first();
     await row.locator('[data-record-menu]').click();
     await page.locator('[data-menu-action="edit"]').click();
