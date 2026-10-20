@@ -1,7 +1,7 @@
 {
   "name": "cicada",
-  "version": "0.5.19",
-  "cicadaBuildId": "20261020-theme946-0519.1",
+  "version": "0.5.20",
+  "cicadaBuildId": "20261020-event-delete-0520.1",
   "private": true,
   "type": "module",
   "scripts": {
