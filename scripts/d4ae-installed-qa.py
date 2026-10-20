@@ -425,6 +425,8 @@ def command(args, name, timeout=180, credentials=False):
         for key in list(env):
             if any(part in key.upper() for part in ('TOKEN', 'SECRET', 'PASSWORD', 'PRIVATE_KEY')):
                 env.pop(key)
+    if name == 'actual-installed-runtime':
+        env['PYTHONIOENCODING'] = 'utf-8'
     started = datetime.datetime.now(datetime.timezone.utc).isoformat()
     write_json(EVIDENCE / (name + '.json'), {'argv':[str(a) for a in args], 'started':started, 'state':'started', 'exit':None})
     process = subprocess.Popen([str(arg) for arg in args], cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -614,6 +616,21 @@ RUNTIME_CODE = r"""async (page) => {
     await page.locator('[data-today]').first().click();
     await dayReady.waitFor({state:'visible'});
     const row=page.locator(`[data-record-source="event:${id}"]`).first();
+    await row.locator('[data-record-menu]').scrollIntoViewIfNeeded();
+    await row.locator('[data-record-menu]').evaluate(async trigger=>{
+      // Scroll events precede rAF; drain the explicit scroll before opening a dismiss-on-scroll menu.
+      let previous, stable=0;
+      for(let frame=0;frame<120;frame++){
+        await new Promise(requestAnimationFrame);
+        if(!trigger.isConnected)throw Error('viewport prerequisite: trigger detached');
+        const rect=trigger.getBoundingClientRect(), positions=[];
+        for(let node=trigger;node;node=node.parentElement)positions.push(node.scrollLeft,node.scrollTop);
+        const current=JSON.stringify([rect.x,rect.y,rect.width,rect.height,...positions]);
+        stable=current===previous?stable+1:0;previous=current;
+        if(stable>=2&&rect.width>0&&rect.height>0&&rect.top>=0&&rect.left>=0&&rect.bottom<=innerHeight&&rect.right<=innerWidth)return;
+      }
+      throw Error('viewport prerequisite: scroll/layout did not settle within 120 frames');
+    });
     await row.locator('[data-record-menu]').click();
     await page.locator('[data-menu-action="edit"]').click();
     await page.locator('#evm-title').waitFor();
