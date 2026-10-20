@@ -6,7 +6,7 @@ import { invoke as defaultInvoke } from './state.js';
 import { escapeHtml } from './utils.js';
 import { createCalendarDialog } from './calendar-dialog.js';
 import { mountCalendarContextMenu } from './calendar-context-menu.js';
-import { DEVELOPMENT_STATE_KEY, readDevelopmentState, developmentOf, goalNumericProgress, formatNumber } from './calendar-development-state.js';
+import { DEVELOPMENT_STATE_KEY, readDevelopmentState, developmentOf, goalNumericProgress, goalActionProgress, normalizeDevelopmentState, formatNumber } from './calendar-development-state.js';
 import { mountCalendarWishes } from './calendar-wishes.js';
 import { wishGoalDraft } from './calendar-wishes-store.js';
 
@@ -235,6 +235,7 @@ export async function mountCalendarGoals(element, dependencies = {}) {
   const uiCopy = createUiCopy(document);
   const viewState = dependencies.state || { view: 'goals' };
   let disposed = false, revision = 0, busy = false, creating = false;
+  let actionTasks = null, developmentAvailable = true;
   let goals = [], goalsLoaded = false, development = readDevelopmentState(null), selectedId = null, active = null, creationDialog = null, wishes = null;
   element.classList.add('calendar-panels', 'calendar-goals');
   element.innerHTML = `<header class="cp-heading"><div><h2>${uiCopy("Цели")}</h2><p data-goals-hint></p></div></header>
@@ -290,6 +291,7 @@ export async function mountCalendarGoals(element, dependencies = {}) {
     if (ext.stages.length) meta.push(stage ? uiCopy.format("Этап: {0}", stage.title) : uiCopy("Этап не выбран"));
     const numeric = goalNumericProgress(goal);
     if (numeric) meta.push(uiCopy.format("{0} из {1}{2}", formatNumber(numeric.done), formatNumber(numeric.total), goal.unit ? ` ${goal.unit}` : ""));
+    if (goal.goal_kind === 'goal') meta.push(developmentAvailable ? goalActionProgress(development, goal, actionTasks).label : uiCopy("Связанные действия: данные недоступны"));
     if (goal.deadline) meta.push(uiCopy.format("до {0}", calendarGoalDateLabel(goal.deadline)));
     return meta;
   }
@@ -341,11 +343,14 @@ export async function mountCalendarGoals(element, dependencies = {}) {
     const focused = document.activeElement?.closest?.('[data-goal-open], [data-goal-menu]');
     const focusSelector = focused && list.contains(focused) ? Object.entries(focused.dataset).map(([key, value]) => `[data-${key.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`)}="${value}"]`).join('') : '';
     try {
-      const [loadedGoals, raw, block, developmentRaw] = await Promise.all([api('get_goals', { tabName: null }), api('get_ui_state', { key: 'calendar_now_v1' }), api('get_active_block'), api('get_ui_state', { key: DEVELOPMENT_STATE_KEY }).catch(() => null)]);
+      const [loadedGoals, raw, block, developmentRaw, tasks] = await Promise.all([api('get_goals', { tabName: null }), api('get_ui_state', { key: 'calendar_now_v1' }), api('get_active_block'), api('get_ui_state', { key: DEVELOPMENT_STATE_KEY }).catch(() => undefined), api('get_calendar_tasks', { includeCompleted: true }).catch(() => null)]);
       if (disposed || rev !== revision || (canCommit && !canCommit())) return;
       const saved = raw ? JSON.parse(raw) : null;
       if (saved && saved.version !== 1) throw new Error('Unsupported calendar state');
-      goals = loadedGoals; goalsLoaded = true; selectedId = saved?.goalId == null ? null : String(saved.goalId); active = block; development = readDevelopmentState(developmentRaw);
+      goals = loadedGoals; goalsLoaded = true; selectedId = saved?.goalId == null ? null : String(saved.goalId); active = block; actionTasks = tasks;
+      developmentAvailable = developmentRaw !== undefined;
+      try { development = normalizeDevelopmentState(developmentRaw); }
+      catch { developmentAvailable = false; development = readDevelopmentState(null); }
       renderCards(); focusSelector && list.querySelector(focusSelector)?.focus(); message.textContent = goals.some(goal => goal.goal_metadata_error) ? uiCopy("Состояние целей и этапы не удалось прочитать. Сами цели доступны.") : active ? uiCopy("Задача сейчас выполняется. Главную цель можно сменить.") : success;
       wishes?.render();
     } catch {

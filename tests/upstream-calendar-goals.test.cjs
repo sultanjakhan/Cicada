@@ -25,11 +25,12 @@ async function setup(t, { dependencies = {}, ui: initialUi = {} } = {}) {
   const w = dom.window;
   w.HTMLDialogElement.prototype.showModal = function () { this.open = true; this.querySelector('button')?.focus(); };
   w.HTMLDialogElement.prototype.close = function () { this.open = false; this.dispatchEvent(new w.Event('close')); };
-  const goals = [], links = [], calls = [], before = new Map(); let selected = 0, created = null, active = null;
+  const goals = [], tasks = [], links = [], calls = [], before = new Map(); let selected = 0, created = null, active = null;
   const ui = new Map(Object.entries({ calendar_now_v1: JSON.stringify({ version: 1, goalId: null }), ...initialUi }));
   const api = async (name, args) => {
     calls.push({ name, args: structuredClone(args) }); if (before.has(name)) await before.get(name)(args);
     if (name === 'get_goals') return structuredClone(goals);
+    if (name === 'get_calendar_tasks') return structuredClone(tasks);
     if (name === 'get_calendar_task_goals') return structuredClone(links);
     if (name === 'get_ui_state') return ui.get(args.key) ?? null;
     if (name === 'set_ui_state') { if (args.expectedValue != null && (ui.get(args.key) ?? '') !== args.expectedValue) throw new Error('mvp_sync_stale_ui_state'); ui.set(args.key, args.value); return; }
@@ -52,7 +53,7 @@ async function setup(t, { dependencies = {}, ui: initialUi = {} } = {}) {
   const refresh = async () => { w.dispatchEvent(new w.Event('task-state-changed')); await tick(); };
   const menuItems = selector => { const more = root.querySelector(selector); more.focus(); more.click(); return [...w.document.querySelectorAll('.calendar-record-menu [role=menuitem]')]; };
   const menu = async (selector, action) => { menuItems(selector).find(item => item.dataset.menuAction === action).click(); await tick(); return w.document.querySelector('dialog'); };
-  return { w, root, goals, links, calls, before, ui, opened, dispose, open, submit, refresh, menu, menuItems, selected: () => selected, created: () => created, setActive: value => { active = value; } };
+  return { w, root, goals, tasks, links, calls, before, ui, opened, dispose, open, submit, refresh, menu, menuItems, selected: () => selected, created: () => created, setActive: value => { active = value; } };
 }
 
 test('shared Create goal opens the existing editor; cancel restores its caller without IPC', async t => {
@@ -222,7 +223,7 @@ test('long-term numeric goals show real current and target values without invent
   x.goals.push({ id: 1, title: 'Накопить резерв', goal_kind: 'goal', target_value: 100000, current_value: 25000, unit: '₸' }, { id: 2, title: 'Выстроить процесс', goal_kind: 'goal', target_value: 1, unit: '' });
   await x.refresh();
   assert.match(x.root.querySelector('[data-goal-id="1"] .cp-goal-row__meta').textContent, /25\s000 из 100\s000 ₸/);
-  assert.equal(x.root.querySelector('[data-goal-id="2"] .cp-goal-row__meta'), null);
+  assert.equal(x.root.querySelector('[data-goal-id="2"] .cp-goal-row__meta').textContent, 'Связанных действий пока нет');
 });
 
 test('unrecognized goal kinds remain visible for repair instead of disappearing', async t => {
@@ -303,8 +304,8 @@ test('goal rows show title, one-line description, current stage and deadline; th
   assert.equal(row('g1').querySelector('.cp-goal-row__badge').textContent, 'Главная');
   assert.equal(row('g3').querySelector('.cp-goal-row__badge'), null);
   assert.equal(row('g1').querySelector('.cp-goal-row__desc').textContent, 'Уверенно описывать требования', 'only the first line of the description');
-  assert.equal(row('g1').querySelector('.cp-goal-row__meta').textContent, 'Этап: Основы требований · до 1 декабря 2026 г. · Подцели: 1');
-  assert.match(row('g3').querySelector('.cp-goal-row__meta').textContent, /^Этап не выбран · 12 из 21 км$/);
+  assert.equal(row('g1').querySelector('.cp-goal-row__meta').textContent, 'Этап: Основы требований · Связанных действий пока нет · до 1 декабря 2026 г. · Подцели: 1');
+  assert.match(row('g3').querySelector('.cp-goal-row__meta').textContent, /^Этап не выбран · 12 из 21 км · Связанных действий пока нет$/);
   assert.equal(row('g2'), null, 'subgoals are available through the parent popup, not as catalog rows');
   assert.equal(row('g4').closest('[data-list]').querySelectorAll('.cp-goal-group')[1].textContent, 'Ежедневные нормы');
   assert.equal(row('g4').querySelector('.cp-goal-row__meta').textContent, 'Каждый день: 2 л');
@@ -444,4 +445,49 @@ test('Goals list stale save retains every draft field until explicit review and 
   button('Проверить актуальную цель').click();await tick();assert.equal(f.title.value,'Local draft');assert.match(modal.textContent,/Newer remote title/);
   button('Заменить черновик актуальными данными').click();assert.equal(f.title.value,'Newer remote title');assert.equal(f.current_value.value,'7');assert.equal(x.w.document.activeElement,f.title);
   f.description.value='Fresh edit';await x.submit(modal);assert.equal(modal.isConnected,false);assert.equal(x.goals[0].description,'Fresh edit');assert.equal(x.goals[0].current_value,7);
+});
+
+
+test('goal catalog projects saved actions after changes and remount without choosing or completing anything', async t => {
+  const development = JSON.stringify({version:1,goals:{g:{skills:[{id:'s',title:'Skill',topic:'Topic',taskIds:['a','b']}],stages:[{id:'stage',title:'Stage',skillIds:['s']}],activeStageId:'stage'}}});
+  const x = await setup(t,{ui:{calendar_development_v1:development}});
+  x.goals.push({id:'g',goal_kind:'goal',title:'Existing goal',numeric_progress:true,current_value:3,target_value:10});
+  x.tasks.push({source_type:'note',source_id:'a',completed:true,status_extra:'done'},{source_type:'note',source_id:'b',completed:false,status_extra:'task'});
+  await x.refresh();
+  assert.match(x.root.textContent,/Действия этапа: выполнено 1 из 2/);
+  assert.match(x.root.textContent,/3 из 10/);
+  const opened=[];
+  x.dispose();
+  const dispose = await (await modulePromise).mountCalendarGoals(x.root,{invoke:async (name,args) => {
+    if(name==='get_goals') return structuredClone(x.goals);
+    if(name==='get_calendar_tasks') return structuredClone(x.tasks);
+    if(name==='get_ui_state') return x.ui.get(args.key) ?? null;
+    if(name==='get_active_block') return null;
+    throw Error('Unexpected mutation: '+name);
+  },onOpenGoal:goal=>opened.push(goal.id)});
+  t.after(dispose);
+  assert.match(x.root.textContent,/Действия этапа: выполнено 1 из 2/);
+  x.root.querySelector('[data-goal-open="g"]').click();
+  assert.deepEqual(opened,['g'],'existing goal entry still opens the linked-action detail flow');
+  x.tasks[1].completed=true; x.tasks[1].status_extra='done'; await x.refresh();
+  assert.match(x.root.textContent,/Действия этапа: выполнено 2 из 2/);
+  x.tasks.pop(); await x.refresh();
+  assert.match(x.root.textContent,/Действия этапа: выполнено 1 из 2 · Статус неизвестен: 1/);
+  assert.equal(x.selected(),0); assert.equal(x.created(),null);
+  assert.equal(x.ui.get('calendar_development_v1'),development);
+  assert.equal(x.calls.some(c=>/save_|set_|complete|start/.test(c.name)),false);
+});
+
+test('failed action or development reads preserve goal navigation with honest unknown states', async t => {
+  const x = await setup(t,{ui:{calendar_development_v1:JSON.stringify({version:1,goals:{g:{skills:[{id:'s',title:'Skill',topic:'Topic',taskIds:['a']}],stages:[]}}})}});
+  x.goals.push({id:'g',goal_kind:'goal',title:'Retained goal'});
+  x.before.set('get_calendar_tasks',()=>{throw Error('Unavailable');}); await x.refresh();
+  assert.match(x.root.textContent,/Действия цели: выполнено 0 из 1 · Статус неизвестен: 1/);
+  assert.ok(x.root.querySelector('[data-goal-open="g"]'));
+  x.ui.set('calendar_development_v1','{broken'); await x.refresh();
+  assert.match(x.root.textContent,/Связанные действия: данные недоступны/);
+  assert.doesNotMatch(x.root.textContent,/Связанных действий пока нет/);
+  x.ui.delete('calendar_development_v1'); x.before.delete('get_calendar_tasks'); await x.refresh();
+  assert.match(x.root.textContent,/Связанных действий пока нет/);
+  assert.doesNotMatch(x.root.textContent,/0%/);
 });
