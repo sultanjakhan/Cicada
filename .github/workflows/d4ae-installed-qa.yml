@@ -30,7 +30,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm.cmd install --prefix .local/d4ae-tools --ignore-scripts --no-audit --no-fund --save-exact @playwright/mcp@0.0.80
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Verify and exercise the exact signed production installer
+      - name: Verify signed20 on the disposable runner Default desktop
         env:
           GH_TOKEN: ${{ github.token }}
         run: python -B scripts/d4ae-installed-qa.py --mcp-cli .local/d4ae-tools/node_modules/@playwright/mcp/cli.js

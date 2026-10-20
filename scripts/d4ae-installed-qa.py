@@ -1,11 +1,15 @@
 """One exact signed Windows release in a disposable hosted fixture; no product writes."""
 import argparse
+import asyncio
+import contextlib
 import datetime
 import hashlib
 import importlib.util
 import importlib.metadata
 import json
 import os
+import socket
+import shutil
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -23,6 +27,7 @@ SOURCE = 'ba433551496cdba26fb27f34c2ca503bab8bf28a'
 TREE = '08dbbf66ff10d9231bab0dfe9caf83c3c4f5d9d9'
 BUILD = '20261020-event-delete-0520.1'
 VERSION = '0.5.20'
+INSTALLED_EXE_SHA = '5824491ffc9b7f8386cffe696e9c664196d260813ad531ca843babf3544303a0'
 REPO = 'sultanjakhan/Cicada'
 REPO_ID = 1373356816
 SIGNING_RUN = 39363910526
@@ -485,10 +490,252 @@ def preflight():
         'python_packages':{name:importlib.metadata.version(name) for name in ('mcp','psutil','pywin32')}})
 
 
+def validate_host_context(platform, env, station=None, desktop=None):
+    require(platform == 'win32' and env.get('GITHUB_ACTIONS') == 'true' and env.get('RUNNER_ENVIRONMENT') == 'github-hosted', 'Only disposable GitHub-hosted Windows is admitted')
+    require(env.get('GITHUB_REPOSITORY') == REPO and env.get('GITHUB_REF') == 'refs/heads/work/d4ae-installed-qa-v1'
+            and env.get('GITHUB_EVENT_NAME') == 'push' and env.get('GITHUB_RUN_ATTEMPT') == '1', 'Wrong operation trigger or duplicate attempt')
+    if station is not None or desktop is not None:
+        require(station == 'WinSta0' and desktop == 'Default', 'Only the disposable runner WinSta0 Default desktop is admitted')
+
+
+def reject_overlap(candidate, protected):
+    candidate = Path(candidate).resolve()
+    for item in protected:
+        item = Path(item).resolve(strict=True)
+        require(not candidate.is_relative_to(item) and not item.is_relative_to(candidate), 'QA root overlaps a production data parent')
+
+
+def validate_listener(listeners, owned_webviews, port):
+    require(bool(listeners), 'No owned CDP listener')
+    require(all(row['ip'] == '127.0.0.1' and row['port'] == port and row['pid'] in owned_webviews for row in listeners), 'CDP is not exclusively loopback and owned by the pinned WebView profile')
+
+
+def unique_tauri_page(targets):
+    pages = [target for target in targets if target.get('type') == 'page']
+    require(len(pages) == 1, 'No unique installed Tauri page')
+    url = urllib.parse.urlsplit(pages[0].get('url', ''))
+    require(url.scheme == 'http' and url.hostname == 'tauri.localhost' and not url.username and not url.password and url.port is None, 'Unexpected installed Tauri page origin')
+    return pages[0]
+
+
+def current_thread_desktop():
+    import ctypes
+    from ctypes import wintypes
+    user = ctypes.WinDLL('user32', use_last_error=True)
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.GetCurrentThreadId.restype = wintypes.DWORD
+    user.GetThreadDesktop.argtypes = [wintypes.DWORD]; user.GetThreadDesktop.restype = wintypes.HANDLE
+    user.GetUserObjectInformationW.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+    user.GetUserObjectInformationW.restype = wintypes.BOOL
+    handle = user.GetThreadDesktop(kernel.GetCurrentThreadId())
+    require(bool(handle), 'Runner thread desktop is unavailable')
+    name = ctypes.create_unicode_buffer(512); needed = wintypes.DWORD()
+    require(bool(user.GetUserObjectInformationW(handle, 2, name, ctypes.sizeof(name), ctypes.byref(needed))), 'Cannot verify runner thread desktop')
+    return name.value  # Borrowed GetThreadDesktop handle must not be closed.
+
+
+def input_desktop_name():
+    import win32service
+    import win32con
+    handle = win32service.OpenInputDesktop(0, False, win32con.DESKTOP_READOBJECTS)
+    try:
+        return win32service.GetUserObjectInformation(handle, win32con.UOI_NAME)
+    finally:
+        handle.CloseDesktop()
+
+
+def serve_default_desktop(args):
+    """Exact signed app on this disposable runner's normal desktop, then MCP stdio."""
+    validate_host_context(sys.platform, os.environ)
+    require(args.release_isolation, 'Explicit --release-isolation is mandatory')
+    import msvcrt
+    import psutil
+    import qa_files
+    import win32api
+    import win32con
+    import win32event
+    import win32file
+    import win32gui
+    import win32job
+    import win32process
+    import win32service
+    from win32com.shell import shell, shellcon
+    station = win32service.GetUserObjectInformation(win32service.GetProcessWindowStation(), win32con.UOI_NAME)
+    desktop = current_thread_desktop()
+    validate_host_context(sys.platform, os.environ, station, desktop)
+    input_handle = win32service.OpenInputDesktop(0, False, win32con.DESKTOP_READOBJECTS)
+    try:
+        input_before = win32service.GetUserObjectInformation(input_handle, win32con.UOI_NAME)
+    finally:
+        input_handle.CloseDesktop()
+    require(input_before == 'Default', 'Runner input desktop is not Default')
+    run = ROOT / '.local/background-qa' / OPERATION
+    data = run / 'data'; profile = data / 'webview2'
+    require(args.data_root.absolute() == data.absolute() and args.exe.absolute() == (BASE / 'installed/hanni-mvp.exe').absolute(), 'Unexpected isolated fixture or installed binary path')
+    require(args.expected_sha256 == INSTALLED_EXE_SHA, 'Unexpected installed executable pin')
+    protected = [Path(shell.SHGetFolderPath(0, item, None, 0)) for item in (shellcon.CSIDL_APPDATA, shellcon.CSIDL_LOCAL_APPDATA)]
+    reject_overlap(data, protected)
+    spec = importlib.util.spec_from_file_location('existing_qa_launch_policy', ROOT / 'scripts/qa-launch-policy.py')
+    policy = importlib.util.module_from_spec(spec); spec.loader.exec_module(policy)
+    manifest = {'state':'starting','desktop_mode':'hosted-default','station':station,'thread_desktop':desktop,'input_desktop_before':input_before,
+                'source':SOURCE,'build':BUILD,'exe_sha256':args.expected_sha256,'data':str(data),'profile':str(profile),'cleanup_verified':False}
+    handles = contextlib.ExitStack(); job = process = thread = mcp = None; lock_fd = None
+    try:
+        for directory in (ROOT / '.local', BASE, BASE / 'installed', run.parent, run, data):
+            handles.enter_context(qa_files.pinned_tree(directory, scan=False))
+        handles.enter_context(qa_files.pinned_tree(data))
+        handles.enter_context(qa_files.pinned_tree(profile, create=not profile.exists()))
+        binary_handle = qa_files.checked_handle(args.exe, win32con.GENERIC_READ, win32con.OPEN_EXISTING, share=1)
+        handles.callback(binary_handle.Close)
+        size = win32file.GetFileSize(binary_handle); require(0 < size <= 32*1024*1024, 'Invalid installed executable size')
+        binary = win32file.ReadFile(binary_handle, size)[1]
+        policy.verify_binary(binary, args.expected_sha256, args.release_isolation)
+        require(json.loads(qa_files.read_text(run / 'profile.json')) == {'application':'app.hanni.mvp','purpose':'isolated-background-qa','exe_sha256':args.expected_sha256}, 'Wrong QA fixture identity')
+        command_line = subprocess.list2cmdline(policy.launch_args(args.exe.resolve(), data.resolve(), 'foreground'))
+        lock_fd = qa_files.writable_fd(run / 'active.lock')
+        msvcrt.locking(lock_fd, msvcrt.LK_NBLCK, 1)
+        cli = args.mcp_cli.resolve(strict=True)
+        require(cli == (ROOT / '.local/d4ae-tools/node_modules/@playwright/mcp/cli.js').resolve(strict=True), 'Unexpected MCP CLI path')
+        package = json.loads(qa_files.read_text(cli.parent / 'package.json', 32768))
+        require(package.get('name') == '@playwright/mcp' and package.get('version') == '0.0.80', 'Official MCP package pin differs')
+        node = shutil.which('node'); require(node, 'Node executable unavailable')
+        with socket.socket() as reservation:
+            reservation.bind(('127.0.0.1',0)); port = reservation.getsockname()[1]
+        endpoint = 'http://127.0.0.1:' + str(port)
+        env = dict(os.environ); env.pop('HANNI_MVP_DATA_DIR',None)
+        env['WEBVIEW2_USER_DATA_FOLDER'] = str(profile.resolve())
+        env['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = '--remote-debugging-port=' + str(port) + ' --remote-debugging-address=127.0.0.1'
+        job = win32job.CreateJobObject(None, 'D4AE-default-' + os.environ['GITHUB_RUN_ID'])
+        limits = win32job.QueryInformationJobObject(job, win32job.JobObjectExtendedLimitInformation)
+        limits['BasicLimitInformation']['LimitFlags'] |= win32job.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        win32job.SetInformationJobObject(job, win32job.JobObjectExtendedLimitInformation, limits)
+        startup = win32process.STARTUPINFO(); startup.lpDesktop = station + '\\' + desktop
+        process, thread, pid, tid = win32process.CreateProcess(str(args.exe.resolve()), command_line, None, None, False,
+            win32con.CREATE_SUSPENDED | win32con.CREATE_UNICODE_ENVIRONMENT | win32con.CREATE_NO_WINDOW, env, str(args.exe.parent.resolve()), startup)
+        try:
+            win32job.AssignProcessToJobObject(job, process)
+        except BaseException:
+            win32api.TerminateProcess(process,1)
+            raise
+        manifest.update(pid=pid,thread_id=tid,endpoint=endpoint,argv=policy.launch_args(args.exe.resolve(),data.resolve(),'foreground'))
+        write_json(run / 'runtime.json', manifest)
+        win32process.ResumeThread(thread)
+        app = psutil.Process(pid)
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        deadline = time.monotonic() + 40; last_error = None
+        while time.monotonic() < deadline:
+            require(win32process.GetExitCodeProcess(process) == 259, 'Owned app exited before WebView readiness')
+            descendants = app.children(recursive=True)
+            webviews = {}
+            for child in descendants:
+                if child.name().casefold() != 'msedgewebview2.exe':
+                    continue
+                folder = profile_argument(child.cmdline())
+                if folder:
+                    require(profile_is_owned(folder, profile), 'Owned WebView uses an unapproved data folder')
+                    webviews[child.pid] = str(Path(folder).resolve())
+            listeners = [{'pid':c.pid,'ip':c.laddr.ip,'port':c.laddr.port} for c in psutil.net_connections(kind='tcp')
+                         if c.status == psutil.CONN_LISTEN and c.laddr.port == port]
+            if listeners:
+                try:
+                    validate_listener(listeners, webviews, port)
+                except RuntimeError as error:
+                    last_error = str(error)
+                    time.sleep(0.15)
+                    continue  # No HTTP request until listener/profile ownership is established.
+                try:
+                    with opener.open(endpoint + '/json/list',timeout=0.5) as response:
+                        raw=response.read(32769); require(len(raw)<=32768,'Oversized target response'); targets=json.loads(raw)
+                    page = unique_tauri_page(targets)
+                    break
+                except (OSError,ValueError,RuntimeError) as error:
+                    last_error = str(error)
+            time.sleep(0.15)
+        else:
+            raise RuntimeError('Default desktop WebView readiness failed: ' + (last_error or 'no owned WebView/CDP listener'))
+        windows = []
+        def owned_window(hwnd, _):
+            if win32process.GetWindowThreadProcessId(hwnd)[1] == pid and win32gui.GetWindowText(hwnd) == 'Cicada [isolated test]':
+                windows.append(hwnd)
+            return True
+        win32gui.EnumWindows(owned_window,None)
+        require(len(windows)==1 and win32gui.IsWindowVisible(windows[0]), 'No unique visible owned isolated app window')
+        manifest.update(state='ready',url=page['url'],targets=targets,app_windows=windows,owned_webview_profile_paths=sorted(set(webviews.values())),
+                        webview_pids=sorted(webviews),listeners=listeners,mcp_package={'name':package['name'],'version':package['version']})
+        write_json(run / 'runtime.json',manifest)
+        output = EVIDENCE / 'official-mcp'; output.mkdir(exist_ok=True)
+        mcp = subprocess.Popen([node,str(cli),'--cdp-endpoint',endpoint,'--output-dir',str(output),'--console-level','warning'],
+            cwd=output,stdin=sys.stdin,stdout=sys.stdout,stderr=sys.stderr,creationflags=subprocess.CREATE_NO_WINDOW)
+        win32job.AssignProcessToJobObject(job,int(mcp._handle))
+        code=mcp.wait()
+        require(code==0,'Official MCP exited with failure')
+        return code
+    except BaseException as error:
+        manifest['error']=str(error)
+        raise
+    finally:
+        try:
+            if job is not None:
+                win32job.TerminateJobObject(job,0)
+            if mcp is not None:
+                if mcp.poll() is None:
+                    mcp.terminate()
+                mcp.wait(timeout=10)
+            if process is not None:
+                require(win32event.WaitForSingleObject(process,10000)==win32event.WAIT_OBJECT_0,'Owned app did not terminate')
+                manifest['app_exit_code_after_cleanup']=win32process.GetExitCodeProcess(process)
+            manifest['cleanup_verified']=True
+        finally:
+            for handle in (thread,process,job):
+                if handle is not None:
+                    handle.Close()
+            manifest.update(state='stopped',input_desktop_after=input_desktop_name(),thread_desktop_after=current_thread_desktop())
+            write_json(run / 'runtime.json',manifest)
+            if lock_fd is not None:
+                with contextlib.suppress(OSError):
+                    os.lseek(lock_fd,0,os.SEEK_SET);msvcrt.locking(lock_fd,msvcrt.LK_UNLCK,1)
+                os.close(lock_fd)
+            handles.close()
+
+
+async def check_default_desktop(args):
+    validate_host_context(sys.platform,os.environ)
+    require(args.release_isolation,'Explicit --release-isolation is mandatory')
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+    launcher = [sys.executable,'-B',str(Path(__file__).resolve()),'--serve-default-desktop','--exe',str(args.exe),
+                '--expected-sha256',args.expected_sha256,'--mcp-cli',str(args.mcp_cli),'--data-root',str(args.data_root),'--release-isolation']
+    params = StdioServerParameters(command=launcher[0],args=launcher[1:],env={**os.environ,'PYTHONIOENCODING':'utf-8'})
+    calls = json.loads(args.calls.read_text(encoding='utf-8'))
+    async with stdio_client(params) as (read,write):
+        async with ClientSession(read,write,read_timeout_seconds=datetime.timedelta(seconds=60)) as client:
+            await client.initialize()
+            for index,call in enumerate(calls):
+                result=await client.call_tool(call['name'],call.get('arguments',{}))
+                stored=result.model_dump(mode='json')
+                write_json(ROOT / '.local/background-qa' / OPERATION / ('runtime-calls-' + str(index) + '.json'),stored)
+                require(not result.isError,'Actual installed MCP scenario failed')
+                print(json.dumps(stored,ensure_ascii=False),flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--mcp-cli', type=Path, required=True)
+    parser.add_argument('--serve-default-desktop',action='store_true')
+    parser.add_argument('--check-default-desktop',action='store_true')
+    parser.add_argument('--release-isolation',action='store_true')
+    parser.add_argument('--exe',type=Path)
+    parser.add_argument('--expected-sha256')
+    parser.add_argument('--data-root',type=Path)
+    parser.add_argument('--calls',type=Path)
     args = parser.parse_args()
+    if args.serve_default_desktop or args.check_default_desktop:
+        require(not (args.serve_default_desktop and args.check_default_desktop),'Conflicting launcher roles')
+        require(args.exe and args.expected_sha256 and args.data_root,'Incomplete explicit launcher identity')
+        if args.serve_default_desktop:
+            return serve_default_desktop(args)
+        require(args.calls,'Missing actual runtime calls')
+        return asyncio.run(check_default_desktop(args))
     EVIDENCE.mkdir(parents=True, exist_ok=True)
     receipt = EVIDENCE / 'operation.json'
     require(not receipt.exists(), 'Operation already has a receipt; refusing duplicate execution')
@@ -512,21 +759,23 @@ def main():
         command([candidate / ASSET, '/S', '/D=' + str(install.resolve())], 'install-signed-runtime', timeout=180)
         exe = install / 'hanni-mvp.exe'; require(exe.is_file(), 'Signed installer did not install the expected executable')
         exe_hash = digest(exe)
+        require(exe_hash == INSTALLED_EXE_SHA,'Installed executable differs from the admitted signed20 bytes')
         spec = importlib.util.spec_from_file_location('existing_qa_launch_policy', ROOT / 'scripts/qa-launch-policy.py')
         policy = importlib.util.module_from_spec(spec); spec.loader.exec_module(policy)
         policy.verify_binary(exe.read_bytes(), exe_hash, True)
         write_json(EVIDENCE / 'installed-binary.json', {'path':str(exe.resolve()),'sha256':exe_hash,'installer_sha256':manifest['sha256'],'source':SOURCE,'build':BUILD})
         run, data = seed_protected_fixture(exe_hash)
-        code = RUNTIME_CODE.replace('SHOTS', json.dumps(str(EVIDENCE.resolve()))).replace('DATA', json.dumps(str(data.resolve())))
+        code = RUNTIME_CODE.replace('SHOTS', json.dumps(str((EVIDENCE / 'official-mcp').resolve()))).replace('DATA', json.dumps(str(data.resolve())))
         calls = EVIDENCE / 'runtime-calls.json'; write_json(calls,[{'name':'browser_run_code','arguments':{'code':code}}])
-        command([sys.executable,'-B',ROOT / 'scripts/task-workflow-native-qa.py','--exe',exe.resolve(),'--expected-sha256',exe_hash,
-                 '--mcp-cli',args.mcp_cli.resolve(),'--session',OPERATION,'--calls',calls.resolve(),'--release-isolation'], 'actual-installed-runtime', timeout=180)
+        command([sys.executable,'-B',Path(__file__).resolve(),'--check-default-desktop','--data-root',data.resolve(),'--exe',exe.resolve(),'--expected-sha256',exe_hash,
+                 '--mcp-cli',args.mcp_cli.resolve(),'--calls',calls.resolve(),'--release-isolation'], 'actual-installed-runtime', timeout=180)
         result = parse_runtime_result(json.loads((run / 'runtime-calls-0.json').read_text(encoding='utf-8')))
         write_json(EVIDENCE / 'runtime-assertions.json', result)
         runtime = json.loads((run / 'runtime.json').read_text(encoding='utf-8')); write_json(EVIDENCE / 'launcher-after.json', runtime)
         require(runtime.get('state') == 'stopped' and runtime.get('exe_sha256') == exe_hash, 'Launcher cleanup or binary identity failed')
-        observation = runtime.get('background_observation', {})
-        require(observation.get('samples',0) > 0 and observation.get('qa_desktop_ever_active') is False and observation.get('read_errors') == 0, 'Inactive-desktop observation failed')
+        require(runtime.get('desktop_mode') == 'hosted-default' and runtime.get('station') == 'WinSta0' and runtime.get('thread_desktop') == 'Default'
+                and runtime.get('input_desktop_before') == 'Default' and runtime.get('input_desktop_after') == 'Default'
+                and runtime.get('cleanup_verified') is True,'Hosted Default desktop or owned cleanup verification failed')
         import psutil
         require(not psutil.pid_exists(runtime['pid']), 'Owned application process remains after QA')
         with sqlite3.connect((data / 'calendar.db').as_uri() + '?mode=ro', uri=True) as conn:
@@ -544,4 +793,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

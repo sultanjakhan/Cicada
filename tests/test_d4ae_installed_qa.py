@@ -90,6 +90,44 @@ class QaGuards(unittest.TestCase):
         self.assertEqual(qa.profile_argument(['browser','--user-data-dir','owned']),'owned')
         self.assertIsNone(qa.profile_argument(['browser','--user-data-dir']))
 
+    def test_default_desktop_host_gate_rejects_local_fork_other_branch_and_retries(self):
+        env={'GITHUB_ACTIONS':'true','RUNNER_ENVIRONMENT':'github-hosted','GITHUB_REPOSITORY':qa.REPO,
+             'GITHUB_REF':'refs/heads/work/d4ae-installed-qa-v1','GITHUB_EVENT_NAME':'push','GITHUB_RUN_ATTEMPT':'1'}
+        qa.validate_host_context('win32',env,'WinSta0','Default')
+        for key,value in [('RUNNER_ENVIRONMENT','self-hosted'),('GITHUB_REPOSITORY','other/repo'),
+                          ('GITHUB_REF','refs/heads/main'),('GITHUB_RUN_ATTEMPT','2'),('GITHUB_EVENT_NAME','workflow_dispatch')]:
+            with self.subTest(key=key),self.assertRaises(RuntimeError):qa.validate_host_context('win32',{**env,key:value},'WinSta0','Default')
+        for platform,station,desktop in [('linux','WinSta0','Default'),('win32','Service-0x0','Default'),('win32','WinSta0','HanniMvpQA-other')]:
+            with self.subTest(platform=platform,station=station,desktop=desktop),self.assertRaises(RuntimeError):qa.validate_host_context(platform,env,station,desktop)
+
+    def test_default_desktop_rejects_both_directions_of_production_overlap(self):
+        with tempfile.TemporaryDirectory() as temp:
+            parent=Path(temp);production=parent/'production';production.mkdir();safe=parent/'owned';safe.mkdir()
+            qa.reject_overlap(safe,[production])
+            for bad in (parent,production,production/'child'):
+                with self.subTest(path=bad),self.assertRaises(RuntimeError):qa.reject_overlap(bad,[production])
+
+    def test_default_desktop_cdp_requires_exclusive_owned_loopback_and_unique_origin(self):
+        qa.validate_listener([{'pid':7,'ip':'127.0.0.1','port':9000}],{7:'owned-profile'},9000)
+        for rows in ([],[{'pid':8,'ip':'127.0.0.1','port':9000}],[{'pid':7,'ip':'0.0.0.0','port':9000}],
+                     [{'pid':7,'ip':'127.0.0.1','port':9000},{'pid':8,'ip':'127.0.0.1','port':9000}]):
+            with self.subTest(rows=rows),self.assertRaises(RuntimeError):qa.validate_listener(rows,{7:'owned-profile'},9000)
+        page={'type':'page','url':'http://tauri.localhost/index.html'}
+        self.assertEqual(qa.unique_tauri_page([page]),page)
+        for pages in ([],[page,page],[{'type':'page','url':'http://tauri.localhost.evil/'}],[{'type':'page','url':'http://127.0.0.1:1420/'}]):
+            with self.subTest(pages=pages),self.assertRaises(RuntimeError):qa.unique_tauri_page(pages)
+
+    def test_default_desktop_still_uses_the_unchanged_explicit_marker_policy(self):
+        spec=importlib.util.spec_from_file_location('existing_launch_policy',ROOT/'scripts/qa-launch-policy.py')
+        policy=importlib.util.module_from_spec(spec);spec.loader.exec_module(policy)
+        with tempfile.TemporaryDirectory() as temp:
+            data=Path(temp)
+            with self.assertRaises(ValueError):policy.launch_args('hanni-mvp.exe',data,'foreground')
+            (data/'cicada-isolated-test.json').write_text(json.dumps(policy.MARKER))
+            self.assertIn('--isolated-test-root',policy.launch_args('hanni-mvp.exe',data,'foreground'))
+            (data/'cicada-isolated-test.json').write_text('{}')
+            with self.assertRaises(ValueError):policy.launch_args('hanni-mvp.exe',data,'foreground')
+
     def test_runtime_output_requires_actual_result_not_code_or_partial_progress(self):
         passing={'d4aeOutcome':'passed','assertionCount':30,'assertions':['synthetic parser fixture']}
         result=lambda text:{'content':[{'type':'text','text':text}]}
@@ -106,7 +144,10 @@ class QaGuards(unittest.TestCase):
         self.assertNotIn('secrets.',workflow)
         source=(ROOT/'scripts/d4ae-installed-qa.py').read_text()
         self.assertIn("'--release-isolation'",source)
-        self.assertIn('scripts/task-workflow-native-qa.py',source)
+        self.assertIn('scripts/task-workflow-native-qa.py',source)  # Remains in the exact-byte diff guard.
+        self.assertIn("'--check-default-desktop'",source)
+        self.assertNotIn('CreateDesktop(',source)
+        self.assertNotIn('SwitchDesktop(',source)
         self.assertIn("policy.verify_binary(exe.read_bytes(), exe_hash, True)",source)
         self.assertIn('verifyTauriSignature',qa.SIGNATURE_CHECK)
 
