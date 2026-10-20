@@ -9,7 +9,7 @@ globalThis.FormData = dom.window.FormData;
 if (!globalThis.crypto) Object.defineProperty(globalThis, 'crypto', { value:{ randomUUID: () => 'test-id' } });
 globalThis.marked = { Marked: class { use() {} parse(value) { return value; } } };
 const { DEVELOPMENT_STATE_KEY, normalizeDevelopmentState, validateDevelopmentImport, attachDevelopmentTask, mountGoalDevelopment, mountGoalGlance } = await import('../src/hanni/js/calendar-development.js');
-const { goalGlance, goalNumericProgress } = await import('../src/hanni/js/calendar-development-state.js');
+const { goalGlance, goalNumericProgress, goalActionProgress } = await import('../src/hanni/js/calendar-development-state.js');
 
 async function settle() { for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve)); }
 function dialogPolyfill() { const p = dom.window.HTMLDialogElement.prototype; p.showModal = function () { this.open = true; }; p.close = function () { this.open = false; this.dispatchEvent(new dom.window.Event('close')); }; }
@@ -268,4 +268,47 @@ test('mount persists only after acknowledgement and summary refreshes from event
   assert.deepEqual(JSON.parse(stored).goals.g.stages[0].skillIds, []);
   assert.equal(JSON.parse(stored).goals.g.stages[0].focusId, null);
   dev2.dispose(); sum2.dispose(); t.after(() => { root.remove(); summary.remove(); });
+});
+
+
+test('persisted action projection survives reload, scopes the current stage and never confirms skills', () => {
+  const raw = { version:1, goals:{ g:{ skills:[
+    {id:'a',title:'A',topic:'T',taskIds:['one','one','two']},
+    {id:'b',title:'B',topic:'T',taskIds:['one','other'],evidence:'Accepted evidence'}
+  ],stages:[{id:'stage',title:'Stage',skillIds:['a']}],activeStageId:'stage'} } };
+  const state = normalizeDevelopmentState(JSON.stringify(raw));
+  const goal = {id:'g',goal_kind:'goal',numeric_progress:true,current_value:2,target_value:10};
+  const tasks = [
+    {source_type:'note',source_id:'one',completed:true,status_extra:'done'},
+    {source_type:'note',source_id:'two',completed:false,status_extra:'task'},
+    {source_type:'note',source_id:'other',completed:true,status_extra:'done'},
+    {source_type:'event',source_id:'two',completed:true,status_extra:'done'}
+  ];
+  const before = JSON.stringify(state);
+  const glance = goalGlance(state,goal,tasks);
+  assert.deepEqual(glance.actions,{done:1,total:2,unknown:0,percent:50,scope:'stage',label:'Действия этапа: выполнено 1 из 2'});
+  assert.equal(glance.progress.scope,'numeric'); assert.equal(glance.progress.percent,20);
+  assert.equal(goalGlance(state,{...goal,numeric_progress:false},tasks).progress.done,0,'action completion is not skill evidence');
+  assert.equal(JSON.stringify(state),before,'projection never writes stage/goal/skill decisions');
+  const reopened = normalizeDevelopmentState(JSON.stringify(state));
+  assert.deepEqual(goalActionProgress(reopened,goal,tasks),glance.actions);
+  tasks[1] = {...tasks[1],completed:true,status_extra:'done'};
+  assert.equal(goalActionProgress(reopened,goal,tasks).percent,100);
+  tasks[0] = {...tasks[0],completed:false,status_extra:'task'};
+  assert.equal(goalActionProgress(reopened,goal,tasks).percent,50,'reopened saved action reduces completion');
+  reopened.goals.g.activeStageId = null;
+  assert.equal(goalActionProgress(reopened,goal,tasks).total,3,'whole goal deduplicates shared action IDs');
+});
+
+test('missing, unreadable, ambiguous and unsupported action records remain unknown', () => {
+  const state = normalizeDevelopmentState({version:1,goals:{g:{skills:[{id:'a',title:'A',topic:'T',taskIds:['one','missing']}],stages:[]}}});
+  const goal = {id:'g',goal_kind:'goal'};
+  const row = {source_type:'note',source_id:'one',completed:true,status_extra:'done'};
+  for (const tasks of [null,[],[row],[row,row],[{...row,completed:'true'}],[{...row,status_extra:'running'}],[{...row,archived:true}],[{...row,source_type:'schedule'}]]) {
+    const result = goalActionProgress(state,goal,tasks);
+    assert.equal(result.total,2); assert.ok(result.unknown > 0); assert.equal(result.percent,null);
+    assert.match(result.label,/Статус неизвестен/);
+  }
+  const empty = goalActionProgress(normalizeDevelopmentState(null),goal,[]);
+  assert.equal(empty.total,0); assert.equal(empty.percent,null); assert.equal(empty.label,'Связанных действий пока нет');
 });

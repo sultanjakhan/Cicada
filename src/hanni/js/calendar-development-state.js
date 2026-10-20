@@ -77,11 +77,36 @@ export function goalNumericProgress(goal) {
 }
 
 /**
+ * Linked actions are a separate measure, never evidence that a skill or goal is
+ * achieved. Scope is the saved current stage's skills, otherwise all goal skills.
+ * Only native note identities and persisted task/done completion are used. Every
+ * distinct saved link stays in the denominator; missing/ambiguous/unreadable
+ * records keep the percentage unknown (including archived tasks absent in lists).
+ */
+export function goalActionProgress(state, goal, tasks = null) {
+  const ext = developmentOf(state, goal?.id), stage = activeStageOf(state, goal?.id);
+  const skills = stage ? ext.skills.filter(skill => stage.skillIds.includes(skill.id)) : ext.skills;
+  const ids = [...new Set(skills.flatMap(skill => skill.taskIds || []).map(text).filter(Boolean))];
+  const scope = stage ? 'stage' : 'goal';
+  let done = 0, unknown = 0;
+  for (const id of ids) {
+    const rows = Array.isArray(tasks) ? tasks.filter(task => task?.source_type === 'note' && String(task.source_id) === id) : [];
+    const row = rows.length === 1 ? rows[0] : null;
+    if (!row || row.archived || typeof row.completed !== 'boolean' || !['task', 'done'].includes(row.status_extra)) unknown++;
+    else if (row.completed || row.status_extra === 'done') done++;
+  }
+  const total = ids.length;
+  const label = !total ? 'Связанных действий пока нет' :
+    `Действия ${stage ? 'этапа' : 'цели'}: выполнено ${done} из ${total}${unknown ? ` · Статус неизвестен: ${unknown}` : ''}`;
+  return { done, total, unknown, percent: total && !unknown ? percentOf(done, total) : null, scope, label };
+}
+
+/**
  * A measurable result comes first. Otherwise show explicitly labelled skill
  * confirmations of the current stage or the whole goal, never task completion.
  * No data means no progress (never an invented 0%).
  */
-export function goalGlance(state, goal) {
+export function goalGlance(state, goal, tasks = null) {
   const ext = developmentOf(state, goal?.id);
   const stage = activeStageOf(state, goal?.id);
   let progress = goalNumericProgress(goal);
@@ -93,5 +118,5 @@ export function goalGlance(state, goal) {
     const done = ext.skills.filter(skillConfirmed).length;
     progress = { done, total: ext.skills.length, percent: percentOf(done, ext.skills.length), scope: 'goal', label: `${done} из ${ext.skills.length} навыков цели подтверждено` };
   }
-  return { stage, hasStages: ext.stages.length > 0, progress, skills: ext.skills.length };
+  return { stage, hasStages: ext.stages.length > 0, progress, skills: ext.skills.length, actions: goalActionProgress(state, goal, tasks) };
 }
