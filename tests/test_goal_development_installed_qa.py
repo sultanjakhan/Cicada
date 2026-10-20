@@ -37,6 +37,7 @@ class GoalInstalledPreparation(unittest.TestCase):
 
     def test_default_cli_fails_closed_before_route_or_process(self):
         with mock.patch.object(sys, 'argv', ['qa', '--owned-app-policy', '--mcp-cli', 'unused']), \
+             mock.patch.object(qa, 'ADMITTED', None), \
              mock.patch.object(qa, 'configure_utf8'), mock.patch.object(qa, 'load_route') as route:
             with self.assertRaisesRegex(RuntimeError, 'preparation only'):
                 qa.main()
@@ -181,7 +182,8 @@ print(json.dumps(value,ensure_ascii=False));print(child,end='')
                      'OwnedWebviewPolicy', 'WindowsPolicyStore', 'cleanup_owned_policy', 'static_runtime_call',
                      'preflight_mcp_tools', 'seed_protected_fixture', 'RUNTIME_CODE'):
             self.assertFalse(hasattr(route, name), name)
-        self.assertIsNone(qa.ADMITTED)
+        self.assertNotIn('INSTALLED_EXE_SHA', qa.PACKAGE_PINS)
+        qa.validate_admission(qa.ADMITTED)
         with self.assertRaises(RuntimeError):
             qa.validate_admission(qa.PACKAGE_PINS)
         for change in ({'INSTALLED_EXE_SHA': '0' * 64}, {'SOURCE': 'b' * 40}):
@@ -243,17 +245,16 @@ print(json.dumps(value,ensure_ascii=False));print(child,end='')
             self.assertNotIn('inspect-package-install', calls)
             self.assertEqual(json.loads((route.EVIDENCE / 'operation.json').read_text())['state'], 'failed')
 
-    def test_exact_nsis_no_autolaunch_source_and_metadata_only_workflow(self):
+    def test_exact_nsis_no_autolaunch_source_and_reviewed_full_qa_workflow(self):
         proof = qa.installer_source_proof()
         self.assertIn('/R required', proof['restart_flag'])
         with tempfile.TemporaryDirectory() as temp, mock.patch.object(qa, 'ROOT', Path(temp)), \
              self.assertRaises((FileNotFoundError, RuntimeError)):
             qa.installer_source_proof()
-        workflow = (ROOT / '.github/workflows/goal-development-installed-qa.yml').read_text()
-        self.assertIn('--package-inspection-only', workflow)
-        self.assertIn('--package-inspection-audit', workflow)
-        for forbidden in ('--owned-app-policy', '--mcp-cli', '@playwright/mcp', '--cleanup-owned-policy'):
-            self.assertNotIn(forbidden, workflow)
+        path = '.github/workflows/goal-development-installed-qa.yml'
+        workflow = (ROOT / path).read_bytes()
+        self.assertEqual(hashlib.sha256(workflow).hexdigest(),
+                         '2b616d1474980ade91f90ca875415a581523a4feaad3af01e768b77240b285d0')
 
 
 if __name__ == '__main__':

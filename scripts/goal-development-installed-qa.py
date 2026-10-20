@@ -19,7 +19,6 @@ ROUTE_SHA256 = '0e3a1a38161ec3f1d845f646a7d1b35fe4e7915c6d6bbcb74c6521a79250a032
 CORE_VERSION = '1.63.0-alpha-2026-08-31'
 # Bind only after canonical signed21 artifacts exist and independent review admits
 # their exact identities. No CLI/environment inputs can supply provenance or code.
-ADMITTED = None
 PACKAGE_OPERATION = 'd432-goal-package-inspection-20261020-v1'
 PACKAGE_PINS = {
     'SOURCE': '1bbc37aa8d278df21ff2b4aaeb725d36f50470dd',
@@ -32,6 +31,10 @@ PACKAGE_PINS = {
     'DESCRIPTOR_SHA': '096bb98ae3d6d4f700e363597a23a42f297dab34ee5f0c6be625d1a57e51bdb3',
     'PREPARED_ID': '16588cfce68c61ed9cb039cc95e2c69f3aa7a6ebb27d86f7e02be012119c9182',
 }
+# Observed by metadata run39379206552, artifact12245150091, ZIP SHA256
+# 8ab02b17b98b736a14d8524d7d85fac796302627e9217b8e61db81712c346b86.
+ADMITTED = {**PACKAGE_PINS,
+            'INSTALLED_EXE_SHA': '01d3ccb73018ffd20cd6b8ec600653ae35e3557f9ceb9d514c0d823556742a7e'}
 PIN_FIELDS = {'SOURCE', 'TREE', 'INSTALLED_EXE_SHA', 'SIGNING_RUN', 'CI_RUN',
               'ARTIFACT_ID', 'ARCHIVE_SIZE', 'ARCHIVE_SHA', 'INSTALLER_SIZE',
               'INSTALLER_SHA', 'DESCRIPTOR_SHA', 'PREPARED_ID'}

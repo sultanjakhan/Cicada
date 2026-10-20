@@ -1,4 +1,4 @@
-name: Goal signed21 package metadata inspection only
+name: Goal development signed21 installed QA
 on:
   push:
     branches: [work/goal-development-installed-qa-v1]
@@ -6,7 +6,7 @@ permissions:
   contents: read
   actions: read
 jobs:
-  package-metadata-only:
+  goal-only-installed:
     runs-on: windows-latest
     timeout-minutes: 15
     env:
@@ -30,25 +30,29 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Prepare only Windows data inspection dependencies
+      - name: Prepare exact existing MCP route without browser downloads
         shell: pwsh
         run: |
-          python -X utf8 -m pip install pywin32==311 psutil==7.1.3
+          python -X utf8 -m pip install pywin32==311 psutil==7.1.3 mcp==1.26.0
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Inspect exact signed package without launching Cicada
+          npm.cmd install --prefix .local/d4ae-tools --ignore-scripts --no-audit --no-fund --save-exact @playwright/mcp@0.0.80 playwright@1.63.0-alpha-2026-08-31 playwright-core@1.63.0-alpha-2026-08-31
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Exercise only the exact admitted signed21 goal scenario
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python -X utf8 -B scripts/goal-development-installed-qa.py --package-inspection-only
-      - name: Audit no matching app or fixture and no policy entry
+        run: python -X utf8 -B scripts/goal-development-installed-qa.py --owned-app-policy --mcp-cli .local/d4ae-tools/node_modules/@playwright/mcp/cli.js
+      - name: Compare and remove only this operation's exact owned policy
         if: always()
-        run: python -X utf8 -B scripts/goal-development-installed-qa.py --package-inspection-audit
-      - name: Preserve package metadata and cleanup proof including failure
+        run: python -X utf8 -B scripts/goal-development-installed-qa.py --cleanup-owned-policy --mcp-cli .local/d4ae-tools/node_modules/@playwright/mcp/cli.js
+      - name: Preserve actual goal scenario evidence including failure
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: goal-package-inspection-${{ github.run_id }}-${{ github.sha }}
+          name: goal-development-installed-qa-${{ github.run_id }}-${{ github.sha }}
           path: |
-            .local/goal-package-inspection/evidence/**
+            .local/goal-development-installed-qa/evidence/**
+            .local/background-qa/d432-goal-installed-qa-20261020-v1/runtime.json
+            .local/background-qa/d432-goal-installed-qa-20261020-v1/runtime-calls-*.json
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
