@@ -255,8 +255,9 @@ export function openCalendarRoutineEditor({ document, store, plan = null, kind =
       const field = body.querySelector('[data-step-dependency]:checked') || body.querySelector('[data-step-dependency]');
       showFieldError('Проверь зависимости: шаги не должны образовывать цикл.', field); return;
     }
-    const savedMode = currentKind === 'rule' ? 'check' : layout === 'single' ? singleMode === 'check' ? 'count' : singleMode : mode;
-    if (savedMode === 'count' && (!Number.isSafeInteger(dailyTarget) || dailyTarget < 1 || dailyTarget > 1000)) { showFieldError('Дневная цель: целое число от 1 до 1000.', body.querySelector('[data-routine-target]')); return; }
+    const checkOnly = currentKind === 'action' && layout === 'single' && singleMode === 'check';
+    if (checkOnly && (!Number.isSafeInteger(dailyTarget) || dailyTarget < 1 || dailyTarget > 1000)) { showFieldError('Дневная цель: целое число от 1 до 1000.', body.querySelector('[data-routine-target]')); return; }
+    const savedMode = currentKind === 'rule' ? 'check' : layout === 'single' ? checkOnly && (plan?.mode === 'count' || dailyTarget > 1) ? 'count' : singleMode : mode;
     const graphSteps = steps.map(step => ({ title: step.title.trim(), dependsOn: [...step.dependsOn].map(id => steps.findIndex(candidate => candidate.id === id)).filter(index => index >= 0).sort((a, b) => a - b), trackingMode: step.trackingMode, optional: step.optional }));
     const fields = { kind: currentKind, title: title.trim(), weekdays, startsOn, endsOn, time, active, required, mode: savedMode, steps: layout === 'multi' ? (savedMode === 'chain' ? steps.map(step => ({ title: step.title.trim() })) : graphSteps) : [] };
     if (savedMode === 'count') fields.dailyTarget = dailyTarget;
