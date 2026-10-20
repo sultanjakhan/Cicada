@@ -662,13 +662,21 @@ pub fn update_event(
         Ok(())
     }
 }
-#[tauri::command]
-pub fn delete_event(id: String, state: State<'_, AppState>) -> Result<(), String> {
+#[tauri::command(rename_all = "camelCase")]
+pub fn delete_event(id: String, expected_version: i64, state: State<'_, AppState>) -> Result<(), String> {
     crate::health_sleep::editable(&id)?;
     let mut conn = lock(&state)?;
     let transaction = conn
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|e| fail(e.to_string()))?;
+    // Read and compare under the same write transaction as link cleanup/deletion.
+    // A missing or changed event must leave every link untouched.
+    let version: Option<i64> = transaction.query_row(
+        "SELECT version FROM items WHERE id=?1 AND kind='event'", [&id], |r| r.get(0),
+    ).optional().map_err(|e| fail(e.to_string()))?;
+    if version != Some(expected_version) {
+        return Err(fail("event changed elsewhere or was deleted"));
+    }
     let active: bool = transaction
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM timeline_blocks WHERE source_type='event' AND source_id=?1 AND is_active=1)",
@@ -686,7 +694,7 @@ pub fn delete_event(id: String, state: State<'_, AppState>) -> Result<(), String
         )
         .map_err(|e| fail(e.to_string()))?;
     let affected = transaction
-        .execute("DELETE FROM items WHERE id=?1 AND kind='event'", [&id])
+        .execute("DELETE FROM items WHERE id=?1 AND kind='event' AND version=?2", params![id, expected_version])
         .map_err(|e| fail(e.to_string()))?;
     if affected != 1 {
         return Err(fail("event not found"));
@@ -2226,10 +2234,10 @@ mod tests {
         assert_eq!(load(&conn,"hc-sleep:fixture").unwrap()["source"],"health_connect");
         let app = tauri::test::mock_builder().manage(AppState(std::sync::Mutex::new(conn)))
             .build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap();
-        assert_eq!(delete_event("hc-sleep:fixture".into(),app.state()).unwrap_err(),"health_sleep_readonly");
+        assert_eq!(delete_event("hc-sleep:fixture".into(),1,app.state()).unwrap_err(),"health_sleep_readonly");
         assert_eq!(start_task_block("event".into(),"hc-sleep:fixture".into(),None,None,app.state()).unwrap_err(),"health_sleep_readonly");
         assert_eq!(set_calendar_task_goal("event".into(),"hc-sleep:fixture".into(),None,app.state()).unwrap_err(),"health_sleep_readonly");
-        assert_eq!(delete_event("hc-steps:all:2026-01-01".into(),app.state()).unwrap_err(),"health_activity_readonly");
+        assert_eq!(delete_event("hc-steps:all:2026-01-01".into(),1,app.state()).unwrap_err(),"health_activity_readonly");
         assert_eq!(start_task_block("event".into(),"hc-steps:all:2026-01-01".into(),None,None,app.state()).unwrap_err(),"health_activity_readonly");
         assert_eq!(set_calendar_task_goal("event".into(),"hc-steps:all:2026-01-01".into(),None,app.state()).unwrap_err(),"health_activity_readonly");
     }

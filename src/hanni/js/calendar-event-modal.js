@@ -149,7 +149,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
   let importantChanged = false;
   let eventAttempt = null, attemptReadError = null, restoredEventDraft = false, restoreEventDraft = () => {};
   let acknowledgedEventPayload = null;
-  let knownEventOutcome = null, reconcileButton = null, reconciliationDialog = null;
+  let knownEventOutcome = null, reconcileButton = null, reconciliationDialog = null, deletionReviewDialog = null;
   if (!isEdit) {
     try { eventAttempt = readEventCreateAttempt(window.localStorage); }
     catch (error) { attemptReadError = error; }
@@ -275,7 +275,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
     window.dispatchEvent(new CustomEvent('task-state-changed'));
   };
   const close = () => { if (!pending) { if (!rememberEventDraft()) return; overlay.remove(); if (changed) notifyChange(); } };
-  const isTopModal = () => [...document.querySelectorAll('.modal-overlay')].at(-1) === overlay;
+  const isTopModal = () => !deletionReviewDialog?.modal.open && [...document.querySelectorAll('.modal-overlay')].at(-1) === overlay;
   overlay.addEventListener('mousedown', e => { if (e.target === overlay && isTopModal()) close(); });
   overlay.querySelector('#evm-cancel').addEventListener('click', close);
   overlay.querySelector('#evm-close').addEventListener('click', close);
@@ -304,6 +304,7 @@ export async function showEventModal(eventId = null, initialDate = null, options
   new MutationObserver((_, obs) => {
     if (!document.body.contains(overlay)) {
       reconciliationDialog?.dispose();
+      deletionReviewDialog?.dispose();
       keyCtl.abort(); obs.disconnect();
       if (document.activeElement === document.body) {
         if (options.returnFocus) options.returnFocus();
@@ -760,19 +761,76 @@ export async function showEventModal(eventId = null, initialDate = null, options
     }
   });
 
-  // Delete (edit-mode only)
+  // Keep the editor's snapshot/draft intact. Reviewing a newer deletion target
+  // happens separately and never silently advances the editor's savedVersion.
+  const deleteReview = document.createElement('button');
+  deleteReview.type = 'button'; deleteReview.id = 'evm-delete-review'; deleteReview.hidden = true;
+  deleteReview.textContent = 'Проверить актуальное событие перед удалением';
+  overlay.querySelector('#evm-error').after(deleteReview);
+  const deleteFailure = err => {
+    const message = typeof err === 'string' ? err : err?.message;
+    deleteReview.hidden = false;
+    showError(message === 'event has an active timer'
+      ? 'Сначала поставь событие на паузу, затем проверь его перед удалением. Черновик остался в форме.'
+      : 'Удаление не подтверждено. Событие могло измениться или исчезнуть. Черновик остался в форме; проверь актуальное событие перед новой попыткой. ' + (message || err));
+  };
+  const deleteReviewed = async version => {
+    if (!Number.isSafeInteger(version) || version < 1) throw Error('Неизвестна версия события. Повтори проверку.');
+    await invoke('delete_event', { id: String(eventId), expectedVersion: version });
+  };
+  const deleted = () => {
+    overlay.remove();
+    window.dispatchEvent(new CustomEvent('hanni:calendar-refresh'));
+  };
   overlay.querySelector('#evm-del')?.addEventListener('click', async () => {
-    if (kind !== 'event' || pending || !confirm('Удалить событие безвозвратно?')) return;
+    if (kind !== 'event' || pending || !deleteReview.hidden || !confirm('Удалить показанную версию события безвозвратно?')) return;
     showError(''); setPending(true);
+    try { await deleteReviewed(savedVersion); deleted(); }
+    catch (err) { setPending(false); deleteFailure(err); }
+  });
+  deleteReview.addEventListener('click', async () => {
+    if (pending || !overlay.isConnected) return;
+    setPending(true);
+    let review = null;
     try {
-      await invoke('delete_event', { id: String(eventId) });
-      overlay.remove();
-      window.dispatchEvent(new CustomEvent('hanni:calendar-refresh'));
-    } catch (err) {
-      setPending(false);
-      const message = typeof err === 'string' ? err : err?.message;
-      showError(message === 'event has an active timer' ? 'Сначала поставь событие на паузу, затем удали его.' : 'Не удалось удалить событие: ' + err);
-    }
+      const events = await invoke('get_all_events');
+      const latest = events.find(item => String(item.id) === String(eventId));
+      if (!latest) throw Error('Событие больше не существует. Удалять нечего; черновик сохранён в форме.');
+      if (latest.readonly) throw Error('Это событие изменяется только в приложении-источнике.');
+      const links = await invoke('get_calendar_task_goals');
+      const goals = await invoke('get_goals', { tabName: null });
+      if (!overlay.isConnected) return;
+      const link = links.find(item => item.source_type === 'event' && String(item.source_id) === String(eventId));
+      const goal = goals.find(item => String(item.id) === String(link?.goal_id));
+      review = createCalendarDialog({ document, title: 'Проверить удаляемое событие',
+        hint: 'Ниже актуальная сохранённая версия. Черновик в редакторе не меняется. Если событие снова изменится, удаление будет отклонено.',
+        submitLabel: 'Удалить эту версию', onClose: () => { deletionReviewDialog = null; setPending(false); } });
+      deletionReviewDialog = review;
+      const details = document.createElement('dl');
+      for (const [label, value] of [ ['Версия', latest.version], ['Название', latest.title],
+        ['Описание', latest.description], ['Дата', latest.date], ['Время', latest.time || 'Без времени'],
+        ['Длительность, мин', latest.duration_minutes], ['Категория', latest.category],
+        ['Важность', latest.priority], ['Цель', link ? (goal?.title || link.goal_id) : 'Без цели'] ]) {
+        const term = document.createElement('dt'), definition = document.createElement('dd');
+        term.textContent = label; definition.textContent = value == null ? '' : String(value);
+        details.append(term, definition);
+      }
+      review.body.append(details);
+      let reviewValid = true;
+      review.form.addEventListener('submit', async e => {
+        e.preventDefault(); if (review.pending || !reviewValid) return;
+        review.setPending(true);
+        try { await deleteReviewed(latest.version); review.setPending(false); review.close(); deleted(); }
+        catch (err) {
+          reviewValid = false;
+          review.setPending(false); review.submit.disabled = true;
+          review.showError('Удаление не подтверждено. Закрой проверку и загрузи актуальное событие ещё раз. ' + (err?.message || err));
+          deleteFailure(err);
+        }
+      });
+      review.open();
+    } catch (err) { setPending(false); deleteFailure(err); }
+    finally { if (!review) setPending(false); }
   });
 
   const submitOther = async () => {

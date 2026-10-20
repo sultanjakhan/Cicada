@@ -1692,7 +1692,7 @@ fn original_goal_task_and_event_forms_round_trip_over_ipc() {
     assert_eq!(events[0]["id"], event);
     assert_eq!(events[0]["description"], "Context");
     assert_eq!(events[0]["time"], "10:30");
-    call(&view, "delete_event", json!({"id":event})).unwrap();
+    call(&view, "delete_event", json!({"id":event,"expectedVersion":1})).unwrap();
     assert_eq!(call(&view, "get_all_events", json!({})).unwrap(), json!([]));
 }
 
@@ -1754,6 +1754,42 @@ fn unified_create_payloads_for_task_goal_and_note_cross_the_real_ipc() {
 }
 
 #[test]
+fn event_delete_requires_reviewed_revision_and_preserves_newer_links() {
+    let (app, view) = fixture();
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        mutation_fixture_sql(&conn);
+        conn.execute_batch("INSERT INTO calendar_task_goals(source_type,source_id,goal_id,created_at) VALUES('event','event-a','goal-a','fixture');
+            UPDATE items SET title='Newer event',version=2 WHERE id='event-a';
+            UPDATE calendar_task_goals SET goal_id='goal-b' WHERE source_type='event' AND source_id='event-a';").unwrap();
+    }
+    let before = mutation_snapshot(&app.state::<AppState>().0.lock().unwrap());
+    assert!(call(&view, "delete_event", json!({"id":"event-a"})).is_err(), "revision is mandatory");
+    let error = call(&view, "delete_event", json!({"id":"event-a","expectedVersion":1})).unwrap_err();
+    assert!(error.as_str().unwrap().contains("event changed elsewhere or was deleted"));
+    assert_eq!(mutation_snapshot(&app.state::<AppState>().0.lock().unwrap()), before);
+    call(&view, "delete_event", json!({"id":"event-a","expectedVersion":2})).unwrap();
+    let after = mutation_snapshot(&app.state::<AppState>().0.lock().unwrap());
+    assert!(call(&view, "delete_event", json!({"id":"event-a","expectedVersion":2})).is_err());
+    assert_eq!(mutation_snapshot(&app.state::<AppState>().0.lock().unwrap()), after);
+}
+
+#[test]
+fn event_delete_missing_revision_target_preserves_orphan_links() {
+    let (app, view) = fixture();
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        mutation_fixture_sql(&conn);
+        conn.execute_batch("INSERT INTO calendar_task_goals(source_type,source_id,goal_id,created_at) VALUES('event','missing-event','goal-a','fixture')").unwrap();
+    }
+    let before = mutation_snapshot(&app.state::<AppState>().0.lock().unwrap());
+    assert!(call(&view, "delete_event", json!({"id":"missing-event","expectedVersion":1})).is_err());
+    assert_eq!(mutation_snapshot(&app.state::<AppState>().0.lock().unwrap()), before);
+}
+
+#[test]
 fn event_delete_removes_only_its_link_and_preserves_closed_history() {
     let (app, view) = fixture();
     {
@@ -1769,7 +1805,7 @@ fn event_delete_removes_only_its_link_and_preserves_closed_history() {
         )
         .unwrap();
     }
-    call(&view, "delete_event", json!({"id":"event-a"})).unwrap();
+    call(&view, "delete_event", json!({"id":"event-a","expectedVersion":1})).unwrap();
     let state = app.state::<AppState>();
     let conn = state.0.lock().unwrap();
     for sql in [
@@ -1811,7 +1847,7 @@ fn event_delete_rolls_back_links_when_missing_or_source_delete_fails() {
         conn.execute_batch("INSERT INTO calendar_task_goals(source_type,source_id,goal_id,created_at) VALUES('event','event-a','goal-a','fixture')").unwrap();
         mutation_snapshot(&conn)
     };
-    assert!(call(&view, "delete_event", json!({"id":"missing-event"})).is_err());
+    assert!(call(&view, "delete_event", json!({"id":"missing-event","expectedVersion":1})).is_err());
     assert_eq!(
         mutation_snapshot(&app.state::<AppState>().0.lock().unwrap()),
         before
@@ -1821,7 +1857,7 @@ fn event_delete_rolls_back_links_when_missing_or_source_delete_fails() {
         let conn = state.0.lock().unwrap();
         conn.execute_batch("CREATE TRIGGER reject_event_delete BEFORE DELETE ON items WHEN OLD.id='event-a' BEGIN SELECT RAISE(ABORT,'injected event delete failure'); END;").unwrap();
     }
-    let error = call(&view, "delete_event", json!({"id":"event-a"})).unwrap_err();
+    let error = call(&view, "delete_event", json!({"id":"event-a","expectedVersion":1})).unwrap_err();
     assert!(error
         .as_str()
         .unwrap()
@@ -1849,14 +1885,14 @@ fn active_event_delete_rejects_then_paused_event_deletes_with_history() {
     )
     .unwrap();
     let before_rejection = mutation_snapshot(&app.state::<AppState>().0.lock().unwrap());
-    let error = call(&view, "delete_event", json!({"id":"event-a"})).unwrap_err();
+    let error = call(&view, "delete_event", json!({"id":"event-a","expectedVersion":1})).unwrap_err();
     assert!(error.as_str().unwrap().contains("active timer"));
     assert_eq!(
         mutation_snapshot(&app.state::<AppState>().0.lock().unwrap()),
         before_rejection
     );
     call(&view, "pause_task_block", json!({"blockId":block})).unwrap();
-    call(&view, "delete_event", json!({"id":"event-a"})).unwrap();
+    call(&view, "delete_event", json!({"id":"event-a","expectedVersion":1})).unwrap();
     let state = app.state::<AppState>();
     let conn = state.0.lock().unwrap();
     assert_eq!(
