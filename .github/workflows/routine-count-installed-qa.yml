@@ -10,7 +10,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 15
     env:
-      QA_PHASE: package-metadata
+      QA_PHASE: runtime
       HANNI_SESSION_ID: a085-routine-qa-6ad6d6f5-claim1153
       PYTHONUTF8: '1'
       PYTHONIOENCODING: utf-8

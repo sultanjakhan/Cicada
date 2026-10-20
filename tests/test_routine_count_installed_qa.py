@@ -317,7 +317,9 @@ print(json.dumps(value,ensure_ascii=False));print(child,end='')
         self.assertEqual(workflow.count('if: always()'), 3)
         for forbidden in ('workflow_dispatch', 'secrets.', 'contents: write', 'actions: write', 'signing', 'push: [main]'):
             self.assertNotIn(forbidden, workflow)
-        self.assertIsNone(qa.ADMITTED)
+        qa.validate_admission(qa.ADMITTED)
+        self.assertEqual(qa.ADMITTED['INSTALLED_EXE_SHA'],
+                         '0835a7d05d58a4ccbdc9aa560382940ecded689607f59346261c7b786001d09a')
 
     def package_pins(self):
         return {key: value for key, value in self.pins().items() if key != 'INSTALLED_EXE_SHA'}
@@ -341,7 +343,7 @@ print(json.dumps(value,ensure_ascii=False));print(child,end='')
                     qa.validate_package_pins(value)
             with self.assertRaises(RuntimeError):
                 qa.validate_admission(self.package_pins())
-        self.assertIsNone(qa.ADMITTED)
+        qa.validate_admission(qa.ADMITTED)
 
     def test_metadata_adapter_has_no_inherited_binary_or_launch_policy_browser_entries(self):
         route = self.package_route()
@@ -434,7 +436,7 @@ print(json.dumps(value,ensure_ascii=False));print(child,end='')
         self.assertEqual(hashlib.sha256(qa.RUNTIME_CODE.encode()).hexdigest(),
                          '00013aafc74767564fa7bfdb40fa24f16ab2fdfe1c9873d84abb1901aa8f012c')
         workflow = (ROOT / '.github/workflows/routine-count-installed-qa.yml').read_text()
-        self.assertIn('QA_PHASE: package-metadata', workflow)
+        self.assertIn('QA_PHASE: runtime', workflow)
         self.assertIn("if: env.QA_PHASE == 'runtime'", workflow)
         self.assertIn('--package-inspection-only', workflow)
         self.assertIn('--package-inspection-audit', workflow)
