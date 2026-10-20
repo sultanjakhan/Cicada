@@ -46,6 +46,8 @@ jobs:
             .local/d4ae-installed-qa/evidence/**
             .local/background-qa/d4ae-installed-qa-20261020-v1/runtime.json
             .local/background-qa/d4ae-installed-qa-20261020-v1/*calls*.json
+            .local/background-qa/d4ae-installed-qa-20261020-v1/dialog-*.json
+            .local/background-qa/d4ae-installed-qa-20261020-v1/runtime-result.json
             .local/background-qa/d4ae-installed-qa-20261020-v1/*calls*.png
           include-hidden-files: true
           if-no-files-found: error

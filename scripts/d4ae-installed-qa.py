@@ -537,7 +537,7 @@ console.log('Both signatures verified with the existing pinned production public
 """
 
 # Executed by the official MCP server in the real installed app's WebView.
-RUNTIME_CODE = r"""async (page) => {
+RUNTIME_CODE = r"""async function* (page) {
   const assertions=[], receipts=[], menuTrace=[];
   try {
   const check=(ok,label)=>{if(!ok)throw Error(label);assertions.push(label);};
@@ -645,7 +645,8 @@ RUNTIME_CODE = r"""async (page) => {
       menuTrace.push(...trace);if(menuTrace.length>160)menuTrace.splice(0,menuTrace.length-160);
     }
   };
-  const confirmDelete=async()=>{page.once('dialog',d=>d.accept());await page.locator('#evm-del').click();};
+  const confirmDelete=phase=>Object.freeze({operation:'d4ae-installed-qa-20261020-v1',phase,type:'confirm',message:'Удалить показанную версию события безвозвратно?',accept:true,
+    assertions:Object.freeze(assertions.slice()),receipts:Object.freeze(receipts.slice()),menuTrace:Object.freeze(menuTrace.slice())});
   const review=async()=>{await page.locator('#evm-delete-review').click();await page.locator('dialog[open] [type="submit"]').waitFor();};
   const closeReview=()=>page.locator('dialog[open] [data-dialog-close]').first().click();
   const commitReview=()=>page.locator('dialog[open] [type="submit"]').click();
@@ -655,7 +656,7 @@ RUNTIME_CODE = r"""async (page) => {
   const block=await rpc('start_task_block',{sourceType:'event',sourceId:id});await rpc('pause_task_block',{blockId:block});
   await open(id);await page.locator('#evm-title').fill('D4AE unsaved draft');await page.locator('#evm-desc').fill('Retain this description');
   await update(id,1,'D4AE revision N2');await link(id,g2);
-  await confirmDelete();await page.locator('#evm-delete-review').waitFor({state:'visible'});
+  yield confirmDelete(1);await page.locator('#evm-delete-review').waitFor({state:'visible'});
   check((await get(id)).version===2,'stale delete preserves revision N2');
   check((await links()).some(l=>l.source_id===id&&l.goal_id===g2),'stale delete preserves newer goal link');
   check(await page.locator('#evm-title').inputValue()==='D4AE unsaved draft','stale delete retains title draft');
@@ -676,14 +677,14 @@ RUNTIME_CODE = r"""async (page) => {
   check((await rpc('get_timeline_blocks',{date:today})).some(b=>b.id===block&&!b.is_active),'closed timer history preserved');
   await reject('delete_event',{id,expectedVersion:3},'event changed elsewhere or was deleted');
   const missing=await event('D4AE disappearance');await open(missing);await page.locator('#evm-title').fill('D4AE missing draft');
-  await rpc('delete_event',{id:missing,expectedVersion:1});await confirmDelete();await page.locator('#evm-delete-review').waitFor({state:'visible'});
+  await rpc('delete_event',{id:missing,expectedVersion:1});yield confirmDelete(2);await page.locator('#evm-delete-review').waitFor({state:'visible'});
   await page.locator('#evm-delete-review').click();await page.waitForFunction(()=>document.querySelector('#evm-error')?.textContent.includes('больше не существует'));
   check(await page.locator('#evm-title').inputValue()==='D4AE missing draft','disappearance keeps draft');check(!(await get(missing)),'review never recreates missing event');
   await snap('04-missing-draft');await page.locator('#evm-close').click();
-  const ordinary=await event('D4AE ordinary current');await link(ordinary,g1);await open(ordinary);await confirmDelete();await page.locator('#evm-title').waitFor({state:'detached'});
+  const ordinary=await event('D4AE ordinary current');await link(ordinary,g1);await open(ordinary);yield confirmDelete(3);await page.locator('#evm-title').waitFor({state:'detached'});
   check(!(await get(ordinary))&&!(await links()).some(l=>l.source_id===ordinary),'ordinary current delete and link cleanup');
   const active=await event('D4AE active timer');await link(active,g1);const activeBlock=await rpc('start_task_block',{sourceType:'event',sourceId:active});await open(active);
-  await confirmDelete();await page.locator('#evm-delete-review').waitFor({state:'visible'});
+  yield confirmDelete(4);await page.locator('#evm-delete-review').waitFor({state:'visible'});
   check((await get(active)).version===1,'active timer prevents event deletion');check((await links()).some(l=>l.source_id===active),'active timer refusal preserves link');
   check((await page.locator('#evm-error').innerText()).includes('паузу'),'active timer error explains pause');await snap('05-active-refusal');
   await rpc('pause_task_block',{blockId:activeBlock});await review();await commitReview();await page.locator('#evm-title').waitFor({state:'detached'});
@@ -705,11 +706,16 @@ RUNTIME_CODE = r"""async (page) => {
 }"""
 
 
-def parse_runtime_result(stored):
+def tool_result(stored):
+    require(not stored.get('isError'), 'MCP tool returned an error')
+    values=[]
     for part in stored.get('content', []):
         if part.get('type') != 'text':
             continue
         text = part.get('text', '')
+        require('### Modal state' not in text and '### Error' not in text,'Unexpected modal/error at checkpoint')
+        headings=[line for line in text.splitlines() if line in ('### Result','# Result')]
+        require(len(headings)<=1,'Duplicated runtime result')
         for heading in ('### Result\n', '# Result\n'):
             if heading in text:
                 raw = text.split(heading, 1)[1].lstrip()
@@ -717,11 +723,20 @@ def parse_runtime_result(stored):
                     value, _ = json.JSONDecoder().raw_decode(raw)
                     if isinstance(value, str):
                         value = json.loads(value)
-                    if isinstance(value, dict) and value.get('d4aeOutcome') == 'passed' and value.get('assertionCount', 0) >= 25:
-                        return value
+                    if isinstance(value, dict):
+                        values.append(value)
                 except (ValueError, TypeError):
                     pass
-    raise RuntimeError('No unambiguous successful runtime assertion result')
+                break
+    require(len(values)==1,'No unambiguous runtime result')
+    return values[0]
+
+
+def parse_runtime_result(stored):
+    value=tool_result(stored)
+    require(value.get('d4aeOutcome')=='passed' and value.get('assertionCount')==31
+            and len(value.get('assertions',[]))==31, 'All 31 original runtime checks must pass')
+    return value
 
 
 def preflight():
@@ -988,6 +1003,16 @@ def validate_mcp_tools(tools):
     for field in ('code','filename'):
         value=schema['properties'][field]
         require(value.get('type')=='string' and set(value)<={'type','description'},'Pinned MCP string field differs')
+    dialogs=[tool for tool in tools if tool.get('name')=='browser_handle_dialog']
+    require(len(dialogs)==1,'Pinned dialog tool missing or duplicated')
+    dialog=dialogs[0].get('inputSchema',{})
+    require(set(dialog)=={'$schema','type','properties','required','additionalProperties'}
+            and dialog['$schema']==schema['$schema'] and dialog['type']=='object'
+            and dialog['additionalProperties'] is False and dialog['required']==['accept']
+            and set(dialog['properties'])=={'accept','promptText'},'Pinned dialog schema differs')
+    for field,kind in (('accept','boolean'),('promptText','string')):
+        require(dialog['properties'][field].get('type')==kind
+                and set(dialog['properties'][field])<={'type','description'},'Pinned dialog field differs')
 
 
 async def check_mcp_tools(client,receipt):
@@ -1022,10 +1047,94 @@ async def preflight_mcp_tools(cli):
     return 0
 
 
-def static_runtime_call(data):
+STAGE_HEADER = r"""const s=page.__d4aeDialogStages;
+  if(!s||s.operation!=='d4ae-installed-qa-20261020-v1')throw Error('Lost/foreign stage state');
+"""
+STAGE_ADVANCE = r"""const step=await s.iterator.next();
+  if(step.done){
+    s.state='complete';s.result=step.value;
+    if(s.phase!==4||step.value?.d4aeOutcome!=='passed')throw Error('Incomplete original scenario: '+JSON.stringify(step.value));
+    return step.value;
+  }
+  const c=step.value;
+  if(c.operation!==s.operation||c.phase!==s.phase+1||c.type!=='confirm'||c.message!=='Удалить показанную версию события безвозвратно?'||c.accept!==true)
+    throw Error('Unexpected scenario checkpoint');
+  s.phase=c.phase;s.checkpoint=c;s.state='prepared';s.pending=null;
+  return c;
+"""
+
+
+def static_runtime_call(data, stage='start'):
+    """Finite code allowlist; stage names are internal constants, never client-supplied inputs."""
     require(data.resolve()==(ROOT/'.local/background-qa'/OPERATION/'data').resolve(),'Unexpected static scenario root')
-    code=RUNTIME_CODE.replace('SHOTS',json.dumps(str((EVIDENCE/'official-mcp').resolve()))).replace('DATA',json.dumps(str(data.resolve())))
+    scenario=RUNTIME_CODE.replace('SHOTS',json.dumps(str((EVIDENCE/'official-mcp').resolve()))).replace('DATA',json.dumps(str(data.resolve())))
+    codes={'start':"async(page)=>{if(page.__d4aeDialogStages)throw Error('Duplicate scenario start');"
+           "const s={operation:'"+OPERATION+"',phase:0,state:'starting',pending:null};page.__d4aeDialogStages=s;"
+           "s.iterator=("+scenario+")(page);"+STAGE_ADVANCE+"}"}
+    for phase in range(1,5):
+        guard=STAGE_HEADER+f"if(s.phase!=={phase}||s.state!=='prepared'||s.pending)throw Error('Duplicate/wrong trigger');"
+        codes[f'trigger-{phase}']='async(page)=>{'+guard+"s.state='clicked';s.pending=page.locator('#evm-del').click().then(()=>({ok:true}),e=>({ok:false,error:String(e)}));return await s.pending;}"
+        guard=STAGE_HEADER+f"if(s.phase!=={phase}||s.state!=='clicked'||!s.pending)throw Error('Duplicate/wrong continuation');"
+        codes[f'continue-{phase}']='async(page)=>{'+guard+"s.state='continuing';const click=await s.pending;if(!click.ok)throw Error(click.error);"+STAGE_ADVANCE+'}'
+    require(stage in codes,'External/unknown scenario stage refused')
+    code=codes[stage]
     return {'name':MCP_RUN_TOOL,'arguments':{'code':code}}  # Never pass filename or externally supplied JavaScript.
+
+
+def expected_dialog(phase):
+    require(type(phase) is int and 1<=phase<=4,'Wrong dialog phase')
+    return {'operation':OPERATION,'phase':phase,'type':'confirm',
+            'message':'Удалить показанную версию события безвозвратно?','accept':True}
+
+
+def validate_checkpoint(stored,phase):
+    checkpoint=tool_result(stored)
+    expected=expected_dialog(phase)
+    require(set(checkpoint)==set(expected)|{'assertions','receipts','menuTrace'}
+            and all(type(checkpoint[k]) is type(v) and checkpoint[k]==v for k,v in expected.items()),
+            'Wrong checkpoint/operation/phase/decision')
+    require(all(isinstance(checkpoint[k],list) for k in ('assertions','receipts','menuTrace'))
+            and len(checkpoint['assertions'])<=31 and len(checkpoint['menuTrace'])<=160,'Unbounded checkpoint')
+    return checkpoint
+
+
+def validate_modal(stored,phase):
+    expected=expected_dialog(phase)
+    require(not stored.get('isError'),'Dialog trigger failed')
+    parts=[p.get('text','') for p in stored.get('content',[]) if p.get('type')=='text']
+    require(len(parts)==1 and '### Result\n' not in parts[0] and '### Error' not in parts[0]
+            and parts[0].count('### Modal state\n')==1,'Missing/extra dialog result')
+    modal=parts[0].split('### Modal state\n',1)[1].strip()
+    require(modal==f'- ["{expected["type"]}" dialog with message "{expected["message"]}"]: can be handled by browser_handle_dialog',
+            'Wrong/unexpected dialog; refusing to handle it')
+
+
+async def run_static_stages(client,data,run):
+    index=0
+    require(not (run/'dialog-call-0.json').exists(),'Duplicate staged operation refused')
+    async def invoke(call):
+        nonlocal index
+        intent=run/f'dialog-call-{index}.json'
+        write_json(intent,{'operation':OPERATION,'index':index,'tool':call['name'],'state':'pending'})
+        result=await client.call_tool(call['name'],call['arguments'])
+        stored=result.model_dump(mode='json')
+        write_json(run/f'runtime-calls-{index}.json',stored);index+=1
+        write_json(intent,{'operation':OPERATION,'index':index-1,'tool':call['name'],'state':'returned'})
+        require(not stored.get('isError'),'Actual installed MCP stage failed')
+        return stored
+    stored=await invoke(static_runtime_call(data))
+    for phase in range(1,5):
+        checkpoint=validate_checkpoint(stored,phase)
+        write_json(run/f'dialog-checkpoint-{phase}.json',checkpoint)
+        modal=await invoke(static_runtime_call(data,f'trigger-{phase}'))
+        validate_modal(modal,phase)
+        handled=await invoke({'name':'browser_handle_dialog','arguments':{'accept':True}})
+        require(all('### Modal state' not in p.get('text','') and '### Error' not in p.get('text','')
+                    for p in handled.get('content',[])),'Dialog remained or unexpected extra dialog')
+        stored=await invoke(static_runtime_call(data,f'continue-{phase}'))
+    parse_runtime_result(stored)
+    write_json(run/'runtime-result.json',stored)
+    return stored
 
 
 async def check_default_desktop(args):
@@ -1043,12 +1152,8 @@ async def check_default_desktop(args):
         async with ClientSession(read,write,read_timeout_seconds=datetime.timedelta(seconds=60)) as client:
             await client.initialize()
             await check_mcp_tools(client,EVIDENCE/'mcp080-runtime-tools.json')
-            for index,call in enumerate(calls):
-                result=await client.call_tool(call['name'],call.get('arguments',{}))
-                stored=result.model_dump(mode='json')
-                write_json(ROOT / '.local/background-qa' / OPERATION / ('runtime-calls-' + str(index) + '.json'),stored)
-                require(not result.isError,'Actual installed MCP scenario failed')
-                print(json.dumps(stored,ensure_ascii=False),flush=True)
+            stored=await run_static_stages(client,args.data_root,ROOT/'.local/background-qa'/OPERATION)
+            print(json.dumps(stored,ensure_ascii=False),flush=True)
 
 
 def inspect_windows_manifest_and_token(exe):
@@ -1214,7 +1319,7 @@ def main():
                  '--mcp-cli',args.mcp_cli.resolve(),'--calls',calls.resolve(),'--release-isolation','--owned-app-policy'], 'actual-installed-runtime', timeout=180)
         policy_receipt=json.loads((EVIDENCE/POLICY_RECEIPT).read_text(encoding='utf-8'))
         require(policy_receipt.get('state')=='removed' and policy_receipt.get('cleanup_verified') is True,'Policy cleanup unverified; no runtime acceptance')
-        result = parse_runtime_result(json.loads((run / 'runtime-calls-0.json').read_text(encoding='utf-8')))
+        result = parse_runtime_result(json.loads((run / 'runtime-result.json').read_text(encoding='utf-8')))
         write_json(EVIDENCE / 'runtime-assertions.json', result)
         runtime = json.loads((run / 'runtime.json').read_text(encoding='utf-8')); write_json(EVIDENCE / 'launcher-after.json', runtime)
         require(runtime.get('state') == 'stopped' and runtime.get('exe_sha256') == exe_hash, 'Launcher cleanup or binary identity failed')

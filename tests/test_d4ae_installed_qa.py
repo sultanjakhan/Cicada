@@ -9,10 +9,17 @@ import tempfile
 import unittest
 from unittest import mock
 import zipfile
+import ast
+import asyncio
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('d4ae_qa', ROOT / 'scripts/d4ae-installed-qa.py')
 qa = importlib.util.module_from_spec(spec); spec.loader.exec_module(qa)
+
+DIALOG_TOOL={'name':'browser_handle_dialog','inputSchema':{
+    '$schema':'https://json-schema.org/draft/2020-12/schema','type':'object',
+    'properties':{'accept':{'type':'boolean'},'promptText':{'type':'string'}},
+    'required':['accept'],'additionalProperties':False}}
 
 
 class QaGuards(unittest.TestCase):
@@ -20,14 +27,14 @@ class QaGuards(unittest.TestCase):
         schema={'$schema':'https://json-schema.org/draft/2020-12/schema','type':'object',
                 'properties':{'code':{'type':'string'},'filename':{'type':'string'}},'additionalProperties':False}
         tool={'name':'browser_run_code_unsafe','inputSchema':schema}
-        qa.validate_mcp_tools([tool])
+        qa.validate_mcp_tools([tool,DIALOG_TOOL])
         for tools in ([],[{**tool,'name':'browser_run_code'}],[tool,tool],
                       [{**tool,'inputSchema':{**schema,'additionalProperties':True}}],
                       [{**tool,'inputSchema':{**schema,'required':['filename']}}],
                       [{**tool,'inputSchema':{**schema,'properties':{'code':{'type':'number'},'filename':{'type':'string'}}}}],
                       [{**tool,'inputSchema':{**schema,'properties':{**schema['properties'],'external':{'type':'string'}}}}],
                       [{**tool,'inputSchema':{**schema,'anyOf':[{}]}}]):
-            with self.subTest(tools=tools),self.assertRaises(RuntimeError):qa.validate_mcp_tools(tools)
+            with self.subTest(tools=tools),self.assertRaises(RuntimeError):qa.validate_mcp_tools(tools+[DIALOG_TOOL])
         call=qa.static_runtime_call(ROOT/'.local/background-qa'/qa.OPERATION/'data')
         self.assertEqual(call['name'],'browser_run_code_unsafe')
         self.assertEqual(set(call['arguments']),{'code'})
@@ -332,11 +339,12 @@ class QaGuards(unittest.TestCase):
             with self.assertRaises(ValueError):policy.launch_args('hanni-mvp.exe',data,'foreground')
 
     def test_runtime_output_requires_actual_result_not_code_or_partial_progress(self):
-        passing={'d4aeOutcome':'passed','assertionCount':30,'assertions':['synthetic parser fixture']}
+        passing={'d4aeOutcome':'passed','assertionCount':31,'assertions':['synthetic parser fixture']*31}
         result=lambda text:{'content':[{'type':'text','text':text}]}
         self.assertEqual(qa.parse_runtime_result(result('### Result\n'+json.dumps(passing))),passing)
         for text in ('### Ran code\n'+json.dumps(passing),'### Result\n'+json.dumps({**passing,'d4aeOutcome':'failed'}),
-                     '### Result\n'+json.dumps({**passing,'assertionCount':2}), 'pending'):
+                     '### Result\n'+json.dumps({**passing,'assertionCount':30}),
+                     '### Result\n'+json.dumps({**passing,'assertions':[]}), 'pending'):
             with self.subTest(text=text),self.assertRaises(RuntimeError):qa.parse_runtime_result(result(text))
 
     def test_isolation_gate_stays_mandatory_and_product_helpers_are_not_replaced(self):
@@ -353,6 +361,128 @@ class QaGuards(unittest.TestCase):
         self.assertNotIn('SwitchDesktop(',source)
         self.assertIn("policy.verify_binary(exe.read_bytes(), exe_hash, True)",source)
         self.assertIn('verifyTauriSignature',qa.SIGNATURE_CHECK)
+
+
+class StaticDialogStages(unittest.TestCase):
+    @staticmethod
+    def stored(value):return {'content':[{'type':'text','text':'### Result\n'+json.dumps(value)}]}
+
+    def test_business_source_parity_and_static_allowlist(self):
+        baseline=subprocess.check_output(['git','show','b4c2fb384265a9f604e1ff4fb3cd6657e13a0a1b:scripts/d4ae-installed-qa.py'],cwd=ROOT,text=True)
+        old=next(ast.literal_eval(n.value) for n in ast.parse(baseline).body if isinstance(n,ast.Assign)
+                 and any(isinstance(t,ast.Name) and t.id=='RUNTIME_CODE' for t in n.targets))
+        restored=qa.RUNTIME_CODE.replace('async function* (page)','async (page) =>',1)
+        start=restored.index('  const confirmDelete=');end=restored.index('\n',restored.index('menuTrace:Object.freeze',start))
+        old_helper=old.split('  const confirmDelete=',1)[1].split('\n',1)[0]
+        restored=restored[:start]+'  const confirmDelete='+old_helper+restored[end:]
+        for phase in range(1,5):restored=restored.replace(f'yield confirmDelete({phase})','await confirmDelete()',1)
+        self.assertEqual(restored,old)
+        self.assertEqual(qa.RUNTIME_CODE.count('check(')-1+5,31)  # One reject helper; two rejects plus three protected records.
+        data=ROOT/'.local/background-qa'/qa.OPERATION/'data'
+        for stage in ['start']+[f'{action}-{phase}' for phase in range(1,5) for action in ('trigger','continue')]:
+            call=qa.static_runtime_call(data,stage)
+            self.assertEqual(set(call['arguments']),{'code'})
+            subprocess.run(['node','--check'],input='('+call['arguments']['code']+');',text=True,check=True,capture_output=True)
+        for stage in ('continue-0','trigger-5','foreign',None):
+            with self.assertRaises(RuntimeError):qa.static_runtime_call(data,stage)
+
+    def test_checkpoint_dialog_and_final_result_fail_closed(self):
+        checkpoint={**qa.expected_dialog(1),'assertions':[],'receipts':[],'menuTrace':[]}
+        qa.validate_checkpoint(self.stored(checkpoint),1)
+        for change in ({'operation':'foreign'},{'phase':2},{'accept':False},{'phase':True},{'type':'alert'},{'message':'foreign'}):
+            with self.subTest(change=change),self.assertRaises(RuntimeError):qa.validate_checkpoint(self.stored({**checkpoint,**change}),1)
+        modal='### Modal state\n- ["confirm" dialog with message "'+checkpoint['message']+'"]: can be handled by browser_handle_dialog'
+        raw=lambda text:{'content':[{'type':'text','text':text}]}
+        qa.validate_modal(raw(modal),1)
+        for text in ('',modal.replace('confirm','alert'),modal.replace(checkpoint['message'],'foreign'),modal+'\n- extra',modal+'\n'+modal,'### Result\n{}\n'+modal):
+            with self.subTest(text=text),self.assertRaises(RuntimeError):qa.validate_modal(raw(text),1)
+        for text in ('### Result\n{}\n### Result\n{}','### Result\n{}\n'+modal):
+            with self.assertRaises(RuntimeError):qa.tool_result(raw(text))
+        tool={'name':qa.MCP_RUN_TOOL,'inputSchema':{'$schema':'https://json-schema.org/draft/2020-12/schema',
+              'type':'object','properties':{'code':{'type':'string'},'filename':{'type':'string'}},'additionalProperties':False}}
+        for dialog in (None,{**DIALOG_TOOL,'inputSchema':{**DIALOG_TOOL['inputSchema'],'required':[]}}):
+            with self.assertRaises(RuntimeError):qa.validate_mcp_tools([tool]+([dialog] if dialog else []))
+
+    def test_pinned_backend_modal_lifecycle_without_browser(self):
+        bundle=ROOT/'.local/d4ae-tools/node_modules/playwright-core/lib/coreBundle.js'
+        self.assertEqual(hashlib.sha256(bundle.read_bytes()).hexdigest(),'7aa0bf8b6b69d32065912e3d8f7e3c18c62de4d668f770a8e039811d3cf9c6a0')
+        # Only the scenario is inert here; Tab, run-code handler and official dialog handler are real pinned code.
+        synthetic="""async function* (page){for(let phase=1;phase<=4;phase++){
+          yield Object.freeze({operation:'d4ae-installed-qa-20261020-v1',phase,type:'confirm',message:'Удалить показанную версию события безвозвратно?',accept:true,assertions:[],receipts:[],menuTrace:[]});
+          page.completed++;
+        }return {d4aeOutcome:'passed',assertionCount:31,assertions:Array(31).fill('INERT CONTRACT ONLY')};}"""
+        data=ROOT/'.local/background-qa'/qa.OPERATION/'data'
+        with mock.patch.object(qa,'RUNTIME_CODE',synthetic):
+            calls={stage:qa.static_runtime_call(data,stage)['arguments'] for stage in
+                   ['start']+[f'{action}-{phase}' for phase in range(1,5) for action in ('trigger','continue')]}
+        js=r"""const assert=require('node:assert/strict'),{EventEmitter}=require('node:events');
+const {tools}=require(BUNDLE),calls=CALLS;
+const page=new EventEmitter();page.completed=0;page.evaluate=async()=>{};
+const tab=new EventEmitter();Object.setPrototypeOf(tab,tools.Tab.prototype);
+tab.page=page;tab._modalStates=[];tab._initializedPromise=Promise.resolve();
+const context={config:{timeouts:{settle:0}},ensureTab:async()=>tab,onUnhandledRejection:()=>()=>{}};tab.context=context;
+page.on('dialog',d=>tab._dialogShown(d));page.on('dialogclosed',d=>tab._dialogClosed(d));
+let clicks=0,accepts=0;
+page.locator=selector=>{assert.equal(selector,'#evm-del');return {click:()=>new Promise(resolve=>{
+ clicks++;const dialog={type:()=> 'confirm',message:()=> 'Удалить показанную версию события безвозвратно?',
+ accept:async()=>{accepts++;page.emit('dialogclosed',dialog);resolve();},dismiss:async()=>{throw Error('Unexpected cancel')}};
+ page.emit('dialog',dialog);
+})}};
+const run=tools.browserTools.find(t=>t.schema.name==='browser_run_code_unsafe');
+const handle=tools.browserTools.find(t=>t.schema.name==='browser_handle_dialog');
+async function invoke(tool,args){const results=[],errors=[];await tool.handle(context,args,{addCode(){},addTextResult:v=>results.push(JSON.parse(v)),addError:e=>errors.push(e)});return {results,errors};}
+(async()=>{
+ assert.equal((await invoke(run,calls.start)).results[0].phase,1);
+ await assert.rejects(invoke(run,calls.start),/Duplicate scenario/);
+ await assert.rejects(invoke(run,calls['trigger-2']),/wrong trigger/);
+ for(let phase=1;phase<=4;phase++){
+  const triggered=await invoke(run,calls['trigger-'+phase]);assert.equal(triggered.results.length,0);assert.equal(tab.modalStates().length,1);
+  assert.equal(page.completed,phase-1);assert.equal(page.__d4aeDialogStages.state,'clicked');
+  const blocked=await invoke(run,calls['continue-'+phase]);assert.equal(blocked.errors.length,1);
+  await invoke(handle,{accept:true});assert.equal(tab.modalStates().length,0);
+  await assert.rejects(invoke(run,calls['trigger-'+phase]),/Duplicate/);
+  const continued=await invoke(run,calls['continue-'+phase]);assert.equal(page.completed,phase);
+  if(phase<4)assert.equal(continued.results[0].phase,phase+1);else assert.equal(continued.results[0].assertionCount,31);
+  await assert.rejects(invoke(run,calls['continue-'+phase]),/Duplicate/);
+ }
+ assert.equal(clicks,4);assert.equal(accepts,4);assert.equal(page.__d4aeDialogStages.state,'complete');
+ console.log('PASS real pinned Tab/runUnsafe/handleDialog: four modal races, same retained click promises, generator continuation, duplicate refusal; inert plumbing, zero browser/app');
+})().catch(e=>{console.error(e);process.exitCode=1});
+""".replace('BUNDLE',json.dumps(str(bundle))).replace('CALLS',json.dumps(calls))
+        result=subprocess.run(['node'],input=js,text=True,capture_output=True,timeout=20)
+        self.assertEqual(result.returncode,0,result.stderr);self.assertIn('PASS real pinned',result.stdout)
+        print(result.stdout.strip())
+
+    def test_client_order_durable_intent_duplicate_and_unfinished_refusal(self):
+        import types
+        def response(value):return types.SimpleNamespace(model_dump=lambda **kwargs:value)
+        modal='### Modal state\n- ["confirm" dialog with message "'+qa.expected_dialog(1)['message']+'"]: can be handled by browser_handle_dialog'
+        checkpoint=lambda phase:self.stored({**qa.expected_dialog(phase),'assertions':[],'receipts':[],'menuTrace':[]})
+        final=self.stored({'d4aeOutcome':'passed','assertionCount':31,'assertions':['INERT']*31})
+        good=[checkpoint(1)]
+        for phase in range(1,5):good.extend([{'content':[{'type':'text','text':modal}]},{'content':[]},checkpoint(phase+1) if phase<4 else final])
+        class Client:
+            def __init__(self,rows,fail_at=None):self.rows=rows;self.calls=[];self.fail_at=fail_at
+            async def call_tool(self,name,args):
+                index=len(self.calls);self.calls.append((name,args))
+                if index==self.fail_at:raise TimeoutError('inert unfinished continuation')
+                return response(self.rows[index])
+        data=ROOT/'.local/background-qa'/qa.OPERATION/'data'
+        with tempfile.TemporaryDirectory() as temp:
+            run=Path(temp);client=Client(good);stored=asyncio.run(qa.run_static_stages(client,data,run))
+            self.assertEqual(stored,final);self.assertEqual(len(client.calls),13)
+            self.assertEqual([name for name,args in client.calls].count('browser_handle_dialog'),4)
+            self.assertTrue(all(args=={'accept':True} for name,args in client.calls if name=='browser_handle_dialog'))
+            self.assertEqual(len(list(run.glob('dialog-checkpoint-*.json'))),4)
+            with self.assertRaisesRegex(RuntimeError,'Duplicate'):asyncio.run(qa.run_static_stages(client,data,run))
+            self.assertEqual(len(client.calls),13)
+        for fail_at,rows,error in ((3,good,TimeoutError),(None,[good[0],{'content':[{'type':'text','text':modal.replace('confirm','alert')}]}],RuntimeError)):
+            with tempfile.TemporaryDirectory() as temp:
+                client=Client(rows,fail_at);run=Path(temp)
+                with self.assertRaises(error):asyncio.run(qa.run_static_stages(client,data,run))
+                self.assertFalse((run/'runtime-result.json').exists())
+                if fail_at==3:self.assertEqual(json.loads((run/'dialog-call-3.json').read_text())['state'],'pending')
+                else:self.assertFalse(any(name=='browser_handle_dialog' for name,args in client.calls))
 
 
 if __name__=='__main__':unittest.main()
