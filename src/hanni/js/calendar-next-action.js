@@ -110,9 +110,9 @@ export function rankNextAction({ now = new Date(), tasks = [], routines = [], ac
     const date = item.runDate || today;
     if (active) { activeRoutines.push({ key: keyOfRoutine(item.id, date), type: 'routine', title: safeText(item.title) || uiCopy("Повторяющееся дело"), reason: uiCopy("Выполнение уже запущено."), action: 'open', routine: item, date, run }); continue; }
     // Only actual routine activities can be launched; a check-only action is explicitly marked done.
-    if (!['check', 'activity', 'chain', 'graph'].includes(item.mode)) continue;
+    if (!['check', 'count', 'activity', 'chain', 'graph'].includes(item.mode)) continue;
     const urgency = explainRoutine(item, instant, today, uiCopy);
-    candidates.push({ key: keyOfRoutine(item.id, date), type: 'routine', title: safeText(item.title) || uiCopy("Повторяющееся дело"), reason: run ? uiCopy.format("На паузе. {0}", urgency.reason) : urgency.reason, action: item.mode === 'check' ? 'done' : 'start', routine: item, date, run, score: urgency.score + (run ? 90 : 0) });
+    candidates.push({ key: keyOfRoutine(item.id, date), type: 'routine', title: safeText(item.title) || uiCopy("Повторяющееся дело"), reason: run ? uiCopy.format("На паузе. {0}", urgency.reason) : urgency.reason, action: ['check','count'].includes(item.mode) ? 'done' : 'start', routine: item, date, run, score: urgency.score + (run ? 90 : 0) });
   }
   const available = candidates.filter(item => !deferredKeys.has(item.key));
   available.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title, 'ru') || a.key.localeCompare(b.key));
@@ -205,7 +205,7 @@ export function mountCalendarNextAction(element, dependencies) {
       if (!compactRunning && selected.type === 'routine') {
         const context = document.createElement('p'); context.className = 'calendar-next-action__context';
         const count = selected.routine.steps?.length || 0;
-        context.textContent = selected.routine.mode === 'check' ? uiCopy("Рутина · отметка без таймера") : count > 1 ? uiCopy.format("Рутина · шагов: {0}", count) : uiCopy("Рутина · с учётом времени");
+        context.textContent = selected.routine.mode === 'count' ? uiCopy.format('Выполнено {0} из {1} · осталось {2}',selected.routine.completedCount,selected.routine.dailyTarget,selected.routine.remainingCount) : selected.routine.mode === 'check' ? uiCopy("Рутина · отметка без таймера") : count > 1 ? uiCopy.format("Рутина · шагов: {0}", count) : uiCopy("Рутина · с учётом времени");
         card.append(context);
       }
       if (!compactRunning && selected.type === 'task' && (selected.context?.goal || selected.context?.stage || selected.context?.waiting)) {
@@ -310,10 +310,10 @@ export function mountCalendarNextAction(element, dependencies) {
         if (!openRoutine) throw new Error(uiCopy("Запуск рутины недоступен."));
         if (openRoutine({ id: current.routine.id, date: current.date, start: true }) === false) return;
       } else if (current.type === 'routine' && kind === 'done' && current.action === 'done') {
-        await store.setStatus(current.routine.id, 'done', current.date, { expectedStatus:'pending' });
+        await store.setCount(current.routine.id,(expected.routine.completedCount??0)+1,current.date,{expectedCount:expected.routine.completedCount??0,expectedTarget:expected.routine.dailyTarget??1,expectedStatus:'pending'});
       } else throw new Error(uiCopy("Действие больше недоступно. Обнови список."));
       notifyChange?.();
-      feedback = current.action === 'done' || kind === 'done' ? uiCopy.format("«{0}» — выполнено.", current.title) : '';
+      feedback = current.type==='routine' && current.routine.mode==='count' ? uiCopy('Отметка сохранена.') : current.action === 'done' || kind === 'done' ? uiCopy.format("«{0}» — выполнено.", current.title) : '';
       snapshot = await readSnapshot();
       if (disposed || own !== revision) return;
       recommendation = selection(snapshot);

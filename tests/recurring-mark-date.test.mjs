@@ -62,6 +62,27 @@ async function setup(t, library) {
 
 for (const library of [false, true]) {
   const surface = library ? 'library' : 'daily list';
+  test(`a085 ${surface}: target3 counter/correction and open details retain reviewed day across midnight`,async t=>{
+    const app=await setup(t,library),state=app.read();state.plans[1]={...check,mode:'count',dailyTarget:3};app.fixture.raw=JSON.stringify(state);app.dom.window.dispatchEvent(new app.dom.window.Event('hanni:calendar-refresh'));await settle();
+    const selector=library?`[data-library-mark="${check.id}"][data-library-status="done"]`:`[data-recurring-id="${check.id}"] [data-recurring-status="done"]`;
+    for(let n=1;n<=3;n++){app.host.querySelector(selector).click();await settle();assert.equal(app.read().days[today][check.id].completedCount,n);}
+    assert.match(app.host.textContent,/Выполнено 3 из 3 · осталось 0/);
+    const undo=library?`[data-library-mark="${check.id}"][data-library-status="pending"]`:`[data-recurring-id="${check.id}"] [data-recurring-status="pending"]`;
+    app.host.querySelector(undo).click();await settle();assert.equal(app.read().days[today][check.id].completedCount,2);
+    app.fixture.failWrites=1;app.host.querySelector(selector).click();await settle();assert.equal(app.read().days[today][check.id].completedCount,2,'failed count save cannot add a mark');
+    if(!library){
+      app.host.querySelector(`[data-recurring-id="${check.id}"] [data-recurring-details]`).click();const dialog=app.document.querySelector('dialog[open]');await app.rollover();dialog.querySelector('[data-detail-count="1"]').click();await settle();
+      assert.equal(app.read().days[today][check.id].completedCount,3);assert.equal(app.read().days[tomorrow],undefined);
+    }
+    assert.equal(app.read().plans.length,2);assert.ok(app.fixture.calls.every(command=>['get_ui_state','set_ui_state'].includes(command)));
+  });
+  if(!library)test('a085 edit from a legacy counted day still edits the current definition',async t=>{
+    const app=await setup(t,library);app.markCheck();await settle();
+    app.host.querySelector(`[data-recurring-id="${check.id}"] [data-recurring-details]`).click();app.document.querySelector('dialog[open] [data-detail-edit]').click();
+    const dialog=app.document.querySelector('dialog[open]');dialog.querySelector('[data-routine-target]').value='3';
+    dialog.querySelector('form').dispatchEvent(new app.dom.window.Event('submit',{bubbles:true,cancelable:true}));await settle();
+    assert.equal(app.read().plans.find(p=>p.id===check.id).dailyTarget,3);assert.equal(app.read().days[today][check.id].snapshot.dailyTarget,1);
+  });
 
   test(`${surface}: rule details mark the opening day after date navigation`, async t => {
     const app = await setup(t, library), before = app.read(), dialog = app.openRule();
@@ -180,9 +201,9 @@ for (const library of [false, true]) {
   test(`${surface}: a stale quick undo preserves a newer mark`, async t => {
     const app = await setup(t, library);
     app.markCheck(); await settle();
-    const remote = app.read(); remote.days[today][check.id].status = 'skipped'; app.fixture.raw = JSON.stringify(remote);
+    const remote = app.read(); remote.days[today][check.id].completedCount = 2; app.fixture.raw = JSON.stringify(remote);
     app.markCheck(); await settle();
-    assert.equal(app.read().days[today][check.id].status, 'skipped');
+    assert.equal(app.read().days[today][check.id].completedCount, 2);
     assert.equal(app.fixture.writes, 1, 'only the original explicit completion is written');
     assert.equal(app.fixture.changes, 1);
     assert.match(app.host.querySelector('[data-recurring-error]').textContent, /уже отмечена/);

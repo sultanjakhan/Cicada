@@ -1,5 +1,45 @@
 use super::*;
 
+fn a085_count_state() -> Value {
+    let plan=json!({"id":"counted","kind":"action","title":"Synthetic marks","mode":"count","dailyTarget":3,"required":false});
+    json!({"version":1,"plans":[plan.clone()],"days":{"2026-10-20":{"counted":{"snapshot":plan,"completedCount":2,"status":"pending"}}}})
+}
+#[test]
+fn a085_count_records_keep_whole_payload_v2_cas_and_invalid_writes_fail_closed() {
+    let (conn,_)=replica("a085-count");let key="calendar_recurring_v1";let state=a085_count_state();
+    assert!(crate::mvp_sync_db::set_ui(&conn,key,&state.to_string(),None).is_err());
+    crate::mvp_sync_db::set_ui(&conn,key,&state.to_string(),Some("")).unwrap();
+    let before=crate::mvp_sync_db::read_ui(&conn,key).unwrap().unwrap();
+    for group in ["plans","days"] {
+        let id=(if group=="plans" {json!(["ui",[key,group,"counted"]])} else {json!(["ui",[key,group,"2026-10-20","counted"]])}).to_string();
+        let outgoing=row(&conn,&id);let mut wire:Value=serde_json::from_str(outgoing.f["data"].as_str().unwrap()).unwrap();
+        assert_eq!(wire["v"],2);crate::mvp_sync_db::validate_publishable_record(&conn,&outgoing.f).unwrap();
+        wire["v"]=json!(1);let mut legacy=outgoing.clone();legacy.f["data"]=json!(wire.to_string());
+        assert!(crate::mvp_sync_db::validate_publishable_record(&conn,&legacy.f).is_err());
+    }
+    for value in [json!(-1),json!(1.5),json!(1000001)] {
+        let mut invalid=state.clone();invalid["days"]["2026-10-20"]["counted"]["completedCount"]=value;
+        assert!(crate::mvp_sync_db::set_ui(&conn,key,&invalid.to_string(),Some(&before)).is_err());
+        assert_eq!(crate::mvp_sync_db::read_ui(&conn,key).unwrap().unwrap(),before);
+    }
+    let mut next=state.clone();next["days"]["2026-10-20"]["counted"]["completedCount"]=json!(3);next["days"]["2026-10-20"]["counted"]["status"]=json!("done");
+    crate::mvp_sync_db::set_ui(&conn,key,&next.to_string(),Some(&before)).unwrap();
+    assert!(crate::mvp_sync_db::set_ui(&conn,key,&state.to_string(),Some(&before)).is_err());
+    assert_eq!(serde_json::from_str::<Value>(&crate::mvp_sync_db::read_ui(&conn,key).unwrap().unwrap()).unwrap(),next);
+    assert_eq!(conn.query_row("SELECT count(*) FROM items WHERE kind='task'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+}
+#[test]
+fn a085_legacy_count_batch_cannot_upload_or_change_immutable_queue() {
+    let (mut conn,cfg)=replica("a085-legacy-queue");let state=a085_count_state();
+    crate::mvp_sync_db::set_ui(&conn,"calendar_recurring_v1",&state.to_string(),Some("")).unwrap();
+    let id=json!(["ui",["calendar_recurring_v1","days","2026-10-20","counted"]]).to_string();
+    let mut legacy=row(&conn,&id);let mut wire:Value=serde_json::from_str(legacy.f["data"].as_str().unwrap()).unwrap();wire["v"]=json!(1);legacy.f["data"]=json!(wire.to_string());
+    stage_batch(&conn,&cfg,&changes(vec![legacy]));let before=snapshot(&conn);
+    assert!(enqueue(&mut conn,&cfg).is_err());
+    assert!(upload_with(&conn,&cfg,|_|panic!("incompatible count reached transport")).is_err());
+    assert_eq!(snapshot(&conn),before);
+}
+
 fn snapshot(conn: &Connection) -> Value {
     let out: Vec<Value> = conn.prepare("SELECT local_seq,batch_id,body,envelope_hash FROM content_sync_outbox ORDER BY local_seq").unwrap()
         .query_map([], |r| Ok(json!([r.get::<_,i64>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?]))).unwrap().collect::<Result<_,_>>().unwrap();

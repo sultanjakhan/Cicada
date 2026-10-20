@@ -284,12 +284,13 @@ fn goal_metadata_needs_v2(kind: &str, keys: &[Value], value: &Value, prior: Opti
 }
 
 fn graph_payload(keys: &[Value], value: &Value, deleted: bool) -> bool {
+    // Count-backed marks share the existing v2 gate; legacy frontends reject the unknown count mode.
     if deleted {
         return false;
     }
     match keys.get(1).and_then(Value::as_str) {
-        Some("plans") => value["row"]["mode"] == "graph",
-        Some("days") => value["snapshot"]["mode"] == "graph",
+        Some("plans") => matches!(value["row"]["mode"].as_str(), Some("graph" | "count")),
+        Some("days") => matches!(value["snapshot"]["mode"].as_str(), Some("graph" | "count")),
         _ => false,
     }
 }
@@ -470,7 +471,9 @@ pub(crate) fn validate_publishable_record(conn: &Connection, fields: &Map<String
     if record.v == 1 && record.kind == "ui" && recurring_identity(&record.key)
         && graph_payload(&record.key, &record.value, record.deleted)
     {
-        return Err("content_sync_legacy_graph_queue".into());
+        return Err(if record.value["row"]["mode"] == "count" || record.value["snapshot"]["mode"] == "count" {
+            "content_sync_legacy_count_queue"
+        } else { "content_sync_legacy_graph_queue" }.into());
     }
     Ok(())
 }
@@ -886,6 +889,10 @@ pub(crate) fn set_ui_in_transaction(
                 Some(raw) => split_ui(key, &parse(raw)?)?,
                 None => BTreeMap::new(),
             };
+            if expected.is_none() && key == "calendar_recurring_v1" && old.values().chain(next.values()).any(|row|
+                row["row"]["mode"] == "count" || row["snapshot"]["mode"] == "count") {
+                return Err("mvp_sync_expected_ui_state_required".into());
+            }
             for (path, record) in &next {
                 if old.get(path) != Some(record) {
                     record_local(&tx, "ui", parse_keys(path)?, record.clone(), false)?;
@@ -984,6 +991,7 @@ fn split_ui(name: &str, value: &Value) -> Result<BTreeMap<String, Value>, String
         }
     } else if name == "calendar_recurring_v1" {
         for (position, row) in array(&value["plans"])?.iter().enumerate() {
+            if !valid_count_plan(row) { return Err("mvp_sync_invalid_snapshot".into()); }
             let id = row["id"]
                 .as_str()
                 .filter(|s| !s.is_empty())
@@ -1001,6 +1009,7 @@ fn split_ui(name: &str, value: &Value) -> Result<BTreeMap<String, Value>, String
         for (day, rows) in object(&value["days"])? {
             crate::validate_date(day)?;
             for (id, row) in object(rows)? {
+                if !valid_count_day(row) { return Err("mvp_sync_invalid_snapshot".into()); }
                 if row["snapshot"]["id"].as_str() != Some(id) {
                     return Err("mvp_sync_invalid_snapshot".into());
                 }
@@ -1027,6 +1036,17 @@ fn process_row(row: &Value) -> bool {
             stage["id"].as_str().is_some_and(|id| crate::task_attributes::valid_id(id) && seen.insert(id.to_owned()))
                 && text(&stage["title"])
         })
+}
+fn valid_count_plan(plan: &Value) -> bool {
+    if plan["mode"] != "count" { return plan.get("dailyTarget").is_none(); }
+    plan["kind"] == "action" && plan["dailyTarget"].as_u64().is_some_and(|n| (1..=1000).contains(&n))
+}
+fn valid_count_day(day: &Value) -> bool {
+    let plan=&day["snapshot"];
+    valid_count_plan(plan) && if plan["mode"] == "count" {
+        day.get("run").is_none() && day["completedCount"].as_u64().is_some_and(|n| n<=1_000_000
+            && day["status"] == if n>=plan["dailyTarget"].as_u64().unwrap_or(u64::MAX) { "done" } else { "pending" })
+    } else { day.get("completedCount").is_none() }
 }
 fn validate_ui_record(record: &Record) -> Result<(), String> {
     let keys: Vec<_> = record
@@ -1065,12 +1085,14 @@ fn validate_ui_record(record: &Record) -> Result<(), String> {
         ["calendar_recurring_v1", "plans", id] => {
             !id.is_empty()
                 && (record.deleted
-                    || (record.value["row"]["id"] == *id && record.value["position"].is_u64()))
+                    || (record.value["row"]["id"] == *id && record.value["position"].is_u64() && valid_count_plan(&record.value["row"])
+                        && (record.value["row"]["mode"] != "count" || record.v == 2)))
         }
         ["calendar_recurring_v1", "days", day, id] => {
             crate::validate_date(day).is_ok()
                 && !id.is_empty()
-                && (record.deleted || record.value["snapshot"]["id"] == *id)
+                && (record.deleted || (record.value["snapshot"]["id"] == *id && valid_count_day(&record.value)
+                    && (record.value["snapshot"]["mode"] != "count" || record.v == 2)))
         }
         _ => false,
     };

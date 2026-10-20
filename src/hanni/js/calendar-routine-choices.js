@@ -23,7 +23,7 @@ export function mountCalendarRoutineChoices(element, { invoke, openRoutine, open
       const focused = document.activeElement?.dataset?.routineChoice;
       list.replaceChildren(...items.map(item => {
         const row = document.createElement('li'), info = document.createElement('span'), title = document.createElement('span'), kind = document.createElement('small'), button = document.createElement('button');
-        title.textContent = item.title; kind.textContent = item.mode === 'graph' ? `${item.steps?.length || 0} связанных шагов` : item.mode === 'chain' ? `${item.steps?.length || 0} шагов` : item.runnable ? 'С учётом времени' : 'Отметка без таймера';
+        title.textContent = item.title; kind.textContent = item.mode === 'count' ? `Выполнено ${item.completedCount} из ${item.dailyTarget} · осталось ${item.remainingCount}` : item.mode === 'graph' ? `${item.steps?.length || 0} связанных шагов` : item.mode === 'chain' ? `${item.steps?.length || 0} шагов` : item.runnable ? 'С учётом времени' : 'Отметка без таймера';
         info.append(title, kind); button.type = 'button'; button.dataset.routineChoice = item.id;
         button.textContent = item.resumable ? 'Продолжить' : item.runnable ? 'Начать' : 'Готово';
         button.setAttribute('aria-label', `${button.textContent}: ${item.title}`); row.append(info, button); return row;
@@ -45,11 +45,13 @@ export function mountCalendarRoutineChoices(element, { invoke, openRoutine, open
     busy = true; ++revision; paint(); error.hidden = retry.hidden = true;
     try {
       // Revalidate at the click, including marks synchronized since the last render.
+      const displayed = items.find(item => item.id === id);
       const fresh = candidates(await store.read()).find(item => item.id === id);
       if (disposed) return;
       if (!fresh) throw Error('Рутина уже отмечена или изменена. Обнови список.');
+      if (fresh.date !== displayed?.date) throw Error('День изменился. Обнови список.');
       if (fresh.runnable) await openRoutine({ id:fresh.id, date:fresh.date, start:true });
-      else { await store.setStatus(fresh.id, 'done', fresh.date, { expectedStatus:'pending' }); notifyChange?.(); }
+      else { await store.setCount(fresh.id, (displayed.completedCount??0)+1, displayed.date, {expectedCount:displayed.completedCount??0,expectedTarget:displayed.dailyTarget??1,expectedStatus:'pending'}); notifyChange?.(); }
     } catch (cause) { if (!disposed) fail(cause); }
     finally {
       busy = false;

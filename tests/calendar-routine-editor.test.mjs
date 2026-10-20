@@ -41,8 +41,14 @@ test('routine editor starts compact and saves a single action without extra step
   body.querySelector('[data-routine-title]').value = 'Ежедневное действие';
   await submit(dialog);
   assert.equal(calls.length, 1);
-  assert.equal(calls[0][0].mode, 'check');
+  assert.equal(calls[0][0].mode, 'count');
+  assert.equal(calls[0][0].dailyTarget, 1);
   assert.deepEqual(calls[0][0].steps, []);
+});
+test('a085 daily target is persisted and invalid draft stays editable',async t=>{
+  const {dialog,calls}=setup(t);dialog.body.querySelector('[data-routine-title]').value='Synthetic target';
+  const field=dialog.body.querySelector('[data-routine-target]');field.value='0';await submit(dialog);assert.equal(calls.length,0);assert.equal(dialog.modal.isConnected,true);
+  field.value='3';await submit(dialog);assert.equal(calls.length,1);assert.equal(calls[0][0].dailyTarget,3);assert.equal(calls[0][0].mode,'count');assert.equal(calls[0][0].required,true);
 });
 
 test('graph editor preserves later dependencies through reorder and converts chain options without losing edges', async t => {

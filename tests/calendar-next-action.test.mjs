@@ -232,6 +232,15 @@ test('a check-only routine can be marked done, but a chain is started explicitly
   assert.match(x.host.textContent, /Подходящей задачи или дела сейчас нет/);
   assert.equal(x.calls.some(call => call.name === 'start_task_block'), false);
 });
+test('a085 count-backed recommendation marks target3 without a timer and refuses stale partial progress',async t=>{
+  const saved=plan('counted',{title:'Поесть',mode:'count',dailyTarget:3,required:false});const x=setup(t,{plans:[saved]});
+  const dispose=mountCalendarNextAction(x.host,{invoke:x.invoke,clock:now,openRoutine:()=>assert.fail('count is not a run')});t.after(dispose);await settle();
+  x.host.querySelector('[data-next-action-action="done"]').click();await settle();assert.equal(JSON.parse(x.currentState).days[today].counted.completedCount,1);assert.match(x.host.textContent,/осталось 2/);
+  x.afterNextRecurringRead(snapshot=>{snapshot.days[today].counted.completedCount=2;});
+  x.host.querySelector('[data-next-action-action="done"]').click();await settle();assert.equal(JSON.parse(x.currentState).days[today].counted.completedCount,2);assert.equal(x.calls.filter(c=>c.name==='set_ui_state').length,1);assert.match(x.host.textContent,/уже отмечена/);
+  x.dom.window.dispatchEvent(new x.dom.window.Event('hanni:recurring-changed'));await settle();x.host.querySelector('[data-next-action-action="done"]').click();await settle();
+  assert.equal(JSON.parse(x.currentState).days[today].counted.completedCount,3);assert.equal(x.calls.some(c=>c.name==='start_task_block'),false);assert.equal(JSON.parse(x.currentState).plans.length,1);assert.equal(JSON.parse(x.currentState).plans[0].required,false);
+});
 
 for (const status of ['done', 'skipped']) test(`recommendation preserves a ${status} mark arriving after click revalidation`, async t => {
   const saved = plan('check', { title: 'Поесть' });
