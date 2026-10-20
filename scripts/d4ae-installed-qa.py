@@ -43,11 +43,196 @@ ASSET = 'Cicada-0.5.20-windows-x86_64.exe'
 ARTIFACT = 'cicada-update-windows-' + SOURCE
 BASE = ROOT / '.local/d4ae-installed-qa'
 EVIDENCE = BASE / 'evidence'
+POLICY_NAME = 'hanni-mvp.exe'
+POLICY_ROOT = r'Software\Policies\Microsoft\Edge\WebView2'
+POLICY_KEY = POLICY_ROOT + r'\AdditionalBrowserArguments'
+POLICY_OPTIONS = ('BrowserExecutableFolder','ChannelSearchKind','ReleaseChannels','AdditionalBrowserArguments','UserDataFolder','ReleaseChannelPreference')
+POLICY_RECEIPT = 'owned-webview-policy.json'
+# Primary basis: WebView2 Globals/CreateCoreWebView2EnvironmentWithOptions (AppId -> exe -> *),
+# concepts/security (elevated hosts honor HKLM), winprog64/shared-registry-keys
+# (SOFTWARE\Policies shared). Audit both logical views; mutate only HKLM/64/exact exe value.
+# https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/webview2-idl
+# https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/security
+# https://learn.microsoft.com/en-us/windows/win32/winprog64/shared-registry-keys
+# Runtime compiled filename is verified before resume and at readiness; no bundle/shortcut AUMID is assumed.
 
 
 def require(condition, reason):
     if not condition:
         raise RuntimeError(reason)
+
+
+def policy_arguments(port):
+    require(type(port) is int and 1024 <= port <= 65535, 'Invalid owned CDP port')
+    return '--remote-debugging-port=' + str(port) + ' --remote-debugging-address=127.0.0.1'
+
+
+def validate_policy_snapshot(rows, owned=None):
+    for row in rows:
+        require(not row['unknown_subkeys'], 'Ambiguous WebView policy subkeys')
+        for name,value,kind in row['values']:
+            allowed = (owned is not None and row['hive']=='HKLM' and row['option']=='AdditionalBrowserArguments'
+                       and name==POLICY_NAME and kind==1 and value==owned)
+            require(allowed, 'Preexisting, foreign or changed WebView policy; refusing mutation/launch')
+
+
+class WindowsPolicyStore:
+    def snapshot(self):
+        import winreg as reg
+        rows=[]
+        for hive_name,hive in (('HKLM',reg.HKEY_LOCAL_MACHINE),('HKCU',reg.HKEY_CURRENT_USER)):
+            for view in (reg.KEY_WOW64_64KEY,reg.KEY_WOW64_32KEY):
+                for option in ('',*POLICY_OPTIONS,'legacy'):
+                    path = (r'Software\Policies\Microsoft\EmbeddedBrowserWebView\LoaderOverride' if option=='legacy'
+                            else POLICY_ROOT + ('\\'+option if option else ''))
+                    try:
+                        with reg.OpenKey(hive,path,0,reg.KEY_READ|view) as key:
+                            subkeys,values,_=reg.QueryInfoKey(key)
+                            children=[reg.EnumKey(key,i) for i in range(subkeys)]
+                            rows.append({'hive':hive_name,'view':view,'option':option,
+                                'values':[reg.EnumValue(key,i) for i in range(values)],
+                                'unknown_subkeys':[name for name in children if option or name not in POLICY_OPTIONS]})
+                    except FileNotFoundError:
+                        pass
+        return rows
+
+    def exchange(self, expected, replacement):
+        """Transacted absence/expected-value compare and single-value change; no overwrite race."""
+        import ctypes
+        from ctypes import wintypes as w
+        ktm=ctypes.WinDLL('KtmW32',use_last_error=True);adv=ctypes.WinDLL('advapi32',use_last_error=True)
+        kernel=ctypes.WinDLL('kernel32',use_last_error=True)
+        def api(dll,name,result,*args):
+            fn=getattr(dll,name);fn.restype=result;fn.argtypes=args;return fn
+        create=api(ktm,'CreateTransaction',w.HANDLE,ctypes.c_void_p,ctypes.c_void_p,w.DWORD,w.DWORD,w.DWORD,w.DWORD,w.LPWSTR)
+        commit=api(ktm,'CommitTransaction',w.BOOL,w.HANDLE)
+        rollback=api(ktm,'RollbackTransaction',w.BOOL,w.HANDLE)
+        close=api(kernel,'CloseHandle',w.BOOL,w.HANDLE)
+        create_key=api(adv,'RegCreateKeyTransactedW',w.LONG,w.HKEY,w.LPCWSTR,w.DWORD,w.LPWSTR,w.DWORD,w.DWORD,
+                       ctypes.c_void_p,ctypes.POINTER(w.HKEY),ctypes.POINTER(w.DWORD),w.HANDLE,ctypes.c_void_p)
+        query=api(adv,'RegQueryValueExW',w.LONG,w.HKEY,w.LPCWSTR,ctypes.c_void_p,ctypes.POINTER(w.DWORD),ctypes.c_void_p,ctypes.POINTER(w.DWORD))
+        set_value=api(adv,'RegSetValueExW',w.LONG,w.HKEY,w.LPCWSTR,w.DWORD,w.DWORD,ctypes.c_void_p,w.DWORD)
+        delete=api(adv,'RegDeleteValueW',w.LONG,w.HKEY,w.LPCWSTR)
+        close_key=api(adv,'RegCloseKey',w.LONG,w.HKEY)
+        def checked(code):
+            if code:raise ctypes.WinError(code)
+        transaction=create(None,None,0,0,0,10000,'D4AE owned WebView single value')
+        require(transaction not in (None,0,ctypes.c_void_p(-1).value),'Registry transactions unavailable; no non-atomic fallback')
+        key=w.HKEY();committed=False
+        try:
+            disposition=w.DWORD()
+            # HKLM predefined handle must be sign-extended on 64-bit Windows.
+            checked(create_key(w.HKEY(-2147483646),POLICY_KEY,0,None,0,0x20019|0x2|0x100,None,
+                               ctypes.byref(key),ctypes.byref(disposition),transaction,None))
+            kind=w.DWORD();size=w.DWORD();code=query(key,POLICY_NAME,None,ctypes.byref(kind),None,ctypes.byref(size))
+            current=None
+            if code!=2:
+                checked(code);require(size.value<=65536,'Oversized policy value')
+                buffer=ctypes.create_string_buffer(size.value)
+                checked(query(key,POLICY_NAME,None,ctypes.byref(kind),buffer,ctypes.byref(size)))
+                current=(kind.value,buffer.raw[:size.value])
+            wanted=None if expected is None else (1,(expected+'\0').encode('utf-16-le'))
+            require(current==wanted,'Policy compare failed; preserving preexisting/foreign change')
+            if replacement is None:
+                checked(delete(key,POLICY_NAME))
+            else:
+                raw=(replacement+'\0').encode('utf-16-le');buffer=ctypes.create_string_buffer(raw)
+                checked(set_value(key,POLICY_NAME,0,1,buffer,len(raw)))
+            checked(close_key(key));key=w.HKEY()
+            if not commit(transaction):raise ctypes.WinError(ctypes.get_last_error())
+            committed=True
+        finally:
+            if key.value:close_key(key)
+            if not committed:rollback(transaction)
+            close(transaction)
+
+
+class OwnedWebviewPolicy:
+    def __init__(self,store,value,receipt):
+        self.store=store;self.value=value;self.receipt=receipt;self.owned=False
+        self.record={'operation':OPERATION,'run':os.environ.get('GITHUB_RUN_ID'),'head':os.environ.get('GITHUB_SHA'),
+                     'source':SOURCE,'exe_sha256':INSTALLED_EXE_SHA,'hive':'HKLM','view':64,'key':POLICY_KEY,
+                     'name':POLICY_NAME,'type':1,'value':value,'state':'prepared','cleanup_verified':False,
+                     'lookup_audit':{'hives':['HKLM','HKCU'],'views':[64,32],'options':list(POLICY_OPTIONS),
+                                     'wildcard_and_all_appids':'must be absent','policies_key_is_shared':True}}
+
+    def check(self):
+        rows=self.store.snapshot();validate_policy_snapshot(rows,self.value)
+        require({row['view'] for row in rows if row['hive']=='HKLM' and row['option']=='AdditionalBrowserArguments'
+                 and (POLICY_NAME,self.value,1) in row['values']}=={0x100,0x200}, 'Owned policy missing or registry views disagree')
+
+    def activate(self):
+        require(not self.receipt.exists(),'Policy receipt already exists; refusing duplicate mutation')
+        rows=self.store.snapshot()
+        # Preserve presence/type/name/hash evidence without publishing unrelated configuration contents.
+        self.record['before']=[{**row,'values':[(n,k,hashlib.sha256(str(v).encode()).hexdigest()) for n,v,k in row['values']]} for row in rows]
+        write_json(self.receipt,self.record)
+        validate_policy_snapshot(rows)
+        self.record['state']='validated_absent';write_json(self.receipt,self.record)
+        self.store.exchange(None,self.value);self.owned=True
+        self.record['state']='owned';write_json(self.receipt,self.record)
+        self.check()
+        self.record['readback_verified']=True;write_json(self.receipt,self.record)
+
+    def cleanup(self):
+        if self.owned:
+            try:
+                self.store.exchange(self.value,None)
+                validate_policy_snapshot(self.store.snapshot())
+                self.record.update(state='removed',cleanup_verified=True)
+                self.owned=False
+            except BaseException as error:
+                self.record.update(state='cleanup_refused_or_failed',error=str(error),cleanup_verified=False)
+                raise
+            finally:
+                write_json(self.receipt,self.record)
+
+
+def owned_process_identity(handle,exe):
+    import ctypes
+    from ctypes import wintypes as w
+    kernel=ctypes.WinDLL('kernel32',use_last_error=True)
+    query=kernel.QueryFullProcessImageNameW;query.argtypes=[w.HANDLE,w.DWORD,w.LPWSTR,ctypes.POINTER(w.DWORD)];query.restype=w.BOOL
+    size=w.DWORD(32768);path=ctypes.create_unicode_buffer(size.value)
+    require(query(int(handle),0,path,ctypes.byref(size)),'Cannot establish owned process executable')
+    require(Path(path.value).resolve()==exe.resolve() and Path(path.value).name==POLICY_NAME,'Compiled process code name differs')
+    return {'image':path.value,'compiled_code_name':POLICY_NAME,'application_user_model_id':'UNKNOWN; not queried or assumed',
+            'policy_value_name':POLICY_NAME,
+            'lookup_basis':'All AppId and wildcard values absent in both hives/views; exact executable fallback only'}
+
+
+def reject_foreign_matching_apps(allowed_pid=None):
+    import psutil
+    for process in psutil.process_iter(['pid','name']):
+        name=process.info['name']
+        require(name is not None,'Cannot inspect process name for policy ownership')
+        if name.casefold() in (POLICY_NAME,'cicada.exe'):
+            require(process.pid==allowed_pid,'Foreign matching app exists; refusing shared executable-name policy')
+        if name.casefold()=='msedgewebview2.exe':
+            arguments=process.cmdline()
+            if any(arg.casefold()=='--webview-exe-name='+POLICY_NAME for arg in arguments):
+                require(allowed_pid is not None and allowed_pid in [parent.pid for parent in process.parents()],
+                        'Foreign matching WebView exists')
+
+
+def cleanup_owned_policy():
+    validate_host_context(sys.platform,os.environ)
+    receipt=EVIDENCE/POLICY_RECEIPT
+    if not receipt.exists():return 0
+    record=json.loads(receipt.read_text(encoding='utf-8'))
+    require((record.get('operation'),record.get('run'),record.get('head'),record.get('source'),record.get('exe_sha256'),record.get('key'),record.get('name'),record.get('hive'),record.get('view'),record.get('type'))==
+            (OPERATION,os.environ.get('GITHUB_RUN_ID'),os.environ.get('GITHUB_SHA'),SOURCE,INSTALLED_EXE_SHA,POLICY_KEY,POLICY_NAME,'HKLM',64,1),'Foreign policy receipt')
+    value=record['value'];prefix='--remote-debugging-port='
+    port=int(value.split(' ',1)[0].removeprefix(prefix));require(value==policy_arguments(port),'Unapproved policy arguments')
+    if record['state']=='removed':
+        validate_policy_snapshot(WindowsPolicyStore().snapshot());return 0
+    policy=OwnedWebviewPolicy(WindowsPolicyStore(),value,receipt);policy.record=record
+    rows=policy.store.snapshot()
+    if not any(name==POLICY_NAME for row in rows for name,_,_ in row['values']):
+        validate_policy_snapshot(rows);record.update(state='removed',cleanup_verified=True);write_json(receipt,record);return 0
+    require(record['state'] in ('owned','cleanup_refused_or_failed'),
+            'Policy ownership not durably confirmed; preserving value and reporting UNKNOWN cleanup')
+    policy.owned=True;policy.cleanup();return 0
 
 
 def digest(path):
@@ -579,7 +764,7 @@ def serve_default_desktop(args):
     policy = importlib.util.module_from_spec(spec); spec.loader.exec_module(policy)
     manifest = {'state':'starting','desktop_mode':'hosted-default','station':station,'thread_desktop':desktop,'input_desktop_before':input_before,
                 'source':SOURCE,'build':BUILD,'exe_sha256':args.expected_sha256,'data':str(data),'profile':str(profile),'cleanup_verified':False}
-    handles = contextlib.ExitStack(); job = process = thread = mcp = None; lock_fd = None
+    handles = contextlib.ExitStack(); job = process = thread = mcp = None; lock_fd = None; policy_owner = None
     try:
         for directory in (ROOT / '.local', BASE, BASE / 'installed', run.parent, run, data):
             handles.enter_context(qa_files.pinned_tree(directory, scan=False))
@@ -602,9 +787,10 @@ def serve_default_desktop(args):
         with socket.socket() as reservation:
             reservation.bind(('127.0.0.1',0)); port = reservation.getsockname()[1]
         endpoint = 'http://127.0.0.1:' + str(port)
+        require(not any(key.upper().startswith(('WEBVIEW2_','COREWEBVIEW2_')) for key in os.environ), 'Preexisting WebView environment overrides')
         env = dict(os.environ); env.pop('HANNI_MVP_DATA_DIR',None)
         env['WEBVIEW2_USER_DATA_FOLDER'] = str(profile.resolve())
-        env['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = '--remote-debugging-port=' + str(port) + ' --remote-debugging-address=127.0.0.1'
+        reject_foreign_matching_apps()
         job = win32job.CreateJobObject(None, 'D4AE-default-' + os.environ['GITHUB_RUN_ID'])
         limits = win32job.QueryInformationJobObject(job, win32job.JobObjectExtendedLimitInformation)
         limits['BasicLimitInformation']['LimitFlags'] |= win32job.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
@@ -618,12 +804,18 @@ def serve_default_desktop(args):
             win32api.TerminateProcess(process,1)
             raise
         manifest.update(pid=pid,thread_id=tid,endpoint=endpoint,argv=policy.launch_args(args.exe.resolve(),data.resolve(),'foreground'))
+        manifest['identity_before_resume']=owned_process_identity(process,args.exe)
+        reject_foreign_matching_apps(pid)
+        policy_owner=OwnedWebviewPolicy(WindowsPolicyStore(),policy_arguments(port),EVIDENCE/POLICY_RECEIPT)
+        handles.callback(policy_owner.cleanup)
+        policy_owner.activate()
         write_json(run / 'runtime.json', manifest)
         win32process.ResumeThread(thread)
         app = psutil.Process(pid)
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         deadline = time.monotonic() + 40; last_error = None
         while time.monotonic() < deadline:
+            policy_owner.check();reject_foreign_matching_apps(pid)
             require(win32process.GetExitCodeProcess(process) == 259, 'Owned app exited before WebView readiness')
             descendants = app.children(recursive=True)
             webviews = {}
@@ -647,6 +839,9 @@ def serve_default_desktop(args):
                     with opener.open(endpoint + '/json/list',timeout=0.5) as response:
                         raw=response.read(32769); require(len(raw)<=32768,'Oversized target response'); targets=json.loads(raw)
                     page = unique_tauri_page(targets)
+                    browser_arguments={row['pid']:psutil.Process(row['pid']).cmdline() for row in listeners}
+                    require(all('--remote-debugging-port='+str(port) in arguments and '--remote-debugging-address=127.0.0.1' in arguments
+                                for arguments in browser_arguments.values()), 'Owned listener process lacks the exact admitted CDP flags')
                     break
                 except (OSError,ValueError,RuntimeError) as error:
                     last_error = str(error)
@@ -660,13 +855,19 @@ def serve_default_desktop(args):
             return True
         win32gui.EnumWindows(owned_window,None)
         require(len(windows)==1 and win32gui.IsWindowVisible(windows[0]), 'No unique visible owned isolated app window')
+        manifest['identity_at_ready']=owned_process_identity(process,args.exe)
+        policy_owner.check();reject_foreign_matching_apps(pid)
         manifest.update(state='ready',url=page['url'],targets=targets,app_windows=windows,owned_webview_profile_paths=sorted(set(webviews.values())),
-                        webview_pids=sorted(webviews),listeners=listeners,mcp_package={'name':package['name'],'version':package['version']})
+                        webview_pids=sorted(webviews),listeners=listeners,browser_cdp_arguments=browser_arguments,mcp_package={'name':package['name'],'version':package['version']})
         write_json(run / 'runtime.json',manifest)
         output = EVIDENCE / 'official-mcp'; output.mkdir(exist_ok=True)
         mcp = subprocess.Popen([node,str(cli),'--cdp-endpoint',endpoint,'--output-dir',str(output),'--console-level','warning'],
             cwd=output,stdin=sys.stdin,stdout=sys.stdout,stderr=sys.stderr,creationflags=subprocess.CREATE_NO_WINDOW)
         win32job.AssignProcessToJobObject(job,int(mcp._handle))
+        while mcp.poll() is None:
+            policy_owner.check();reject_foreign_matching_apps(pid)
+            time.sleep(0.15)
+        policy_owner.check();reject_foreign_matching_apps(pid)
         code=mcp.wait()
         require(code==0,'Official MCP exited with failure')
         return code
@@ -704,7 +905,7 @@ async def check_default_desktop(args):
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
     launcher = [sys.executable,'-B',str(Path(__file__).resolve()),'--serve-default-desktop','--exe',str(args.exe),
-                '--expected-sha256',args.expected_sha256,'--mcp-cli',str(args.mcp_cli),'--data-root',str(args.data_root),'--release-isolation']
+                '--expected-sha256',args.expected_sha256,'--mcp-cli',str(args.mcp_cli),'--data-root',str(args.data_root),'--release-isolation','--owned-app-policy']
     params = StdioServerParameters(command=launcher[0],args=launcher[1:],env={**os.environ,'PYTHONIOENCODING':'utf-8'})
     calls = json.loads(args.calls.read_text(encoding='utf-8'))
     async with stdio_client(params) as (read,write):
@@ -811,14 +1012,21 @@ def main():
     parser.add_argument('--serve-default-desktop',action='store_true')
     parser.add_argument('--check-default-desktop',action='store_true')
     parser.add_argument('--diagnostic-only',action='store_true',help='Inspect installed resources and current token; never launch the app')
+    parser.add_argument('--owned-app-policy',action='store_true',help='Use only owned exact HKLM executable-name CDP policy')
+    parser.add_argument('--cleanup-owned-policy',action='store_true',help='Recover only a durably owned exact policy value; no app launch')
     parser.add_argument('--release-isolation',action='store_true')
     parser.add_argument('--exe',type=Path)
     parser.add_argument('--expected-sha256')
     parser.add_argument('--data-root',type=Path)
     parser.add_argument('--calls',type=Path)
     args = parser.parse_args()
+    require(not (args.diagnostic_only and (args.owned_app_policy or args.cleanup_owned_policy)), 'Diagnostic mode cannot mutate policy')
+    if args.cleanup_owned_policy:
+        require(not (args.owned_app_policy or args.serve_default_desktop or args.check_default_desktop), 'Cleanup cannot launch')
+        return cleanup_owned_policy()
     require(not (args.diagnostic_only and (args.serve_default_desktop or args.check_default_desktop)), 'Diagnostic mode cannot launch an application')
     if args.serve_default_desktop or args.check_default_desktop:
+        require(args.owned_app_policy,'Environment-only launches are not admitted')
         require(not (args.serve_default_desktop and args.check_default_desktop),'Conflicting launcher roles')
         require(args.exe and args.expected_sha256 and args.data_root,'Incomplete explicit launcher identity')
         if args.serve_default_desktop:
@@ -836,6 +1044,7 @@ def main():
         require(sys.platform == 'win32' and os.environ.get('GITHUB_ACTIONS') == 'true' and os.environ.get('RUNNER_ENVIRONMENT') == 'github-hosted', 'Only disposable GitHub-hosted Windows is admitted')
         require(os.environ.get('GITHUB_REPOSITORY') == REPO and os.environ.get('GITHUB_REF') == 'refs/heads/work/d4ae-installed-qa-v1' and os.environ.get('GITHUB_EVENT_NAME') == 'push' and os.environ.get('GITHUB_RUN_ATTEMPT') == '1', 'Wrong operation trigger or duplicate attempt')
         require(args.mcp_cli.is_file(), 'Pinned official MCP CLI unavailable')
+        require(args.diagnostic_only or args.owned_app_policy,'Explicit owned policy route required; no environment-only retry')
         command(['git','diff','--exit-code', SOURCE, '--', 'src', 'src-tauri', 'scripts/qa-launch-policy.py', 'scripts/qa-background.py', 'scripts/qa_files.py', 'scripts/task-workflow-native-qa.py', 'scripts/stage-updates.mjs'], 'unchanged-product-and-helpers')
         if not args.diagnostic_only:
             preflight()
@@ -863,7 +1072,9 @@ def main():
         code = RUNTIME_CODE.replace('SHOTS', json.dumps(str((EVIDENCE / 'official-mcp').resolve()))).replace('DATA', json.dumps(str(data.resolve())))
         calls = EVIDENCE / 'runtime-calls.json'; write_json(calls,[{'name':'browser_run_code','arguments':{'code':code}}])
         command([sys.executable,'-B',Path(__file__).resolve(),'--check-default-desktop','--data-root',data.resolve(),'--exe',exe.resolve(),'--expected-sha256',exe_hash,
-                 '--mcp-cli',args.mcp_cli.resolve(),'--calls',calls.resolve(),'--release-isolation'], 'actual-installed-runtime', timeout=180)
+                 '--mcp-cli',args.mcp_cli.resolve(),'--calls',calls.resolve(),'--release-isolation','--owned-app-policy'], 'actual-installed-runtime', timeout=180)
+        policy_receipt=json.loads((EVIDENCE/POLICY_RECEIPT).read_text(encoding='utf-8'))
+        require(policy_receipt.get('state')=='removed' and policy_receipt.get('cleanup_verified') is True,'Policy cleanup unverified; no runtime acceptance')
         result = parse_runtime_result(json.loads((run / 'runtime-calls-0.json').read_text(encoding='utf-8')))
         write_json(EVIDENCE / 'runtime-assertions.json', result)
         runtime = json.loads((run / 'runtime.json').read_text(encoding='utf-8')); write_json(EVIDENCE / 'launcher-after.json', runtime)

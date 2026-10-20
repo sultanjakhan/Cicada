@@ -16,6 +16,121 @@ qa = importlib.util.module_from_spec(spec); spec.loader.exec_module(qa)
 
 
 class QaGuards(unittest.TestCase):
+    class PolicyStore:
+        def __init__(self):self.value=None;self.rows=[];self.exchanges=[];self.fail_create=False
+        def snapshot(self):
+            return self.rows+[{'hive':'HKLM','view':view,'option':'AdditionalBrowserArguments',
+                'values':[] if self.value is None else [(qa.POLICY_NAME,self.value,1)],'unknown_subkeys':[]} for view in (0x100,0x200)]
+        def exchange(self,expected,replacement):
+            self.exchanges.append((expected,replacement))
+            if self.fail_create and expected is None:raise OSError('synthetic transaction unavailable')
+            if self.value!=expected:raise RuntimeError('Policy compare failed')
+            self.value=replacement
+
+    def test_policy_refuses_any_preexisting_target_wildcard_appid_or_configuration(self):
+        for hive in ('HKLM','HKCU'):
+            for view in (0x100,0x200):
+                for option in qa.POLICY_OPTIONS:
+                    for name in (qa.POLICY_NAME,'*','app.hanni.mvp','foreign.exe'):
+                        rows=[{'hive':hive,'view':view,'option':option,'values':[(name,'foreign',1)],'unknown_subkeys':[]}]
+                        with self.subTest(hive=hive,view=view,option=option,name=name),self.assertRaises(RuntimeError):
+                            qa.validate_policy_snapshot(rows)
+        with self.assertRaises(RuntimeError):qa.validate_policy_snapshot([{'values':[],'unknown_subkeys':['unknown']}])
+
+    def test_policy_success_and_failure_cleanup_only_own_exact_value(self):
+        for fail_body in (None,OSError,KeyboardInterrupt):
+            with self.subTest(failure=fail_body),tempfile.TemporaryDirectory() as temp:
+                store=self.PolicyStore();value=qa.policy_arguments(12345)
+                policy=qa.OwnedWebviewPolicy(store,value,Path(temp)/'receipt.json')
+                try:
+                    policy.activate();policy.check()
+                    self.assertEqual(store.value,value)
+                    if fail_body:raise fail_body('synthetic scenario failure or cancellation')
+                except (OSError,KeyboardInterrupt):pass
+                finally:policy.cleanup()
+                self.assertIsNone(store.value)
+                self.assertEqual(store.exchanges,[(None,value),(value,None)])
+                self.assertTrue(json.loads(policy.receipt.read_text())['cleanup_verified'])
+
+    def test_preexisting_identical_value_is_foreign_and_never_adopted(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store=self.PolicyStore();store.value=qa.policy_arguments(12345)
+            policy=qa.OwnedWebviewPolicy(store,store.value,Path(temp)/'receipt.json')
+            with self.assertRaises(RuntimeError):policy.activate()
+            policy.cleanup()
+            self.assertEqual(store.value,qa.policy_arguments(12345));self.assertEqual(store.exchanges,[])
+
+    def test_policy_cleanup_preserves_foreign_changed_value_and_does_not_retry(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store=self.PolicyStore();policy=qa.OwnedWebviewPolicy(store,qa.policy_arguments(12345),Path(temp)/'receipt.json')
+            policy.activate();store.value='foreign replacement'
+            with self.assertRaises(RuntimeError):policy.cleanup()
+            self.assertEqual(store.value,'foreign replacement')
+            self.assertFalse(json.loads(policy.receipt.read_text())['cleanup_verified'])
+            self.assertEqual(len(store.exchanges),2)
+
+    def test_policy_missing_readback_and_view_disagreement_fail_closed(self):
+        store=self.PolicyStore();value=qa.policy_arguments(12345)
+        policy=qa.OwnedWebviewPolicy(store,value,Path('unused'))
+        with self.assertRaisesRegex(RuntimeError,'missing'):policy.check()
+        store.value=value
+        with mock.patch.object(store,'snapshot',return_value=store.snapshot()[:1]),self.assertRaisesRegex(RuntimeError,'views disagree'):
+            policy.check()
+
+    def test_policy_transaction_failure_leaves_no_owned_mutation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store=self.PolicyStore();store.fail_create=True
+            policy=qa.OwnedWebviewPolicy(store,qa.policy_arguments(12345),Path(temp)/'receipt.json')
+            with self.assertRaises(OSError):policy.activate()
+            policy.cleanup()
+            self.assertIsNone(store.value);self.assertFalse(policy.owned)
+            self.assertEqual(len(store.exchanges),1)
+
+    def test_policy_preexisting_receipt_refuses_mutation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            receipt=Path(temp)/'receipt.json';receipt.write_text('foreign')
+            store=self.PolicyStore();policy=qa.OwnedWebviewPolicy(store,qa.policy_arguments(12345),receipt)
+            with self.assertRaises(RuntimeError):policy.activate()
+            self.assertEqual(receipt.read_text(),'foreign');self.assertEqual(store.exchanges,[])
+
+    def test_policy_invalid_ports_and_environment_only_launch_are_refused(self):
+        for port in (0,80,65536,True,'9222'):
+            with self.subTest(port=port),self.assertRaises(RuntimeError):qa.policy_arguments(port)
+        with mock.patch.object(qa.sys,'argv',['qa','--serve-default-desktop','--mcp-cli','unused']),self.assertRaisesRegex(RuntimeError,'Environment-only'):
+            qa.main()
+
+    def test_foreign_matching_apps_and_webviews_refused(self):
+        import types
+        app=types.SimpleNamespace(pid=7,info={'name':qa.POLICY_NAME})
+        webview=types.SimpleNamespace(pid=8,info={'name':'msedgewebview2.exe'},
+            cmdline=lambda:['--webview-exe-name='+qa.POLICY_NAME],parents=lambda:[])
+        for process in (app,webview):
+            fake=types.SimpleNamespace(process_iter=lambda fields:[process])
+            with mock.patch.dict('sys.modules',{'psutil':fake}),self.assertRaises(RuntimeError):qa.reject_foreign_matching_apps()
+        with mock.patch.dict('sys.modules',{'psutil':types.SimpleNamespace(process_iter=lambda fields:[app])}):
+            qa.reject_foreign_matching_apps(7)
+
+    def test_recovery_refuses_unknown_ownership_even_when_value_matches(self):
+        with tempfile.TemporaryDirectory() as temp,contextlib.ExitStack() as stack:
+            base=Path(temp);store=self.PolicyStore();value=qa.policy_arguments(12345)
+            policy=qa.OwnedWebviewPolicy(store,value,base/qa.POLICY_RECEIPT)
+            policy.record['state']='validated_absent';qa.write_json(policy.receipt,policy.record);store.value=value
+            stack.enter_context(mock.patch.object(qa,'EVIDENCE',base))
+            stack.enter_context(mock.patch.object(qa,'validate_host_context'))
+            stack.enter_context(mock.patch.object(qa,'WindowsPolicyStore',return_value=store))
+            with self.assertRaisesRegex(RuntimeError,'not durably confirmed'):qa.cleanup_owned_policy()
+            self.assertEqual(store.value,value);self.assertEqual(store.exchanges,[])
+
+    def test_recovery_removes_durably_owned_value_after_interrupted_body(self):
+        with tempfile.TemporaryDirectory() as temp,contextlib.ExitStack() as stack:
+            base=Path(temp);store=self.PolicyStore();value=qa.policy_arguments(12345)
+            policy=qa.OwnedWebviewPolicy(store,value,base/qa.POLICY_RECEIPT);policy.activate()
+            stack.enter_context(mock.patch.object(qa,'EVIDENCE',base))
+            stack.enter_context(mock.patch.object(qa,'validate_host_context'))
+            stack.enter_context(mock.patch.object(qa,'WindowsPolicyStore',return_value=store))
+            self.assertEqual(qa.cleanup_owned_policy(),0);self.assertIsNone(store.value)
+            self.assertEqual(qa.cleanup_owned_policy(),0);self.assertEqual(len(store.exchanges),2)
+
     def test_diagnostic_report_has_only_prospective_webview_values_and_no_runtime_acceptance(self):
         raw=b'<assembly xmlns="urn:schemas-microsoft-com:asm.v1"><trustInfo><requestedExecutionLevel level="asInvoker" uiAccess="false"/></trustInfo></assembly>'
         token={'TokenIntegrityLevel':12288,'TokenElevation':1,'TokenElevationType':1}
