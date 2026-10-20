@@ -1,0 +1,54 @@
+name: Goal signed21 package metadata inspection only
+on:
+  push:
+    branches: [work/goal-development-installed-qa-v1]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  package-metadata-only:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      HANNI_SESSION_ID: d432-goal-qa-6ad6f7fc-claim1093
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: d22b18e3fa95cc7bd9dbad2214c5ca381705fd26
+          path: .local/goal-qa-route
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Prepare only Windows data inspection dependencies
+        shell: pwsh
+        run: |
+          python -X utf8 -m pip install pywin32==311 psutil==7.1.3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Inspect exact signed package without launching Cicada
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python -X utf8 -B scripts/goal-development-installed-qa.py --package-inspection-only
+      - name: Audit no matching app or fixture and no policy entry
+        if: always()
+        run: python -X utf8 -B scripts/goal-development-installed-qa.py --package-inspection-audit
+      - name: Preserve package metadata and cleanup proof including failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: goal-package-inspection-${{ github.run_id }}-${{ github.sha }}
+          path: |
+            .local/goal-package-inspection/evidence/**
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
