@@ -536,7 +536,7 @@ console.log('Both signatures verified with the existing pinned production public
 
 # Executed by the official MCP server in the real installed app's WebView.
 RUNTIME_CODE = r"""async (page) => {
-  const assertions=[], receipts=[];
+  const assertions=[], receipts=[], menuTrace=[];
   try {
   const check=(ok,label)=>{if(!ok)throw Error(label);assertions.push(label);};
   const call=async(name,args={})=>{
@@ -560,6 +560,48 @@ RUNTIME_CODE = r"""async (page) => {
   const get=async id=>(await records()).find(e=>e.id===id);
   const links=()=>rpc('get_calendar_task_goals');
   const open=async id=>{
+    await page.evaluate(id=>{
+      const key='__d4aeMenuPassiveTrace';
+      if(window[key])throw Error('passive trace ownership collision');
+      const entries=[], listeners=[], limit=160;
+      let phase='open-start', previousHost, previousRow, previousMenu;
+      const classify=node=>{
+        if(!(node instanceof Element))return {tag:'none',role:'none',kind:'other'};
+        const role=node.getAttribute('role');
+        const kind=[['[data-menu-action="edit"]','edit'],['[data-record-menu]','record-menu'],['button[data-period="day"]','day'],['[data-today]','today'],['.uni-tab[data-pane="table"]','table'],['.calendar-record-menu','menu'],['[data-calendar-records]','records']].find(([selector])=>node.closest(selector));
+        return {tag:['BUTTON','DIV','INPUT','TEXTAREA','BODY','HTML'].includes(node.tagName)?node.tagName:'other',role:['menu','menuitem','button','dialog'].includes(role)?role:'other',kind:kind?kind[1]:'other'};
+      };
+      const sample=(event,target,mutations=[])=>{
+        const host=document.querySelector('#uni-pane-calendar [data-calendar-records]');
+        const row=host&&Array.from(host.querySelectorAll('[data-record-source]')).find(node=>node.getAttribute('data-record-source')==='event:'+id);
+        const menus=document.querySelectorAll('.calendar-record-menu'), menu=menus[0], rect=menu?.getBoundingClientRect();
+        const busy=host?.getAttribute('aria-busy');
+        entries.push({ms:Math.round(performance.now()*10)/10,phase,event,target:classify(target),focus:classify(document.activeElement),
+          host:!!host,busy:busy===null?'absent':busy==='true'?'true':'other',rowConnected:!!row?.isConnected,
+          previousHostDetached:!!previousHost&&!previousHost.isConnected,previousRowDetached:!!previousRow&&!previousRow.isConnected,
+          previousMenuDetached:!!previousMenu&&!previousMenu.isConnected,menuCount:menus.length,
+          menuRect:rect?[rect.x,rect.y,rect.width,rect.height].map(Math.round):null,
+          scroll:target instanceof Element?[Math.round(target.scrollLeft),Math.round(target.scrollTop)]:null,
+          childList:mutations.some(m=>m.type==='childList'),removed:mutations.some(m=>m.removedNodes?.length>0),
+          busyAttribute:mutations.some(m=>m.attributeName==='aria-busy'),expandedAttribute:mutations.some(m=>m.attributeName==='aria-expanded')});
+        if(entries.length>limit)entries.shift();
+        previousHost=host;previousRow=row;previousMenu=menu;
+      };
+      const listen=(target,type)=>{
+        const fn=e=>{const kind=classify(e.target).kind;if(type==='pointerdown'&&kind!=='other')phase=kind;sample(type,e.target);};
+        target.addEventListener(type,fn,{capture:true,passive:true});listeners.push([target,type,fn]);
+      };
+      for(const type of ['pointerdown','focusin','focusout','scroll'])listen(document,type);
+      listen(window,'resize');listen(window,'hanni:calendar-refresh');
+      const observer=new MutationObserver(mutations=>sample('mutation',null,mutations));
+      observer.observe(document.body,{subtree:true,childList:true,attributes:true,attributeFilter:['aria-busy','aria-expanded']});
+      window[key]=()=>{
+        observer.disconnect();for(const [target,type,fn] of listeners)target.removeEventListener(type,fn,true);
+        phase='open-end';sample('cleanup',null);delete window[key];return entries;
+      };
+      sample('start',null);
+    },id);
+    try {
     const host='#uni-pane-calendar [data-calendar-records]';
     const ready=page.locator(host+':not([aria-busy])');
     const dayReady=page.locator(host+'[data-period="day"]:not([aria-busy])');
@@ -575,6 +617,13 @@ RUNTIME_CODE = r"""async (page) => {
     await row.locator('[data-record-menu]').click();
     await page.locator('[data-menu-action="edit"]').click();
     await page.locator('#evm-title').waitFor();
+    } finally {
+      const trace=await page.evaluate(()=>{
+        const stop=window.__d4aeMenuPassiveTrace;
+        return typeof stop==='function'?stop():[{event:'trace-unavailable'}];
+      });
+      menuTrace.push(...trace);if(menuTrace.length>160)menuTrace.splice(0,menuTrace.length-160);
+    }
   };
   const confirmDelete=async()=>{page.once('dialog',d=>d.accept());await page.locator('#evm-del').click();};
   const review=async()=>{await page.locator('#evm-delete-review').click();await page.locator('dialog[open] [type="submit"]').waitFor();};
@@ -628,10 +677,10 @@ RUNTIME_CODE = r"""async (page) => {
   await page.locator('[data-record-source="event:hc-sleep:d4ae-fixture"] .calv-record').first().click();
   await page.locator('dialog[open]').waitFor();check(await page.locator('#evm-del').count()===0,'protected record exposes no delete action');await snap('06-protected-record');
   await page.locator('dialog[open] [data-close]').first().click();await snap('07-runtime-finished');
-  return {d4aeOutcome:'passed',assertionCount:assertions.length,assertions,receipts,status};
+  return {d4aeOutcome:'passed',assertionCount:assertions.length,assertions,receipts,status,menuTrace};
   } catch(error) {
     await page.screenshot({path:SHOTS+'/failure.png'}).catch(()=>{});
-    return {d4aeOutcome:'failed',error:String(error),assertions,receipts};
+    return {d4aeOutcome:'failed',error:String(error),assertions,receipts,menuTrace};
   }
 }"""
 
