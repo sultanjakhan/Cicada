@@ -46,6 +46,7 @@ export function openCalendarRoutineEditor({ document, store, plan = null, kind =
   let startsOn = plan?.startsOn || '', endsOn = plan?.endsOn || '', time = plan?.time || '';
   let active = plan?.active !== false, required = plan?.required !== false;
   let singleMode = mode === 'activity' ? 'activity' : 'check';
+  let dailyTarget = plan?.dailyTarget ?? 1;
   let steps = [];
   if (mode === 'graph') {
     steps = (plan.steps || []).map(step => makeStep(step.title, step.trackingMode || 'track', step.optional ?? false));
@@ -71,6 +72,7 @@ export function openCalendarRoutineEditor({ document, store, plan = null, kind =
 
   function capture() {
     title = body.querySelector('[data-routine-title]')?.value ?? title;
+    dailyTarget = body.querySelector('[data-routine-target]')?.valueAsNumber ?? dailyTarget;
     weekdays = [...body.querySelectorAll('[data-routine-weekday]:checked')].map(input => Number(input.value));
     startsOn = body.querySelector('[data-routine-starts]')?.value || '';
     endsOn = body.querySelector('[data-routine-ends]')?.value || '';
@@ -127,7 +129,7 @@ export function openCalendarRoutineEditor({ document, store, plan = null, kind =
     body.innerHTML = `<div class="calendar-routine-editor">
       <label class="cre-title">Название<input data-routine-title maxlength="160" autocomplete="off" placeholder="Например, Утренний порядок" value="${esc(title)}"></label>
       <fieldset class="cre-layout" aria-label="Структура рутины"><legend>Что повторяется</legend><div><button type="button" data-layout="single" aria-pressed="${!multi}" ${currentKind === 'rule' ? 'disabled' : ''}>Одно действие</button><button type="button" data-layout="multi" aria-pressed="${multi}" ${currentKind === 'rule' ? 'disabled' : ''}>Список шагов</button></div>${currentKind === 'rule' ? '<small>Правило отмечается целиком.</small>' : ''}</fieldset>
-      ${!multi && currentKind === 'action' ? `<fieldset class="cre-tracking"><legend>Как отмечать</legend><div><label><input type="radio" name="routine-tracking" data-routine-tracking value="check" ${singleMode === 'check' ? 'checked' : ''}> Отметить</label><label><input type="radio" name="routine-tracking" data-routine-tracking value="activity" ${singleMode === 'activity' ? 'checked' : ''}> Учитывать время</label></div></fieldset>` : ''}
+      ${!multi && currentKind === 'action' ? `<fieldset class="cre-tracking"><legend>Как отмечать</legend><div><label><input type="radio" name="routine-tracking" data-routine-tracking value="check" ${singleMode === 'check' ? 'checked' : ''}> Отметить</label><label><input type="radio" name="routine-tracking" data-routine-tracking value="activity" ${singleMode === 'activity' ? 'checked' : ''}> Учитывать время</label></div></fieldset>${singleMode === 'check' ? `<label class="cre-field">Дневная цель<input type="number" data-routine-target min="1" max="1000" step="1" value="${esc(dailyTarget)}"></label>` : ''}` : ''}
       ${multi ? `<section class="cre-steps" aria-labelledby="cre-steps-heading"><div class="cre-steps-heading"><h3 id="cre-steps-heading">Шаги</h3><span>${steps.length}</span></div>${steps.map((step, index) => { const stepAdvanced = step.optional || step.dependsOn.size; const stepDependencyLabel = step.dependsOn.size ? ` · после ${step.dependsOn.size} шага${step.dependsOn.size === 1 ? '' : 'ов'}` : ''; return `<article class="cre-step" data-routine-step="${esc(step.id)}"><header><label><span class="cre-step-number">${index + 1}</span><input data-step-title maxlength="160" aria-label="Шаг ${index + 1}" placeholder="Название шага" value="${esc(step.title)}"></label><div class="cre-step-order"><button type="button" data-move-step="up" data-step-id="${esc(step.id)}" aria-label="Переместить шаг ${index + 1} выше" ${index === 0 ? 'disabled' : ''}>↑</button><button type="button" data-move-step="down" data-step-id="${esc(step.id)}" aria-label="Переместить шаг ${index + 1} ниже" ${index === steps.length - 1 ? 'disabled' : ''}>↓</button><button type="button" data-remove-step="${esc(step.id)}" aria-label="Удалить шаг ${index + 1}">Удалить</button></div></header><details class="cre-step-options" data-options-for="${esc(step.id)}" ${openSteps.has(step.id) || (initialRender && stepAdvanced) ? 'open' : ''}><summary>Настройки шага</summary><fieldset class="cre-step-tracking"><legend>Как отметить</legend><div><label><input type="radio" name="tracking-${esc(step.id)}" data-step-tracking value="check" ${step.trackingMode === 'check' ? 'checked' : ''}> Отметить</label><label><input type="radio" name="tracking-${esc(step.id)}" data-step-tracking value="track" ${step.trackingMode === 'track' ? 'checked' : ''}> Учитывать время</label></div></fieldset><details class="cre-step-disclosure" data-step-skip="${esc(step.id)}" ${openStepSkip.has(step.id) || (initialRender && step.optional) ? 'open' : ''}><summary>Пропуск${step.optional ? ' · разрешён' : ''}</summary><label class="cre-toggle"><input type="checkbox" data-step-optional ${step.optional ? 'checked' : ''}> Можно пропустить этот шаг</label></details><details class="cre-step-disclosure" data-step-dependencies="${esc(step.id)}" ${openStepDependencies.has(step.id) || (initialRender && step.dependsOn.size) ? 'open' : ''}><summary>Зависимости${esc(stepDependencyLabel)}</summary><fieldset class="cre-dependencies"><legend>После каких шагов</legend><p class="cre-muted">Пусто — этот шаг можно начать сразу.</p>${optionRows(step)}</fieldset></details></details>${deleteConfirm === step.id ? `<div class="cre-delete-confirm" role="alert"><p>${deleteEffects(step).length ? `Изменится связь «После…»: ${deleteEffects(step).map(change => `«${esc(change.step.title || 'Без названия')}» → ${change.after.length ? change.after.map(esc).join(', ') : 'можно начать сразу'}`).join('; ')}.` : 'Удаление шага изменит порядок оставшихся шагов.'} Продолжить?</p><button type="button" data-confirm-delete="${esc(step.id)}">Удалить шаг</button><button type="button" data-cancel-delete>Оставить</button></div>` : ''}</article>`; }).join('')}<button type="button" class="cre-add-step" data-add-step ${steps.length >= 50 ? 'disabled' : ''}>Добавить шаг</button></section>` : '<section class="cre-single"><p class="cre-muted">Одно действие без списка шагов.</p></section>'}
       ${collapseConfirm ? '<div class="cre-change-confirm" role="alert"><p>После сохранения будущие запуски будут без этих шагов. До сохранения их можно вернуть переключателем.</p><button type="button" data-confirm-collapse>Продолжить</button><button type="button" data-cancel-collapse>Отмена</button></div>' : ''}
       <details class="cre-advanced" data-routine-schedule ${scheduleOpen || (initialRender && hasSchedule) ? 'open' : ''}><summary>Расписание${esc(scheduleLabel ? ` · ${scheduleLabel}` : '')}</summary><div class="cre-advanced-fields"><fieldset class="cre-week"><legend>Дни недели</legend>${[1, 2, 3, 4, 5, 6, 0].map(day => `<label><input type="checkbox" data-routine-weekday value="${day}" ${weekdays.includes(day) ? 'checked' : ''}>${WEEKDAYS[day]}</label>`).join('')}</fieldset><div class="cre-dates"><label>Начало, если нужно<input type="date" data-routine-starts value="${esc(startsOn)}"></label><label>Конец курса, если нужен<input type="date" data-routine-ends value="${esc(endsOn)}"></label><label>Время в списке, если нужно<input type="time" data-routine-time value="${esc(time)}"></label></div><p class="cre-muted">Время задаёт порядок в списке; уведомления и автозапуск не используются.</p></div></details>
@@ -179,7 +181,7 @@ export function openCalendarRoutineEditor({ document, store, plan = null, kind =
   body.addEventListener('change', event => {
     const target = event.target;
     if (target.matches('[data-routine-kind]')) { currentKind = target.value; render(); return; }
-    if (target.matches('[data-routine-tracking]')) { singleMode = target.value; mode = singleMode; return; }
+    if (target.matches('[data-routine-tracking]')) { capture(); singleMode = target.value; mode = singleMode; render(); return; }
     if (target.matches('[data-step-dependency]')) {
       const row = target.closest('[data-routine-step]'), step = steps.find(item => item.id === row?.dataset.routineStep);
       const id = target.value, checked = target.checked;
@@ -204,6 +206,7 @@ export function openCalendarRoutineEditor({ document, store, plan = null, kind =
   body.addEventListener('input', event => {
     const target = event.target;
     if (target.matches('[data-routine-title]')) title = target.value;
+    else if (target.matches('[data-routine-target]')) dailyTarget = target.valueAsNumber;
     else if (target.matches('[data-step-title]')) {
       const step = steps.find(item => item.id === target.closest('[data-routine-step]')?.dataset.routineStep);
       if (step) step.title = target.value;
@@ -252,9 +255,12 @@ export function openCalendarRoutineEditor({ document, store, plan = null, kind =
       const field = body.querySelector('[data-step-dependency]:checked') || body.querySelector('[data-step-dependency]');
       showFieldError('Проверь зависимости: шаги не должны образовывать цикл.', field); return;
     }
-    const savedMode = currentKind === 'rule' ? 'check' : layout === 'single' ? singleMode : mode;
+    const checkOnly = currentKind === 'action' && layout === 'single' && singleMode === 'check';
+    if (checkOnly && (!Number.isSafeInteger(dailyTarget) || dailyTarget < 1 || dailyTarget > 1000)) { showFieldError('Дневная цель: целое число от 1 до 1000.', body.querySelector('[data-routine-target]')); return; }
+    const savedMode = currentKind === 'rule' ? 'check' : layout === 'single' ? checkOnly && (plan?.mode === 'count' || dailyTarget > 1) ? 'count' : singleMode : mode;
     const graphSteps = steps.map(step => ({ title: step.title.trim(), dependsOn: [...step.dependsOn].map(id => steps.findIndex(candidate => candidate.id === id)).filter(index => index >= 0).sort((a, b) => a - b), trackingMode: step.trackingMode, optional: step.optional }));
     const fields = { kind: currentKind, title: title.trim(), weekdays, startsOn, endsOn, time, active, required, mode: savedMode, steps: layout === 'multi' ? (savedMode === 'chain' ? steps.map(step => ({ title: step.title.trim() })) : graphSteps) : [] };
+    if (savedMode === 'count') fields.dailyTarget = dailyTarget;
     dialog.setPending(true); dialog.showError('');
     let result;
     try {

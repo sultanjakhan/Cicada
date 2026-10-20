@@ -5,6 +5,12 @@ export const dateKey = date => `${date.getFullYear()}-${String(date.getMonth()+1
 export function validDate(value) { return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && dateKey(new Date(value+'T12:00:00')) === value; }
 const empty = () => ({version:1, plans:[], days:{}});
 const allowed = kind => kind === 'rule' ? ['pending','kept','broken'] : ['pending','done','skipped'];
+export const countable = plan => plan?.kind === 'action' && ['check','count'].includes(plan.mode || 'check');
+export function routineCount(plan, record = {}) {
+  const target = plan.dailyTarget ?? 1, completed = record.completedCount ?? (record.status === 'done' ? 1 : 0);
+  if (!Number.isSafeInteger(target) || target < 1 || target > 1000 || !Number.isSafeInteger(completed) || completed < 0 || completed > 1000000) throw Error('Проверь дневную цель и количество отметок.');
+  return { dailyTarget: target, completedCount: completed, remainingCount: Math.max(0, target - completed) };
+}
 function validatedGraphSteps(steps) {
   if (!Array.isArray(steps) || !steps.length || steps.length > 50) throw Error('В графе должно быть от 1 до 50 шагов.');
   const normalized = steps.map((step,index) => {
@@ -35,7 +41,9 @@ function planFields(fields, old, today, id) {
   if (plan.endsOn && plan.endsOn < (plan.startsOn || plan.createdOn)) throw Error('Конец курса должен быть не раньше начала.');
   if (plan.time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(plan.time)) throw Error('Проверь время.');
   plan.mode = fields.mode || old?.mode || 'check';
-  if (!['check','activity','chain','graph'].includes(plan.mode) || plan.kind==='rule' && plan.mode!=='check') throw Error('Правило можно только отмечать.');
+  if (!['check','count','activity','chain','graph'].includes(plan.mode) || plan.kind==='rule' && plan.mode!=='check') throw Error('Правило можно только отмечать.');
+  if (plan.mode === 'count') plan.dailyTarget = routineCount({dailyTarget:fields.dailyTarget ?? old?.dailyTarget ?? 1}).dailyTarget;
+  else if (fields.dailyTarget != null) throw Error('Дневная цель доступна для отметок без таймера.');
   const stepSource=fields.steps ?? (plan.mode==='graph'?old?.steps:undefined) ?? [];
   plan.steps = plan.mode==='graph' ? validatedGraphSteps(stepSource) : plan.mode==='chain' ? stepSource.map(step=>({title:String(step.title||'').trim()})) : [];
   if (plan.mode==='chain' && (!plan.steps.length || plan.steps.length>50 || plan.steps.some(step=>!step.title || step.title.length>160))) throw Error('Укажи от 1 до 50 шагов, до 160 символов каждый.');
@@ -57,6 +65,12 @@ export function parseRecurring(raw) {
       for (const [id,record] of Object.entries(records)) {
         if (record.snapshot.id!==id || !allowed(record.snapshot.kind).includes(record.status)) throw Error();
         const snapshot=planFields(record.snapshot,record.snapshot,day,id);
+        if (record.completedCount != null) {
+          if (snapshot.mode !== 'count' || record.run) throw Error();
+          const counts = routineCount(snapshot,record);
+          if (record.status !== (counts.remainingCount ? 'pending' : 'done')) throw Error();
+        }
+        if (snapshot.mode === 'count' && record.completedCount == null) throw Error();
         if (record.run && (!Array.isArray(record.run.steps) || !record.run.steps.length || record.run.steps.length>50 || record.run.steps.some(step=>typeof step.title!=='string'||!step.title.trim()||step.title.length>160||!['pending','done','skipped'].includes(step.status)))) throw Error();
         if (record.run&&snapshot.mode==='graph'&&(record.run.steps.length!==snapshot.steps.length||record.run.steps.some((step,index)=>step.title!==snapshot.steps[index].title||!Array.isArray(step.dependsOn)||JSON.stringify(step.dependsOn)!==JSON.stringify(snapshot.steps[index].dependsOn)||(step.trackingMode??'track')!==snapshot.steps[index].trackingMode||(step.optional??false)!==snapshot.steps[index].optional))) throw Error();
       }
@@ -72,7 +86,7 @@ export function recurringItems(state,date) {
   const records=state.days[date]||{};
   const plans=new Map(state.plans.filter(plan=>applies(plan,date)).map(plan=>[plan.id,{...plan,status:'pending'}]));
   for (const [id,record] of Object.entries(records)) plans.set(id,{...record.snapshot,status:record.status,run:record.run});
-  return [...plans.values()].sort((a,b)=>(a.time||'99').localeCompare(b.time||'99')||a.title.localeCompare(b.title,'ru'));
+  return [...plans.values()].map(plan=>countable(plan)?{...plan,...routineCount(plan,records[plan.id])}:plan).sort((a,b)=>(a.time||'99').localeCompare(b.time||'99')||a.title.localeCompare(b.title,'ru'));
 }
 export function createRecurringStore(invoke,{now=()=>new Date(),uuid=()=>crypto.randomUUID()}={}) {
   const read = async () => parseRecurring(await invoke('get_ui_state',{key:RECURRING_KEY}));
@@ -95,7 +109,10 @@ export function createRecurringStore(invoke,{now=()=>new Date(),uuid=()=>crypto.
       const plan=planFields(fields,old,dateKey(now()),id||uuid());
       if (old) state.plans[state.plans.indexOf(old)]=plan; else state.plans.push(plan);
       const record=state.days[dateKey(now())]?.[plan.id];
-      if (record && !record.run && record.status==='pending') record.snapshot=clone(plan);
+      if (record && !record.run && record.status==='pending' && record.completedCount == null) {
+        record.snapshot=clone(plan);
+        if (plan.mode==='count') record.completedCount=0;
+      }
       return plan.id;
     }); },
     setStatus(id,status,date=dateKey(now()),{expectedStatus=null}={}) { return update(state=>{
@@ -105,11 +122,22 @@ export function createRecurringStore(invoke,{now=()=>new Date(),uuid=()=>crypto.
       if (!plan || (!record&&!applies(plan,date))) throw Error('На этот день повторение не запланировано.');
       if (!allowed(plan.kind).includes(status)) throw Error('Недопустимая отметка.');
       if (record?.run) throw Error('Открой выполнение, чтобы завершить или пропустить его шаг.');
+      if (plan.mode === 'count') throw Error('Используй количество отметок для этой рутины.');
       // Quick actions carry the status they observed; an explicit manager edit
       // can omit it. Check inside the queued read, before preparing a write.
       if (expectedStatus!==null && (record?.status||'pending')!==expectedStatus) throw Error('Рутина уже отмечена или изменена. Обнови список.');
       state.days[date]||={};
       state.days[date][id]={snapshot:clone(plan),status};
+    }); },
+    setCount(id,completedCount,date,{expectedCount,expectedTarget,expectedStatus}={}) { return update(state=>{
+      if (!validDate(date)||date>dateKey(now())) throw Error('Отметить можно только наступивший день.');
+      const record=state.days[date]?.[id], plan=record?.snapshot||state.plans.find(item=>item.id===id);
+      if (!plan || !countable(plan) || record?.run || (!record&&!applies(plan,date))) throw Error('На этот день отметки недоступны.');
+      const before=routineCount(plan,record);
+      if (expectedCount!==before.completedCount || expectedTarget!==before.dailyTarget || expectedStatus!==(record?.status||'pending')) throw Error('Рутина уже отмечена или изменена. Обнови список.');
+      const counts=routineCount(plan,{completedCount});
+      state.days[date]||={};
+      state.days[date][id]={snapshot:{...clone(plan),mode:'count',dailyTarget:counts.dailyTarget},completedCount,status:counts.remainingCount?'pending':'done'};
     }); },
     ensureRun(id,date=dateKey(now())) { return update(state=>{
       if (!validDate(date) || date>dateKey(now())) throw Error('Запустить можно только наступившее занятие.');

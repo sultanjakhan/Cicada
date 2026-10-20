@@ -4,6 +4,39 @@ import {readFileSync} from 'node:fs';
 import {createRecurringStore,recurringItems,parseRecurring,availableGraphSteps} from '../src/hanni/js/calendar-recurring-store.js';
 function setup(){let raw=null,fail=false,now=new Date(2026,8,13,12),sequence=0;const invoke=async(command,args)=>{if(command==='get_ui_state')return raw;if(fail)throw Error('offline');raw=args.value;};return {store:createRecurringStore(invoke,{now:()=>now,uuid:()=>String(++sequence)}),second:()=>createRecurringStore(invoke,{now:()=>now,uuid:()=>String(++sequence)}),raw:()=>raw,fail:()=>{fail=true;},advance:()=>{now=new Date(2026,8,14,12);}};}
 const action={kind:'action',title:'Учебный курс',weekdays:[0,1,2,3,4,5,6],startsOn:'2026-09-13',endsOn:'2026-09-15'};
+const counted={...action,mode:'count',dailyTarget:3};
+async function countWrite(store,id,value,day='2026-09-13',item=null){item??=recurringItems(await store.read(),day).find(p=>p.id===id);return store.setCount(id,value,day,{expectedCount:item.completedCount,expectedTarget:item.dailyTarget,expectedStatus:item.status});}
+test('a085 target3 marks/correction/reload retain one routine, local days and required metadata',async()=>{
+  const x=setup(),{result:id}=await x.store.savePlan({...counted,required:false});
+  for(let value=1;value<=4;value++){
+    await countWrite(x.store,id,value);const item=recurringItems(await x.second().read(),'2026-09-13')[0];
+    assert.equal(item.completedCount,value);assert.equal(item.remainingCount,Math.max(0,3-value));assert.equal(item.required,false);
+  }
+  await countWrite(x.store,id,2);const prior=(await x.store.read()).days['2026-09-13'];x.advance();
+  let next=recurringItems(await x.second().read(),'2026-09-14')[0];assert.equal(next.completedCount,0);assert.equal(next.remainingCount,3);
+  await countWrite(x.store,id,1,'2026-09-14');const state=await x.store.read();assert.equal(state.plans.length,1);assert.equal(state.plans[0].id,id);assert.deepEqual(state.days['2026-09-13'],prior);
+  await x.store.savePlan({...counted,dailyTarget:5},id);assert.equal(recurringItems(await x.store.read(),'2026-09-14')[0].dailyTarget,3,'started day snapshot stays reviewed');
+});
+test('a085 stale count/target/status, malformed input and failed writes preserve saved state',async()=>{
+  const x=setup(),{result:id}=await x.store.savePlan(counted);const observed=recurringItems(await x.store.read(),'2026-09-13')[0];
+  await countWrite(x.store,id,1);let before=x.raw();await assert.rejects(countWrite(x.second(),id,1,'2026-09-13',observed),/уже отмечена/);assert.equal(x.raw(),before);
+  for(const count of [-1,1.5,NaN,Infinity,1000001]){await assert.rejects(countWrite(x.store,id,count));assert.equal(x.raw(),before);}
+  for(const dailyTarget of [0,-1,1.5,1001,NaN])await assert.rejects(x.store.savePlan({...counted,dailyTarget}));
+  await assert.rejects(x.store.setStatus(id,'done'),/количество/);await assert.rejects(countWrite(x.store,id,2,'2026-09-14'));
+  x.fail();await assert.rejects(countWrite(x.store,id,2),/offline/);assert.equal(x.raw(),before);
+});
+test('a085 legacy done is one completion without read migration; malformed counted snapshots fail closed',async()=>{
+  const x=setup(),{result:id}=await x.store.savePlan(action);await x.store.setStatus(id,'done');const raw=x.raw();const item=recurringItems(await x.store.read(),'2026-09-13')[0];
+  assert.equal(item.dailyTarget,1);assert.equal(item.completedCount,1);assert.equal(item.remainingCount,0);assert.equal(x.raw(),raw);assert.deepEqual(parseRecurring(raw),JSON.parse(raw));
+  await countWrite(x.store,id,0);assert.equal(recurringItems(await x.store.read(),'2026-09-13')[0].remainingCount,1);
+  for(const change of [{completedCount:-1},{completedCount:1,status:'pending'},{completedCount:1.5}]){const bad=JSON.parse(x.raw());Object.assign(bad.days['2026-09-13'][id],change);assert.throws(()=>parseRecurring(JSON.stringify(bad)));}
+});
+test('a085 CAS remote failure and observed target change do not retry or overwrite',async()=>{
+  let raw=null,writes=0,inject=false;const invoke=async(command,args)=>{if(command==='get_ui_state')return raw;writes++;if(inject){raw=JSON.stringify({...JSON.parse(raw),foreign:true});throw Error('mvp_sync_stale_ui_state');}assert.equal(args.expectedValue,raw??'');raw=args.value;};
+  const store=createRecurringStore(invoke,{now:()=>new Date('2026-09-13T12:00:00'),uuid:()=> 'same-id'});await store.savePlan(counted);const old=recurringItems(await store.read(),'2026-09-13')[0];
+  await store.savePlan({...counted,dailyTarget:4},'same-id');await assert.rejects(countWrite(store,'same-id',1,'2026-09-13',old),/уже отмечена/);assert.equal(writes,2);
+  inject=true;await assert.rejects(countWrite(store,'same-id',1),/другом устройстве/);assert.equal(writes,3);assert.equal(JSON.parse(raw).foreign,true);assert.equal(JSON.parse(raw).days['2026-09-13'],undefined);
+});
 test('native runtime fixtures match actual frontend activity and chain payloads',async()=>{
   for(const mode of ['activity','chain']){
     let raw=null;

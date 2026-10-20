@@ -24,3 +24,10 @@ for(const status of ['done','skipped'])test(`a ${status} mark arriving after cli
 });
 test('graph routine stays on the shared Start list and only opens execution after an explicit click',async t=>{const x=await boot(t);const button=x.host.querySelector('[data-routine-choice="graph"]');assert.match(button.parentElement.textContent,/2 связанных шагов/);button.click();await tick();assert.deepEqual(x.opened,[{id:'graph',date:'2026-09-27',start:true}]);assert.equal(x.writes.length,0);});
 test('routine no-op refresh retains focused action DOM',async t=>{const x=await boot(t);const button=x.host.querySelector('[data-routine-choice="chain"]');button.focus();x.dom.window.dispatchEvent(new x.dom.window.Event('hanni:calendar-refresh'));await tick();assert.equal(x.host.querySelector('[data-routine-choice="chain"]'),button);assert.equal(x.dom.window.document.activeElement,button);});
+test('a085 picker target3 marks same routine three times and rejects a stale partial count',async t=>{
+  const x=await boot(t);Object.assign(x.state().plans[0],{mode:'count',dailyTarget:3,required:false});x.dom.window.dispatchEvent(new x.dom.window.Event('hanni:calendar-refresh'));await tick();
+  x.choose('check');await tick();assert.equal(x.state().days['2026-09-27'].check.completedCount,1);assert.match(x.host.textContent,/осталось 2/);
+  x.state().days['2026-09-27'].check.completedCount=2;x.choose('check');await tick();assert.equal(x.writes.length,1);assert.match(x.host.textContent,/уже отмечена/);
+  x.dom.window.dispatchEvent(new x.dom.window.Event('hanni:calendar-refresh'));await tick();x.choose('check');await tick();
+  assert.equal(x.state().days['2026-09-27'].check.completedCount,3);assert.equal(x.host.querySelector('[data-routine-choice="check"]'),null);assert.equal(x.state().plans.length,3);assert.equal(x.opened.length,0);assert.equal(x.state().plans[0].required,false);
+});
