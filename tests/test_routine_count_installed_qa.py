@@ -118,7 +118,7 @@ class RoutineInstalledPreparation(unittest.TestCase):
                   'assertions': ['native isolation', 'exact root', 'sync denied'] + ['observed'] * 50,
                   'receipts': [{'name': 'isolated_test_status'}, {'name': 'mvp_sync_now'}],
                   'transitions': [{'completed': n, 'target': 3, 'remaining': max(0, 3-n)} for n in range(1, 5)],
-                  'dayBoundaryMethod': 'native isolated prior-day fixture plus normal History/Today UI; no clock advance'}
+                  'dayBoundaryMethod': 'native isolated prior-day snapshots plus current-day library UI/reload; no clock advance'}
         block = lambda value: {'type': 'text', 'text': '### Result\n' + json.dumps(value)}
         good = block(result)
         self.assertEqual(qa.parse_result({'content': [good]}), result)
@@ -186,21 +186,21 @@ print(json.dumps(value,ensure_ascii=False));print(child,end='')
                          'stale partial count refuses overwrite', 'stale reviewed target refuses overwrite',
                          'failed native write preserves exact saved state', 'stale plan retains editor draft',
                          'existing count plan target1 retained', 'legacy target1 save remains check',
-                         'legacy history read performs no migration write',
-                         'history correction stays on reviewed local day', 'marks create no tasks',
+                         'legacy binary history preserved exactly without migration',
+                         'current-day changes preserve all prior-day snapshots', 'marks create no tasks',
                          'marks create no timeblocks', 'no implicit timer or start'):
             self.assertIn(contract, code)
         for forbidden in ('force:true', 'force: true', 'waitForTimeout', 'setTimeout', 'Date.now =',
                           'window.confirm', 'localStorage.setItem', 'createRecurringStore', 'setCount(',
-                          '.dispatchEvent(', '.innerHTML =', 'page.keyboard', 'page.mouse'):
+                          '.dispatchEvent(', '.innerHTML =', 'page.keyboard', 'page.mouse', 'calendar-recurring--today',
+                          'data-recurring-history', 'data-history-date', 'data-detail-count', 'mountCalendarRecurring', 'setDate('):
             self.assertNotIn(forbidden, code)
         # Native CAS fixture writes use only the same fixed UI-state key, after
         # real native isolation; UI creation/marks use product controls.
         self.assertIn("const key='calendar_recurring_v1'", code)
         self.assertIn("button[data-create-kind=\"routine\"]", code)
         source = (ROOT / 'src/hanni/js/calendar-recurring.js').read_text()
-        for attr in ('data-library-mark', 'data-library-status', 'data-recurring-details',
-                     'data-detail-count', 'data-recurring-today', 'data-history-date'):
+        for attr in ('data-library-mark', 'data-library-status', 'data-recurring-edit', 'data-recurring-error'):
             self.assertIn(attr, source)
         checked = subprocess.run(['node', '--check', '--input-type=module'], input='(' + code.replace('DATA', '"synthetic-owned-root"').replace('SHOTS', '"synthetic-owned-shots"') + ');', text=True, capture_output=True)
         self.assertEqual(checked.returncode, 0, checked.stderr)
@@ -431,10 +431,10 @@ print(json.dumps(value,ensure_ascii=False));print(child,end='')
 
     def test_metadata_source_proof_and_runtime_code_remain_reviewed(self):
         self.assertIn('/R required', qa.installer_source_proof()['restart_flag'])
-        # Exact static scenario from reviewed unpublished bec940; no local Git
-        # object is needed when these tests run in a future published checkout.
+        # Exact static candidate after the source-supported visible-library mapping;
+        # old run39389130754/digest00013aaf remains in its immutable receipt.
         self.assertEqual(hashlib.sha256(qa.RUNTIME_CODE.encode()).hexdigest(),
-                         '00013aafc74767564fa7bfdb40fa24f16ab2fdfe1c9873d84abb1901aa8f012c')
+                         '57bb253a9776b1910f88adf3d51831a7442b884165346dacae85f5fcea3a5520')
         workflow = (ROOT / '.github/workflows/routine-count-installed-qa.yml').read_text()
         self.assertIn('QA_PHASE: runtime', workflow)
         self.assertIn("if: env.QA_PHASE == 'runtime'", workflow)
