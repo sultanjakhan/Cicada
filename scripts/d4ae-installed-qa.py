@@ -634,6 +634,9 @@ RUNTIME_CODE = r"""async (page) => {
     await row.locator('[data-record-menu]').click();
     await page.locator('[data-menu-action="edit"]').click();
     await page.locator('#evm-title').waitFor();
+    await page.locator('details.evm-advanced[data-editor-event] > summary').click();
+    await page.locator('#evm-desc').waitFor({state:'visible'});
+    await page.locator('#evm-del').waitFor({state:'visible'});
     } finally {
       const trace=await page.evaluate(()=>{
         const stop=window.__d4aeMenuPassiveTrace;
