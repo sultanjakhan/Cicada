@@ -218,6 +218,7 @@ pub(crate) fn allowed(command: &str) -> bool {
     matches!(
         command,
         "get_compact_window_state" | "set_compact_window" |
+        "personal_activity_status" | "personal_activity_configure" | "personal_activity_day" | "personal_activity_walks" |
         "isolated_test_status"
             | "list_items"
             | "save_item"

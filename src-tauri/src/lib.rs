@@ -1,5 +1,6 @@
 mod health_sleep;
 mod health_activity;
+mod personal_activity;
 use chrono::{NaiveDate, NaiveTime, Utc};
 use rusqlite::{
     backup::{Backup, StepResult},
@@ -262,7 +263,41 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
     mvp_sync_db::initialize(conn)?;
     health_sleep::initialize(conn)?;
     health_activity::initialize(conn)?;
+    personal_activity::initialize(conn)?;
     Ok(())
+}
+
+#[tauri::command]
+fn personal_activity_status(state: State<'_, AppState>) -> Result<personal_activity::Status, String> {
+    let connection = state.0.lock().map_err(|_| fail("activity database unavailable"))?;
+    personal_activity::status(&connection)
+}
+
+#[tauri::command]
+fn personal_activity_configure(
+    state: State<'_, AppState>,
+    request: personal_activity::ConfigureRequest,
+) -> Result<personal_activity::Status, String> {
+    let mut connection = state.0.lock().map_err(|_| fail("activity database unavailable"))?;
+    personal_activity::configure(&mut connection, request)
+}
+
+#[tauri::command]
+fn personal_activity_day(
+    state: State<'_, AppState>,
+    request: personal_activity::DayRequest,
+) -> Result<personal_activity::Day, String> {
+    let connection = state.0.lock().map_err(|_| fail("activity database unavailable"))?;
+    personal_activity::day(&connection, request)
+}
+
+#[tauri::command]
+fn personal_activity_walks(
+    state: State<'_, AppState>,
+    request: personal_activity::DayRequest,
+) -> Result<Vec<serde_json::Value>, String> {
+    let connection = state.0.lock().map_err(|_| fail("activity database unavailable"))?;
+    health_activity::personal_day_walks(&connection, &request.date, request.start_ms, request.end_ms)
 }
 
 fn row_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<Item> {
@@ -730,6 +765,12 @@ pub fn run() {
                 app.manage(AppState(Mutex::new(connection)));
                 app.manage(instance_lock);
                 #[cfg(windows)]
+                if !isolated && !startup_options.is_one_shot() && !startup_options.is_update_background() {
+                    if personal_activity::start(data_dir.join("calendar.db")).is_err() {
+                        eprintln!("Cicada personal activity collector unavailable");
+                    }
+                }
+                #[cfg(windows)]
                 if !startup_options.is_one_shot() && production_profile {
                     if update_control_pipe::start(app.handle().clone(), endpoint_root).is_err() {
                         eprintln!("Cicada guarded update control unavailable");
@@ -789,6 +830,10 @@ pub fn run() {
             health_activity::health_activity_status,
             health_activity::health_activity_connect,
             health_activity::health_activity_import,
+            personal_activity_status,
+            personal_activity_configure,
+            personal_activity_day,
+            personal_activity_walks,
             list_items,
             save_item,
             set_completed,

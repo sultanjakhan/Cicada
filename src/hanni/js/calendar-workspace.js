@@ -35,11 +35,14 @@ import { mountCalendarRoutineChoices } from './calendar-routine-choices.js';
 import { showCalendarSettings } from './calendar-settings.js';
 import { openCalendarCreateMenu } from './calendar-create-menu.js';
 import { mountCalendarAiReports } from './calendar-ai-reports.js';
+import { loadPersonalActivityView, mountPersonalActivityToday } from './personal-activity.js';
+import { taskBlockIntervals } from './personal-activity-model.js';
 
 let disposeNow = null, disposeTable = null, disposePanel = null, disposeTasks = null;
 let disposeRecurring = null, goalPopup = null, tasksDialog = null;
 let disposeDayBanner = null, disposeInProgress = null, disposeAiReports = null, todayTaskSelection = null;
 let disposeFocus = null;
+let disposePersonalActivityToday = null, personalActivityViewGeneration = 0;
 let disposeNextAction = null, disposeTaskDetails = null, disposeRoutineChoices = null;
 let routinesRouteHandler = null;
 let preferences = { density:'comfortable', showCompleted:false };
@@ -49,7 +52,11 @@ const tasksPaneState = { filter:'active', search:'', goal:'', sphere:'', page:0 
 // The Goals/Wishes choice survives pane switches within a session; it is not a stored preference.
 const goalsPaneState = { view:'goals' };
 let closeCreateMenu = null;
-function cleanupWorkspace() { disposeFocus?.(); disposeFocus=null; workspaceRevision++; disposeNextAction?.(); disposeTaskDetails?.(); disposeRoutineChoices?.(); disposeNextAction = disposeTaskDetails = disposeRoutineChoices = null; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeRecurring?.(); disposeDayBanner?.(); disposeInProgress?.(); disposeAiReports?.(); goalPopup?.dispose(); tasksDialog?.dispose(); disposeInProgress = null; disposeAiReports = null; disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; disposeRecurring = null; disposeDayBanner = null; goalPopup = null; tasksDialog = null; }
+function cleanupWorkspace() { disposePersonalActivityToday?.(); disposePersonalActivityToday = null; personalActivityViewGeneration++; disposeFocus?.(); disposeFocus=null; workspaceRevision++; disposeNextAction?.(); disposeTaskDetails?.(); disposeRoutineChoices?.(); disposeNextAction = disposeTaskDetails = disposeRoutineChoices = null; disposeNow?.(); disposeTable?.(); disposePanel?.(); disposeTasks?.(); disposeRecurring?.(); disposeDayBanner?.(); disposeInProgress?.(); disposeAiReports?.(); goalPopup?.dispose(); tasksDialog?.dispose(); disposeInProgress = null; disposeAiReports = null; disposeNow = null; disposeTable = null; disposePanel = null; disposeTasks = null; disposeRecurring = null; disposeDayBanner = null; goalPopup = null; tasksDialog = null; }
+window.addEventListener('hanni:personal-activity-view-changed', event => {
+  personalActivityViewGeneration++;
+  disposePersonalActivityToday?.setEnabled(event.detail?.enabled === true);
+});
 const nextActionPreferences = () => ({ enabled:preferences.recommendationsEnabled, includeTasks:preferences.recommendTasks, includeRoutines:preferences.recommendRoutines });
 const view = { period: 'day', mode: 'grid', date: views.iso(new Date()), firstDay:'mon' };
 let initialViewLoaded = false;
@@ -733,6 +740,7 @@ export async function loadCalendarWorkspace(el, { nativeReview = true } = {}) {
       pane.innerHTML = `<section class="calendar-today" aria-label="${uiCopy("Сегодня")}">
         <div data-calendar-day-banner></div><div data-calendar-next-action></div>
         <div data-calendar-in-progress></div><div data-calendar-ai-reports></div>
+        <div data-calendar-personal-activity></div>
       </section><div data-calendar-now-slot></div>`;
       pane.querySelector('[data-calendar-now-slot]').replaceWith(nowHost);
       nowHost.hidden = false;
@@ -750,6 +758,7 @@ export async function loadCalendarWorkspace(el, { nativeReview = true } = {}) {
           // Update first: clearing old focus can synchronously rerender NextAction
           // and call back into this handler.
           todayTaskSelection = task;
+          disposePersonalActivityToday?.refresh();
           disposeFocus?.setSelectedTask(task);
           if (previousKey && previousKey !== nextKey) disposeNextAction?.setFocusedTaskVisible(previousKey,false);
           disposeInProgress?.setSelectedTask(task);
@@ -774,6 +783,29 @@ export async function loadCalendarWorkspace(el, { nativeReview = true } = {}) {
       });
       disposeInProgress.setSelectedTask(todayTaskSelection);
       disposeAiReports = mountCalendarAiReports(pane.querySelector('[data-calendar-ai-reports]'), { invoke, listen, readTaskReview, onOpenTask:openNativeTask });
+      const activityView = mountPersonalActivityToday(pane.querySelector('[data-calendar-personal-activity]'), {
+        invoke,
+        enabled: false,
+        getSelectedTask: async () => {
+          const selected = todayTaskSelection;
+          if (selected?.source_type !== 'note' || selected.source_id == null) return null;
+          try {
+            // Native personalOnly checks scope metadata before loading content.
+            await invoke('get_note', { id: String(selected.source_id), personalOnly: true });
+            return selected;
+          } catch { return null; }
+        },
+        getTaskIntervals: async ({ task, startMs, endMs }) => {
+          if (!task) return null;
+          const rows = await invoke('get_calendar_task_blocks', { sourceIds: [String(task.source_id)] });
+          return taskBlockIntervals(rows, task, { startMs, endMs }, Date.now());
+        },
+      });
+      disposePersonalActivityToday = activityView;
+      const activityGeneration = ++personalActivityViewGeneration;
+      void loadPersonalActivityView(invoke).then(value => {
+        if (disposePersonalActivityToday === activityView && activityGeneration === personalActivityViewGeneration) activityView.setEnabled(value.enabled);
+      }).catch(() => {});
     },
     renderTable: pane => mountCalendarTable(pane),
     renderTasks: pane => {
