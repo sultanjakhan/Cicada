@@ -4,8 +4,9 @@
 //! bounded snapshots so a missing permission or an unavailable provider never
 //! turns into a source deletion.
 
+use chrono::DateTime;
 #[cfg(any(target_os = "android", test))]
-use chrono::{DateTime, FixedOffset, NaiveDate, Utc};
+use chrono::{FixedOffset, NaiveDate, Utc};
 use rusqlite::Connection;
 #[cfg(any(target_os = "android", test))]
 use rusqlite::{params, TransactionBehavior};
@@ -200,7 +201,9 @@ fn apply(conn: &mut Connection, batch: Batch) -> Result<Value, String> {
         let notes = format!("Источник: {} через Health Connect.\nПериод прогулки: {} мин.\nИзменения и удаление — в приложении-источнике.", record.origin, minutes);
         let tags = json!([
             "health:walking:v1",
-            format!("health:origin:{}", record.origin)
+            format!("health:origin:{}", record.origin),
+            format!("health:walking:start-ms:{}", record.start_ms),
+            format!("health:walking:end-ms:{}", record.end_ms)
         ])
         .to_string();
         changed += tx.execute(
@@ -372,6 +375,9 @@ pub fn decorate(value: &mut Value, key: &str, tags: &str) {
     value["source"] = json!("health_connect");
     value["tracking_mode"] = json!("none");
     if let Ok(tags) = serde_json::from_str::<Vec<String>>(tags) {
+        let mut exact_start = None;
+        let mut exact_end = None;
+        let mut exact_invalid = false;
         for tag in tags {
             if let Some(v) = tag.strip_prefix("health:origin:") {
                 value["health_origin"] = json!(v);
@@ -382,8 +388,102 @@ pub fn decorate(value: &mut Value, key: &str, tags: &str) {
             if let Some(v) = tag.strip_prefix("health:origin-scope:") {
                 value["health_origin_scope"] = json!(v);
             }
+            if let Some(v) = tag.strip_prefix("health:walking:start-ms:") {
+                if exact_start.is_some() {
+                    exact_invalid = true;
+                } else {
+                    exact_start = v.parse::<i64>().ok();
+                    if exact_start.is_none() {
+                        exact_invalid = true;
+                    }
+                }
+            }
+            if let Some(v) = tag.strip_prefix("health:walking:end-ms:") {
+                if exact_end.is_some() {
+                    exact_invalid = true;
+                } else {
+                    exact_end = v.parse::<i64>().ok();
+                    if exact_end.is_none() {
+                        exact_invalid = true;
+                    }
+                }
+            }
+        }
+        if kind == "walking" && !exact_invalid {
+            if let (Some(start_ms), Some(end_ms)) = (exact_start, exact_end) {
+                let valid_span = end_ms
+                    .checked_sub(start_ms)
+                    .is_some_and(|span| span > 0 && span <= 7 * 86_400_000);
+                if valid_span
+                    && DateTime::from_timestamp_millis(start_ms).is_some()
+                    && DateTime::from_timestamp_millis(end_ms).is_some()
+                {
+                    value["health_start_ms"] = json!(start_ms);
+                    value["health_end_ms"] = json!(end_ms);
+                }
+            }
         }
     }
+}
+
+/// Read only the owned walking metadata needed for a local day projection.
+/// Precise records are selected by their UTC interval; historical records
+/// without a valid exact pair remain visible only on their stored local date.
+pub fn personal_day_walks(
+    conn: &Connection,
+    date: &str,
+    start_ms: i64,
+    end_ms: i64,
+) -> Result<Vec<Value>, String> {
+    crate::validate_date(date)?;
+    let span = end_ms
+        .checked_sub(start_ms)
+        .filter(|value| *value > 0 && *value <= 27 * 60 * 60 * 1000)
+        .ok_or_else(|| "health_activity_invalid_day_bounds".to_string())?;
+    let _ = span;
+    DateTime::from_timestamp_millis(start_ms)
+        .ok_or_else(|| "health_activity_invalid_day_bounds".to_string())?;
+    DateTime::from_timestamp_millis(end_ms)
+        .ok_or_else(|| "health_activity_invalid_day_bounds".to_string())?;
+
+    let mut statement = conn
+        .prepare(
+            "SELECT id,date,tags FROM items
+             WHERE kind='event' AND archived=0 AND id LIKE ?1
+             ORDER BY id LIMIT 5001",
+        )
+        .map_err(failure)?;
+    let rows = statement
+        .query_map([format!("{WALK_PREFIX}%")], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(failure)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(failure)?;
+    if rows.len() > 5000 {
+        return Err("health_activity_too_many_walks".into());
+    }
+
+    let mut result = Vec::new();
+    for (id, stored_date, tags) in rows {
+        let mut value = json!({});
+        decorate(&mut value, &id, &tags);
+        let precise = value["health_start_ms"].as_i64().zip(value["health_end_ms"].as_i64());
+        let include = match precise {
+            Some((walk_start, walk_end)) => walk_start < end_ms && walk_end > start_ms,
+            None => stored_date.as_deref() == Some(date),
+        };
+        if include {
+            value["id"] = json!(id);
+            value["date"] = stored_date.map_or(Value::Null, Value::String);
+            result.push(value);
+        }
+    }
+    Ok(result)
 }
 
 #[tauri::command]
@@ -500,6 +600,12 @@ mod tests {
             apply(&mut c, batch(None, "a", json!([walk()]), json!([steps()]))).unwrap()["changed"],
             2
         );
+        let walk_key = walking_id("fictional-walk");
+        let first_tags: String = c
+            .query_row("SELECT tags FROM items WHERE id=?1", [&walk_key], |r| r.get(0))
+            .unwrap();
+        assert!(first_tags.contains("health:walking:start-ms:1758326400000"));
+        assert!(first_tags.contains("health:walking:end-ms:1758330000000"));
         assert_eq!(
             apply(
                 &mut c,
@@ -523,6 +629,10 @@ mod tests {
             .unwrap()["changed"],
             2
         );
+        let updated_tags: String = c
+            .query_row("SELECT tags FROM items WHERE id=?1", [&walk_key], |r| r.get(0))
+            .unwrap();
+        assert!(updated_tags.contains("health:walking:end-ms:1758333600000"));
         assert!(apply(&mut c, batch(Some("b"), "stale", json!([]), json!([]))).is_err());
         let empty = batch(Some("c"), "d", json!([]), json!([]));
         assert_eq!(apply(&mut c, empty).unwrap()["changed"], 2);
@@ -628,6 +738,112 @@ mod tests {
             crate::health_sleep::editable("hc-steps:all:2025-09-20").unwrap_err(),
             "health_activity_readonly"
         );
+    }
+
+    #[test]
+    fn personal_day_walks_is_metadata_only_and_clips_precise_windows() {
+        let mut c = db();
+        apply(&mut c, batch(None, "a", json!([walk()]), json!([steps()]))).unwrap();
+        c.execute(
+            "INSERT INTO items(id,kind,title,duration_minutes,version,created_at,updated_at,date,tags,status)
+             VALUES('unrelated','event','Private work',30,1,'now','now','2025-09-20','[]','event')",
+            [],
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO items(id,kind,title,duration_minutes,version,created_at,updated_at,date,tags,status)
+             VALUES('hc-walk:cross','event','Прогулка',1,1,'now','now','2025-09-20',?1,'event')",
+            [json!(["health:walking:v1", "health:walking:start-ms:1758326399000", "health:walking:end-ms:1758326401000"]).to_string()],
+        )
+        .unwrap();
+        let rows = personal_day_walks(&c, "2025-09-20", 1758326400000, 1758333600000).unwrap();
+        assert_eq!(rows.len(), 2);
+        let exact = rows.iter().find(|row| row["id"] == walking_id("fictional-walk")).unwrap();
+        assert_eq!(exact["health_start_ms"], 1758326400000i64);
+        assert_eq!(exact["health_end_ms"], 1758330000000i64);
+        let cross = rows.iter().find(|row| row["id"] == "hc-walk:cross").unwrap();
+        assert_eq!(cross["health_start_ms"], 1758326399000i64);
+        assert_eq!(cross["health_end_ms"], 1758326401000i64);
+        assert!(exact.get("title").is_none());
+        assert!(exact.get("notes").is_none());
+
+        c.execute(
+            "UPDATE items SET tags='[\"health:walking:v1\"]' WHERE id=?1",
+            [walking_id("fictional-walk")],
+        )
+        .unwrap();
+        let legacy = personal_day_walks(&c, "2025-09-20", 1758330000000, 1758333600000).unwrap();
+        assert_eq!(legacy.len(), 1);
+        assert!(legacy[0].get("health_start_ms").is_none());
+        assert!(legacy[0].get("health_end_ms").is_none());
+        assert!(personal_day_walks(&c, "2025-09-21", 1758333600000, 1758420000000)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn personal_day_walks_rejects_invalid_bounds_and_detects_overflow() {
+        let c = db();
+        assert!(personal_day_walks(&c, "2025-09-20", 10, 10).is_err());
+        assert!(personal_day_walks(&c, "2025-09-20", 10, 10 + 27 * 60 * 60 * 1000 + 1).is_err());
+        assert!(personal_day_walks(&c, "2025-09-20", i64::MAX, i64::MAX).is_err());
+
+        for n in 0..5001 {
+            c.execute(
+                "INSERT INTO items(id,kind,title,duration_minutes,version,created_at,updated_at,date,tags,status)
+                 VALUES(?1,'event','Прогулка',1,1,'now','now','2025-09-20','[\"health:walking:v1\"]','event')",
+                [format!("hc-walk:overflow-{n}")],
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            personal_day_walks(&c, "2025-09-20", 1758326400000, 1758333600000)
+                .unwrap_err(),
+            "health_activity_too_many_walks"
+        );
+    }
+
+    #[test]
+    fn walking_exact_utc_fields_require_one_valid_pair() {
+        let valid = json!(["health:walking:v1", "health:walking:start-ms:1758326400123", "health:walking:end-ms:1758326462456"])
+            .to_string();
+        let mut value = json!({});
+        decorate(&mut value, "hc-walk:fixture", &valid);
+        assert_eq!(value["health_start_ms"], 1758326400123i64);
+        assert_eq!(value["health_end_ms"], 1758326462456i64);
+
+        for tags in [
+            r#"["health:walking:start-ms:1758326400123"]"#,
+            r#"["health:walking:start-ms:bad","health:walking:end-ms:1758326462456"]"#,
+            r#"["health:walking:start-ms:1758326462456","health:walking:end-ms:1758326400123"]"#,
+            r#"["health:walking:start-ms:1758326400123","health:walking:start-ms:1758326400124","health:walking:end-ms:1758326462456"]"#,
+            r#"["health:steps-count:42","health:walking:end-ms:1758326462456"]"#,
+        ] {
+            let mut value = json!({});
+            decorate(&mut value, "hc-walk:fixture", tags);
+            assert!(value.get("health_start_ms").is_none());
+            assert!(value.get("health_end_ms").is_none());
+        }
+
+        let mut old = json!({});
+        decorate(&mut old, "hc-walk:legacy", r#"["health:walking:v1"]"#);
+        assert!(old.get("health_start_ms").is_none());
+        assert!(old.get("health_end_ms").is_none());
+    }
+
+    #[test]
+    fn walking_exact_fields_do_not_change_rounded_duration_semantics() {
+        let mut c = db();
+        let precise = json!({"id":"precise","origin":"com.example.walk","startMs":1758326400123i64,"endMs":1758326462456i64,"offsetSeconds":18000});
+        apply(&mut c, batch(None, "precise", json!([precise]), json!([]))).unwrap();
+        let key = walking_id("precise");
+        let minutes: i64 = c.query_row("SELECT duration_minutes FROM items WHERE id=?1", [&key], |r| r.get(0)).unwrap();
+        assert_eq!(minutes, 2);
+        let tags: String = c.query_row("SELECT tags FROM items WHERE id=?1", [&key], |r| r.get(0)).unwrap();
+        let mut value = json!({});
+        decorate(&mut value, &key, &tags);
+        assert_eq!(value["health_start_ms"], 1758326400123i64);
+        assert_eq!(value["health_end_ms"], 1758326462456i64);
     }
     #[test]
     fn existing_items_protocol_delivers_activity_update_and_tombstone_to_replica() {

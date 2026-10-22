@@ -43,6 +43,13 @@
 .calendar-today-links { display:flex; gap:18px; padding-top:14px; }
 .calendar-today-links button, .calendar-routine-choices__heading button { border:0; padding:4px 0; background:transparent; color:var(--text-secondary,#626262); font-size:12px; text-decoration:underline; text-underline-offset:3px; cursor:pointer; }
 .calendar-ai-reports { margin-top:16px; }
+.personal-activity-today { margin-top:20px; padding-top:14px; border-top:1px solid var(--border-default,#ddd); min-width:0; }
+.personal-activity-today[hidden] { display:none; }
+.personal-activity-today h3 { margin:0 0 8px; font-size:14px; font-weight:600; }
+.personal-activity-today p { margin:5px 0; color:var(--text-secondary,#626262); font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
+.personal-activity-today :is([data-personal-activity-games],[data-personal-activity-walking],[data-personal-activity-work]) { margin:8px 0; font-size:13px; line-height:1.5; overflow-wrap:anywhere; }
+.personal-activity-today button { min-height:40px; padding:6px 0; border:0; background:transparent; color:var(--text-secondary,#626262); text-decoration:underline; text-underline-offset:3px; cursor:pointer; }
+.personal-activity-today button:focus-visible { outline:2px solid var(--text-primary,#252525); outline-offset:3px; }
 .calendar-ai-reports h3 { margin:0; font-size:14px; }
 .calendar-ai-reports [data-ai-report-note], .calendar-ai-reports li p { margin:4px 0; color:var(--text-secondary,#626262); font-size:12px; }
 .calendar-ai-reports summary { min-height:48px; box-sizing:border-box; padding:8px 0; cursor:pointer; }

@@ -1,6 +1,62 @@
 //! Exercise the actual Tauri command deserializer and SQLite implementation.
 //! MockRuntime creates no native window and is not live UI evidence.
 #[test]
+fn personal_activity_ipc_preserves_tasks_and_rejects_stale_or_invalid_settings() {
+    let (app, view) = fixture();
+    let task_id = call(&view, "save_calendar_task", json!({
+        "id":null, "title":"Synthetic personal activity", "dueDate":null,
+        "estimateMinutes":null, "goalId":null, "sphere":"personal"
+    })).unwrap();
+    let before = call(&view, "get_calendar_task", json!({"id":task_id})).unwrap();
+    let initial = call(&view, "personal_activity_status", json!({})).unwrap();
+    assert_eq!(initial["enabled"], false);
+    assert_eq!(initial["storageScope"], "local");
+    let revision = initial["revision"].as_u64().unwrap();
+    let saved = call(&view, "personal_activity_configure", json!({"request":{
+        "expectedRevision":revision, "enabled":false, "selectedExecutables":["synthetic-game.exe"]
+    }})).unwrap();
+    assert!(saved["revision"].as_u64().unwrap() > revision);
+    assert!(call(&view, "personal_activity_configure", json!({"request":{
+        "expectedRevision":revision, "enabled":false, "selectedExecutables":[]
+    }})).is_err());
+    assert!(call(&view, "personal_activity_configure", json!({"request":{
+        "expectedRevision":saved["revision"], "enabled":false,
+        "selectedExecutables":["C:\\private\\synthetic-game.exe"]
+    }})).is_err());
+    let reread = call(&view, "personal_activity_status", json!({})).unwrap();
+    assert_eq!(reread["revision"], saved["revision"]);
+    assert_eq!(reread["selectedExecutables"], saved["selectedExecutables"]);
+    let start = chrono::DateTime::parse_from_rfc3339("2026-10-22T00:00:00+05:00").unwrap().timestamp_millis();
+    let day = call(&view, "personal_activity_day", json!({"request":{
+        "date":"2026-10-22", "startMs":start, "endMs":start+86_400_000_i64
+    }})).unwrap();
+    assert!(day["intervals"].as_array().unwrap().is_empty());
+    assert_ne!(day["observationState"], "complete");
+    let view_choice = json!({"version":1,"enabled":true}).to_string();
+    call(&view, "set_ui_state", json!({"key":"personal_activity_view_v1", "value":view_choice, "expectedValue":""})).unwrap();
+    assert!(call(&view, "set_ui_state", json!({"key":"personal_activity_view_v1", "value":"{}", "expectedValue":""})).is_err());
+    assert_eq!(call(&view, "get_ui_state", json!({"key":"personal_activity_view_v1"})).unwrap(), view_choice);
+    {
+        let state = app.state::<AppState>();
+        let conn = state.0.lock().unwrap();
+        let tags = json!(["health:walking:v1",format!("health:walking:start-ms:{}",start+60_000),format!("health:walking:end-ms:{}",start+960_000)]).to_string();
+        conn.execute("INSERT INTO items(id,kind,title,notes,date,time,duration_minutes,completed,version,created_at,updated_at,category,color,tags,status) VALUES('hc-walk:synthetic','event','Synthetic walk','Synthetic health record','2026-10-22','00:01',15,0,1,'fixture','fixture','general','#5B8C85',?1,'event')", [tags]).unwrap();
+    }
+    let walks = call(&view, "personal_activity_walks", json!({"request":{
+        "date":"2026-10-22", "startMs":start, "endMs":start+86_400_000_i64
+    }})).unwrap();
+    assert_eq!(walks.as_array().unwrap().len(), 1);
+    assert_eq!(walks[0]["health_start_ms"], start+60_000);
+    assert!(walks[0].get("title").is_none());
+    assert!(walks[0].get("notes").is_none());
+    assert_eq!(call(&view, "get_calendar_task", json!({"id":task_id})).unwrap(), before);
+    assert!(call(&view, "get_active_blocks", json!({})).unwrap().as_array().unwrap().is_empty());
+    let state = app.state::<AppState>();
+    let conn = state.0.lock().unwrap();
+    assert_eq!(conn.query_row("SELECT count(*) FROM timeline_blocks", [], |row|row.get::<_,i64>(0)).unwrap(), 0);
+}
+
+#[test]
 fn task_workflow_native_ipc_survives_database_reopen_without_starting_work() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("calendar.db");
@@ -85,6 +141,10 @@ fn fixture_with_connection(
     let app = mock_builder()
         .manage(AppState(Mutex::new(conn)))
         .invoke_handler(tauri::generate_handler![
+            crate::personal_activity_status,
+            crate::personal_activity_configure,
+            crate::personal_activity_day,
+            crate::personal_activity_walks,
             crate::delete_item,
             api::get_goals,
             api::save_calendar_goal,
