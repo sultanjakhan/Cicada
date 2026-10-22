@@ -40,7 +40,7 @@ fn personal_activity_ipc_preserves_tasks_and_rejects_stale_or_invalid_settings()
         let state = app.state::<AppState>();
         let conn = state.0.lock().unwrap();
         let tags = json!(["health:walking:v1",format!("health:walking:start-ms:{}",start+60_000),format!("health:walking:end-ms:{}",start+960_000)]).to_string();
-        conn.execute("INSERT INTO items(id,kind,title,tags,date,created_at,updated_at) VALUES('hc-walk:synthetic','event','Synthetic walk',?1,'2026-10-22','fixture','fixture')", [tags]).unwrap();
+        conn.execute("INSERT INTO items(id,kind,title,tags,date,duration_minutes,created_at,updated_at) VALUES('hc-walk:synthetic','event','Synthetic walk',?1,'2026-10-22',15,'fixture','fixture')", [tags]).unwrap();
     }
     let walks = call(&view, "personal_activity_walks", json!({"request":{
         "date":"2026-10-22", "startMs":start, "endMs":start+86_400_000_i64
