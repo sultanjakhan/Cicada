@@ -20,7 +20,7 @@ const english = {
   "Учёт занятий включён на этом устройстве.": "Activity tracking is on for this device.",
   "Учёт занятий включён. Сбор сейчас не запущен.": "Activity tracking is enabled. Collection is not running now.",
   "Актуальность игровых данных неизвестна.": "Game observation freshness is unknown.",
-  "Последнее наблюдение игры на этом ПК: {0}": "Last game observation on this PC: {0}",
+  "Последняя проверка учёта игр на этом ПК: {0}": "Last game tracking check on this PC: {0}",
   "Есть записи прогулок без точного времени; показана только известная часть.": "Some walk records have no precise timing; only the known portion is shown.",
   "Есть записи прогулок без точного времени; длительность неизвестна.": "Walk records have no precise timing; the duration is unknown.",
   "Не удалось прочитать настройки. Повтори проверку.": "Could not read the settings. Check again.",

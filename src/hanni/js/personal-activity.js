@@ -71,7 +71,7 @@ function statusText(status, copy) {
 function freshnessText(value, copy) {
   if (!Number.isFinite(value)) return copy('Актуальность игровых данных неизвестна.');
   const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? copy.format('Последнее наблюдение игры на этом ПК: {0}', date.toLocaleString(copy.locale)) : copy('Актуальность игровых данных неизвестна.');
+  return Number.isFinite(date.getTime()) ? copy.format('Последняя проверка учёта игр на этом ПК: {0}', date.toLocaleString(copy.locale)) : copy('Актуальность игровых данных неизвестна.');
 }
 
 function configureArgs(status, enabled, selectedExecutables) {

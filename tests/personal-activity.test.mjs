@@ -235,7 +235,7 @@ test('Today labels game freshness and omits a walking partial note when every wa
   await tick(); await tick();
   assert.match(host.querySelector('[data-personal-activity-walking]').textContent, /Прогулки: 1 мин/);
   assert.doesNotMatch(host.querySelector('[data-personal-activity-walking]').textContent, /без точного времени/);
-  assert.match(host.querySelector('[data-personal-activity-freshness]').textContent, /Последнее наблюдение игры на этом ПК/);
+  assert.match(host.querySelector('[data-personal-activity-freshness]').textContent, /Последняя проверка учёта игр на этом ПК/);
 });
 
 test('Today discloses when no walking session has precise time', async t => {
