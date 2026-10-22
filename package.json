@@ -1,7 +1,7 @@
 {
   "name": "cicada",
-  "version": "0.5.22",
-  "cicadaBuildId": "20261020-routine-count-0522.1",
+  "version": "0.5.23",
+  "cicadaBuildId": "20261022-personal-activity-0523.1",
   "private": true,
   "type": "module",
   "scripts": {
