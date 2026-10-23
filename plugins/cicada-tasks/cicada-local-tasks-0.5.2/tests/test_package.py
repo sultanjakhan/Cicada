@@ -23,7 +23,7 @@ REPORT = dict(runId='fixture-run-001',sequence=1,taskKey=None,agent='codex',
               mcpCalls=None,inputTokens=None,outputTokens=None)
 
 class Bridge:
-    def __init__(self, *unused):
+    def __init__(self, *unused, **unused_keywords):
         self.calls = []
         self.reply = {'synthetic':True}
     def call(self, value):

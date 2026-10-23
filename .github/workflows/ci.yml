@@ -101,6 +101,18 @@ jobs:
       - run: npm run test:native:checkpoint
         working-directory: sync-relay
       - run: npm run package:mac
+      - name: Report candidate identity and hashes
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          for path in Path('.local/mac-package').glob('*/manifest.json'):
+              manifest = json.loads(path.read_text())
+              print(json.dumps({key: manifest[key] for key in
+                    ('application','identifier','version','platform','source_commit',
+                     'archive','archive_sha256','signing','notarized')}, sort_keys=True))
+              print(json.dumps({'executable_sha256': manifest['files_sha256']['Contents/MacOS/hanni-mvp']}, sort_keys=True))
+          PY
       - uses: actions/upload-artifact@v4
         # Optional CI bundle; signed release delivery is enforced separately.
         continue-on-error: true
