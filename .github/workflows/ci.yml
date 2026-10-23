@@ -70,7 +70,7 @@ jobs:
       - run: npm ci
       - run: npm test
         timeout-minutes: 5
-      - run: npm audit --audit-level=low
+      - run: npm audit --audit-level=low --json
       - run: npm run check:privacy
       - run: npm run build
       - name: Check portable macOS client and synthetic UDS rejection paths
@@ -165,7 +165,7 @@ jobs:
         run: python -B plugins/cicada-tasks/cicada-local-tasks-0.5.0/tests/test_installer.py
       - run: npm.cmd ci
       - run: npm.cmd run check:vendor
-      - run: npm.cmd audit --audit-level=low
+      - run: npm.cmd audit --audit-level=low --json
       - run: .\scripts\audit-rust.ps1
       - run: npm.cmd test
         timeout-minutes: 5

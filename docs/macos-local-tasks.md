@@ -107,3 +107,17 @@ UUID. Confirm the returned binding instead of guessing it. Begin/report must use
 stable operation/run identities and observed-only fields; user acceptance and
 task completion remain separate. A cloud pass does not establish these installed
 checks, profile selection, actual task linkage or unchanged user data.
+
+## Candidate dependency prerequisite
+
+The normal cloud audit of the unchanged base failed on DOMPurify 3.4.16 before
+native tests or packaging. This candidate pins only DOMPurify to 3.4.17, keeping
+the package and lockfile aligned with the [npm registry metadata](https://registry.npmjs.org/dompurify).
+The upstream advisories identify 3.4.17 as patched for
+[SAFE_FOR_TEMPLATES/shadow roots](https://github.com/advisories/GHSA-cg2g-xh64-v4q7),
+[IN_PLACE detached-hook subtrees](https://github.com/advisories/GHSA-mrv2-3pqr-j5jr)
+and [the XHTML SMIL guard](https://github.com/advisories/GHSA-c6gr-qvv4-5v3f).
+The [upstream release](https://github.com/cure53/DOMPurify/releases/tag/3.4.17)
+describes the matching fixes. This records a dependency audit prerequisite;
+reachability of those non-default configurations in Cicada was not established.
+The normal audit thresholds remain enabled.
