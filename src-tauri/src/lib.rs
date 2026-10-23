@@ -32,6 +32,10 @@ mod agent_history;
 mod shared_tasks;
 #[cfg(windows)]
 mod agent_pipe;
+#[cfg(target_os = "macos")]
+mod agent_socket;
+#[cfg(target_os = "macos")]
+mod agent_socket_transport;
 mod data_sources;
 mod data_location;
 mod isolated_test;
@@ -753,7 +757,7 @@ pub fn run() {
                 } else {
                     AppInstanceLock(standard_instance_lock.0.into_iter().chain(source_instance_lock.into_iter().flat_map(|l| l.0)).collect())
                 };
-                #[cfg(windows)]
+                #[cfg(any(windows, target_os = "macos"))]
                 let endpoint_root = data_location::endpoint_source(&standard_dir, &data_dir, isolated, cfg!(debug_assertions));
                 let database_was_present = data_dir.join("calendar.db").try_exists()?;
                 let connection = Connection::open(data_dir.join("calendar.db"))
@@ -780,6 +784,12 @@ pub fn run() {
                 if !startup_options.is_one_shot() {
                     if agent_pipe::start(app.handle().clone(), &data_dir, endpoint_root).is_err() {
                         eprintln!("Cicada local agent access unavailable");
+                    }
+                }
+                #[cfg(target_os = "macos")]
+                if !startup_options.is_one_shot() {
+                    if agent_socket::start(app.handle().clone(), endpoint_root).is_err() {
+                        eprintln!("Cicada opt-in local agent access unavailable");
                     }
                 }
                 #[cfg(target_os = "macos")]

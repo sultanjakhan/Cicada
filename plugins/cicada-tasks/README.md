@@ -1,8 +1,9 @@
-# Cicada local tasks plugin 0.5.1
+# Cicada local tasks plugin 0.5.2
 
 Portable publication bundle for the local Cicada task MCP package.
 
-- `cicada-local-tasks-0.5.1/` — compatible seven-tool client with optional pagination;
+- `cicada-local-tasks-0.5.2/` — opt-in macOS socket support plus preserved Windows seven-tool client;
+- `cicada-local-tasks-0.5.1/` — preserved seven-tool client with optional pagination;
 - `cicada-local-tasks-0.5.0/` — preserved five-tool package source;
 - `cicada-local-tasks-0.4.8/` — preserved source of the previous package;
 - `cicada-local-tasks-0.4.7/` — preserved source of the published package;
@@ -105,3 +106,14 @@ refresh MCP metadata, check all seven names, read `{}`, then traverse with
 installed-device acceptance. The native task queue must never be seeded for this
 check. `fixtures/seven-tool-baseline.b64` is the supplied generic reference
 source, pinned by SHA-256 in the upgrade tests; it contains no profile records.
+
+## Opt-in macOS native transport
+
+The 0.5.2 package adds an explicit macOS Unix-socket connection to the same
+native personal-task dispatcher. It requires a matching native candidate and
+an intentionally enabled machine-local grant; updating Python alone cannot
+add transport to an older installed binary. Existing package directories and
+Windows named-pipe behavior are preserved. Read the [configuration and installed
+acceptance contract](../../docs/macos-local-tasks.md) before enabling access.
+The existing Windows installer/guarded upgrade helpers are unchanged; the Mac
+entry point is configured explicitly and never edits a host configuration.

@@ -15,7 +15,7 @@ def git(*args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--client-version', choices=['0.5.0','0.5.1'], default='0.5.0')
+    parser.add_argument('--client-version', choices=['0.5.0','0.5.1','0.5.2'], default='0.5.0')
     args = parser.parse_args()
     package = Path('plugins/cicada-tasks') / ('cicada-local-tasks-' + args.client_version)
     if git('status', '--porcelain'):
@@ -27,7 +27,7 @@ def main():
         raise SystemExit('Unexpected MCP package identity.')
     members = git('ls-files', str(package), 'plugins/cicada-tasks/install.py',
                   'plugins/cicada-tasks/upgrade_050.py').splitlines()
-    if args.client_version == '0.5.1':
+    if args.client_version in ('0.5.1', '0.5.2'):
         members += git('ls-files', 'plugins/cicada-tasks/README.md',
                        'plugins/cicada-tasks/test_flat_upgrade.py',
                        'plugins/cicada-tasks/fixtures/seven-tool-baseline.b64').splitlines()
@@ -59,7 +59,8 @@ def main():
             readback.extractall(temporary)
         candidate_tree = upgrade.tree_sha(Path(temporary) / package.name)
     receipt = {'source': source, 'clientVersion': manifest['version'],
-               'nativeMinimumVersion': '0.5.5' if args.client_version == '0.5.1' else native, 'nativeEnvelopeVersion': 1,
+               'nativeMinimumVersion': '0.5.5' if args.client_version in ('0.5.1', '0.5.2') else native, 'nativeEnvelopeVersion': 1,
+               'nativeMacTransportRequiresCandidate': args.client_version == '0.5.2',
                'candidateTreeSha256': candidate_tree,
                'archive': archive.name, 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
                'members': hashes}
