@@ -159,12 +159,15 @@ export function mountCalendarInProgress(element, dependencies) {
   function renderRow(row) {
     const item = node('li', `cip-row ${row.running ? 'is-running' : 'is-paused'}`);
     item.dataset.contextRecord = row.key;
+    const selected = !dependencies.singleSelection && row.key === selectedTaskKey;
+    if (selected) item.setAttribute('aria-current', 'true');
     const open = node('button', 'cip-title', row.title); open.type = 'button'; open.title = row.title;
     open.dataset.cipControl = 'open'; open.dataset.cipKey = row.key;
     const time = node('span', 'cip-time'); time.dataset.cipTime = row.key;
     const head = node('div', 'cip-line cip-title-line'); head.append(open);
     const content = node('div', 'cip-content'); content.append(head);
     const meta = node('div', 'cip-line cip-meta');
+    if (selected) { const marker = node('span', 'cip-selected', uiCopy("Выбрано")); marker.dataset.cipSelected = ''; meta.append(marker); }
     meta.append(node('span', 'cip-state', row.running ? uiCopy("Идёт") : uiCopy("На паузе")));
     if (row.stageState) {
       meta.append(stageControl(row));
@@ -192,12 +195,12 @@ export function mountCalendarInProgress(element, dependencies) {
     actions.append(finish, more);
     item.append(toggle, content, meter, actions);
     if (confirming === row.key) { item.classList.add('is-confirming'); item.append(confirmPanel(row)); }
-    rowSignatures.set(item, JSON.stringify([row, confirming === row.key]));
+    rowSignatures.set(item, JSON.stringify([row, confirming === row.key, row.key === selectedTaskKey]));
     return item;
   }
   function renderRowIfChanged(row, previous) {
     const existing = previous.get(row.key);
-    return existing && rowSignatures.get(existing) === JSON.stringify([row, confirming === row.key]) ? existing : renderRow(row);
+    return existing && rowSignatures.get(existing) === JSON.stringify([row, confirming === row.key, row.key === selectedTaskKey]) ? existing : renderRow(row);
   }
   function syncChildren(parent, wanted) {
     wanted.forEach((child, index) => {

@@ -72,6 +72,14 @@ async function main(){assert.equal(process.platform,'linux');const chrome=proces
      if(scenario!=='empty'){
        await page.locator('[data-calendar-task-area] .cip-row[data-context-record="note:running"]').waitFor();
        await page.locator('[data-calendar-task-area] .cip-row[data-context-record="note:paused"]').waitFor();
+       if(scenario==='filled')for(const id of ['running','paused']){
+         await page.locator('[data-today-choose]').click();
+         await page.locator('[data-today-scope="tasks"]').click();
+         await page.locator(`[data-today-task-choices] [data-overview-task="note:${id}"]`).click();
+         await page.locator(`[data-calendar-task-area] .cip-row[data-context-record="note:${id}"][aria-current="true"] [data-cip-selected]`).waitFor();
+         assert.equal(await page.locator('[data-calendar-task-area] [data-cip-selected]').count(),1);
+         assert.equal(await page.locator('[data-calendar-task-area] .cip-row').count(),2);
+       }
      }
      await shot(page,label+'-dashboard',observations);
      await page.locator('.uni-tab[data-pane="tasks"]').click();
