@@ -12,7 +12,7 @@ const records=()=>[
  {source_type:'note',source_id:'done',id:'done',title:'Готово',content:'done body',date:new Date().toISOString().slice(0,10),status_extra:'done',status:'done',completed:true,archived:false,version:3,is_active:false,has_work:true,actual_seconds:120,sphere:'personal'},
  {source_type:'note',source_id:'archived',id:'archived',title:'В архиве',content:'archived body',date:null,status_extra:'task',status:'task',completed:false,archived:true,version:11,is_active:false,has_work:true,actual_seconds:120,sphere:'personal'}
 ];
-function backend({rows}){
+function backend({rows,reviewUnavailable=false}){
  const day = new Date().toLocaleDateString('sv-SE');
  rows.forEach(row=>{if(row.date)row.date=day;});
  const state={rows:rows.map(row=>structuredClone(row)),calls:[],ui:{},archiveMode:false}; window.fixtureState=state;
@@ -22,7 +22,7 @@ function backend({rows}){
   if(command==='get_calendar_task'||command==='get_note'){const x=row(args.id);return x&&structuredClone(x);}
   if(command==='get_calendar_task_goals')return[];
   if(command==='get_calendar_records')return state.rows.filter(row=>!row.archived&&!row.completed).map(row=>structuredClone(row));
-  if(command==='get_ui_state')return state.ui[args.key]??null;
+  if(command==='get_ui_state')return state.ui[args.key]??'';
   if(command==='set_ui_state'&&args.key==='calendar_now_v1'){
     if(args.expectedValue!==undefined&&args.expectedValue!==(state.ui[args.key]??null))throw Error('Synthetic UI state changed');
     state.ui[args.key]=args.value;return null;
@@ -32,7 +32,7 @@ function backend({rows}){
   if(command==='get_active_blocks')return structuredClone(blocks.filter(block=>block.is_active));
   if(command==='get_timeline_blocks')return structuredClone(blocks.filter(block=>block.date===args.date));
   if(command==='get_calendar_task_seconds')return row(args.sourceId)?.actual_seconds||0;
-  if(command==='shared_task_command'&&args.input?.command==='get')return {isError:true,status:404,code:'shared_task_not_found'};
+  if(command==='shared_task_command'&&args.input?.command==='get')return reviewUnavailable?{isError:true,status:503,code:'synthetic_review_unavailable'}:{isError:true,status:404,code:'shared_task_not_found'};
   if(command==='get_calendar_task_minutes')return 0;
   if(command==='toggle_note_archive'){const x=row(args.id);if(!x)throw Error('missing fixture row');if(args.expectedVersion!==x.version)throw Error('stale fixture version');x.archived=!x.archived;x.version++;return x.archived;}
   if(command==='get_notes')return state.rows.map(row=>structuredClone(row));
@@ -44,20 +44,32 @@ function backend({rows}){
 }
 const server=http.createServer((req,res)=>{const name=new URL(req.url,'http://fixture').pathname;if(name==='/'){res.setHeader('Content-Type','text/html');res.end(fixture);return;}const file=path.resolve(root,'.'+name);if(!file.startsWith(root+path.sep)||!fs.existsSync(file)||!fs.statSync(file).isFile()){res.writeHead(404);res.end();return;}res.setHeader('Content-Type',({'.js':'text/javascript','.json':'application/json','.css':'text/css','.svg':'image/svg+xml'})[path.extname(file)]||'application/octet-stream');res.end(fs.readFileSync(file));});
 async function shot(page,label,observations){await page.screenshot({path:path.join(output,label+'.png'),fullPage:true});observations.push({label,text:await page.locator('#calendar-content').innerText(),width:await page.evaluate(()=>innerWidth)});}
+async function visibleCreate(page){
+ const create=page.locator('[data-calendar-create]');
+ assert.equal(await create.isVisible(),true);
+ const style=await create.evaluate(node=>{const box=node.getBoundingClientRect(),css=getComputedStyle(node);return {width:box.width,height:box.height,color:css.color,background:css.backgroundColor};});
+ assert.ok(style.width>=70&&style.height>=40,'Create has a readable hit area');
+ assert.notEqual(style.background,'rgba(0, 0, 0, 0)','primary background survives action reset');
+ assert.notEqual(style.color,style.background,'Create label contrasts with its background');
+ await create.click();await page.getByRole('menu',{name:'Что создать'}).waitFor();await page.keyboard.press('Escape');
+}
 async function main(){assert.equal(process.platform,'linux');const chrome=process.env.MVP_TASKS_CHROME;assert.ok(chrome,'hosted Chrome path required');await new Promise(r=>server.listen(0,'127.0.0.1',r));const browser=await chromium.launch({headless:true,executablePath:chrome});const observations=[];
- try{for(const width of [1100,390])for(const theme of ['light','dark'])for(const scenario of ['filled','empty']){
+ try{for(const width of [1100,390])for(const theme of ['light','dark'])for(const scenario of ['filled','empty','review-unavailable']){
    const page=await browser.newPage({viewport:{width,height:900},timezoneId:'Asia/Almaty'}),errors=[];
    page.on('pageerror',error=>errors.push(error.message));
    const rows=scenario==='empty'?[]:records();
    const label=`${width}-${theme}-${scenario}`;
    const rowIds=async expected=>page.waitForFunction(ids=>JSON.stringify([...document.querySelectorAll('[data-workspace-task-list] .ct-row')].map(node=>node.dataset.contextRecord).sort())===JSON.stringify(ids.map(id=>'note:'+id).sort()),expected);
    try{
-     await page.addInitScript(backend,{rows});
+     await page.addInitScript(backend,{rows,reviewUnavailable:scenario==='review-unavailable'});
      await page.addInitScript(({theme})=>localStorage.setItem('hanni_theme',theme),{theme});
      await page.goto('http://127.0.0.1:'+server.address().port,{waitUntil:'networkidle'});
      await page.waitForFunction(()=>window.fixtureReady);
+     await visibleCreate(page);
      await page.locator('[data-calendar-task-area]').waitFor();
-     if(scenario==='filled'){
+     await page.locator('.calendar-now__goal h2').waitFor();
+     assert.doesNotMatch(await page.locator('#calendar-content').innerText(),/Не удалось обновить текущую задачу|Загружаем цель/);
+     if(scenario!=='empty'){
        await page.locator('[data-calendar-task-area] .cip-row[data-context-record="note:running"]').waitFor();
        await page.locator('[data-calendar-task-area] .cip-row[data-context-record="note:paused"]').waitFor();
      }
@@ -69,6 +81,14 @@ async function main(){assert.equal(process.platform,'linux');const chrome=proces
      assert.equal(await page.locator('.ct-view-management[open]').count(),0);
      assert.equal(await page.locator('.ct-filter-details[open]').count(),0);
      await rowIds(scenario==='empty'?[]:['long','paused','running']);
+     if(scenario==='review-unavailable'){
+       await page.locator('[data-tasks-search]').fill('Очень длинная');await rowIds(['long']);
+       await page.locator('[data-task-control="review-retry"]').waitFor();
+       await page.locator('[data-task-control="open"]').click();
+       await page.locator('.task-details-description').waitFor();
+       await shot(page,label+'-clickable-title',observations);
+       assert.deepEqual(errors,[]);continue;
+     }
      if(scenario==='empty'){
        await page.locator('.ct-empty').waitFor();
        assert.match(await page.locator('.ct-empty').innerText(),/нет|создай/i);
