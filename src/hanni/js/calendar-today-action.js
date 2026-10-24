@@ -11,10 +11,10 @@ export function mountCalendarTodayAction(element, dependencies) {
   const uiCopy = createUiCopy(document);
   let disposed = false, mode = 'recommendation', disposeRun = null, disposeChoices = null, disposeTasks = null, currentRecommendation = null;
   element.classList.add('calendar-today-action');
-  element.innerHTML = `<header class="calendar-today-action__heading"><h2 tabindex="-1">${uiCopy("Что сделать сейчас")}</h2><button type="button" data-today-choose aria-expanded="false">${uiCopy("Выбрать другое")}</button></header>
+  element.innerHTML = `<section class="calendar-task-area" data-calendar-task-area aria-label="${uiCopy("Задачи на сегодня")}"><header class="calendar-today-action__heading"><h2 tabindex="-1">${uiCopy("Что сделать сейчас")}</h2><button type="button" data-today-choose aria-expanded="false">${uiCopy("Выбрать другое")}</button></header>
     <div data-today-recommendation></div>
     <section data-today-choices hidden aria-label="${uiCopy("Выбрать дело")}"><div class="calendar-today-action__scopes" role="group" aria-label="${uiCopy("Что выбрать")}"><button type="button" data-today-scope="routines" aria-pressed="true">${uiCopy("Рутины")}</button><button type="button" data-today-scope="tasks" aria-pressed="false">${uiCopy("Задачи")}</button></div><div data-today-routines></div><div data-today-task-choices hidden></div></section>
-    <div data-today-run hidden></div>`;
+    <div data-today-run hidden></div></section>`;
   const q = selector => element.querySelector(selector);
   const recommendation = q('[data-today-recommendation]'), choices = q('[data-today-choices]'), run = q('[data-today-run]'), choose = q('[data-today-choose]');
   const heading = q('.calendar-today-action__heading h2');
