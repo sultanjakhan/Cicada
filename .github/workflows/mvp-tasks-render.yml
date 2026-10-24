@@ -1,0 +1,34 @@
+name: Cicada MVP tasks hosted render
+on:
+  push:
+    branches: [work/cicada-mvp-cont-20261024-01a14df0]
+permissions:
+  contents: read
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Use hosted Chrome
+        run: |
+          command -v google-chrome || command -v chromium
+      - name: Install pinned render dependencies
+        run: npm install --no-save --ignore-scripts playwright@1.62.1 jsdom@29.1.1
+      - name: Render synthetic MVP task flows
+        env:
+          MVP_TASKS_CHROME: /usr/bin/google-chrome
+        run: node scripts/qa-mvp-tasks-render.cjs
+      - name: Check public history and private data guards
+        run: |
+          python -B scripts/check-private-data.py
+          python -B scripts/check-public-history.py
+      - name: Upload source render evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cicada-mvp-tasks-render
+          path: .local/mvp-tasks-render
+          if-no-files-found: warn
