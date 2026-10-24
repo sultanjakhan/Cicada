@@ -1017,7 +1017,7 @@ fn toggle_note_archive_record(conn: &Connection, id: &str, expected_version: Opt
     // Compare, toggle and return our result in one statement: another writer
     // cannot make a stale archive/restore act as the opposite action. A task
     // with a currently running interval is deliberately not archivable.
-    let result = conn.query_row("UPDATE items SET archived=1-archived,version=version+1,updated_at=?1 WHERE id=?2 AND kind='task' AND (?3 IS NULL OR version=?3) AND NOT EXISTS (SELECT 1 FROM timeline_blocks WHERE source_type='note' AND source_id=?2 AND is_active=1) RETURNING archived!=0",
+    let result = conn.query_row("UPDATE items SET archived=1-archived,version=version+1,updated_at=?1 WHERE id=?2 AND kind='task' AND (?3 IS NULL OR version=?3) AND (archived!=0 OR NOT EXISTS (SELECT 1 FROM timeline_blocks WHERE source_type='note' AND source_id=?2 AND is_active=1)) RETURNING archived!=0",
         params![now(),id,expected_version], |r| r.get(0))
         .optional().map_err(|e| fail(e.to_string()))?
         .ok_or_else(|| fail("note changed elsewhere or was deleted"));
@@ -1100,6 +1100,18 @@ mod note_archive_tests {
         assert!(toggle_note_archive_record(&conn, "synthetic-note", Some(1)).unwrap());
         assert!(!toggle_note_archive_record(&conn, "synthetic-note", Some(2)).unwrap());
         assert_eq!(conn.query_row("SELECT count(*) FROM timeline_blocks WHERE source_type='note' AND source_id='synthetic-note'", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+    }
+
+    #[test]
+    fn active_interval_does_not_strand_an_archived_task_from_restore() {
+        let conn = fixture();
+        conn.execute("UPDATE items SET archived=1,version=9 WHERE id='synthetic-note'", []).unwrap();
+        conn.execute("INSERT INTO timeline_blocks VALUES('note','synthetic-note',1)", []).unwrap();
+        assert!(!toggle_note_archive_record(&conn, "synthetic-note", Some(9)).unwrap());
+        assert_eq!(conn.query_row("SELECT version FROM items WHERE id='synthetic-note'", [], |r| r.get::<_, i64>(0)).unwrap(), 10);
+        assert_eq!(conn.query_row("SELECT count(*) FROM timeline_blocks WHERE source_type='note' AND source_id='synthetic-note' AND is_active=1", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+        assert_eq!(toggle_note_archive_record(&conn, "synthetic-note", Some(10)).unwrap_err(), "task is active");
+        assert_eq!(conn.query_row("SELECT archived,version FROM items WHERE id='synthetic-note'", [], |r| Ok((r.get::<_, i64>(0)?,r.get::<_, i64>(1)?))).unwrap(), (0,10));
     }
 
     #[test]
