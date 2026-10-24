@@ -130,7 +130,7 @@
 .ct-estimate { font-variant-numeric: tabular-nums; }
 .ct-kind { color: var(--text-secondary); }
 .ct-sphere { color: var(--text-secondary); }
-.ct-date { padding: 0 0 0 13px; border: 0; background: transparent; color: var(--text-muted) !important; font-size: 12px !important; line-height: 16px; cursor: pointer; }
+.ct-date { position: relative; padding: 0 0 0 13px; border: 0; background: transparent; color: var(--text-muted) !important; font-size: 12px !important; line-height: 16px; cursor: pointer; }
 .ct-stage { position: relative; padding: 0; border: 0; background: transparent; color: var(--text-muted) !important; font-size: 12px !important; line-height: 16px; cursor: default; }
 .ct-date { font-variant-numeric: tabular-nums; }
 /* The hit area fills the padding band of the meta line (it clips anything larger). */

@@ -19,16 +19,20 @@ function backend({rows}){
  const blocks=state.rows.filter(row=>row.has_work).map((row,index)=>({id:index+1,source_type:'note',source_id:row.id,title:row.title,date:day,completion_date:day,start_time:new Date(Date.now()-120000).toTimeString().slice(0,8),end_time:row.is_active?null:new Date(Date.now()-30000).toTimeString().slice(0,8),duration_seconds:row.is_active?0:90,is_active:row.is_active}));
  const invoke=async(command,args={})=>{state.calls.push({command,args:structuredClone(args)}); const row=id=>state.rows.find(r=>String(r.source_id)===String(id));
   if(command==='get_calendar_tasks') return state.rows.filter(r=>args.includeArchived||!r.archived).filter(r=>args.includeCompleted||(!r.completed&&r.status==='task')).map(row=>structuredClone(row));
-  if(command==='get_calendar_task'){const x=row(args.id);return x&&structuredClone(x);}
+  if(command==='get_calendar_task'||command==='get_note'){const x=row(args.id);return x&&structuredClone(x);}
   if(command==='get_calendar_task_goals')return[];
-  if(command==='get_calendar_records')return[];
+  if(command==='get_calendar_records')return state.rows.filter(row=>!row.archived&&!row.completed).map(row=>structuredClone(row));
   if(command==='get_ui_state')return state.ui[args.key]??null;
+  if(command==='set_ui_state'&&args.key==='calendar_now_v1'){
+    if(args.expectedValue!==undefined&&args.expectedValue!==(state.ui[args.key]??null))throw Error('Synthetic UI state changed');
+    state.ui[args.key]=args.value;return null;
+  }
   if(command==='get_goals')return[];
   if(command==='get_calendar_task_blocks')return structuredClone(blocks.filter(block=>(args.sourceIds||[]).map(String).includes(block.source_id)));
   if(command==='get_active_blocks')return structuredClone(blocks.filter(block=>block.is_active));
   if(command==='get_timeline_blocks')return structuredClone(blocks.filter(block=>block.date===args.date));
   if(command==='get_calendar_task_seconds')return row(args.sourceId)?.actual_seconds||0;
-  if(command==='shared_task_command'&&args.input?.command==='get')return {isError:true,status:404,code:'task_not_found'};
+  if(command==='shared_task_command'&&args.input?.command==='get')return {isError:true,status:404,code:'shared_task_not_found'};
   if(command==='get_calendar_task_minutes')return 0;
   if(command==='toggle_note_archive'){const x=row(args.id);if(!x)throw Error('missing fixture row');if(args.expectedVersion!==x.version)throw Error('stale fixture version');x.archived=!x.archived;x.version++;return x.archived;}
   if(command==='get_notes')return state.rows.map(row=>structuredClone(row));
@@ -93,7 +97,7 @@ async function main(){assert.equal(process.platform,'linux');const chrome=proces
      }
      assert.equal(await page.locator('#calendar-content').evaluate(node=>node.scrollWidth<=node.clientWidth+1),true);
      const calls=await page.evaluate(()=>window.fixtureState.calls);
-     assert.deepEqual(calls.filter(call=>!call.command.startsWith('get_')&&!call.command.startsWith('mvp_sync_')&&!['toggle_note_archive','read_calendar_day'].includes(call.command)&&!(call.command==='shared_task_command'&&call.args.input?.command==='get')),[]);
+     assert.deepEqual(calls.filter(call=>!call.command.startsWith('get_')&&!call.command.startsWith('mvp_sync_')&&!['toggle_note_archive','read_calendar_day'].includes(call.command)&&!(call.command==='shared_task_command'&&call.args.input?.command==='get')&&!(call.command==='set_ui_state'&&call.args.key==='calendar_now_v1')),[]);
    }finally{
      if(errors.length)fs.writeFileSync(path.join(output,label+'-pageerrors.json'),JSON.stringify(errors));
      assert.deepEqual(errors,[]);await page.close();
