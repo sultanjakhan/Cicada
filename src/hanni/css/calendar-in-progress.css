@@ -32,6 +32,7 @@
 .calendar-in-progress .cip-title { flex: 1 1 auto; display: block; min-width: 0; padding: 0; border: 0; border-radius: 3px; background: transparent; font-size: 14px !important; line-height: 20px; font-weight: 600; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .cip-title:hover { text-decoration: underline; text-decoration-color: var(--text-faint); text-underline-offset: 3px; }
 .cip-state { flex: none; font-size: 11px; line-height: 16px; color: var(--text-muted); white-space: nowrap; }
+.cip-selected { font-size: 12px; line-height: 16px; font-weight: 650; color: var(--text-primary); }
 .cip-row.is-running .cip-state { color: var(--text-secondary); }
 .cip-time-meter { display: grid; justify-items: end; row-gap: 2px; min-width: 0; }
 .cip-time-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-size: 10px; line-height: 12px; color: var(--text-muted); white-space: nowrap; }

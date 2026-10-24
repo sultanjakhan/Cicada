@@ -30,6 +30,7 @@ import { openCalendarGoalPopup } from './calendar-goal-popup.js';
 import { sphereLabel, isInstantTask } from './task-model.js';
 import { loadProcesses, mountStageTime, taskStage } from './task-processes.js';
 import { openCalendarTaskDetails } from './calendar-task-details.js';
+import { changeTaskArchive } from './task-archive.js';
 import { mountCalendarTodayAction } from './calendar-today-action.js';
 import { mountCalendarRoutineChoices } from './calendar-routine-choices.js';
 import { showCalendarSettings } from './calendar-settings.js';
@@ -197,6 +198,7 @@ function occurrenceDialog(record, returnFocus = null) {
 }
 
 async function showRecord(record, returnFocus = null, initialFocus = null) {
+  if (record.source_type === 'note' && record.archived) return taskArchiveDialog(record, returnFocus);
   if (record.source_type === 'note' && !record.readonly) {
     const revision = workspaceRevision;
     const isCurrent = () => revision === workspaceRevision && S.activeTab === 'calendar';
@@ -282,11 +284,39 @@ async function showStageDetails(modal, record) {
   modal.addEventListener('close', stop, { once: true });
 }
 
+function taskArchiveDialog(record, returnFocus = null) {
+  const archived = !!record.archived;
+  const modal = dialog(uiCopy(archived ? "Задача в архиве" : "Архивировать задачу"), returnFocus);
+  const fields = modal.querySelector('.cm-fields');
+  const title = document.createElement('p'); title.textContent = record.title;
+  const note = document.createElement('p'); note.textContent = uiCopy(archived ? "История и данные сохранены. Восстанови задачу, чтобы продолжить или изменить её." : "Задача исчезнет из активного списка. Её данные и история сохранятся; восстановление доступно в Архиве.");
+  fields.append(title, note);
+  const save = modal.querySelector('[type=submit]'); save.textContent = uiCopy(archived ? "Восстановить" : "В архив");
+  modal.querySelector('form').addEventListener('submit', async event => {
+    event.preventDefault(); if (save.disabled) return;
+    modal.setPending(true);
+    const error = modal.querySelector('.cm-error'); error.hidden = true;
+    try { await changeTaskArchive(invoke, record, !archived); modal.close(); changed(); }
+    catch (cause) {
+      error.textContent = String(cause?.message || cause).includes('task is active')
+        ? uiCopy("Сначала поставь задачу на паузу.")
+        : uiCopy("Не удалось подтвердить изменение. Закрой окно и перечитай список перед повтором; данные сохранены.");
+      error.hidden = false; error.tabIndex = -1; error.focus();
+    } finally { modal.setPending(false); }
+  });
+  modal.showModal(); save.focus();
+  return modal;
+}
+
 function mountRecordMenu(element, options) {
   return mountCalendarContextMenu(element, { ...options, getActions: row => {
     const record = calendarRecord(row);
     const actions = [{ id: 'open', label: uiCopy("Открыть"), dialog: true, run: restore => showRecord(record, restore) }];
     if (record.readonly) return actions;
+    if (record.archived) {
+      actions.push({ id:'restore', label:uiCopy("Восстановить"), dialog:true, run:restore=>taskArchiveDialog(record,restore) });
+      return actions;
+    }
     if (record.source_type === 'note' || record.source_type === 'event') {
       const edit = (restore, field, isCurrent) => record.source_type === 'note' ? taskEditor(record, restore, field, isCurrent) : showEventModal(String(record.source_id), null, { returnFocus: restore, initialFocus: field, isCurrent });
       actions.push({ id: 'edit', label: uiCopy("Изменить"), dialog: true, run: (restore, isCurrent) => edit(restore, 'title', isCurrent) });
@@ -297,6 +327,8 @@ function mountRecordMenu(element, options) {
     // The command checks live timer state atomically. Never call update_note_status here.
     if (record.source_type === 'note' && row.status_extra === 'task' && !record.completed && !record.is_active && !record.archived)
       actions.push({ id: 'complete', label: uiCopy("Завершить задачу"), run: async restore => { await invoke('complete_calendar_task', { id: String(record.source_id) }); restore(); changed(); } });
+    if (record.source_type === 'note' && !record.is_active && !record._reviewReadError && !['running','awaiting_dispatch'].includes(record._review?.reviewState))
+      actions.push({ id:'archive', label:uiCopy("В архив"), dialog:true, run:restore=>taskArchiveDialog(record,restore) });
     return actions;
   } });
 }
@@ -767,9 +799,10 @@ export async function loadCalendarWorkspace(el, { nativeReview = true } = {}) {
         openTask:task => showRecord(calendarRecord(task), () => disposeNextAction?.focus()),
         executeTask:(task,action) => executeCalendarTaskAction(calendarRecord(task),action),
       });
+      pane.querySelector('[data-calendar-task-area]').append(pane.querySelector('[data-calendar-in-progress]'));
       disposeInProgress = mountCalendarInProgress(pane.querySelector('[data-calendar-in-progress]'), {
-        invoke, notifyChange:changed, title:uiCopy("Идёт сейчас"), activeOnly:true, hideWhenEmpty:true, embedded:true,
-        singleSelection:true, selectedTask:todayTaskSelection,
+        invoke, notifyChange:changed, title:uiCopy("Запущено и на паузе"), activeOnly:false, hideWhenEmpty:true, embedded:true,
+        singleSelection:false, selectedTask:todayTaskSelection,
         onSelectedTaskState:state => {
           if (!todayTaskSelection || state.key !== `${todayTaskSelection.source_type}:${String(todayTaskSelection.source_id)}`) return;
           disposeNextAction?.setFocusedTaskVisible(`task:${todayTaskSelection.source_type}:${String(todayTaskSelection.source_id)}`,state.visible);
@@ -813,7 +846,8 @@ export async function loadCalendarWorkspace(el, { nativeReview = true } = {}) {
       pane.innerHTML = `<div data-workspace-task-list></div><details class="calendar-task-history"><summary>${uiCopy("Запущено и на паузе сегодня")}</summary><div data-calendar-in-progress></div></details>`;
       disposePanel = mountCalendarTasks(pane.querySelector('[data-workspace-task-list]'), {
         invoke, state:tasksPaneState, readTaskReview, mountMenu:mountRecordMenu, notifyChange:changed,
-        openTask:(row,restore) => void openNativeTask(row,restore),
+        openTask:(row,restore) => row.archived ? taskArchiveDialog(calendarRecord(row),restore) : void openNativeTask(row,restore),
+        archiveTask:(row,restore) => taskArchiveDialog(calendarRecord(row),restore),
         editDate:(row,restore) => taskEditor(calendarRecord(row),restore,'date',()=>revision===workspaceRevision && pane.isConnected),
         executeAction:(row,action) => executeCalendarTaskAction(calendarRecord(row),action),
       });

@@ -1,6 +1,10 @@
 /* One full-width workspace, one primary action. Lists retain their own pane. */
 .calendar-today { border:1px solid var(--border-default,#ddd); border-radius:8px; padding:16px; background:var(--bg-card,#fff); }
 .calendar-today [hidden] { display:none !important; }
+.calendar-task-area { min-width:0; }
+.calendar-task-area > .calendar-today-action__heading { margin-bottom:4px; }
+.calendar-task-area > [data-today-recommendation], .calendar-task-area > [data-today-run] { min-width:0; }
+.calendar-task-area > [data-today-run] { border-top:1px solid var(--border-default,#ddd); padding-top:10px; }
 .calendar-today .calendar-next-action__surface { padding:4px 0 2px; border:0; border-radius:0; background:transparent; }
 .calendar-today .calendar-next-action__surface header > button { border:0; padding:5px 0; min-height:32px; font-size:12px; color:var(--text-muted,#777); }
 .calendar-today .calendar-next-action__actions > button:first-child { background:var(--text-primary,#252525); color:var(--bg-card,#fff); border-color:var(--text-primary,#252525); }

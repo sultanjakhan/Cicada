@@ -10,6 +10,14 @@ const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 export function mountTaskFilterTabs(host, { invoke, state, onApply }) {
   const doc = host.ownerDocument;
   const uiCopy = createUiCopy(doc);
+  // These IDs cannot collide with user-created view IDs (which start with a letter/number).
+  const builtins = [
+    { id:'active', title:uiCopy("Активные"), filters:DEFAULT_TASK_FILTERS },
+    { id:'all', title:uiCopy("Все"), filters:ALL_TASK_FILTERS },
+    { id:'@completed', title:uiCopy("Завершённые"), filters:{...DEFAULT_TASK_FILTERS,filter:'completed'} },
+    { id:'@archive', title:uiCopy("Архив"), filters:{...DEFAULT_TASK_FILTERS,filter:'archived'} },
+  ];
+  const builtin = id => builtins.find(view => view.id === id);
   const errorText = error => uiCopy.format(error?.copyKey || error?.message || 'повторите попытку', ...(error?.parameters || []));
   host.classList.add('ct-view-tabs');
   const tabs = doc.createElement('div');
@@ -24,15 +32,17 @@ export function mountTaskFilterTabs(host, { invoke, state, onApply }) {
   status.setAttribute('role', 'status');
   status.setAttribute('aria-live', 'polite');
   status.tabIndex = -1;
-  host.append(tabs, actions, editorHost, status);
+  const management = doc.createElement('details'); management.className = 'ct-view-management';
+  const managementTitle = doc.createElement('summary'); managementTitle.textContent = uiCopy("Управление подборками");
+  management.append(managementTitle, actions, editorHost);
+  host.append(tabs, management, status);
 
   const currentFilters = () => {
     try { return taskFilters(state); }
     catch { return null; }
   };
   let snapshot = null;
-  let selected = state.taskViewId || (same(currentFilters(), ALL_TASK_FILTERS) ? 'all'
-    : same(currentFilters(), DEFAULT_TASK_FILTERS) ? 'active' : null);
+  let selected = state.taskViewId || builtins.find(view => same(currentFilters(), view.filters))?.id || null;
   let editor = null;
   let busy = false;
   let loading = false;
@@ -55,15 +65,13 @@ export function mountTaskFilterTabs(host, { invoke, state, onApply }) {
     return target;
   };
   const viewById = id => snapshot?.state.views.find(view => view.id === id);
-  const selectedFilters = () => selected === 'all' ? ALL_TASK_FILTERS
-    : selected === 'active' ? DEFAULT_TASK_FILTERS : viewById(selected)?.filters;
+  const selectedFilters = () => builtin(selected)?.filters || viewById(selected)?.filters;
   const modified = () => !!selectedFilters() && !same(currentFilters(), selectedFilters());
 
   function drawTabs() {
     const focusedId = doc.activeElement?.dataset?.taskViewId;
     const entries = [
-      { id:'all', title:uiCopy("Все"), filters:ALL_TASK_FILTERS },
-      { id:'active', title:uiCopy("Активные"), filters:DEFAULT_TASK_FILTERS },
+      ...builtins,
       ...(snapshot?.state.views || []),
     ];
     tabs.replaceChildren(...entries.map(view => {
@@ -209,6 +217,7 @@ export function mountTaskFilterTabs(host, { invoke, state, onApply }) {
 
   function openEditor(mode) {
     if (busy || stale || !snapshot || editor) return;
+    management.open = true;
     const view = mode === 'edit' ? viewById(selected) : null;
     if (mode === 'edit' && !view) return;
     let filters;
@@ -261,7 +270,7 @@ export function mountTaskFilterTabs(host, { invoke, state, onApply }) {
         if (editor) editor.targetChanged = false;
         message = '';
       }
-      if (selected && !['all','active'].includes(selected) && !viewById(selected)) {
+      if (selected && !builtin(selected) && !viewById(selected)) {
         // Keep the identity as well as the filter snapshot. On a later Tasks
         // mount, a missing ID would make a saved Review choice look like a
         // legacy transient filter and allow the calendar to fall back to Active.

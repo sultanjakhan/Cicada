@@ -2,7 +2,7 @@
 
 This route is a local Unix-domain socket from the portable seven-tool MCP client
 to Cicada's existing native personal-task dispatcher. It requires a candidate
-containing `agent_socket.rs`; an older installed 0.5.23 build does not acquire it
+containing `agent_socket.rs`; a build without this module does not acquire it
 from a client update. Application version, source commit and executable hash are
 separate evidence. This change neither publishes a release nor enables access.
 

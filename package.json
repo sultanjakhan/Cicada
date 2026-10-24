@@ -1,7 +1,7 @@
 {
   "name": "cicada",
-  "version": "0.5.23",
-  "cicadaBuildId": "20261022-personal-activity-0523.1",
+  "version": "0.5.25",
+  "cicadaBuildId": "20261024-macos-task-transport-0525.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -33,6 +33,9 @@
     "@tauri-apps/cli": "2.11.4",
     "jsdom": "29.1.1",
     "vite": "8.3.5"
+  },
+  "overrides": {
+    "undici": "7.30.1"
   },
   "license": "MIT"
 }

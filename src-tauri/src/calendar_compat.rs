@@ -1015,11 +1015,16 @@ pub fn toggle_note_archive(id: String, expected_version: Option<i64>, state: Sta
 
 fn toggle_note_archive_record(conn: &Connection, id: &str, expected_version: Option<i64>) -> Result<bool, String> {
     // Compare, toggle and return our result in one statement: another writer
-    // cannot make a stale archive/restore act as the opposite action.
-    conn.query_row("UPDATE items SET archived=1-archived,version=version+1,updated_at=?1 WHERE id=?2 AND kind='task' AND (?3 IS NULL OR version=?3) RETURNING archived!=0",
+    // cannot make a stale archive/restore act as the opposite action. A task
+    // with a currently running interval is deliberately not archivable.
+    let result = conn.query_row("UPDATE items SET archived=1-archived,version=version+1,updated_at=?1 WHERE id=?2 AND kind='task' AND (?3 IS NULL OR version=?3) AND (archived!=0 OR NOT EXISTS (SELECT 1 FROM timeline_blocks WHERE source_type='note' AND source_id=?2 AND is_active=1)) RETURNING archived!=0",
         params![now(),id,expected_version], |r| r.get(0))
         .optional().map_err(|e| fail(e.to_string()))?
-        .ok_or_else(|| fail("note changed elsewhere or was deleted"))
+        .ok_or_else(|| fail("note changed elsewhere or was deleted"));
+    if result.is_err() && conn.query_row("SELECT EXISTS(SELECT 1 FROM timeline_blocks WHERE source_type='note' AND source_id=?1 AND is_active=1)", [id], |r| r.get::<_, bool>(0)).unwrap_or(false) {
+        return Err(fail("task is active"));
+    }
+    result
 }
 
 #[cfg(test)]
@@ -1029,6 +1034,7 @@ mod note_archive_tests {
     fn fixture() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE items(id TEXT PRIMARY KEY,kind TEXT,archived INTEGER,version INTEGER,updated_at TEXT,title TEXT,notes TEXT,tags TEXT);
+            CREATE TABLE timeline_blocks(source_type TEXT,source_id TEXT,is_active INTEGER);
             INSERT INTO items VALUES('synthetic-note','task',0,1,'baseline','Synthetic note','Preserved content','keep,synthetic');").unwrap();
         conn
     }
@@ -1082,20 +1088,69 @@ mod note_archive_tests {
             assert_eq!(snapshot(&conn), before);
         }
     }
+
+    #[test]
+    fn running_interval_blocks_archive_but_paused_history_can_archive_and_restore() {
+        let conn = fixture();
+        conn.execute("INSERT INTO timeline_blocks VALUES('note','synthetic-note',1)", []).unwrap();
+        let before = snapshot(&conn);
+        assert_eq!(toggle_note_archive_record(&conn, "synthetic-note", Some(1)).unwrap_err(), "task is active");
+        assert_eq!(snapshot(&conn), before);
+        conn.execute("UPDATE timeline_blocks SET is_active=0", []).unwrap();
+        assert!(toggle_note_archive_record(&conn, "synthetic-note", Some(1)).unwrap());
+        assert!(!toggle_note_archive_record(&conn, "synthetic-note", Some(2)).unwrap());
+        assert_eq!(conn.query_row("SELECT count(*) FROM timeline_blocks WHERE source_type='note' AND source_id='synthetic-note'", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+    }
+
+    #[test]
+    fn active_interval_does_not_strand_an_archived_task_from_restore() {
+        let conn = fixture();
+        conn.execute("UPDATE items SET archived=1,version=9 WHERE id='synthetic-note'", []).unwrap();
+        conn.execute("INSERT INTO timeline_blocks VALUES('note','synthetic-note',1)", []).unwrap();
+        assert!(!toggle_note_archive_record(&conn, "synthetic-note", Some(9)).unwrap());
+        assert_eq!(conn.query_row("SELECT version FROM items WHERE id='synthetic-note'", [], |r| r.get::<_, i64>(0)).unwrap(), 10);
+        assert_eq!(conn.query_row("SELECT count(*) FROM timeline_blocks WHERE source_type='note' AND source_id='synthetic-note' AND is_active=1", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+        assert_eq!(toggle_note_archive_record(&conn, "synthetic-note", Some(10)).unwrap_err(), "task is active");
+        assert_eq!(conn.query_row("SELECT archived,version FROM items WHERE id='synthetic-note'", [], |r| Ok((r.get::<_, i64>(0)?,r.get::<_, i64>(1)?))).unwrap(), (0,10));
+    }
+
+    #[test]
+    fn archived_task_is_hidden_by_default_and_returned_with_identity_when_requested() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::init_schema(&conn).unwrap();
+        conn.execute("INSERT INTO items(id,kind,title,notes,date,duration_minutes,completed,version,created_at,updated_at,archived,tags,status) VALUES('archive-list-fixture','task','Archive me','Keep this','2026-10-24',30,0,4,'a','a',0,'task-sphere:personal','task')", []).unwrap();
+        conn.execute("INSERT INTO timeline_blocks(source_type,source_id,date,start_time,end_time,duration_minutes,is_active,completion_date,created_at,updated_at) VALUES('note','archive-list-fixture','2026-10-23','10:00','10:12',12,0,'2026-10-23','a','a')", []).unwrap();
+        assert!(toggle_note_archive_record(&conn, "archive-list-fixture", Some(4)).unwrap());
+        assert!(calendar_list(&conn, "kind='task' AND archived=0 AND status IN ('task','done')", "s.id", &[], true).unwrap().is_empty());
+        let archived = calendar_list(&conn, "kind='task' AND status IN ('task','done')", "s.id", &[], true).unwrap();
+        assert_eq!(archived.len(), 1);
+        assert_eq!(archived[0]["source_id"], "archive-list-fixture");
+        assert_eq!(archived[0]["archived"], true);
+        assert_eq!(archived[0]["version"], 5);
+        assert_eq!(archived[0]["actual_seconds"], 720);
+        assert!(toggle_note_archive_record(&conn, "archive-list-fixture", Some(5)).unwrap() == false);
+        let restored = calendar_list(&conn, "kind='task' AND archived=0 AND status IN ('task','done')", "s.id", &[], true).unwrap();
+        assert_eq!(restored[0]["source_id"], "archive-list-fixture");
+        assert_eq!(restored[0]["archived"], false);
+        assert_eq!(restored[0]["version"], 6);
+        assert_eq!(restored[0]["actual_seconds"], 720);
+    }
 }
 
 #[tauri::command(rename_all = "camelCase")]
 pub fn get_calendar_tasks(
     include_completed: Option<bool>,
+    include_archived: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<Vec<Value>, String> {
     let conn = lock(&state)?;
+    let archive = if include_archived.unwrap_or(false) { "" } else { "archived=0 AND " };
     let predicate = if include_completed.unwrap_or(false) {
-        "kind='task' AND archived=0 AND status IN ('task','done')"
+        format!("kind='task' AND {archive}status IN ('task','done')")
     } else {
-        "kind='task' AND archived=0 AND status='task' AND completed=0"
+        format!("kind='task' AND {archive}status='task' AND completed=0")
     };
-    calendar_list(&conn, predicate, "s.date IS NULL,s.date,NULLIF(s.time,'') IS NULL,s.time,s.id", &[], true)
+    calendar_list(&conn, &predicate, "s.date IS NULL,s.date,NULLIF(s.time,'') IS NULL,s.time,s.id", &[], true)
 }
 
 // Only the two list commands supply these static SQL fragments. External values
@@ -1109,7 +1164,7 @@ fn calendar_list(
 ) -> Result<Vec<Value>, String> {
     let sql = format!(
         "WITH selected AS (
-            SELECT id,kind,title,date,time,duration_minutes,category,color,completed,status,priority,tags,
+            SELECT id,kind,title,date,time,duration_minutes,category,color,completed,status,priority,tags,archived,version,
                 CASE WHEN kind='event' THEN 'event' ELSE 'note' END AS source_type
             FROM items WHERE {predicate}
         ), timeline AS (
@@ -1121,7 +1176,7 @@ fn calendar_list(
             GROUP BY t.source_type,t.source_id
         )
         SELECT s.id,s.kind,s.title,s.date,s.time,s.duration_minutes,s.category,s.color,
-            s.completed,s.status,s.priority,COALESCE(t.active,0),COALESCE(t.seconds,0),COALESCE(t.has_work,0),s.tags
+            s.completed,s.status,s.priority,COALESCE(t.active,0),COALESCE(t.seconds,0),COALESCE(t.has_work,0),s.tags,s.archived,s.version
         FROM selected s LEFT JOIN timeline t ON t.source_type=s.source_type AND t.source_id=s.id
         ORDER BY {order}"
     );
@@ -1150,6 +1205,8 @@ fn calendar_list(
                 "is_active": row.get::<_, i64>(11)? != 0,
                 "actual_minutes": row.get::<_, i64>(12)? / 60,
                 "has_work": row.get::<_, i64>(13)? > 0,
+                "archived": row.get::<_, i64>(15)? != 0,
+                "version": row.get::<_, i64>(16)?,
             });
             if is_task {
                 value["actual_seconds"] = json!(row.get::<_, i64>(12)?);
