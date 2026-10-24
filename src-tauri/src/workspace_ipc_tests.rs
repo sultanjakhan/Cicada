@@ -383,7 +383,7 @@ fn expected_list_record(
     let mut value = json!({"source_type":source,"source_id":id,"title":id,"date":date,"planned_time":time,
         "duration_minutes":duration,"category":"Example","color":"#123456","completed":false,
         "status_extra":"task","priority":3,"tracking_mode":if source=="note" {"check"}else{"track"},
-        "is_active":false,"actual_minutes":0,"has_work":false});
+        "is_active":false,"actual_minutes":0,"has_work":false,"archived":false,"version":1});
     if source == "note" {
         value["actual_seconds"] = json!(0);
         value["task_kind"] = json!("normal");

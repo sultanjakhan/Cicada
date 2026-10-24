@@ -1,0 +1,44 @@
+name: Cicada MVP tasks hosted render
+on:
+  push:
+    branches: [work/cicada-mvp-cont-20261024-01a14df0]
+permissions:
+  contents: read
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Use hosted Chrome
+        run: |
+          CHROME=$(command -v google-chrome || command -v chromium)
+          echo "MVP_TASKS_CHROME=$CHROME" >> "$GITHUB_ENV"
+      - name: Check public history and private data guards
+        run: |
+          python -B scripts/check-private-data.py
+          python -B scripts/check-public-history.py
+      - name: Install pinned render dependencies outside repository
+        run: |
+          npm install --prefix "$RUNNER_TEMP/cicada-render" --no-save --ignore-scripts playwright@1.62.1 jsdom@29.1.1
+      - name: Render synthetic MVP task flows
+        env:
+          NODE_PATH: ${{ runner.temp }}/cicada-render/node_modules
+        run: node scripts/qa-mvp-tasks-render.cjs
+      - name: Record hosted source and tool versions
+        if: always()
+        run: |
+          mkdir -p .local/mvp-tasks-render
+          CHROME=$(command -v google-chrome || command -v chromium || true)
+          printf '{"sourceSha":"%s","playwright":"1.62.1","jsdom":"29.1.1","hostedChrome":"%s","sourceOnly":true,"installedAcceptance":false}\n' "$GITHUB_SHA" "$CHROME" > .local/mvp-tasks-render/run-metadata.json
+      - name: Upload source render evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cicada-mvp-tasks-render
+          path: .local/mvp-tasks-render
+          if-no-files-found: error
+          retention-days: 3

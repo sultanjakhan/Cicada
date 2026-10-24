@@ -1,7 +1,7 @@
 {
   "name": "cicada",
-  "version": "0.5.23",
-  "cicadaBuildId": "20261022-personal-activity-0523.1",
+  "version": "0.5.24",
+  "cicadaBuildId": "20261024-mvp-tasks-0524.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -26,13 +26,16 @@
     "@editorjs/list": "2.0.9",
     "@editorjs/marker": "1.4.0",
     "@editorjs/quote": "2.7.6",
-    "dompurify": "3.4.16",
+    "dompurify": "3.4.17",
     "editorjs-drag-drop": "1.1.16"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.11.4",
     "jsdom": "29.1.1",
     "vite": "8.3.5"
+  },
+  "overrides": {
+    "undici": "7.30.1"
   },
   "license": "MIT"
 }

@@ -416,13 +416,13 @@ test('Today links to a persistent routines pane; creation and launch keep explic
   assert.deepEqual(errors,[]);
 });
 
-test('one persistent action below the Calendar heading opens the shared Task/Event editor and restores focus', async t => {
+test('one persistent action beside the Calendar heading opens the shared Task/Event editor and restores focus', async t => {
   const { w, click } = await launch(t);
   assert.equal(w.document.querySelector('[data-overview-create]'), null);
   const trigger = w.document.querySelector('[data-calendar-create]');
   assert.ok(trigger.closest('.uni-header-actions'));
   assert.equal(trigger.closest('.uni-header-actions').previousElementSibling.className, 'uni-header');
-  assert.equal(trigger.closest('.uni-header-actions').nextElementSibling.className, 'calendar-focus');
+  assert.equal(trigger.closest('.uni-heading-bar').nextElementSibling.className, 'calendar-focus');
   assert.equal(w.document.querySelector('.calendar-focus').nextElementSibling.className, 'uni-navigation');
   assert.equal(w.document.querySelector('#tab-bar [data-calendar-create]'), null);
   assert.equal(w.document.querySelector('.uni-header-desc'), null);
@@ -615,7 +615,7 @@ test('two tasks run at once from Tasks and the launcher; Dashboard preserves bot
   await settle();
   assert.equal(w.document.querySelector('.uni-tab.active').dataset.pane, 'dash');
   const rows = () => [...widget().querySelectorAll('.cip-row')];
-  assert.equal(rows().length, 1, 'Today shows only the currently selected running task');
+  assert.equal(rows().length, 2, 'Dashboard exposes both independently running tasks');
   const selectedKey = rows()[0].querySelector('[data-cip-control="toggle"]').dataset.cipKey;
   assert.ok(['note:first','note:second'].includes(selectedKey));
   assert.equal(rows()[0].classList.contains('is-running'), true);
@@ -626,9 +626,10 @@ test('two tasks run at once from Tasks and the launcher; Dashboard preserves bot
   const selectedBlockId = taskState.blocks.find(block => `note:${block.source_id}` === selectedKey).id;
   assert.deepEqual(calls.filter(call => call.command === 'pause_task_block').map(call => call.args.blockId), [selectedBlockId], 'only the chosen task pauses');
   assert.deepEqual(taskState.blocks.filter(block => block.is_active).map(block => `note:${block.source_id}`), [otherKey], 'the other timer continues unchanged');
-  assert.equal(rows().length, 1, 'the paused selected task stays visible as Today focus');
-  assert.equal(rows()[0].querySelector('[data-cip-control="toggle"]').dataset.cipKey, selectedKey);
-  assert.equal(rows()[0].classList.contains('is-running'), false);
+  assert.equal(rows().length, 2, 'the paused task and the other running task stay visible');
+  const pausedRow=rows().find(row=>row.querySelector('[data-cip-control="toggle"]').dataset.cipKey===selectedKey);
+  assert.ok(pausedRow);
+  assert.equal(pausedRow.classList.contains('is-running'), false);
   await settle();
   assert.equal(count(), 1);
   // Resuming from the Tasks pane also runs beside the other task.

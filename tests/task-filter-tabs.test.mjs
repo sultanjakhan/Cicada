@@ -51,6 +51,18 @@ function mountTabs(db, state = {...DEFAULT_TASK_FILTERS}, language = 'ru') {
   return {dom,host,state,applied,control,close:() => {control.dispose();dom.window.close();}};
 }
 const control = (host, name) => host.querySelector('[data-task-view-' + name + ']');
+test('archive/completed navigation is permanent without showing management or mutating records', async t => {
+  const db=store(collection([makeView('completed','My existing view')]));
+  const mounted=mountTabs(db); t.after(mounted.close); await flush();
+  assert.equal(mounted.host.querySelector('.ct-view-management').open,false);
+  mounted.host.querySelector('[data-task-view-id="@archive"]').click();
+  assert.equal(mounted.state.filter,'archived');
+  mounted.host.querySelector('[data-task-view-id="@completed"]').click();
+  assert.equal(mounted.state.filter,'completed');
+  assert.equal(mounted.host.querySelector('[data-task-view-id="completed"]').textContent,'My existing view');
+  assert.equal(db.writes,0);
+  assert.equal(db.commands.some(command=>!command.endsWith('ui_state')),false);
+});
 function nameInput(host, value) {
   const input = control(host, 'name');
   input.value = value;
@@ -66,7 +78,7 @@ test('All and Active are permanent; saved tab appears after acknowledged write a
   const mounted = mountTabs(db);
   t.after(mounted.close);
   await flush();
-  assert.equal(mounted.host.querySelectorAll('[data-task-view-tab]').length, 2);
+  assert.equal(mounted.host.querySelectorAll('[data-task-view-tab]').length, 4);
   mounted.host.querySelector('[data-task-view-id="all"]').click();
   assert.equal(mounted.state.filter, 'all');
   assert.deepEqual(taskFilters(mounted.state), ALL_TASK_FILTERS);
@@ -80,7 +92,7 @@ test('All and Active are permanent; saved tab appears after acknowledged write a
   db.defer = true;
   submit(mounted.host);
   await flush();
-  assert.equal(mounted.host.querySelectorAll('[data-task-view-tab]').length, 2);
+  assert.equal(mounted.host.querySelectorAll('[data-task-view-tab]').length, 4);
   assert.equal(control(mounted.host, 'save').disabled, true);
   assert.equal(db.writes, 0);
   db.release();
@@ -89,7 +101,7 @@ test('All and Active are permanent; saved tab appears after acknowledged write a
   const saved = JSON.parse(db.raw).views[0];
   assert.equal(saved.title, 'Важное');
   assert.equal(saved.filters.search, 'важное');
-  assert.equal(mounted.host.querySelectorAll('[data-task-view-tab]').length, 3);
+  assert.equal(mounted.host.querySelectorAll('[data-task-view-tab]').length, 5);
   assert.equal(mounted.host.querySelector('[data-task-view-id="' + saved.id + '"]').getAttribute('aria-pressed'), 'true');
 
   const remounted = mountTabs(db, mounted.state);
@@ -159,7 +171,7 @@ test('editing uses current filters, marks modifications, and deletion needs conf
   control(mounted.host, 'confirm-remove').click();
   await flush();
   assert.equal(JSON.parse(db.raw).views.length, 0);
-  assert.equal(mounted.host.querySelectorAll('[data-task-view-tab]').length, 2);
+  assert.equal(mounted.host.querySelectorAll('[data-task-view-tab]').length, 4);
   assert.deepEqual(mounted.applied.at(-1).search, 'новый поиск');
 });
 
@@ -406,7 +418,7 @@ test('English view controls, save/edit/delete confirmation and modified state pr
   t.after(mounted.close);
   await flush();
   assert.equal(mounted.host.querySelector('[role="group"]').getAttribute('aria-label'), 'Task views');
-  assert.deepEqual([...mounted.host.querySelectorAll('[data-task-view-tab]')].map(item=>item.textContent), ['All','Active',authoredName]);
+  assert.deepEqual([...mounted.host.querySelectorAll('[data-task-view-tab]')].map(item=>item.textContent), ['Active','All','Completed','Archive',authoredName]);
   assert.deepEqual([...mounted.host.querySelectorAll('.ct-view-tabs-actions button')].map(item=>item.textContent), ['Save current filters','Edit view','Refresh views']);
   mounted.host.querySelector('[data-task-view-id="authored"]').click();
   mounted.state.search = 'мой поиск';

@@ -12,7 +12,7 @@ export const DEFAULT_TASK_FILTERS = Object.freeze({
 export const ALL_TASK_FILTERS = Object.freeze({ ...DEFAULT_TASK_FILTERS, filter: 'all' });
 
 const FILTER_KEYS = Object.keys(DEFAULT_TASK_FILTERS);
-const FILTER_MODES = new Set(['all', 'active', 'today', 'undated', 'completed', 'review', 'ai-running']);
+const FILTER_MODES = new Set(['all', 'active', 'today', 'undated', 'completed', 'archived', 'review', 'ai-running']);
 const SPHERES = new Set(['', 'work', 'personal']);
 const PERSONAL_SPHERES = new Set(['', 'home', 'health', 'growth', 'personal', 'none']);
 const GROUPS = new Set(['date', 'goal']);

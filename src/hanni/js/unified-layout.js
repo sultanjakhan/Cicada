@@ -87,12 +87,14 @@ export async function renderUnifiedLayout(el, tabId, config = {}) {
   themeControls.get(el)?.();
   themeControls.delete(el);
   el.innerHTML = `
+    ${tabId === 'calendar' ? '<div class="uni-heading-bar">' : ''}
     <div class="uni-header">
       <span class="uni-header-icon${config.headerIcon ? ' uni-header-icon--static' : ''}" ${config.headerIcon ? 'aria-hidden="true"' : 'title="Изменить иконку"'}>${icon}</span>
       <h1 class="uni-header-name${config.editableHeader === false ? ' uni-header-name--static' : ''}"${config.editableHeader === false ? '' : ' title="Изменить название"'}>${escapeHtml(name)}</h1>
       ${config.hideDescription ? '' : `<div class="uni-header-desc" title="Изменить описание">${desc ? escapeHtml(desc) : '<span style="opacity:0.4">Добавить описание…</span>'}</div>`}
     </div>
     ${actionsHtml ? `<div class="uni-header-actions">${actionsHtml}</div>` : ''}
+    ${tabId === 'calendar' ? '</div>' : ''}
     ${config.headerExtra || ''}
     <div class="uni-navigation"><div class="uni-tabs" aria-label="Разделы календаря">${tabsHtml}</div></div>
     <div class="uni-content"><div class="uni-pane" id="uni-pane-${tabId}"></div></div>`;
