@@ -22,9 +22,9 @@ function backend({rows,reviewUnavailable=false}){
   if(command==='get_calendar_task'||command==='get_note'){const x=row(args.id);return x&&structuredClone(x);}
   if(command==='get_calendar_task_goals')return[];
   if(command==='get_calendar_records')return state.rows.filter(row=>!row.archived&&!row.completed).map(row=>structuredClone(row));
-  if(command==='get_ui_state')return state.ui[args.key]??'';
+  if(command==='get_ui_state')return state.ui[args.key]??null;
   if(command==='set_ui_state'&&args.key==='calendar_now_v1'){
-    if(args.expectedValue!==undefined&&args.expectedValue!==(state.ui[args.key]??null))throw Error('Synthetic UI state changed');
+    if(args.expectedValue!==undefined&&(args.expectedValue??'')!==(state.ui[args.key]??''))throw Error('Synthetic UI state changed');
     state.ui[args.key]=args.value;return null;
   }
   if(command==='get_goals')return[];
