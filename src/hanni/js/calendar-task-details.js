@@ -70,6 +70,11 @@ export function openCalendarTaskDetails(record, dependencies) {
   route.append(routeTitle, routeCurrent, routeNext, routeHint);
   const total = document.createElement('strong'); total.className = 'task-details-total';
   const metadata = document.createElement('div'); metadata.className = 'task-details-meta';
+  const description = document.createElement('details'); description.className = 'task-details-description'; description.hidden = true;
+  const descriptionSummary = document.createElement('summary'); descriptionSummary.textContent = text('Описание задачи', 'Task description');
+  const descriptionContent = document.createElement('div'); descriptionContent.className = 'task-details-description-content';
+  const descriptionUnsupported = document.createElement('p'); descriptionUnsupported.className = 'task-details-description-unsupported'; descriptionUnsupported.textContent = text('Форматированное содержимое доступно через «Изменить»; в карточке показан только обычный текст.', 'Formatted content is available through “Edit”; this card shows plain text only.'); descriptionUnsupported.hidden = true;
+  description.append(descriptionSummary, descriptionContent, descriptionUnsupported);
   const goal = document.createElement('div'); goal.className = 'task-details-goal'; goal.hidden = true;
   const stageRow = document.createElement('label'); stageRow.className = 'task-details-stage-row';
   const stageCaption = document.createElement('span'); stageCaption.className = 'task-details-stage-caption';
@@ -83,7 +88,7 @@ export function openCalendarTaskDetails(record, dependencies) {
   const historyContent = document.createElement('div'); historyContent.className = 'task-details-history-content';
   history.append(historySummary, historyContent);
   const announcement = document.createElement('span'); announcement.className = 'task-details-sr-only'; announcement.setAttribute('role', 'status'); announcement.setAttribute('aria-live', 'polite');
-  card.append(total, metadata, goal, route, stageRow, waiting, history, announcement);
+  card.append(total, metadata, description, goal, route, stageRow, waiting, history, announcement);
   fields.append(card);
   const sharedControlsHost = document.createElement('section'); sharedControlsHost.className = 'task-details-shared-controls'; sharedControlsHost.setAttribute('aria-label', 'Связь задачи');
   fields.append(sharedControlsHost);
@@ -150,6 +155,16 @@ export function openCalendarTaskDetails(record, dependencies) {
     goal.hidden = !linked;
     if (linked) goal.replaceChildren(iconLabel(ICONS.target, linked));
   }
+  function syncDescription() {
+    const plain = typeof current.description === 'string' && current.description.trim()
+      ? current.description
+      : typeof current.content === 'string' && current.content.trim() ? current.content : '';
+    const structured = current.content_blocks != null && String(current.content_blocks).trim() !== '';
+    description.hidden = !plain && !structured;
+    descriptionContent.textContent = plain;
+    descriptionContent.hidden = !plain;
+    descriptionUnsupported.hidden = !structured || !!plain;
+  }
   function syncStageOptions() {
     stageState = taskStage(current, processes);
     stageRow.hidden = !stageState || isInstantTask(current);
@@ -184,7 +199,7 @@ export function openCalendarTaskDetails(record, dependencies) {
     stageSelect.disabled = value || pending || loadFailed || !stageState || !!current.completed || ['done', 'skipped', 'missed'].includes(current.status_extra);
   }
 
-  syncSummary(); syncMetadata(); syncStageOptions();
+  syncSummary(); syncMetadata(); syncDescription(); syncStageOptions();
   history.addEventListener('toggle', () => {
     if (history.open) remountHistory();
     else { historyStop?.(); historyStop = null; }
@@ -222,7 +237,7 @@ export function openCalendarTaskDetails(record, dependencies) {
       closedSeconds = timeAvailable ? seconds : 0;
       activeBlocks = Array.isArray(active) ? active : [];
       activeStatusKnown = true; loadFailed = false;
-      syncStageOptions(); syncSummary(); syncMetadata(); syncClock(); remountHistory();
+      syncStageOptions(); syncSummary(); syncMetadata(); syncDescription(); syncClock(); remountHistory();
       api.showError(''); api.retry.hidden = true;
     } catch (error) {
       if (!live() || request !== loadRevision) return;

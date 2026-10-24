@@ -64,6 +64,17 @@ test('task total compares exact accounted time with its current estimate', async
   assert.equal(f.window.document.querySelector('.task-details-history').open, false);
 });
 
+test('task details exposes the native plain description without rendering stored markup', async t => {
+  const f = fixture({ task: { ...record, description: 'Требования:\nСохранить исходный текст <как есть>', content: 'fallback', content_blocks: '{"blocks":[{"type":"telemetry"}]}' } });
+  t.after(() => { f.dispose(); f.dom.window.close(); });
+  await settle();
+  const section = f.window.document.querySelector('.task-details-description');
+  assert.equal(section.hidden, false);
+  assert.equal(section.querySelector('.task-details-description-content').textContent, 'Требования:\nСохранить исходный текст <как есть>');
+  assert.equal(section.querySelector('.task-details-description-content').querySelector('*'), null);
+  assert.equal(section.querySelector('.task-details-description-unsupported').hidden, true);
+});
+
 test('instant task card does not present an estimate from stale duration metadata', async t => {
   const f = fixture({ task: { ...record, task_kind: 'instant', duration_minutes: 30 }, seconds: 100 });
   t.after(() => { f.dispose(); f.dom.window.close(); });
