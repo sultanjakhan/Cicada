@@ -73,7 +73,7 @@ export function openCalendarTaskDetails(record, dependencies) {
   const description = document.createElement('details'); description.className = 'task-details-description'; description.hidden = true;
   const descriptionSummary = document.createElement('summary'); descriptionSummary.textContent = text('Описание задачи', 'Task description');
   const descriptionContent = document.createElement('div'); descriptionContent.className = 'task-details-description-content';
-  const descriptionUnsupported = document.createElement('p'); descriptionUnsupported.className = 'task-details-description-unsupported'; descriptionUnsupported.textContent = text('Форматированное содержимое доступно через «Изменить»; в карточке показан только обычный текст.', 'Formatted content is available through “Edit”; this card shows plain text only.'); descriptionUnsupported.hidden = true;
+  const descriptionUnsupported = document.createElement('p'); descriptionUnsupported.className = 'task-details-description-unsupported'; descriptionUnsupported.textContent = text('Сохранённое форматированное содержимое пока недоступно в этой карточке.', 'Saved formatted content cannot yet be read in this card.'); descriptionUnsupported.hidden = true;
   description.append(descriptionSummary, descriptionContent, descriptionUnsupported);
   const goal = document.createElement('div'); goal.className = 'task-details-goal'; goal.hidden = true;
   const stageRow = document.createElement('label'); stageRow.className = 'task-details-stage-row';

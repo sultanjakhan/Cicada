@@ -106,6 +106,24 @@ test('Today selection shows one chosen row, keeps it after pause, and leaves par
   assert.equal(x.host.hidden,true,'no work row is shown while Today has no selected task');
 });
 
+test('dashboard focus tracks its row while parallel running and paused work remains visible', async t => {
+  const data=backend(), states=[];
+  const x=await mount(t,data,{singleSelection:false,activeOnly:false,
+    selectedTask:{source_type:'note',source_id:'draft'},onSelectedTaskState:state=>states.push(state)});
+  assert.ok(x.row('note:draft'));
+  assert.ok(x.row('note:letters'),'paused work remains reachable');
+  assert.ok(x.row(`schedule:${routine}`),'parallel routine remains reachable');
+  assert.equal(states.at(-1).key,'note:draft');
+  assert.equal(states.at(-1).visible,true);
+  x.dispose.setSelectedTask({source_type:'note',source_id:'letters'});
+  assert.equal(states.at(-1).key,'note:letters');
+  assert.equal(states.at(-1).visible,true);
+  x.dispose.setSelectedTask(null);
+  assert.equal(states.at(-1).key,null);
+  assert.equal(x.rows().length,3,'changing focus changes no execution row');
+  assert.equal(data.calls.some(call=>['pause_task_block','start_task_block','finish_task_block','complete_calendar_task'].includes(call.name)),false);
+});
+
 test('selection is retained with an explicit stale-data error when a refresh fails', async t => {
   const data=backend(), x=await mount(t,data,{activeOnly:true,hideWhenEmpty:true,singleSelection:true,selectedTask:{source_type:'note',source_id:'draft'}});
   data.failReads=true;

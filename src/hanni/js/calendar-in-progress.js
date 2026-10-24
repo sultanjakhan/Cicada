@@ -61,7 +61,7 @@ export function mountCalendarInProgress(element, dependencies) {
   let rows = null, failed = false, busy = false, disposed = false, revision = 0, queued = false, feedback = null;
   let hidden = {}, hiddenRaw = null, confirming = null, menu = null;
   let excludedRoutine = null;
-  let selectedTaskKey = dependencies.singleSelection ? sourceKey(dependencies.selectedTask) || null : undefined;
+  let selectedTaskKey = sourceKey(dependencies.selectedTask) || null;
   let day = dayOf(clock());
   element.classList.add('calendar-in-progress');
   element.innerHTML = `<section class="cip-card" aria-labelledby="${prefix}-title" data-cip-card>
@@ -250,7 +250,7 @@ export function mountCalendarInProgress(element, dependencies) {
     // An open menu follows its re-rendered trigger or closes with its row.
     if (menu) { const trigger = findControl(menu.key, menu.control); if (trigger && !busy) { menu.trigger = trigger; trigger.setAttribute('aria-expanded', 'true'); } else closeMenu(menu.menu.contains(doc.activeElement)); }
     if (focusKey && (!focused.isConnected || doc.activeElement !== focused)) restore(focusKey, focusControl);
-    if (dependencies.singleSelection) dependencies.onSelectedTaskState?.({ key: selectedTaskKey, visible: visibleRows.some(row => row.key === selectedTaskKey), ready: rows !== null, failed });
+    dependencies.onSelectedTaskState?.({ key: selectedTaskKey, visible: visibleRows.some(row => row.key === selectedTaskKey), ready: rows !== null, failed });
   }
   async function load(today) {
     const [running, blocks, hiddenValue, processes] = await Promise.all([readActiveBlocks(invoke), invoke('get_timeline_blocks', { date: today }), invoke('get_ui_state', { key: HIDDEN_KEY }).catch(() => hiddenRaw), loadProcesses(invoke)]);
@@ -278,7 +278,7 @@ export function mountCalendarInProgress(element, dependencies) {
       if (!row.running && (!row.lastBlock || `${block.end_time || block.start_time}` > `${row.lastBlock.end_time || row.lastBlock.start_time}`)) { row.lastBlock = block; row.completion_date = block.completion_date || block.date; }
     }
     const types = new Set([...entries.values()].map(row => row.source_type));
-    if (dependencies.singleSelection && selectedTaskKey) types.add(selectedTaskKey.split(':')[0]);
+    if (selectedTaskKey) types.add(selectedTaskKey.split(':')[0]);
     const [tasks, events, schedules, links, goals] = await Promise.all([
       types.has('note') ? invoke('get_calendar_tasks', {}) : [],
       types.has('event') ? invoke('get_all_events', {}) : [],
@@ -287,7 +287,7 @@ export function mountCalendarInProgress(element, dependencies) {
       types.size ? invoke('get_calendar_task_goals', {}).catch(() => []) : [],
       types.size ? invoke('get_goals', { tabName: null }).catch(() => []) : [],
     ]);
-    if (dependencies.singleSelection && selectedTaskKey && !entries.has(selectedTaskKey)) {
+    if (selectedTaskKey && !entries.has(selectedTaskKey)) {
       const selected = [...tasks, ...schedules, ...events.map(event => ({ ...event, source_type:'event', source_id:String(event.id), status_extra:event.status }))].find(task => sourceKey(task) === selectedTaskKey);
       const work = Number(selected?.actual_seconds) || Number(selected?.actual_minutes) * 60 || 0;
       if (selected && !closedTask(selected) && (selected.has_work || work > 0)) {
@@ -537,7 +537,7 @@ export function mountCalendarInProgress(element, dependencies) {
   dispose.setExcludedRoutine = id => { excludedRoutine = id == null ? null : String(id); render(); };
   dispose.setSelectedTask = task => {
     const next = task == null ? null : typeof task === 'string' ? task : sourceKey(task);
-    if (!dependencies.singleSelection || next === selectedTaskKey) return;
+    if (next === selectedTaskKey) return;
     selectedTaskKey = next;
     render();
     if (next && !rows?.some(row => row.key === next) && !busy) void refresh();

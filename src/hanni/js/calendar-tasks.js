@@ -29,8 +29,8 @@ const dayOf = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padSt
 const shiftDay = (day, delta) => { const date = new Date(`${day}T12:00:00`); date.setDate(date.getDate() + delta); return dayOf(date); };
 // Running work leads the list (2026-09-24); other active tasks are grouped by how
 // urgent their planned day is; closed tasks keep one group.
-const GROUPS = [['running','В работе'],['overdue','Просрочено'],['today','Сегодня'],['soon','Скоро'],['undated','Без даты'],['completed','Завершённые']];
-const groupOf = (row, today) => closed(row) ? 'completed' : row.is_active ? 'running' : !row.date ? 'undated' : row.date < today ? 'overdue' : row.date === today ? 'today' : 'soon';
+const GROUPS = [['running','В работе'],['overdue','Просрочено'],['today','Сегодня'],['soon','Скоро'],['undated','Без даты'],['completed','Завершённые'],['archived','Архив']];
+const groupOf = (row, today) => row.archived ? 'archived' : closed(row) ? 'completed' : row.is_active ? 'running' : !row.date ? 'undated' : row.date < today ? 'overdue' : row.date === today ? 'today' : 'soon';
 const groupIndex = (row, today) => GROUPS.findIndex(([id]) => id === groupOf(row, today));
 // Work and personal are the main split (2026-09-25): «Личное» is every task whose
 // sphere is not work, tasks without a sphere included. Inside it a light second
@@ -44,6 +44,7 @@ const ARROW_ICON = '<svg width="13" height="13" viewBox="0 0 14 14" fill="none" 
 const plural = (count, forms) => { const n = Math.abs(count) % 100, d = n % 10; return forms[n > 10 && n < 20 ? 2 : d === 1 ? 0 : d >= 2 && d <= 4 ? 1 : 2]; };
 const EMPTY = { search:'Ничего не нашлось. Измени поиск, цель или сферу.', sphere:'В этой сфере задач нет. Выбери другую сферу или создай задачу через «+ Создать».', completed:'Завершённых задач пока нет.', undated:'Все задачи распределены по дням.', today:'На сегодня задач нет.', active:'Задач пока нет. Создай первую через «+ Создать».' };
 EMPTY.all = 'Задач пока нет.';
+EMPTY.archived = 'В архиве пока нет задач.';
 // Overdue cleanup acts on every task of the group through the task save path.
 const BULK = {
   today: { label:'Перенести на сегодня', ask:(n,copy=uiCopy) => copy.format("Перенести {0} {1}?", n, copy.locale==='en'?(n===1?'task':'tasks'):plural(n,['задачу','задачи','задач'])), confirm:'Перенести', pending:'Переносим…', verb:'перенести',
@@ -64,7 +65,7 @@ async function saveTaskDate(invoke, row, dueDate) {
 }
 
 export function mountCalendarTasks(host, dependencies) {
-  const { invoke, openTask, editDate, mountMenu, executeAction, notifyChange } = dependencies;
+  const { invoke, openTask, editDate, mountMenu, executeAction, notifyChange, archiveTask } = dependencies;
   const doc = host.ownerDocument, win = doc.defaultView;
   const uiCopy = createUiCopy(doc);
   const state = dependencies.state || { filter:'active', search:'', goal:'', sphere:'', page:0 };
@@ -109,7 +110,7 @@ export function mountCalendarTasks(host, dependencies) {
   for(const [key,label]of [['source',uiCopy("Источник задачи")],['project',uiCopy("Проект")],['tag',uiCopy("Тег")]]){const caption=doc.createElement('label');caption.textContent=uiCopy(label);const select=doc.createElement('select');select.dataset.tasksObservation=key;caption.append(select);observationFilters.append(caption);observationSelects[key]=select;select.addEventListener('change',()=>{state[key]=select.value;state.page=0;render();});}
   const observationNote=doc.createElement('p');observationNote.dataset.tasksObservationNote='';observationNote.setAttribute('role','status');filterBody.append(observationFilters);
   const toolbar = host.querySelector('.ct-toolbar'), filters = host.querySelector('.ct-filters');
-  toolbar.after(filterDetails); filterBody.append(filters, goalFilter.parentElement, grouping);
+  toolbar.after(filterDetails); filterBody.append(filters, goalFilter.parentElement, grouping, host.querySelector('.ct-spheres'), q('personal'));
   const applied = doc.createElement('div'); applied.className = 'ct-applied-filters';
   const appliedLabel = doc.createElement('span'); appliedLabel.dataset.tasksApplied = '';
   const reset = doc.createElement('button'); reset.type = 'button'; reset.textContent = uiCopy("Сбросить фильтры"); reset.dataset.tasksReset = '';
@@ -155,17 +156,17 @@ export function mountCalendarTasks(host, dependencies) {
     return root?{id:`goal:${root.id}`,label:root.title,rank:1,name:root.title}:{id:'no-goal',label:uiCopy('Без цели'),rank:2,name:''};
   }
   function renderRow(row, section, byGoal) {
-    const id=taskKey(row), done=closed(row), overdue=!done&&!!row.date&&row.date<today, running=!done&&!!row.is_active;
+    const archived=!!row.archived, id=taskKey(row), done=closed(row), overdue=!archived&&!done&&!!row.date&&row.date<today, running=!archived&&!done&&!!row.is_active;
     const item=node('li','ct-row');item.dataset.contextRecord=id;item.classList.toggle('is-running',running);item.classList.toggle('is-overdue',overdue);item.classList.toggle('is-done',done);
-    const complete=control('ct-complete',done?'✓':'',()=>void finish(row));complete.disabled=busy||done||!!row.readonly;complete.setAttribute('aria-label',`${done?uiCopy("Завершена"):uiCopy("Завершить")}: ${row.title}`);if(!done)complete.title=uiCopy("Завершить");
+    const complete=control(archived?'ct-restore':'ct-complete',archived?'↶':done?'✓':'',()=>archived?archiveTask?.(row,()=>restore(id,'open')):void finish(row));complete.disabled=busy||(!archived&&done)||!!row.readonly;complete.setAttribute('aria-label',`${archived?uiCopy("Восстановить"):done?uiCopy("Завершена"):uiCopy("Завершить")}: ${row.title}`);if(!done||archived)complete.title=uiCopy(archived?"Восстановить":"Завершить");
     const title=control('ct-title',row.title,()=>openTask(row,()=>restore(id)));title.title=row.title;
     const meta=node('span','ct-meta');
     // The running accent says «В работе»; a paused task keeps a small mark.
     const primaryMeta=node('span','ct-primary-meta');
-    const progress=taskProgress({...contextFor(row),completed:done,waiting:!!row.waiting,language:doc.documentElement.lang});
-    primaryMeta.append(node('span','ct-status',done?uiCopy("Завершена"):running?uiCopy("Таймер идёт"):row.has_work||row.actual_minutes>0?uiCopy("На паузе"):uiCopy("Не начата")));
+    const progress=archived?null:taskProgress({...contextFor(row),completed:done,waiting:!!row.waiting,language:doc.documentElement.lang});
+    primaryMeta.append(node('span','ct-status',archived?uiCopy("В архиве"):done?uiCopy("Завершена"):running?uiCopy("Таймер идёт"):row.has_work||row.actual_minutes>0?uiCopy("На паузе"):uiCopy("Не начата")));
     if(progress)primaryMeta.firstChild.textContent=progress.label;
-    if(!done)primaryMeta.append(node('span','ct-timer-status',running?uiCopy("Таймер идёт"):row.has_work||row.actual_minutes>0?uiCopy("Таймер на паузе"):uiCopy("Таймер не запущен")));
+    if(!archived&&!done&&progress)primaryMeta.append(node('span','ct-timer-status',running?uiCopy("Таймер идёт"):row.has_work||row.actual_minutes>0?uiCopy("Таймер на паузе"):uiCopy("Таймер не запущен")));
     const instant=isInstantTask(row), time=taskTime(row), sphere=uiCopy(sphereLabel(row.sphere));
     if(instant){const kind=node('span','ct-kind',uiCopy("Моментальная"));kind.title=uiCopy("Отмечается одним нажатием, без таймера");meta.append(kind);}
     // A day the group or filter already names is not repeated; «Без даты» is never printed.
@@ -173,13 +174,13 @@ export function mountCalendarTasks(host, dependencies) {
     const day=row.date&&!sameDay?dateLabel(row.date):'', when=[day,time].filter(Boolean).join(', ');
     let date=null;
     if(when){
-      date=control('ct-date',when,()=>editDate(row,()=>restore(id,'date')));date.disabled=busy||!!row.readonly;date.classList.toggle('is-overdue',overdue);
+      date=control('ct-date',when,()=>editDate(row,()=>restore(id,'date')));date.disabled=busy||!!row.readonly||archived;date.classList.toggle('is-overdue',overdue);
       date.title=uiCopy.format("{0}{1}{2} — изменить дату", formatDate(row.date,{day:'numeric',month:'long',weekday:'short'}), time?`, ${time}`:'', overdue?uiCopy(" · просрочено"):'');
       if(overdue)date.setAttribute('aria-label',uiCopy.format("{0}, просрочено. Изменить дату", when));
       meta.append(date);
     }
     // Stages belong to a task with a process (2026-09-25); instant and closed tasks show none.
-    const stage=!done&&!instant?taskStage(row,processes):null;
+    const stage=!archived&&!done&&!instant?taskStage(row,processes):null;
     if(stage){
       if(stage.waiting){if(!running)primaryMeta.firstChild.textContent=uiCopy("Жду ответа");else primaryMeta.append(node('span','ct-status',uiCopy('Жду ответа')));}
       const group=node('span','ct-stage-group');
@@ -221,7 +222,7 @@ export function mountCalendarTasks(host, dependencies) {
     else content.append(meta);
     if(running)content.append(node('span','ct-visually-hidden',uiCopy("В работе")));
     const actions=node('div','ct-actions');
-    if(!done&&(!instant||row.is_active)){
+    if(!archived&&!done&&(!instant||row.is_active)){
       const review=stage?.waiting&&!running;
       const label=uiCopy(review?uiCopy("Открыть ожидание"):row.is_active?uiCopy("Пауза"):row.has_work||row.actual_minutes>0?uiCopy("Продолжить"):uiCopy("Начать"));
       const run=control('ct-run ct-icon-button',null,()=>review?openTask(row,()=>restore(id,'execute')):void finish(row,row.is_active?'pause':'start'));
@@ -232,7 +233,7 @@ export function mountCalendarTasks(host, dependencies) {
     }
     const more=control('ct-more ct-icon-button',null,()=>{});more.innerHTML=MORE_ICON;more.dataset.recordMenu='';more.title=uiCopy("Действия");more.setAttribute('aria-label',uiCopy.format("Действия: {0}", row.title));more.setAttribute('aria-haspopup','menu');more.setAttribute('aria-expanded','false');more.disabled=busy||!!row.readonly;
     actions.append(more);
-    for(const [button,action] of [[title,'open'],[date,'date'],[more,'menu'],[complete,'finish']])if(button){button.dataset.taskId=id;button.dataset.taskControl=action;}
+    for(const [button,action] of [[title,'open'],[date,'date'],[more,'menu'],[complete,archived?'restore':'finish']])if(button){button.dataset.taskId=id;button.dataset.taskControl=action;}
     item.append(complete,content,actions);
     return item;
   }
@@ -280,7 +281,7 @@ export function mountCalendarTasks(host, dependencies) {
     observationNote.textContent=[observationState.available?'':uiCopy("Не удалось прочитать наблюдения источников."),observationState.unboundCount?uiCopy.format("Наблюдения без связи с задачами: {0}. Данные источников сохранены.", observationState.unboundCount):'',state.filter==='review'&&!dependencies.readTaskReview?uiCopy("Приёмка недоступна: подборка сохранена, задачи не показаны."):'',state.filter==='ai-running'?uiCopy("Здесь показаны отчёты исполнителей; текущие обновления не подключены."):''].filter(Boolean).join(' ');
     observationNote.hidden=!observationNote.textContent;
     const query=state.search.trim().toLocaleLowerCase('ru');
-    const eligible=rows.filter(row=>(state.filter==='completed'?closed(row):state.filter==='all'?true:!closed(row))&&(state.filter!=='today'||row.date===today)&&(state.filter!=='undated'||!row.date)&&(state.filter!=='review'||!!dependencies.readTaskReview&&contextFor(row).review?.reviewState==='awaiting_review')&&(state.filter!=='ai-running'||contextFor(row).reports.some(r=>r.status==='running'))&&observationMatches(contextFor(row),state));
+    const eligible=rows.filter(row=>(state.filter==='archived'?!!row.archived:!row.archived&&(state.filter==='completed'?closed(row):state.filter==='all'?true:!closed(row)))&&(state.filter!=='today'||row.date===today)&&(state.filter!=='undated'||!row.date)&&(state.filter!=='review'||!!dependencies.readTaskReview&&contextFor(row).review?.reviewState==='awaiting_review')&&(state.filter!=='ai-running'||contextFor(row).reports.some(r=>r.status==='running'))&&observationMatches(contextFor(row),state));
     const matching=eligible.filter(row=>matchesGoal(row)&&`${row.title} ${goalPath(goalFor(row))}`.toLocaleLowerCase('ru').includes(query));
     const counts=new Map(SPHERE_TABS.map(([id])=>[id,0]));
     for(const row of matching){counts.set('',counts.get('')+1);counts.set(bucketOf(row),counts.get(bucketOf(row))+1);}
@@ -290,7 +291,7 @@ export function mountCalendarTasks(host, dependencies) {
       ||(byGoal?groupIndex(a.row,today)-groupIndex(b.row,today):0)||(Number(b.row.priority)||0)-(Number(a.row.priority)||0)||(a.row.date||'9999').localeCompare(b.row.date||'9999')||compareTaskTime(a.row,b.row)||a.row.title.localeCompare(b.row.title,'ru')||taskKey(a.row).localeCompare(taskKey(b.row)));
     shown=new Set(visible.map(({row})=>taskKey(row)));
     q('count').textContent=String(visible.length);
-    appliedLabel.textContent=[{all:uiCopy("Все"),active:uiCopy("Активные"),today:uiCopy("Сегодня"),undated:uiCopy("Без даты"),completed:uiCopy("Завершённые"),review:uiCopy("На приёмке"),'ai-running':uiCopy("ИИ: running по отчётам")}[state.filter],state.groupBy==='goal'?uiCopy("По цели"):null,state.goal?(state.goal==='none'?uiCopy("Без цели"):uiCopy.format("Цель: {0}", goalPath(state.goal)||uiCopy.format("Недоступная цель ({0})", state.goal))):null,state.sphere?SPHERE_TABS.find(([id])=>id===state.sphere)?.[1]:null,state.personal?PERSONAL_TABS.find(([id])=>id===state.personal)?.[1]:null,state.search?uiCopy.format("Поиск: {0}", state.search):null,...['source','project','tag'].map(k=>state[k]?observationSelects[k].selectedOptions[0]?.textContent:null)].filter(Boolean).join(' · ');
+    appliedLabel.textContent=[{all:uiCopy("Все"),active:uiCopy("Активные"),today:uiCopy("Сегодня"),undated:uiCopy("Без даты"),completed:uiCopy("Завершённые"),archived:uiCopy("Архив"),review:uiCopy("На приёмке"),'ai-running':uiCopy("ИИ: running по отчётам")}[state.filter],state.groupBy==='goal'?uiCopy("По цели"):null,state.goal?(state.goal==='none'?uiCopy("Без цели"):uiCopy.format("Цель: {0}", goalPath(state.goal)||uiCopy.format("Недоступная цель ({0})", state.goal))):null,state.sphere?SPHERE_TABS.find(([id])=>id===state.sphere)?.[1]:null,state.personal?PERSONAL_TABS.find(([id])=>id===state.personal)?.[1]:null,state.search?uiCopy.format("Поиск: {0}", state.search):null,...['source','project','tag'].map(k=>state[k]?observationSelects[k].selectedOptions[0]?.textContent:null)].filter(Boolean).join(' · ');
     reset.hidden=state.filter==='active'&&!state.search&&!state.goal&&!state.sphere&&!state.personal&&state.groupBy==='date'&&!state.source&&!state.project&&!state.tag;
     host.querySelectorAll('[data-tasks-filter]').forEach(el=>el.setAttribute('aria-pressed',String(el.dataset.tasksFilter===state.filter)));
     host.querySelectorAll('[data-tasks-sphere]').forEach(el=>{const id=el.dataset.tasksSphere,count=String(counts.get(id));el.setAttribute('aria-pressed',String(id===state.sphere));el.querySelector('[data-tasks-sphere-count]').textContent=count;el.setAttribute('aria-label',`${uiCopy(SPHERE_TABS.find(([tab])=>tab===id)[1])}: ${count}`);});
@@ -319,15 +320,15 @@ export function mountCalendarTasks(host, dependencies) {
     if(disposed||busy||canCommit&&!canCommit())return;
     const request=++revision;host.setAttribute('aria-busy','true');if(!ready)message.textContent=uiCopy("Загружаем задачи…");
     try{
-      const result=await Promise.all([invoke('get_calendar_tasks',{includeCompleted:true}),invoke('get_goals',{tabName:null}),invoke('get_calendar_task_goals'),loadProcesses(invoke)]);
+      const result=await Promise.all([invoke('get_calendar_tasks',{includeCompleted:true,includeArchived:true}),invoke('get_goals',{tabName:null}),invoke('get_calendar_task_goals'),loadProcesses(invoke)]);
       if(disposed||request!==revision||canCommit&&!canCommit())return;
       if(result.some(value=>!Array.isArray(value)))throw new Error('Invalid task response');
-      const nextRows=[...new Map(result[0].filter(row=>row.source_type==='note'&&!row.archived).map(row=>[taskKey(row),row])).values()];
+      const nextRows=[...new Map(result[0].filter(row=>row.source_type==='note').map(row=>[taskKey(row),row])).values()];
       // Time per stage is context for the tooltip; a failed read leaves it empty.
-      const blocks=await loadStageBlocks(invoke,nextRows.filter(row=>!closed(row)&&!isInstantTask(row)&&taskStage(row,result[3])).map(row=>row.source_id));
+      const blocks=await loadStageBlocks(invoke,nextRows.filter(row=>!row.archived&&!closed(row)&&!isInstantTask(row)&&taskStage(row,result[3])).map(row=>row.source_id));
       if(disposed||request!==revision||canCommit&&!canCommit())return;
       const nextToday=dayOf(new Date());
-      const nextObservations=await (dependencies.readTaskObservations||readNativeTaskObservations)(nextRows,invoke,{readReview:dependencies.readTaskReview||null,previousContexts:observationState.contexts});
+      const nextObservations=await (dependencies.readTaskObservations||readNativeTaskObservations)(nextRows.filter(row=>!row.archived),invoke,{readReview:dependencies.readTaskReview||null,previousContexts:observationState.contexts});
       if(disposed||request!==revision||canCommit&&!canCommit())return;
       const nextSignature=stableJson([nextToday,nextRows,result[1],result[2],result[3],[...blocks].sort(([a],[b])=>String(a).localeCompare(String(b))),[...nextObservations.contexts],nextObservations.available,nextObservations.unboundCount]);
       const recovered=executionStale;
@@ -345,7 +346,7 @@ export function mountCalendarTasks(host, dependencies) {
     finally{if(!disposed&&request===revision)host.removeAttribute('aria-busy');}
   }
   async function finish(row,action='finish'){
-    if(busy||disposed||row.readonly||(executionStale&&(action==='start'||action==='pause'))||(action==='finish'&&(contextFor(row).reviewReadError||(contextFor(row).review&&contextFor(row).review.reviewState!=='accepted'))))return;busy=true;revision++;feedback='';message.textContent='';render();
+    if(busy||disposed||row.readonly||row.archived||(executionStale&&(action==='start'||action==='pause'))||(action==='finish'&&(contextFor(row).reviewReadError||(contextFor(row).review&&contextFor(row).review.reviewState!=='accepted'))))return;busy=true;revision++;feedback='';message.textContent='';render();
     let ownsBusy=true;
     const releaseBusy=()=>{if(ownsBusy){busy=false;ownsBusy=false;}};
     try{
@@ -382,7 +383,7 @@ export function mountCalendarTasks(host, dependencies) {
   }
   async function advance(id) {
     const row=rows.find(item=>taskKey(item)===id), stage=row&&taskStage(row,processes), next=stage?.next;
-    if(!next||busy||disposed||row.readonly)return;
+    if(!next||busy||disposed||row.readonly||row.archived)return;
     busy=true;revision++;feedback='';message.textContent='';render();
     let succeeded=false;
     try{

@@ -115,7 +115,7 @@
 .ct-row.is-done .ct-complete { border-color: var(--text-muted); background: var(--text-muted); }
 
 .ct-content { display: flex; flex-direction: column; justify-content: center; gap: 1px; min-width: 0; }
-.ct-title { align-self: flex-start; display: block; max-width: 100%; min-width: 0; padding: 0; border: 0; border-radius: 3px; background: transparent; font-size: 14px !important; line-height: 20px; font-weight: 500; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.ct-title { align-self: flex-start; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; max-width: 100%; min-width: 0; padding: 0; border: 0; border-radius: 3px; background: transparent; font-size: 14px !important; line-height: 20px; font-weight: 500; text-align: left; white-space: normal; overflow-wrap: anywhere; overflow: hidden; cursor: pointer; }
 .ct-title:hover { text-decoration: underline; text-decoration-color: var(--text-faint); text-underline-offset: 3px; }
 .ct-row.is-done .ct-title { color: var(--text-muted); font-weight: 400; }
 
@@ -242,6 +242,14 @@
 .ct-view-delete-confirmation { flex-basis: 100%; color: var(--text-primary); font-size: 13px; }
 .ct-view-tabs-status { margin: 0; color: var(--text-secondary); font-size: 12.5px; }
 .ct-view-tabs-status:empty { display: none; }
+.ct-view-management > summary { width:fit-content; color:var(--text-secondary); font-size:12.5px; cursor:pointer; padding:4px 0; }
+.ct-view-management > summary:focus-visible { outline:2px solid var(--ct-focus); outline-offset:3px; }
+.ct-view-management[open] > .ct-view-tabs-actions { margin:6px 0; }
+.ct-view-tabs-list { flex-wrap:wrap; }
+.ct-filter-body .ct-spheres { margin-block:8px 0; }
+.ct-restore { align-self:center; display:grid; place-items:center; width:32px; height:36px; padding:0; border:0; border-radius:4px; color:var(--text-primary); background:transparent; font:inherit; font-size:21px; cursor:pointer; }
+.ct-restore:hover { background:var(--bg-hover); }
+.ct-restore:focus-visible { outline:2px solid var(--ct-focus); outline-offset:2px; }
 .ct-view-tabs button:focus-visible, .ct-view-editor input:focus-visible { outline: 2px solid var(--ct-focus); outline-offset: 2px; }
 @media (max-width: 680px) {
   .ct-view-tabs-list button, .ct-view-tabs-actions button, .ct-view-editor button, .ct-view-editor input { min-height: 44px; }
