@@ -1015,11 +1015,16 @@ pub fn toggle_note_archive(id: String, expected_version: Option<i64>, state: Sta
 
 fn toggle_note_archive_record(conn: &Connection, id: &str, expected_version: Option<i64>) -> Result<bool, String> {
     // Compare, toggle and return our result in one statement: another writer
-    // cannot make a stale archive/restore act as the opposite action.
-    conn.query_row("UPDATE items SET archived=1-archived,version=version+1,updated_at=?1 WHERE id=?2 AND kind='task' AND (?3 IS NULL OR version=?3) RETURNING archived!=0",
+    // cannot make a stale archive/restore act as the opposite action. A task
+    // with a currently running interval is deliberately not archivable.
+    let result = conn.query_row("UPDATE items SET archived=1-archived,version=version+1,updated_at=?1 WHERE id=?2 AND kind='task' AND (?3 IS NULL OR version=?3) AND NOT EXISTS (SELECT 1 FROM timeline_blocks WHERE source_type='note' AND source_id=?2 AND is_active=1) RETURNING archived!=0",
         params![now(),id,expected_version], |r| r.get(0))
         .optional().map_err(|e| fail(e.to_string()))?
-        .ok_or_else(|| fail("note changed elsewhere or was deleted"))
+        .ok_or_else(|| fail("note changed elsewhere or was deleted"));
+    if result.is_err() && conn.query_row("SELECT EXISTS(SELECT 1 FROM timeline_blocks WHERE source_type='note' AND source_id=?1 AND is_active=1)", [id], |r| r.get::<_, bool>(0)).unwrap_or(false) {
+        return Err(fail("task is active"));
+    }
+    result
 }
 
 #[cfg(test)]
@@ -1029,6 +1034,7 @@ mod note_archive_tests {
     fn fixture() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE items(id TEXT PRIMARY KEY,kind TEXT,archived INTEGER,version INTEGER,updated_at TEXT,title TEXT,notes TEXT,tags TEXT);
+            CREATE TABLE timeline_blocks(source_type TEXT,source_id TEXT,is_active INTEGER);
             INSERT INTO items VALUES('synthetic-note','task',0,1,'baseline','Synthetic note','Preserved content','keep,synthetic');").unwrap();
         conn
     }
@@ -1081,6 +1087,19 @@ mod note_archive_tests {
             assert!(toggle_note_archive_record(&conn, "synthetic-note", expected).is_err());
             assert_eq!(snapshot(&conn), before);
         }
+    }
+
+    #[test]
+    fn running_interval_blocks_archive_but_paused_history_can_archive_and_restore() {
+        let conn = fixture();
+        conn.execute("INSERT INTO timeline_blocks VALUES('note','synthetic-note',1)", []).unwrap();
+        let before = snapshot(&conn);
+        assert_eq!(toggle_note_archive_record(&conn, "synthetic-note", Some(1)).unwrap_err(), "task is active");
+        assert_eq!(snapshot(&conn), before);
+        conn.execute("UPDATE timeline_blocks SET is_active=0", []).unwrap();
+        assert!(toggle_note_archive_record(&conn, "synthetic-note", Some(1)).unwrap());
+        assert!(!toggle_note_archive_record(&conn, "synthetic-note", Some(2)).unwrap());
+        assert_eq!(conn.query_row("SELECT count(*) FROM timeline_blocks WHERE source_type='note' AND source_id='synthetic-note'", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
     }
 }
 
