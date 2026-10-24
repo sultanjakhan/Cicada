@@ -41,3 +41,4 @@ jobs:
           name: cicada-mvp-tasks-render
           path: .local/mvp-tasks-render
           if-no-files-found: error
+          retention-days: 3

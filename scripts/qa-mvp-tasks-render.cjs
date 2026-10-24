@@ -13,7 +13,10 @@ const records=()=>[
  {source_type:'note',source_id:'archived',id:'archived',title:'В архиве',content:'archived body',date:null,status_extra:'task',status:'task',completed:false,archived:true,version:11,is_active:false,has_work:true,actual_seconds:120,sphere:'personal'}
 ];
 function backend({rows}){
+ const day = new Date().toLocaleDateString('sv-SE');
+ rows.forEach(row=>{if(row.date)row.date=day;});
  const state={rows:rows.map(row=>structuredClone(row)),calls:[],ui:{},archiveMode:false}; window.fixtureState=state;
+ const blocks=state.rows.filter(row=>row.has_work).map((row,index)=>({id:index+1,source_type:'note',source_id:row.id,title:row.title,date:day,completion_date:day,start_time:new Date(Date.now()-120000).toTimeString().slice(0,8),end_time:row.is_active?null:new Date(Date.now()-30000).toTimeString().slice(0,8),duration_seconds:row.is_active?0:90,is_active:row.is_active}));
  const invoke=async(command,args={})=>{state.calls.push({command,args:structuredClone(args)}); const row=id=>state.rows.find(r=>String(r.source_id)===String(id));
   if(command==='get_calendar_tasks') return state.rows.filter(r=>args.includeArchived||!r.archived).filter(r=>args.includeCompleted||(!r.completed&&r.status==='task')).map(row=>structuredClone(row));
   if(command==='get_calendar_task'){const x=row(args.id);return x&&structuredClone(x);}
@@ -21,12 +24,15 @@ function backend({rows}){
   if(command==='get_calendar_records')return[];
   if(command==='get_ui_state')return state.ui[args.key]??null;
   if(command==='get_goals')return[];
-  if(command==='get_calendar_task_blocks')return state.rows.filter(r=>String(r.source_id)===String(args.sourceIds?.[0])).flatMap(r=>r.has_work?[{source_type:'note',source_id:r.id,date:r.date||new Date().toISOString().slice(0,10),start_time:'10:00:00',end_time:'10:01:30',duration_seconds:r.actual_seconds,is_active:r.is_active,completion_date:r.date}]:[]);
-  if(command==='get_active_blocks')return state.rows.filter(r=>r.is_active).map(r=>({source_type:'note',source_id:r.id,date:r.date,start_time:'10:00:00',completion_date:r.date,is_active:true,title:r.title,tags:'task-sphere:personal',kind:'task'}));
+  if(command==='get_calendar_task_blocks')return structuredClone(blocks.filter(block=>(args.sourceIds||[]).map(String).includes(block.source_id)));
+  if(command==='get_active_blocks')return structuredClone(blocks.filter(block=>block.is_active));
+  if(command==='get_timeline_blocks')return structuredClone(blocks.filter(block=>block.date===args.date));
+  if(command==='get_calendar_task_seconds')return row(args.sourceId)?.actual_seconds||0;
+  if(command==='shared_task_command'&&args.input?.command==='get')return {isError:true,status:404,code:'task_not_found'};
   if(command==='get_calendar_task_minutes')return 0;
   if(command==='toggle_note_archive'){const x=row(args.id);if(!x)throw Error('missing fixture row');if(args.expectedVersion!==x.version)throw Error('stale fixture version');x.archived=!x.archived;x.version++;return x.archived;}
   if(command==='get_notes')return state.rows.map(row=>structuredClone(row));
-  if(command==='read_calendar_day')return {scope:'device_local',date:new Date().toISOString().slice(0,10),day:{date:new Date().toISOString().slice(0,10),closed:false,plan_ids:[],summaries:[]},active_blocks:[],candidates:[],history:[]};
+  if(command==='read_calendar_day')return {scope:'device_local',date:day,day:{date:day,closed:false,plan_ids:[],summaries:[]},active_blocks:[],candidates:[],history:[]};
   if(command==='get_recurring_items'||command==='get_schedules'||command==='get_timeline_blocks'||command==='get_task_pins')return[];
   if(command.startsWith('get_')||command.startsWith('mvp_sync_'))return null;
   throw Error('Unexpected fixture mutation: '+command);
@@ -35,12 +41,63 @@ function backend({rows}){
 const server=http.createServer((req,res)=>{const name=new URL(req.url,'http://fixture').pathname;if(name==='/'){res.setHeader('Content-Type','text/html');res.end(fixture);return;}const file=path.resolve(root,'.'+name);if(!file.startsWith(root+path.sep)||!fs.existsSync(file)||!fs.statSync(file).isFile()){res.writeHead(404);res.end();return;}res.setHeader('Content-Type',({'.js':'text/javascript','.json':'application/json','.css':'text/css','.svg':'image/svg+xml'})[path.extname(file)]||'application/octet-stream');res.end(fs.readFileSync(file));});
 async function shot(page,label,observations){await page.screenshot({path:path.join(output,label+'.png'),fullPage:true});observations.push({label,text:await page.locator('#calendar-content').innerText(),width:await page.evaluate(()=>innerWidth)});}
 async function main(){assert.equal(process.platform,'linux');const chrome=process.env.MVP_TASKS_CHROME;assert.ok(chrome,'hosted Chrome path required');await new Promise(r=>server.listen(0,'127.0.0.1',r));const browser=await chromium.launch({headless:true,executablePath:chrome});const observations=[];
- try{for(const width of [1100,390])for(const theme of ['light','dark'])for(const scenario of ['filled','empty']){const page=await browser.newPage({viewport:{width,height:900}}),errors=[];page.on('pageerror',e=>errors.push(e.message));const rows=scenario==='empty'?[]:records();await page.addInitScript(backend,{rows});await page.addInitScript(({theme})=>localStorage.setItem('hanni_theme',theme),{theme});await page.goto('http://127.0.0.1:'+server.address().port,{waitUntil:'networkidle'});await page.waitForFunction(()=>window.fixtureReady);await page.locator('[data-calendar-task-area]').waitFor();const dashboardText=await page.locator('[data-calendar-task-area]').innerText();if(scenario==='filled')assert.match(dashboardText,/Параллельная работа|Пауза/);else assert.doesNotMatch(dashboardText,/Параллельная работа|Пауза/);await shot(page,`${width}-${theme}-${scenario}-dashboard`,observations);await page.locator('.uni-tab[data-pane="tasks"]').click();await page.locator('[data-task-view-id]').first().waitFor();
-   const controls=page.locator('[data-task-view-id]');assert.equal(await controls.count()>=4,true);assert.equal(await page.locator('[data-tasks-search]').count(),1);assert.equal(await page.locator('[data-calendar-create]').count(),1);if(scenario==='empty'){await shot(page,`${width}-${theme}-empty-tasks`,observations);assert.match(await page.locator('[data-tasks-message]').innerText(),/нет|создай/i);assert.deepEqual(errors,[]);await page.close();continue;}
-   await page.locator('[data-task-view-id="active"]').waitFor();
-   await shot(page,`${width}-${theme}-captureTasks-active`,observations);assert.equal(await page.locator('.ct-filter-details[open]').count(),0);await page.locator('[data-task-view-id="all"]').click();await page.locator('[data-task-control="open"]').first().waitFor();await shot(page,`${width}-${theme}-captureTasks-all`,observations);
-   await page.locator('[data-task-view-id="@completed"]').click();await page.locator('[data-task-view-id="@archive"]').click();await page.locator('.ct-restore').first().waitFor();await page.locator('.ct-restore').first().click();await page.locator('dialog[open] [type="submit"]').waitFor();await page.locator('dialog[open] [type="submit"]').click();await page.waitForFunction(()=>window.fixtureState.rows.find(r=>r.id==='archived').archived===false&&window.fixtureState.rows.find(r=>r.id==='archived').version===12);assert.equal((await page.evaluate(()=>window.fixtureState.calls.filter(c=>c.command==='toggle_note_archive').length)),1);await shot(page,`${width}-${theme}-Archive`,observations);
-   await page.locator('[data-task-view-id="active"]').click();await page.locator('[data-tasks-search]').fill('Очень длинная');await page.locator('[data-task-control="open"]').first().click();await page.locator('.task-details-description').waitFor();await page.locator('.task-details-description summary').click();assert.doesNotMatch(await page.locator('.task-details-description-content').innerText(),/<script>/);assert.equal(await page.locator('.task-details-description-content script').count(),0);await shot(page,`${width}-${theme}-details`,observations);
-   assert.deepEqual(errors,[]);assert.equal(await page.locator('#calendar-content').evaluate(n=>n.scrollWidth<=n.clientWidth+1),true);const calls=await page.evaluate(()=>window.fixtureState.calls);assert.equal(calls.some(c=>!c.command.startsWith('get_')&&!['toggle_note_archive'].includes(c.command)&&!c.command.startsWith('mvp_sync_')),false);await page.close();}}
+ try{for(const width of [1100,390])for(const theme of ['light','dark'])for(const scenario of ['filled','empty']){
+   const page=await browser.newPage({viewport:{width,height:900},timezoneId:'Asia/Almaty'}),errors=[];
+   page.on('pageerror',error=>errors.push(error.message));
+   const rows=scenario==='empty'?[]:records();
+   const label=`${width}-${theme}-${scenario}`;
+   const rowIds=async expected=>page.waitForFunction(ids=>JSON.stringify([...document.querySelectorAll('[data-workspace-task-list] .ct-row')].map(node=>node.dataset.contextRecord).sort())===JSON.stringify(ids.map(id=>'note:'+id).sort()),expected);
+   try{
+     await page.addInitScript(backend,{rows});
+     await page.addInitScript(({theme})=>localStorage.setItem('hanni_theme',theme),{theme});
+     await page.goto('http://127.0.0.1:'+server.address().port,{waitUntil:'networkidle'});
+     await page.waitForFunction(()=>window.fixtureReady);
+     await page.locator('[data-calendar-task-area]').waitFor();
+     if(scenario==='filled'){
+       await page.locator('[data-calendar-task-area] .cip-row[data-context-record="note:running"]').waitFor();
+       await page.locator('[data-calendar-task-area] .cip-row[data-context-record="note:paused"]').waitFor();
+     }
+     await shot(page,label+'-dashboard',observations);
+     await page.locator('.uni-tab[data-pane="tasks"]').click();
+     await page.locator('[data-task-view-id="@archive"]').waitFor();
+     assert.equal(await page.locator('[data-tasks-search]').count(),1);
+     assert.equal(await page.locator('[data-calendar-create]').count(),1);
+     assert.equal(await page.locator('.ct-view-management[open]').count(),0);
+     assert.equal(await page.locator('.ct-filter-details[open]').count(),0);
+     await rowIds(scenario==='empty'?[]:['long','paused','running']);
+     if(scenario==='empty'){
+       await page.locator('.ct-empty').waitFor();
+       assert.match(await page.locator('.ct-empty').innerText(),/нет|создай/i);
+       await shot(page,label+'-tasks',observations);
+     }else{
+       await shot(page,label+'-active',observations);
+       await page.locator('[data-task-view-id="all"]').click();await rowIds(['long','paused','running','done']);
+       await shot(page,label+'-all',observations);
+       await page.locator('[data-task-view-id="@completed"]').click();await rowIds(['done']);
+       await shot(page,label+'-completed',observations);
+       await page.locator('[data-task-view-id="@archive"]').click();await rowIds(['archived']);
+       await shot(page,label+'-archive',observations);
+       await page.locator('.ct-restore').click();await page.locator('dialog[open] [type="submit"]').click();
+       await page.waitForFunction(()=>!window.fixtureState.rows.find(row=>row.id==='archived').archived);
+       await rowIds([]);await shot(page,label+'-archive-after-restore',observations);
+       const restored=await page.evaluate(()=>window.fixtureState.rows.find(row=>row.id==='archived'));
+       assert.equal(restored.version,12);assert.equal(restored.content,'archived body');assert.equal(restored.completed,false);
+       assert.deepEqual(await page.evaluate(()=>window.fixtureState.calls.filter(call=>call.command==='toggle_note_archive').map(call=>call.args)),[{id:'archived',expectedVersion:11}]);
+       await page.locator('[data-task-view-id="active"]').click();await rowIds(['long','paused','running','archived']);
+       await page.locator('[data-tasks-search]').fill('Очень длинная');await rowIds(['long']);
+       await page.locator('[data-task-control="open"]').click();await page.locator('.task-details-description').waitFor();
+       await page.locator('.task-details-description summary').click();
+       assert.equal(await page.locator('.task-details-description-content').innerText(),'Plain body: <script>must stay text</script>');
+       assert.equal(await page.locator('.task-details-description-content script').count(),0);
+       await shot(page,label+'-details',observations);
+     }
+     assert.equal(await page.locator('#calendar-content').evaluate(node=>node.scrollWidth<=node.clientWidth+1),true);
+     const calls=await page.evaluate(()=>window.fixtureState.calls);
+     assert.deepEqual(calls.filter(call=>!call.command.startsWith('get_')&&!call.command.startsWith('mvp_sync_')&&!['toggle_note_archive','read_calendar_day'].includes(call.command)&&!(call.command==='shared_task_command'&&call.args.input?.command==='get')),[]);
+   }finally{
+     if(errors.length)fs.writeFileSync(path.join(output,label+'-pageerrors.json'),JSON.stringify(errors));
+     assert.deepEqual(errors,[]);await page.close();
+   }
+ }}
  finally{fs.writeFileSync(path.join(output,'observations.json'),JSON.stringify(observations,null,2));await browser.close();server.close();}console.log(JSON.stringify({sourceOnly:true,observations:observations.length,installedAcceptance:false}));}
 main().catch(e=>{fs.writeFileSync(path.join(output,'failure.txt'),e.stack);server.close();console.error(e);process.exitCode=1;});
