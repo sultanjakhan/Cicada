@@ -1,238 +1,90 @@
 # Cicada
 
-Отдельная Cicada с одним проектом «Календарь». Интерфейс перенесён из Hanni 1.2.0:
-**Дашборд → Календарь → Задачи → Заметки → Цели**. Вкладка «Рутины» пока скрыта.
+[![CI](https://github.com/sultanjakhan/Cicada/actions/workflows/ci.yml/badge.svg)](https://github.com/sultanjakhan/Cicada/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/sultanjakhan/Cicada)](https://github.com/sultanjakhan/Cicada/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-Tauri 2 · Rust · SQLite · JavaScript.
+[Русская версия](README.ru.md)
 
-Открытый исходный код под [MIT](LICENSE). Лицензии сторонних компонентов
-сохранены в [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-Источник перенесённых файлов закреплён в
-[upstream-calendar.json](docs/upstream-calendar.json).
+Cicada is a local-first planner for goals, tasks, calendar and notes. Your data stays in a SQLite file on your device: no account, no cloud, no telemetry. If you use several devices, you can run your own end-to-end encrypted sync relay.
 
-## Установить и попробовать
+Built with Tauri 2, Rust and plain JavaScript.
 
-Скачай установщик из [последнего релиза](https://github.com/sultanjakhan/Cicada/releases/latest):
+> **Status:** early (0.x), one maintainer. **The interface is in Russian only.**
+> Platforms: Windows x64, macOS on Apple Silicon, Android ARM64. Linux is not supported yet.
 
-- Windows x64: файл `.exe`.
-- Android ARM64: файл `.apk`; разреши установку из выбранного источника.
-- macOS Apple Silicon: подписанный архив
-  `Cicada-<version>-darwin-aarch64.app.tar.gz`, содержащий `Cicada.app`.
-  Подробности — в
-  [инструкции сборки macOS](docs/macos-build.md).
+## Features
 
-Новый профиль пустой. Для локального использования аккаунт не нужен.
-Синхронизация требует отдельной настройки собственного relay и кодов устройств;
-доступ к личным данным автора не входит в приложение.
+- **Dashboard** — the current goal, the current task and a work timer.
+- **Calendar** — day, week and month views; tasks and events share one form.
+- **Tasks** — active, today, undated and completed; search and filter by goal, including subgoals.
+- **Goals** — subgoals, result criteria, skills and stages with deadlines, linked to tasks and events.
+- **Notes** — explicit drafts, archive and restore.
+- **Routines** — recurring actions you start and track from the calendar.
+- **Local and safe** — SQLite with transactional migrations and verified online backups.
+- **Optional sync** — end-to-end encrypted with XChaCha20-Poly1305 through a relay you host yourself on Cloudflare Workers. See [docs/sync-relay.md](docs/sync-relay.md).
+- **Android** — sleep and activity import from Health Connect.
+- **Signed updates** — the app verifies the update signature before installing.
 
-Официальные Windows/Android сборки проверяют подписанные обновления.
-Windows откладывает установку, пока приложение используется; Android может
-потребовать системного подтверждения. Это подпись канала обновлений,
-а не сертификат Windows Authenticode или публикация в Google Play.
+## Install
 
-## Что есть
+Download a file from the [latest release](https://github.com/sultanjakhan/Cicada/releases/latest):
 
-- Исходные компоненты, стили и формы Calendar Workspace.
-- Дашборд с выбранной целью, задачей и таймером работы.
-- Календарь: день, неделя, месяц и список; общий переключатель «Задача / Событие».
-- Задачи: активные, на сегодня, без даты и завершённые; поиск и фильтр по цели, включая её подцели.
-- Панель «Запланировать» в календаре: назначение дня задаче без даты кнопкой или перетаскиванием на дату. На узком экране панель открывается поверх календаря и закрывается крестиком. Используется та же задача, с сохранением цели и таймера; копия события не создаётся. Назначение точного времени здесь пока не поддерживается.
-- Цели, подцели, критерии результата и связи с задачами и событиями.
-- Заметки, явное сохранение черновика, архив и восстановление из архива.
-- Исходные основные настройки календаря Cicada.
+| Platform | File | Note |
+|---|---|---|
+| Windows x64 | `Cicada-<version>-windows-x86_64.exe` | The installer has no Authenticode certificate, so SmartScreen may warn. Choose *More info → Run anyway*. |
+| macOS, Apple Silicon | `Cicada-<version>-darwin-aarch64.app.tar.gz` | Contains `Cicada.app`. First launch is described in [docs/macos-build.md](docs/macos-build.md). |
+| Android ARM64 | `Cicada-<version>-android-aarch64.apk` | Allow installs from the source you downloaded it with. |
 
-Календарный «Список» оставлен для сравнения с вкладкой «Задачи» на телефоне.
-Эта итерация не меняет представление главной страницы.
+A new install starts with an empty profile. Updates keep your data.
 
-В итерации 0.2.2 добавлены бело-графитовая палитра со светлой и тёмной темами,
-оформление переключателей настроек и общий вход «Создать» в шапке вне прокрутки.
-Размещение кнопки пока пробное. Примеры целей для проверки дизайна остаются
-в отдельном локальном тестовом профиле; новая установка начинает с пустых данных.
+## Build from source
 
-Другие проекты, рутины, AI и автоматический импорт старых данных
-не входят в эту сборку. Имя, значок, каталог установки и профиль приложения
-отличаются от обычной Hanni.
-
-Навигация, экран загрузки и настройки перенесены из исходной Hanni с обрезкой
-до этого состава. Отдельный придуманный диалог настроек MVP исключён. Обновление
-календаря сохраняет исходную защиту от замены записей во время редактирования.
-
-## Разработка на Windows
-
-Нужны Node.js 22.12+, Rust 1.98+, Visual Studio Build Tools с C++ и WebView2.
-
-```powershell
-npm.cmd ci
-git config core.hooksPath .githooks
-npm.cmd run tauri dev
-```
-
-`npm.cmd run dev` запускает сервер ресурсов. Сам интерфейс использует native IPC
-установленного Tauri-приложения; браузер не подменяет локальную базу тестовыми данными.
-
-## Продолжение разработки на Mac
-
-После установки Node.js и Rust указанных выше версий и инструментов сборки macOS
-открой чистый checkout этого репозитория на `main` и выполни:
+Requirements: Node.js 22.12+, Rust 1.98+ and Python 3. On Windows you also need Visual Studio Build Tools with C++ and WebView2; on macOS, Xcode Command Line Tools. Android builds are described in [docs/android-build.md](docs/android-build.md).
 
 ```sh
-git pull --ff-only
+git clone https://github.com/sultanjakhan/Cicada.git
+cd Cicada
 npm ci
-HANNI_MVP_DATA_DIR="$PWD/.local/mac-dev-data" npm run tauri -- dev
+git config core.hooksPath .githooks
+npm run tauri dev
 ```
 
-Если checkout уже содержит изменения, сначала сохрани и проверь их; не сбрасывай
-их ради обновления. DEV использует отдельный локальный каталог данных. Личная
-база с Windows не входит в Git и автоматически на Mac не переносится.
-Обмен записями настраивается отдельно, в разделе синхронизации. Обновление
-исходников или приложения само по себе не переносит личную базу.
-Команда запуска следует текущему конфигу проекта; живой запуск на Mac пока не
-проверен. Windows-установщик через `package:windows` на Mac не собирается.
+In Windows PowerShell, use `npm.cmd` instead of `npm`. In a debug build, `HANNI_MVP_DATA_DIR` set to an absolute path gives you a separate test profile.
 
-Точка передачи 14.09.2026: реализованный дашборд v7 закреплён в `0b972f5`.
-158 JavaScript-тестов, сборка интерфейса и скрытая проверка Windows DEV прошли;
-ограничения описаны в [отчёте проверки](docs/background-ui-qa.md).
-Уточнение карточки 15.09.2026: на главной показаны текущая тема и навык,
-прямой выбор другого навыка и подписанный прогресс навыков всей цели.
-Отдельный блок этапа, повтор темы и декоративная иконка убраны.
-Этапы, их сроки и состав остаются внутри цели; выбор навыка по-прежнему
-учитывает активный этап и не меняет текущую задачу.
-
-## Сборка и установка
-
-```powershell
-npm.cmd run package:windows
-```
-
-Команда требует чистый коммит репозитория `hanni-mvp`. Она собирает Windows NSIS
-installer и manifest с исходным SHA, версией, хешем установщика и хешем
-**неупакованного** executable в `.local/windows-package/<sha>/`.
-При упаковке Tauri изменяет встроенный маркер типа пакета; хеш неупакованного
-executable не является хешем установленного файла.
-
-CI запускает проверки и прикладывает такой же пакет к конкретному коммиту.
-Это локальная сборка разработки без сертификата подписи, а не подписанный production-релиз.
-
-Видимое имя продукта — `Cicada`. Техническая идентичность обновлений сохраняется:
-`app.hanni.mvp` / `hanni-mvp.exe`. Windows устанавливает приложение в
-`%LOCALAPPDATA%\Programs\Hanni MVP`, с отдельными ярлыками. Публичный артефакт
-выходит под именем Cicada; обычная Hanni остаётся самостоятельным приложением.
-
-## Данные и резервные копии
-
-База `calendar.db` находится в `%APPDATA%\app.hanni.mvp`.
-Обновление сохраняет записи предыдущего MVP через транзакционную миграцию:
-`items` хранит задачи, события и заметки; дополнительные локальные таблицы —
-цели, связи целей, категории, интервалы работы и настройки интерфейса.
-Время календаря — местное время устройства.
-
-Команда `create_backup` сохраняет файл в подкаталоге `backups`.
-Используются SQLite online backup и проверка целостности.
-
-Перед откатом приложения сохрани текущую базу отдельно. Версия 0.1.x не читает
-новую схему: откатывать приложение нужно вместе с резервной копией базы,
-сделанной до обновления. Для восстановления закрой Cicada, сохрани текущую
-базу и её `-wal`/`-shm` отдельно, затем восстанови выбранную копию как `calendar.db`
-без старых sidecar-файлов рядом. Встроенного восстановления пока нет.
-
-Для проверки debug-сборки `HANNI_MVP_DATA_DIR` задаёт абсолютный путь к отдельному
-тестовому каталогу. Release-сборка игнорирует эту переменную.
-Данные обычной Hanni приложение автоматически не читает и не изменяет.
-
-## Сон из Health Connect
-
-На Android подключение сна находится в настройках календаря. После разрешения
-записи импортируются из Health Connect и передаются обычной синхронизацией.
-Состояния доступа, источника и фонового чтения показаны отдельно; подробнее
-в [описании импорта сна](docs/sleep-import.md).
-
-## Синхронизация устройств
-
-Стабильная сборка для Mac запускается без DEV-сервера. Сборка и подключение
-описаны в [macos-build.md](docs/macos-build.md).
-
-Публичный продукт Cicada использует адаптированный зашифрованный транспорт обычной
-Hanni и отдельный relay. На каждом устройстве нужна совместимая версия **Cicada** и собственный
-код подключения. Обычная Hanni использует другую схему данных и в этот обмен
-не включается. Подготовка сервера и кодов описана в
-[руководстве relay](docs/sync-relay.md).
-
-В настройках открой «Синхронизация», вставь код своего устройства и сохрани его.
-Перед первым включением создаётся проверенная резервная копия. В обмен входят
-записи календаря, цели и их связи, интервалы работы, начало дня, развитие навыков
-и повторяющиеся действия. Настройки окна, локальные предпочтения и секреты
-устройств не являются общими записями.
-
-При отсутствии сети приложение продолжает работать с локальной базой и сохраняет
-изменения для последующей отправки. Статус показывает очередь и ошибки текущего
-устройства; успешная отправка не доказывает, что другое устройство уже получило
-запись. Автоматическое обновление экрана откладывается, пока открыт редактор.
-Счётчик конфликтов включает сохранённые альтернативные версии и изменения,
-которые пока нельзя безопасно применить. Последние проверяются повторно.
-Просмотр и выбор сохранённых версий доступны в настройках синхронизации.
-
-Начало дня, сохранённое в старой версии на недоступном ПК, появится на других
-устройствах только после подключения этого профиля к обмену либо восстановления
-его резервной копии. Синхронизация не может получить никогда не отправленные
-данные с выключенного устройства. Установка приложения на телефон и работа
-в фоне проверяются отдельно от доставки между тестовыми базами на одном Mac.
-Подготовка тестовой Android-сборки описана в [android-build.md](docs/android-build.md).
-
-Журнал relay ограничен 128 МиБ или 100 000 пакетов. При заполнении он отклоняет
-новые отправки; неподтверждённые изменения остаются на устройстве. Реализованы
-контрольные снимки и очистка подтверждённой части журнала; они выключены по
-умолчанию и включаются после обновления клиентов по [правилам relay](docs/sync-relay.md).
-
-## Проверки
-
-```powershell
-npm.cmd test
-npm.cmd run check:privacy
-npm.cmd run build
-cargo test --manifest-path src-tauri/Cargo.toml --locked
-```
-
-Для проверки реального HTTP-обмена между нативными тестовыми базами через
-локальный Cloudflare runtime:
+## Checks
 
 ```sh
-npm --prefix sync-relay ci
-npm --prefix sync-relay test
-npm --prefix sync-relay run test:native
+npm test
+npm run build
+cargo test --manifest-path src-tauri/Cargo.toml --locked
+npm run check:privacy
 ```
 
-Этот прогон использует вымышленные записи и временные ключи. Он не подключается
-к облачной учётной записи и не заменяет проверку установленных приложений
-на Windows, Mac и Android.
+`npm run check:history` also scans every reachable commit and its metadata. The sync relay has its own tests: `npm --prefix sync-relay ci`, then `npm --prefix sync-relay test`.
 
-JSDOM проверяет сборку интерфейса, переходы между вкладками, формы,
-черновики заметок, цели и обработку ошибок. Rust-тесты проверяют хранение,
-миграции и резервные копии. Успех этих проверок не означает визуальную приёмку
-живого окна или проверку реального IPC в установленном приложении.
+## Data and backups
 
-Privacy guard проверяет текущие текстовые файлы на типовые личные данные и секреты.
-Дополнительные приватные строки передаются через `--denylist` из локального JSON
-вне Git. Guard выводит только путь, строку и тип находки; он не очищает старую историю
-и не доказывает отсутствие всех возможных личных данных.
-`npm run check:history` проверяет также все достижимые коммиты и их метаданные.
+The database is `calendar.db` in the app data folder, for example `%APPDATA%\app.hanni.mvp` on Windows. Backups go to the `backups` subfolder and use SQLite online backup with an integrity check.
 
-После очистки истории 16.09.2026 старые локальные ветки нельзя сливать с `main`.
-Сохрани свой WIP отдельно и сделай новый clone; нужные изменения переноси
-проверенным diff. Закрытый архив прежней истории не является источником для push.
+Older versions cannot read a newer database schema. Before going back to an older version, keep a backup made before the update.
 
-## Структура
+## Project layout
 
-Чёрно-белый знак «цикада / песочные часы» хранится в `src/app-icon.svg`:
-этот же SVG используется в оболочке и favicon. Команда
-`python3 scripts/generate-icons.py` обновляет `icon.png`, `icon.ico` и `icon.icns`
-в `src-tauri/icons/`. Для Android она отдельно генерирует прозрачный передний
-слой и монохромный слой тематической иконки, сохраняя белый фон обычной иконки.
-`scripts/prepare-android.py` использует тот же генератор при каждой сборке APK.
+- `src/` — app shell (`app.js`, `index.html`) and UI components in `src/hanni/`.
+- `src-tauri/` — Rust backend: storage, migrations, backups, sync and updates.
+- `src-tauri/plugins/android-installer/` — Android plugin: updates and Health Connect.
+- `sync-relay/` — Cloudflare Worker for encrypted sync.
+- `update-service/` — Cloudflare Worker that serves signed update manifests.
+- `scripts/` — packaging, icon generation and privacy checks.
+- `docs/` — macOS and Android builds, sync relay, application updates.
 
-- `src/hanni/js`, `src/hanni/css` — перенесённые компоненты Calendar.
-- `src/app.js`, `src/index.html` — оболочка отдельного MVP.
-- `src-tauri/src/lib.rs` — запуск, база, миграции и резервные копии.
-- `src-tauri/src/calendar_compat.rs` — локальный контракт команд исходного Calendar.
+## Contributing
 
-Личных профилей, предзаполненной базы, моделей и конфигурации старого приложения
-здесь нет.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Please report security issues privately, as described in [SECURITY.md](SECURITY.md).
+
+## License and origin
+
+MIT, see [LICENSE](LICENSE). Third-party notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+Cicada grew out of the author's private app Hanni. That is why some internal identifiers, such as `app.hanni.mvp` and `hanni-mvp.exe`, keep the old name: changing them would break updates and existing data.
