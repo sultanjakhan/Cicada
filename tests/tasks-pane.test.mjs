@@ -37,7 +37,7 @@ test('waiting task primary action opens review without starting a timer',async t
 
 async function setup(t) {
   const dom=new JSDOM('<main></main>',{url:'https://fixture.invalid',pretendToBeVisual:true});
-  const host=dom.window.document.querySelector('main'), state={filter:'active',search:'',goal:'',page:0};
+  const host=dom.window.document.querySelector('main'), state={filter:'all',search:'',goal:'',page:0};
   let rows=[row('SQL',null),row('API',today()),row('Done',today(),{completed:true}),row('Hidden',null,{archived:true})],fail=false;
   const actions=[], opened=[];
   const dependencies={state,invoke:async command=>{if(fail)throw new Error('offline');if(command==='get_calendar_tasks')return rows;if(command==='get_goals')return[{id:'parent',title:'Career'},{id:'child',parent_goal_id:'parent',title:'SQL'}];if(command==='get_calendar_task_goals')return[{source_type:'note',source_id:'SQL',goal_id:'child'}];throw new Error(command);},openTask:(task)=>opened.push(task.source_id),editDate:()=>{},executeAction:async(task,action)=>{actions.push([task.source_id,action]);rows=rows.map(r=>r===task?{...r,completed:true}:r);},notifyChange:()=>{}};
@@ -52,7 +52,7 @@ test('task catalogue filters actual records by day, completion, search and paren
   x.host.querySelector('[data-tasks-filter="undated"]').click();assert.deepEqual(x.titles(),['SQL']);
   x.host.querySelector('[data-tasks-filter="today"]').click();assert.deepEqual(x.titles(),['API']);
   x.host.querySelector('[data-tasks-filter="completed"]').click();assert.deepEqual(x.titles(),['Done']);
-  x.host.querySelector('[data-tasks-filter="active"]').click();x.change('[data-tasks-goal]','parent');assert.deepEqual(x.titles(),['SQL']);
+  x.host.querySelector('[data-tasks-filter="all"]').click();x.change('[data-tasks-goal]','parent');assert.deepEqual(x.titles(),['SQL']);
   x.change('[data-tasks-search]','Missing');assert.deepEqual(x.titles(),[]);assert.equal(x.host.querySelector('[data-tasks-count]').textContent,'0');
   x.change('[data-tasks-search]','');x.change('[data-tasks-goal]','none');assert.deepEqual(x.titles(),['API']);
   x.host.querySelector('[data-task-control="open"]').click();assert.deepEqual(x.opened,['API']);
@@ -87,12 +87,12 @@ test('pane filter state survives remount and disposed async results cannot repla
   const stop=mountCalendarTasks(x.host,{...x.dependencies,invoke:()=>pending});stop();x.host.textContent='another pane';release([]);await settle();assert.equal(x.host.textContent,'another pane');
 });
 
-test('active tasks are grouped as running, overdue, today, soon and undated, and overdue dates are marked', async t=>{
+test('open tasks are grouped as running, overdue, today, soon and undated, and overdue dates are marked', async t=>{
   const shift=days=>{const d=new Date();d.setDate(d.getDate()+days);return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
   const dom=new JSDOM('<main></main>',{url:'https://fixture.invalid',pretendToBeVisual:true}), host=dom.window.document.querySelector('main');
   const rows=[row('Later',shift(5)),row('Free',null,{actual_minutes:10,has_work:true}),row('Old',shift(-3)),row('Now',today(),{duration_minutes:30,actual_minutes:42,has_work:true,is_active:true}),row('Late',shift(-1),{priority:5}),row('Plain',today()),row('Done',shift(-4),{completed:true})];
   const goals=[{id:'parent',title:'Career'},{id:'child',parent_goal_id:'parent',title:'SQL'}];
-  const dispose=mountCalendarTasks(host,{state:{filter:'active',search:'',goal:'',page:0},invoke:async command=>command==='get_calendar_tasks'?rows:command==='get_goals'?goals:command==='get_calendar_task_goals'?[{source_type:'note',source_id:'Now',goal_id:'child'}]:[],openTask(){},editDate(){},executeAction:async()=>{},notifyChange(){}});
+  const dispose=mountCalendarTasks(host,{state:{filter:'all',search:'',goal:'',page:0},invoke:async command=>command==='get_calendar_tasks'?rows:command==='get_goals'?goals:command==='get_calendar_task_goals'?[{source_type:'note',source_id:'Now',goal_id:'child'}]:[],openTask(){},editDate(){},executeAction:async()=>{},notifyChange(){}});
   t.after(()=>{dispose();dom.window.close();});await settle();
   const titles=()=>[...host.querySelectorAll('[data-task-control="open"]')].map(el=>el.textContent);
   const groups=()=>[...host.querySelectorAll('[data-tasks-group]')].map(el=>[el.dataset.tasksGroup,el.querySelector('.ct-group-label').textContent,el.querySelector('.ct-group-count').textContent]);

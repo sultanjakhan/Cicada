@@ -12,10 +12,10 @@ export function mountTaskFilterTabs(host, { invoke, state, onApply }) {
   const uiCopy = createUiCopy(doc);
   // These IDs cannot collide with user-created view IDs (which start with a letter/number).
   const builtins = [
-    { id:'active', title:uiCopy("Активные"), filters:DEFAULT_TASK_FILTERS },
-    { id:'all', title:uiCopy("Все"), filters:ALL_TASK_FILTERS },
-    { id:'@completed', title:uiCopy("Завершённые"), filters:{...DEFAULT_TASK_FILTERS,filter:'completed'} },
-    { id:'@archive', title:uiCopy("Архив"), filters:{...DEFAULT_TASK_FILTERS,filter:'archived'} },
+    { id:'all', title:uiCopy("Все"), description:uiCopy("Все незавершённые задачи, включая неначатые."), filters:ALL_TASK_FILTERS },
+    { id:'active', title:uiCopy("Активные"), description:uiCopy("Выполнение уже началось: в работе, на паузе или в ожидании."), filters:{...DEFAULT_TASK_FILTERS,filter:'active'} },
+    { id:'@completed', title:uiCopy("Завершённые"), description:uiCopy("Работа завершена. История сохранена."), filters:{...DEFAULT_TASK_FILTERS,filter:'completed'} },
+    { id:'@archive', title:uiCopy("Архив"), description:uiCopy("Убраны из рабочего списка. Завершение не требуется; можно восстановить."), filters:{...DEFAULT_TASK_FILTERS,filter:'archived'} },
   ];
   const builtin = id => builtins.find(view => view.id === id);
   const errorText = error => uiCopy.format(error?.copyKey || error?.message || 'повторите попытку', ...(error?.parameters || []));
@@ -84,6 +84,7 @@ export function mountTaskFilterTabs(host, { invoke, state, onApply }) {
         draw();
       });
       item.dataset.taskViewId = view.id;
+      if (view.description) item.title = view.description;
       const current = selected === view.id;
       item.setAttribute('aria-pressed', String(current));
       if (current && modified()) item.textContent += uiCopy(" · изменено");
@@ -273,7 +274,7 @@ export function mountTaskFilterTabs(host, { invoke, state, onApply }) {
       if (selected && !builtin(selected) && !viewById(selected)) {
         // Keep the identity as well as the filter snapshot. On a later Tasks
         // mount, a missing ID would make a saved Review choice look like a
-        // legacy transient filter and allow the calendar to fall back to Active.
+        // legacy transient filter and allow the calendar to fall back to All.
         // A refresh cannot stand in for the user's explicit choice of a tab.
         if (!editor) message = uiCopy("Выбранная подборка удалена. Текущие фильтры сохранены на экране.");
       }

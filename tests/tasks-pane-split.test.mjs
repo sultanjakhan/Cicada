@@ -13,7 +13,7 @@ const note = (id, date, extra = {}) => ({ source_type: 'note', source_id: id, ti
 async function mount(t, rows, { goals = [], links = [], state = {}, handlers = {} } = {}) {
   const dom = new JSDOM('<main></main>', { url: 'https://fixture.invalid', pretendToBeVisual: true });
   const host = dom.window.document.querySelector('main'), calls = [];
-  const paneState = { filter: 'active', search: '', goal: '', sphere: '', page: 0, ...state };
+  const paneState = { filter: 'all', search: '', goal: '', sphere: '', page: 0, ...state };
   let changes = 0;
   const invoke = async (command, args) => {
     calls.push([command, args]);
@@ -45,7 +45,7 @@ async function mount(t, rows, { goals = [], links = [], state = {}, handlers = {
   };
 }
 
-test('the Work/Personal switch counts active tasks, filters rows, narrows «Личное» by sphere and is remembered', async t => {
+test('the Work/Personal switch counts open tasks, filters rows, narrows «Личное» by sphere and is remembered', async t => {
   const rows = [
     note('W1', day(), { sphere: 'work' }), note('W2', null, { sphere: 'work' }), note('W3', day(), { sphere: 'work', completed: true }),
     note('H1', day(), { sphere: 'home' }), note('H2', day(-1), { sphere: 'home' }),
@@ -87,7 +87,7 @@ test('the Work/Personal switch counts active tasks, filters rows, narrows «Ли
   x.filter('today');
   assert.deepEqual(x.counts(), { '': '3', work: '1', personal: '2' }, 'counts follow the day filter');
   assert.deepEqual(x.titles(), ['H1', 'O2']);
-  x.filter('active');
+  x.filter('all');
   x.$('[data-tasks-search]').value = 'w'; x.$('[data-tasks-search]').dispatchEvent(new x.dom.window.Event('input'));
   assert.deepEqual(x.counts(), { '': '2', work: '2', personal: '0' });
   assert.match(x.$('.ct-empty').textContent, /сферу/);
@@ -98,7 +98,7 @@ test('the Work/Personal switch counts active tasks, filters rows, narrows «Ли
   assert.equal(x.$('[data-tasks-sphere="personal"]').getAttribute('aria-pressed'), 'true', 'the choice survives a remount');
   again();
   for (const [legacy, expected, sub] of [['health', 'personal', ''], ['none', 'personal', ''], ['other', 'personal', ''], ['home', 'personal', 'home'], ['work', 'work', ''], ['bogus', '', '']]) {
-    const state = { filter: 'active', search: '', goal: '', sphere: legacy, page: 0 };
+    const state = { filter: 'all', search: '', goal: '', sphere: legacy, page: 0 };
     const stop = mountCalendarTasks(x.host, { ...x.dependencies, state }); await settle();
     assert.deepEqual([state.sphere, state.personal], [expected, sub], `a session value «${legacy}» maps to «${expected}»`);
     stop();
@@ -242,7 +242,7 @@ test('rows do not repeat what their group or filter already says', async t => {
   x.filter('today');
   assert.equal(date('Timed').textContent, '14:00'); assert.equal(date('Untimed'), null);
   x.filter('undated'); assert.doesNotMatch(x.item('Free').textContent, /Без даты/);
-  x.filter('active'); x.$('[data-tasks-group-by="goal"]').click();
+  x.filter('all'); x.$('[data-tasks-group-by="goal"]').click();
   assert.equal(date('Untimed').textContent, 'Сегодня', 'a goal group mixes days, so the day is shown');
   x.$('[data-tasks-group-by="date"]').click();
   x.$('[data-tasks-goal]').value = 'g'; x.$('[data-tasks-goal]').dispatchEvent(new x.dom.window.Event('change'));

@@ -385,6 +385,7 @@ fn expected_list_record(
         "status_extra":"task","priority":3,"tracking_mode":if source=="note" {"check"}else{"track"},
         "is_active":false,"actual_minutes":0,"has_work":false,"archived":false,"version":1});
     if source == "note" {
+        value["tags"] = json!("");
         value["actual_seconds"] = json!(0);
         value["task_kind"] = json!("normal");
         value["sphere"] = Value::Null;
@@ -2749,6 +2750,36 @@ fn process_payloads_and_task_blocks_cross_the_real_ipc() {
     assert!(blocks.iter().all(|b| b["source_id"] == task && chrono::DateTime::parse_from_rfc3339(b["created_at"].as_str().unwrap()).is_ok()));
     assert_eq!(call(&view, "get_calendar_task_blocks", json!({"sourceIds":[]})).unwrap(), json!([]));
 }
+#[test]
+fn task_list_preserves_raw_project_and_filter_tags_without_changing_records() {
+    let (_app, view) = fixture();
+    for sphere in ["personal", "work"] {
+        let tags = format!("task-sphere:{sphere}, project:Cicada ,filter-tag:keep");
+        let id = call(&view, "create_note", json!({
+            "title":format!("Synthetic {sphere} filter task"), "content":"Preserved requirements",
+            "tags":tags, "status":"task", "dueDate":null, "priority":null
+        })).unwrap();
+        let before = call(&view, "get_calendar_task", json!({"id":id})).unwrap();
+        assert_eq!(before["tags"], tags);
+        let listed = call(&view, "get_calendar_tasks", json!({"includeCompleted":true})).unwrap();
+        let row = listed.as_array().unwrap().iter().find(|row| row["source_id"] == id).unwrap();
+        assert_eq!(row["tags"], tags, "project case and stored whitespace must remain exact");
+        assert_eq!(row["sphere"], sphere);
+        assert_eq!(row["version"], before["version"]);
+        assert_eq!(row["completed"], before["completed"]);
+        assert_eq!(row["is_active"], false);
+        assert_eq!(row["has_work"], false);
+        assert_eq!(call(&view, "get_calendar_task", json!({"id":id})).unwrap(), before);
+
+        call(&view, "toggle_note_archive", json!({"id":id,"expectedVersion":before["version"]})).unwrap();
+        let archived = call(&view, "get_calendar_tasks", json!({"includeCompleted":true,"includeArchived":true})).unwrap();
+        let row = archived.as_array().unwrap().iter().find(|row| row["source_id"] == id).unwrap();
+        assert_eq!(row["tags"], tags);
+        assert_eq!(row["archived"], true);
+        assert_eq!(call(&view, "get_active_blocks", json!({})).unwrap(), json!([]));
+    }
+}
+
 #[test]
 fn personal_import_query_and_revision_archive_use_existing_domain_only() {
     let (_app, view) = fixture();

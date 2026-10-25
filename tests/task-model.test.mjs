@@ -569,7 +569,7 @@ test('a failed goal save keeps the dialog and its text for another try', async t
 function mountTasksPane(t, rows) {
   const dom = new JSDOM('<main></main>', { url: 'https://fixture.invalid', pretendToBeVisual: true }), host = dom.window.document.querySelector('main');
   const actions = [];
-  const dispose = mountCalendarTasks(host, { state: { filter: 'active', search: '', goal: '', sphere: '', page: 0 },
+  const dispose = mountCalendarTasks(host, { state: { filter: 'all', search: '', goal: '', sphere: '', page: 0 },
     invoke: async command => command === 'get_calendar_tasks' ? rows : [],
     openTask() {}, editDate() {}, notifyChange() {}, executeAction: async (row, action) => { actions.push([row.source_id, action]); } });
   t.after(() => { dispose(); dom.window.close(); });

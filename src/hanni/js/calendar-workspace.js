@@ -49,7 +49,7 @@ let routinesRouteHandler = null;
 let preferences = { density:'comfortable', showCompleted:false };
 let workspaceRevision = 0;
 let dialogSequence = 0;
-const tasksPaneState = { filter:'active', search:'', goal:'', sphere:'', page:0 };
+const tasksPaneState = { filter:'all', search:'', goal:'', sphere:'', page:0 };
 // The Goals/Wishes choice survives pane switches within a session; it is not a stored preference.
 const goalsPaneState = { view:'goals' };
 let closeCreateMenu = null;

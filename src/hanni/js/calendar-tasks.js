@@ -5,7 +5,7 @@ const uiCopy = value => createUiCopy(globalThis.document)(value);
 uiCopy.format = (...args) => createUiCopy(globalThis.document).format(...args);
 const uiLocale = () => createUiCopy(globalThis.document).locale;
 import {taskProgress} from './task-progress.js';
-import { readNativeTaskObservations, nativeTaskKey, observationMatches } from './native-task-observations.js';
+import { readNativeTaskObservations, nativeTaskKey, nativeTaskStarted, observationMatches } from './native-task-observations.js';
 import { renderTaskImportance } from './task-importance.js';
 import { ICONS } from './icons.js';
 import { sphereLabel, isInstantTask, taskTime, compareTaskTime, isWorkTask } from './task-model.js';
@@ -43,7 +43,9 @@ const WAIT_ICON = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" s
 const ARROW_ICON = '<svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 7h8.5M7.5 3.5 11 7l-3.5 3.5"/></svg>';
 const plural = (count, forms) => { const n = Math.abs(count) % 100, d = n % 10; return forms[n > 10 && n < 20 ? 2 : d === 1 ? 0 : d >= 2 && d <= 4 ? 1 : 2]; };
 const EMPTY = { search:'Ничего не нашлось. Измени поиск, цель или сферу.', sphere:'В этой сфере задач нет. Выбери другую сферу или создай задачу через «+ Создать».', completed:'Завершённых задач пока нет.', undated:'Все задачи распределены по дням.', today:'На сегодня задач нет.', active:'Задач пока нет. Создай первую через «+ Создать».' };
-EMPTY.all = 'Задач пока нет.';
+EMPTY.all = 'Задач пока нет. Создай первую через «+ Создать».';
+EMPTY.active = 'Начатых задач пока нет.';
+EMPTY['not-started'] = 'Неначатых задач пока нет.';
 EMPTY.archived = 'В архиве пока нет задач.';
 // Overdue cleanup acts on every task of the group through the task save path.
 const BULK = {
@@ -68,18 +70,18 @@ export function mountCalendarTasks(host, dependencies) {
   const { invoke, openTask, editDate, mountMenu, executeAction, notifyChange, archiveTask } = dependencies;
   const doc = host.ownerDocument, win = doc.defaultView;
   const uiCopy = createUiCopy(doc);
-  const state = dependencies.state || { filter:'active', search:'', goal:'', sphere:'', page:0 };
+  const state = dependencies.state || { filter:'all', search:'', goal:'', sphere:'', page:0 };
   // A sphere chosen before the Work/Personal split falls into «Личное»; «Дом» keeps its sphere inside it.
   if (state.sphere === 'home') { state.sphere = 'personal'; state.personal = 'home'; }
   if (['none', 'health', 'growth', 'other'].includes(state.sphere)) state.sphere = 'personal';
   if (!SPHERE_TABS.some(([id]) => id === state.sphere)) state.sphere = '';
   if (state.sphere !== 'personal' || !PERSONAL_TABS.some(([id]) => id === state.personal)) state.personal = '';
   if (state.groupBy !== 'goal') state.groupBy = 'date';
-  // A legacy transient Review filter falls back to Active without a review reader.
+  // A legacy transient Review filter falls back to All without a review reader.
   // A selected saved view keeps its exact choice until review access returns.
   if(state.filter==='review'&&!dependencies.readTaskReview&&(!state.taskViewId||['all','active'].includes(state.taskViewId))) {
-    state.filter='active';
-    state.taskViewId='active';
+    state.filter='all';
+    state.taskViewId='all';
   }
   const prefix = `calendar-tasks-${++sequence}`;
   let taskFilterTabs = null;
@@ -91,7 +93,7 @@ export function mountCalendarTasks(host, dependencies) {
   host.classList.add('calendar-tasks');
   host.innerHTML = `<section aria-labelledby="${prefix}-title"><div class="ct-heading"><h2 id="${prefix}-title" tabindex="-1">${uiCopy("Задачи")} <span data-tasks-count></span></h2>
     <div class="ct-grouping" role="group" aria-label="${uiCopy("Группировать задачи")}" data-tasks-grouping>${[['date',uiCopy("По дате")],['goal',uiCopy("По цели")]].map(([id,label])=>`<button type="button" data-tasks-group-by="${id}" aria-pressed="false">${uiCopy(label)}</button>`).join('')}</div></div>
-    <div class="ct-toolbar"><div class="ct-filters" role="group" aria-label="${uiCopy("Какие задачи показать")}">${[['all',uiCopy("Все")],['active',uiCopy("Активные")],['today',uiCopy("Сегодня")],['undated',uiCopy("Без даты")],['completed',uiCopy("Завершённые")],['review',uiCopy("На приёмке")],['ai-running',uiCopy("ИИ: running по отчётам")]].map(([id,label])=>`<button type="button" data-tasks-filter="${id}" aria-pressed="false">${uiCopy(label)}</button>`).join('')}</div>
+    <div class="ct-toolbar"><div class="ct-filters" role="group" aria-label="${uiCopy("Какие задачи показать")}">${[['all',uiCopy("Все")],['active',uiCopy("Активные")],['not-started',uiCopy("Неначатые")],['today',uiCopy("Сегодня")],['undated',uiCopy("Без даты")],['completed',uiCopy("Завершённые")],['review',uiCopy("На приёмке")],['ai-running',uiCopy("ИИ: running по отчётам")]].map(([id,label])=>`<button type="button" data-tasks-filter="${id}" aria-pressed="false">${uiCopy(label)}</button>`).join('')}</div>
     <div class="ct-search-row"><label class="ct-search"><span class="ct-search-icon">${SEARCH_ICON}</span><input type="search" data-tasks-search placeholder="${uiCopy("Найти задачу")}" aria-label="${uiCopy("Найти задачу")}"></label><span class="ct-select"><select data-tasks-goal aria-label="${uiCopy("Фильтр по цели")}"><option value="">${uiCopy("Любая цель")}</option></select></span></div></div>
     <div class="ct-spheres" role="group" aria-label="${uiCopy("Рабочие или личные задачи")}">${SPHERE_TABS.map(([id,label])=>`<button type="button" data-tasks-sphere="${id}" aria-pressed="false"><span>${uiCopy(label)}</span><span class="ct-sphere-count" data-tasks-sphere-count></span></button>`).join('')}</div>
     <div class="ct-subspheres" role="group" aria-label="${uiCopy("Сфера личных задач")}" data-tasks-personal hidden></div>
@@ -102,7 +104,7 @@ export function mountCalendarTasks(host, dependencies) {
   const heading = host.querySelector('h2'), message = q('message'), list = q('list'), search = q('search'), goalFilter = q('goal');
   const grouping = q('grouping');
   const filterDetails = doc.createElement('details'); filterDetails.className = 'ct-filter-details';
-  const filterSummary = doc.createElement('summary'); filterSummary.textContent = uiCopy("Фильтры и группировка");
+  const filterSummary = doc.createElement('summary'); filterSummary.textContent = uiCopy("Фильтры");
   const filterBody = doc.createElement('div'); filterBody.className = 'ct-filter-body';
   filterDetails.append(filterSummary, filterBody);
   const observationFilters=doc.createElement('div');
@@ -115,7 +117,7 @@ export function mountCalendarTasks(host, dependencies) {
   const appliedLabel = doc.createElement('span'); appliedLabel.dataset.tasksApplied = '';
   const reset = doc.createElement('button'); reset.type = 'button'; reset.textContent = uiCopy("Сбросить фильтры"); reset.dataset.tasksReset = '';
   applied.append(appliedLabel, reset); filterDetails.after(applied);applied.after(observationNote);
-  reset.addEventListener('click', () => { Object.assign(state, {filter:'active',search:'',goal:'',sphere:'',personal:'',groupBy:'date',source:'',project:'',tag:'',page:0}); search.value=''; goalFilter.value=''; render(); search.focus(); });
+  reset.addEventListener('click', () => { Object.assign(state, {filter:'all',search:'',goal:'',sphere:'',personal:'',groupBy:'date',source:'',project:'',tag:'',page:0}); search.value=''; goalFilter.value=''; render(); search.focus(); });
   search.maxLength = VIEW_LIMITS.search;
   search.value = state.search || '';
   const node = (tag, cls, text) => { const el = doc.createElement(tag); if(cls)el.className=cls; if(text!=null)el.textContent=text; return el; };
@@ -163,10 +165,11 @@ export function mountCalendarTasks(host, dependencies) {
     const meta=node('span','ct-meta');
     // The running accent says «В работе»; a paused task keeps a small mark.
     const primaryMeta=node('span','ct-primary-meta');
-    const progress=archived?null:taskProgress({...contextFor(row),completed:done,waiting:!!row.waiting,language:doc.documentElement.lang});
-    primaryMeta.append(node('span','ct-status',archived?uiCopy("В архиве"):done?uiCopy("Завершена"):running?uiCopy("Таймер идёт"):row.has_work||row.actual_minutes>0?uiCopy("На паузе"):uiCopy("Не начата")));
+    const context=contextFor(row),started=nativeTaskStarted(row,context),humanWork=row.has_work||row.actual_seconds>0||row.actual_minutes>0;
+    const progress=archived?null:taskProgress({...context,completed:done,waiting:!!row.waiting,language:doc.documentElement.lang});
+    primaryMeta.append(node('span','ct-status',archived?uiCopy("В архиве"):done?uiCopy("Завершена"):running?uiCopy("Таймер идёт"):humanWork?uiCopy("На паузе"):started===true?uiCopy("Выполнение начато"):started===null?uiCopy("Выполнение неизвестно"):uiCopy("Не начата")));
     if(progress)primaryMeta.firstChild.textContent=progress.label;
-    if(!archived&&!done&&progress)primaryMeta.append(node('span','ct-timer-status',running?uiCopy("Таймер идёт"):row.has_work||row.actual_minutes>0?uiCopy("Таймер на паузе"):uiCopy("Таймер не запущен")));
+    if(!archived&&!done&&progress)primaryMeta.append(node('span','ct-timer-status',running?uiCopy("Таймер идёт"):humanWork?uiCopy("Таймер на паузе"):uiCopy("Таймер не запущен")));
     const instant=isInstantTask(row), time=taskTime(row), sphere=uiCopy(sphereLabel(row.sphere));
     if(instant){const kind=node('span','ct-kind',uiCopy("Моментальная"));kind.title=uiCopy("Отмечается одним нажатием, без таймера");meta.append(kind);}
     // A day the group or filter already names is not repeated; «Без даты» is never printed.
@@ -241,7 +244,7 @@ export function mountCalendarTasks(host, dependencies) {
     const header=node('div',`ct-group ct-group--${section.id.startsWith('goal:')?'goal':section.id}`);header.dataset.tasksGroup=section.id;
     const title=node('h3','ct-group-title');title.setAttribute('aria-label',`${section.label}, ${total}`);title.append(node('span','ct-group-label',section.label),node('span','ct-group-count',String(total)));title.title=section.label;
     header.append(title);
-    if(section.id==='overdue'&&state.filter==='active')header.append(overdueActions(total));
+    if(section.id==='overdue'&&['all','active','not-started'].includes(state.filter))header.append(overdueActions(total));
     return header;
   }
   function overdueActions(total) {
@@ -278,10 +281,19 @@ export function mountCalendarTasks(host, dependencies) {
     taskFilterTabs?.update();
     for(const details of host.querySelectorAll('.ct-row-details')){const id=details.closest('[data-context-record]').dataset.contextRecord;if(details.open)expandedRows.add(id);else expandedRows.delete(id);}
     const focused=doc.activeElement, focusId=focused?.dataset.taskId, focusAction=focused?.dataset.taskControl, focusedBulk=focused?.dataset.tasksBulk;
-    observationNote.textContent=[observationState.available?'':uiCopy("Не удалось прочитать наблюдения источников."),observationState.unboundCount?uiCopy.format("Наблюдения без связи с задачами: {0}. Данные источников сохранены.", observationState.unboundCount):'',state.filter==='review'&&!dependencies.readTaskReview?uiCopy("Приёмка недоступна: подборка сохранена, задачи не показаны."):'',state.filter==='ai-running'?uiCopy("Здесь показаны отчёты исполнителей; текущие обновления не подключены."):''].filter(Boolean).join(' ');
+    observationNote.textContent=[observationState.available?'':uiCopy("Не удалось прочитать наблюдения источников."),observationState.unboundCount?uiCopy.format("Наблюдения без связи с задачами: {0}. Данные источников сохранены.", observationState.unboundCount):'',state.filter==='review'&&!dependencies.readTaskReview?uiCopy("Приёмка недоступна: подборка сохранена, задачи не показаны."):'',state.filter==='ai-running'?uiCopy("Здесь показаны отчёты исполнителей; текущие обновления не подключены."):'',state.filter==='not-started'&&rows.some(row=>!row.archived&&!closed(row)&&nativeTaskStarted(row,contextFor(row))===null)?uiCopy("У части задач выполнение неизвестно. Они доступны во «Все»."):''].filter(Boolean).join(' ');
     observationNote.hidden=!observationNote.textContent;
     const query=state.search.trim().toLocaleLowerCase('ru');
-    const eligible=rows.filter(row=>(state.filter==='archived'?!!row.archived:!row.archived&&(state.filter==='completed'?closed(row):state.filter==='all'?true:!closed(row)))&&(state.filter!=='today'||row.date===today)&&(state.filter!=='undated'||!row.date)&&(state.filter!=='review'||!!dependencies.readTaskReview&&contextFor(row).review?.reviewState==='awaiting_review')&&(state.filter!=='ai-running'||contextFor(row).reports.some(r=>r.status==='running'))&&observationMatches(contextFor(row),state));
+    const eligible=rows.filter(row=>{
+      if(state.filter==='archived')return !!row.archived&&observationMatches(contextFor(row),state);
+      if(row.archived||(state.filter==='completed'?!closed(row):closed(row)))return false;
+      const context=contextFor(row);
+      return (state.filter!=='active'||nativeTaskStarted(row,context)===true)
+        &&(state.filter!=='not-started'||nativeTaskStarted(row,context)===false)
+        &&(state.filter!=='today'||row.date===today)&&(state.filter!=='undated'||!row.date)
+        &&(state.filter!=='review'||!!dependencies.readTaskReview&&context.review?.reviewState==='awaiting_review')
+        &&(state.filter!=='ai-running'||context.reports.some(r=>r.status==='running'))&&observationMatches(context,state);
+    });
     const matching=eligible.filter(row=>matchesGoal(row)&&`${row.title} ${goalPath(goalFor(row))}`.toLocaleLowerCase('ru').includes(query));
     const counts=new Map(SPHERE_TABS.map(([id])=>[id,0]));
     for(const row of matching){counts.set('',counts.get('')+1);counts.set(bucketOf(row),counts.get(bucketOf(row))+1);}
@@ -291,8 +303,8 @@ export function mountCalendarTasks(host, dependencies) {
       ||(byGoal?groupIndex(a.row,today)-groupIndex(b.row,today):0)||(Number(b.row.priority)||0)-(Number(a.row.priority)||0)||(a.row.date||'9999').localeCompare(b.row.date||'9999')||compareTaskTime(a.row,b.row)||a.row.title.localeCompare(b.row.title,'ru')||taskKey(a.row).localeCompare(taskKey(b.row)));
     shown=new Set(visible.map(({row})=>taskKey(row)));
     q('count').textContent=String(visible.length);
-    appliedLabel.textContent=[{all:uiCopy("Все"),active:uiCopy("Активные"),today:uiCopy("Сегодня"),undated:uiCopy("Без даты"),completed:uiCopy("Завершённые"),archived:uiCopy("Архив"),review:uiCopy("На приёмке"),'ai-running':uiCopy("ИИ: running по отчётам")}[state.filter],state.groupBy==='goal'?uiCopy("По цели"):null,state.goal?(state.goal==='none'?uiCopy("Без цели"):uiCopy.format("Цель: {0}", goalPath(state.goal)||uiCopy.format("Недоступная цель ({0})", state.goal))):null,state.sphere?SPHERE_TABS.find(([id])=>id===state.sphere)?.[1]:null,state.personal?PERSONAL_TABS.find(([id])=>id===state.personal)?.[1]:null,state.search?uiCopy.format("Поиск: {0}", state.search):null,...['source','project','tag'].map(k=>state[k]?observationSelects[k].selectedOptions[0]?.textContent:null)].filter(Boolean).join(' · ');
-    reset.hidden=state.filter==='active'&&!state.search&&!state.goal&&!state.sphere&&!state.personal&&state.groupBy==='date'&&!state.source&&!state.project&&!state.tag;
+    appliedLabel.textContent=[{all:uiCopy("Все"),active:uiCopy("Активные"),'not-started':uiCopy("Неначатые"),today:uiCopy("Сегодня"),undated:uiCopy("Без даты"),completed:uiCopy("Завершённые"),archived:uiCopy("Архив"),review:uiCopy("На приёмке"),'ai-running':uiCopy("ИИ: running по отчётам")}[state.filter],state.groupBy==='goal'?uiCopy("По цели"):null,state.goal?(state.goal==='none'?uiCopy("Без цели"):uiCopy.format("Цель: {0}", goalPath(state.goal)||uiCopy.format("Недоступная цель ({0})", state.goal))):null,state.sphere?SPHERE_TABS.find(([id])=>id===state.sphere)?.[1]:null,state.personal?PERSONAL_TABS.find(([id])=>id===state.personal)?.[1]:null,state.search?uiCopy.format("Поиск: {0}", state.search):null,...['source','project','tag'].map(k=>state[k]?observationSelects[k].selectedOptions[0]?.textContent:null)].filter(Boolean).join(' · ');
+    reset.hidden=state.filter==='all'&&!state.search&&!state.goal&&!state.sphere&&!state.personal&&state.groupBy==='date'&&!state.source&&!state.project&&!state.tag;
     host.querySelectorAll('[data-tasks-filter]').forEach(el=>el.setAttribute('aria-pressed',String(el.dataset.tasksFilter===state.filter)));
     host.querySelectorAll('[data-tasks-sphere]').forEach(el=>{const id=el.dataset.tasksSphere,count=String(counts.get(id));el.setAttribute('aria-pressed',String(id===state.sphere));el.querySelector('[data-tasks-sphere-count]').textContent=count;el.setAttribute('aria-label',`${uiCopy(SPHERE_TABS.find(([tab])=>tab===id)[1])}: ${count}`);});
     host.querySelectorAll('[data-tasks-group-by]').forEach(el=>el.setAttribute('aria-pressed',String(el.dataset.tasksGroupBy===state.groupBy)));
@@ -300,8 +312,8 @@ export function mountCalendarTasks(host, dependencies) {
     state.page=Math.max(0,Math.min(state.page||0,Math.ceil(visible.length/50)-1));
     const totals=new Map();for(const {section} of visible)totals.set(section.id,(totals.get(section.id)||0)+1);
     overdue=visible.filter(({section})=>section.id==='overdue').map(({row})=>row);if(!overdue.length&&!bulk)confirming=null;
-    // Active mixes several groups; the other filters name their single group unless grouped by goal.
-    const grouped=state.filter==='active'||state.filter==='all'||byGoal;
+    // Open task views can span several planned dates; keep their group labels.
+    const grouped=['all','active','not-started'].includes(state.filter)||byGoal;
     list.replaceChildren();let lastGroup=null, ul;
     for(const {row,section} of visible.slice(state.page*50,(state.page+1)*50)) {
       if(section.id!==lastGroup){

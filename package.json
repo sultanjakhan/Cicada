@@ -1,7 +1,7 @@
 {
   "name": "cicada",
-  "version": "0.5.25",
-  "cicadaBuildId": "20261024-macos-task-transport-0525.1",
+  "version": "0.5.26",
+  "cicadaBuildId": "20261026-task-filters-0526.1",
   "private": true,
   "type": "module",
   "scripts": {

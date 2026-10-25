@@ -3,6 +3,13 @@ import {createRegistryStore,freshness} from './work-registry.js';
 import {createTaskRunExchange,stableTaskBinding} from './task-run-exchange.js';
 const same=(a,b)=>a&&b&&['sourceNamespace','sourceType','sourceId','taskKey'].every(k=>a[k]===b[k]);
 export const nativeTaskKey=row=>`${row.source_type}:${row.source_id}`;
+// A plan, allocation or manual step does not establish that execution began.
+// Unknown reads remain unknown instead of classifying the task as not started.
+export function nativeTaskStarted(row,ctx={}){
+ if(row.is_active||row.has_work||row.actual_seconds>0||row.actual_minutes>0||ctx.reports?.length||['running','awaiting_review','awaiting_dispatch'].includes(ctx.review?.reviewState))return true;
+ if(ctx.reviewReadError||ctx.executionReadError)return null;
+ return false;
+}
 export function nativeTaskTags(row){return [...new Set((typeof row.tags==='string'?row.tags.split(','):[]).map(t=>t.trim()).filter(t=>t&&!t.startsWith('task-')))];}
 // Read-only join onto native rows; never imports tasks, completes them or guesses title matches.
 export async function readNativeTaskObservations(rows,invoke,{readReview=null,previousContexts=new Map()}={}){
@@ -10,7 +17,8 @@ export async function readNativeTaskObservations(rows,invoke,{readReview=null,pr
  const contexts=new Map(),unbound=[];
  const all=registry.status==='fulfilled'?Object.values(registry.value):[],state=exchange.status==='fulfilled'?exchange.value:null;
  for(const row of rows){
-  const tags=nativeTaskTags(row),ctx={sources:[{id:'native',label:'Задачи Cicada'}],projects:tags.filter(t=>t.startsWith('project:')).map(t=>({id:t,label:t.slice(8)})),tags,observations:[],reports:[],review:null,reviewAvailable:!!readReview};
+  const tags=nativeTaskTags(row),ctx={sources:[{id:'native',label:'Задачи Cicada'}],projects:tags.filter(t=>t.startsWith('project:')).map(t=>({id:t,label:t.slice(8)})),tags,observations:[],reports:[],review:null,reviewAvailable:!!readReview,executionReadError:exchange.status!=='fulfilled'};
+  if(ctx.executionReadError)ctx.reports=previousContexts.get(nativeTaskKey(row))?.reports||[];
   if(!row.readonly){try{ctx.workflow=await createWorkflowStore(row,invoke).load();}catch{ctx.workflowReadError=true;}}
   const expected=state&&!row.readonly?await stableTaskBinding(state.sourceNamespace,row):null;
   const bound=expected&&same(state.bindings[expected.taskKey],expected)?expected:null;
