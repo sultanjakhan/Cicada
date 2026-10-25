@@ -385,6 +385,7 @@ fn expected_list_record(
         "status_extra":"task","priority":3,"tracking_mode":if source=="note" {"check"}else{"track"},
         "is_active":false,"actual_minutes":0,"has_work":false,"archived":false,"version":1});
     if source == "note" {
+        value["tags"] = json!("");
         value["actual_seconds"] = json!(0);
         value["task_kind"] = json!("normal");
         value["sphere"] = Value::Null;
