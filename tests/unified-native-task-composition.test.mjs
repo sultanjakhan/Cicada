@@ -42,6 +42,28 @@ test('one native list composes source/project/tag filters, keeps exact IDs and w
  select('source',`published:fixture-publisher:${namespace}`);assert.equal(host.querySelectorAll('li.ct-row').length,1);host.querySelector('.ct-title').click();assert.deepEqual(opened,['existing-personal']);
  select('source','');select('project','project:agent-city');assert.equal(host.querySelectorAll('li.ct-row').length,1);select('tag','personal-template');assert.equal(host.querySelectorAll('li.ct-row').length,0);host.querySelector('[data-tasks-reset]').click();assert.equal(host.querySelectorAll('li.ct-row').length,3);host.querySelector('[data-tasks-sphere="work"]').click();assert.equal(host.querySelectorAll('li.ct-row').length,2);assert.deepEqual([...host.querySelectorAll('.ct-title')].map(n=>n.textContent).sort(),['Synthetic readonly Jira source','Work native task']);assert.deepEqual(actions,[]);assert.equal(x.native.at(-1).source_id,'jira:synthetic-readonly');assert.equal(x.native.at(-1).readonly,true);
 });
+test('reset clears source, project and tag controls before applying another filter',async t=>{
+ const x=await source(),before=JSON.stringify(x.native),dom=new JSDOM('<main></main>',{pretendToBeVisual:true}),host=dom.window.document.querySelector('main'),actions=[];
+ let stop; t.after(()=>{try{stop?.();}finally{dom.window.close();}});
+ stop=mountCalendarTasks(host,{invoke:x.invoke,openTask(){},editDate(){},executeAction:()=>actions.push('write'),notifyChange(){}});
+ await waitFor('source/project/tag controls ready',()=>host.querySelectorAll('li.ct-row').length===2&&[...host.querySelector('[data-tasks-observation="source"]').options].some(option=>option.value===`published:fixture-publisher:${namespace}`));
+ const control=key=>host.querySelector(`[data-tasks-observation="${key}"]`);
+ const select=(key,value)=>{const item=control(key);item.value=value;item.dispatchEvent(new dom.window.Event('change'));};
+ const titles=()=>[...host.querySelectorAll('.ct-title')].map(item=>item.textContent);
+ select('source',`published:fixture-publisher:${namespace}`);select('project','project:cicada');select('tag','personal-template');
+ assert.deepEqual(titles(),['Personal native task']);
+ host.querySelector('[data-tasks-reset]').click();
+ for(const key of ['source','project','tag']){assert.equal(control(key).value,'',`${key} visibly resets to All`);assert.equal(control(key).selectedOptions[0].textContent,'Все');}
+ assert.equal(host.querySelector('[data-tasks-count]').textContent,'2');
+ assert.equal(dom.window.document.activeElement,host.querySelector('[data-tasks-search]'));
+ select('project','project:agent-city');assert.deepEqual(titles(),['Work native task']);
+ host.querySelector('[data-tasks-reset]').click();
+ select('tag','personal-template');
+ assert.deepEqual(titles(),['Personal native task']);
+ assert.equal(control('project').value,'');assert.equal(control('source').value,'');assert.equal(control('tag').value,'personal-template');
+ assert.doesNotMatch(host.querySelector('[data-tasks-applied]').textContent,/agent-city|Published project/);
+ assert.equal(JSON.stringify(x.native),before);assert.deepEqual(actions,[]);
+});
 test('authoritative awaiting review/rework stay active; only native acceptance enters completed and dashboard shares identity',async t=>{
  const x=await source(),dom=new JSDOM('<main></main>'),host=dom.window.document.querySelector('main');let state='awaiting_review';
  let stop; t.after(()=>{try{stop?.();}finally{dom.window.close();}});
