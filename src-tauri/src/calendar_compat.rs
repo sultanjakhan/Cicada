@@ -1209,6 +1209,7 @@ fn calendar_list(
                 "version": row.get::<_, i64>(16)?,
             });
             if is_task {
+                value["tags"] = json!(tags);
                 value["actual_seconds"] = json!(row.get::<_, i64>(12)?);
                 decorate_task(&mut value, &tags);
             }

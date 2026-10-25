@@ -9,11 +9,11 @@ function fixture(){
  const invoke=async(name)=>{calls.push(name);if(name==='get_calendar_tasks')return rows;if(['get_goals','get_calendar_task_goals','get_calendar_task_blocks'].includes(name))return [];if(name==='get_ui_state')return null;throw Error('Unexpected write/prototype command '+name);};
  return{dom,host,calls,invoke};
 }
-test('normal mode uses one list and native filters without issuing review commands or requiring feature',async()=>{
- const x=fixture(),state={filter:'review',search:'',goal:'',sphere:'',page:0};const stop=mountCalendarTasks(x.host,{state,invoke:x.invoke,openTask(){},editDate(){},executeAction(){throw Error('No write requested');},notifyChange(){}});await tick();await tick();
- assert.equal(state.filter,'active');assert.equal(x.host.querySelector('[data-tasks-filter="review"]').hidden,true);assert.equal(x.host.querySelectorAll('li.ct-row').length,1);assert.equal(x.host.querySelector('.ct-title').textContent,'Existing personal task');
+test('normal mode uses one list and native filters without issuing review commands or requiring feature',async t=>{
+ const x=fixture(),state={filter:'review',search:'',goal:'',sphere:'',page:0};const stop=mountCalendarTasks(x.host,{state,invoke:x.invoke,openTask(){},editDate(){},executeAction(){throw Error('No write requested');},notifyChange(){}});t.after(()=>{stop();x.dom.window.close();});await tick();await tick();
+ assert.equal(state.filter,'all');assert.equal(x.host.querySelector('[data-tasks-filter="review"]').hidden,true);assert.equal(x.host.querySelectorAll('li.ct-row').length,1);assert.equal(x.host.querySelector('.ct-title').textContent,'Existing personal task');
  const project=x.host.querySelector('[data-tasks-observation="project"]');project.value='project:agent-city';project.dispatchEvent(new x.dom.window.Event('change'));assert.equal(x.host.querySelectorAll('li.ct-row').length,0);x.host.querySelector('[data-tasks-filter="completed"]').click();assert.equal(x.host.querySelector('.ct-title').textContent,'Existing completed task');
- assert.equal(x.host.querySelectorAll('.work-registry-section').length,0);assert.ok(x.calls.every(c=>!c.includes('result_review')&&!c.startsWith('prototype_')));assert.doesNotMatch(x.host.textContent,/Native review|isolated opt-in/);stop();x.dom.window.close();
+ assert.equal(x.host.querySelectorAll('.work-registry-section').length,0);assert.ok(x.calls.every(c=>!c.includes('result_review')&&!c.startsWith('prototype_')));assert.doesNotMatch(x.host.textContent,/Native review|isolated opt-in/);
 });
 test('explicit injected review consumer remains separate and visible without enabling default profile authority',async()=>{
  const x=fixture(),stop=mountCalendarTasks(x.host,{invoke:x.invoke,readTaskReview:async id=>{if(id!=='normal-existing')throw Error('no result');return{taskId:id,taskRevision:2,resultVersion:1,reviewState:'awaiting_review',content:'Synthetic fixture',history:[]};},openTask(){},editDate(){},executeAction(){throw Error('Manual completion not authorized');},notifyChange(){}});await tick();await tick();

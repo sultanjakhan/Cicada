@@ -6,13 +6,13 @@ export const VIEW_LIMITS = Object.freeze({
 });
 
 export const DEFAULT_TASK_FILTERS = Object.freeze({
-  filter: 'active', search: '', goal: '', sphere: '', personal: '',
+  filter: 'all', search: '', goal: '', sphere: '', personal: '',
   groupBy: 'date', source: '', project: '', tag: '',
 });
 export const ALL_TASK_FILTERS = Object.freeze({ ...DEFAULT_TASK_FILTERS, filter: 'all' });
 
 const FILTER_KEYS = Object.keys(DEFAULT_TASK_FILTERS);
-const FILTER_MODES = new Set(['all', 'active', 'today', 'undated', 'completed', 'archived', 'review', 'ai-running']);
+const FILTER_MODES = new Set(['all', 'active', 'not-started', 'today', 'undated', 'completed', 'archived', 'review', 'ai-running']);
 const SPHERES = new Set(['', 'work', 'personal']);
 const PERSONAL_SPHERES = new Set(['', 'home', 'health', 'growth', 'personal', 'none']);
 const GROUPS = new Set(['date', 'goal']);

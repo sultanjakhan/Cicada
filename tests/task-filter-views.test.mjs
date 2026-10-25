@@ -29,7 +29,7 @@ test('fresh state and canonical filter snapshots exclude page, rows and task ide
   assert.deepEqual(parseTaskFilterViews(null), { version: 1, views: [] });
   assert.deepEqual(parseTaskFilterViews(''), { version: 1, views: [] });
   assert.equal(ALL_TASK_FILTERS.filter, 'all');
-  assert.equal(DEFAULT_TASK_FILTERS.filter, 'active');
+  assert.equal(DEFAULT_TASK_FILTERS.filter, 'all');
   assert.deepEqual(taskFilters({
     filter: 'today', search: 'plan', goal: 'goal-7', sphere: 'personal',
     personal: 'health', groupBy: 'goal', source: 'local', project: 'P', tag: 'focus',

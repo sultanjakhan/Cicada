@@ -266,7 +266,7 @@ test('future saved format fails closed while permanent tabs remain usable', asyn
   assert.match(mounted.host.querySelector('.ct-view-tabs-status').textContent, /Обновить подборки/);
 });
 
-for (const language of ['ru','en']) test(`calendar ${language} All includes completed nonarchived records; missing saved references stay restrictive across refresh`, async t => {
+for (const language of ['ru','en']) test(`calendar ${language} All includes unfinished records only; missing saved references stay restrictive across refresh`, async t => {
   const orphanFilters = {...ALL_TASK_FILTERS, goal:'gone-goal',source:'gone-source',project:'gone-project',tag:'gone-tag'};
   const reviewFilters = {...DEFAULT_TASK_FILTERS,filter:'review'};
   const db = store(collection([makeView('orphan','Недоступные связи',orphanFilters),makeView('review','Приёмка',reviewFilters)]));
@@ -279,7 +279,7 @@ for (const language of ['ru','en']) test(`calendar ${language} All includes comp
   let actions = 0;
   const dom = new JSDOM(`<html lang="${language}"><main></main></html>`, {pretendToBeVisual:true});
   const host = dom.window.document.querySelector('main');
-  const state = {filter:'active',search:'',goal:'',sphere:'',page:0};
+  const state = {filter:'all',search:'',goal:'',sphere:'',page:0};
   const invoke = async (command,args) => {
     if (command === 'get_calendar_tasks') return rows;
     if (command === 'get_goals' || command === 'get_calendar_task_goals') return [];
@@ -301,10 +301,14 @@ for (const language of ['ru','en']) test(`calendar ${language} All includes comp
   await flush();
   assert.equal(host.querySelector('[data-tasks-count]').textContent, '2');
   host.querySelector('[data-task-view-id="all"]').click();
-  assert.equal(host.querySelector('[data-tasks-count]').textContent, '3');
+  assert.equal(host.querySelector('[data-tasks-count]').textContent, '2');
   assert.equal(state.filter, 'all');
   assert.deepEqual(rows.map(row => row.source_id), ['run','registered','done','archived']);
+  assert.equal(host.querySelector('[data-context-record="note:done"]'), null);
   assert.equal(host.querySelector('[data-context-record="note:archived"]'), null);
+  host.querySelector('[data-task-view-id="active"]').click();
+  assert.equal(host.querySelector('[data-tasks-count]').textContent, '1');
+  assert.equal(host.querySelector('[data-context-record="note:registered"]'), null, 'binding without execution does not make a task active');
   host.querySelector('[data-tasks-filter="ai-running"]').click();
   assert.equal(host.querySelector('[data-tasks-count]').textContent, '1');
   assert.match(host.querySelector('[data-tasks-list]').textContent, /Работает/);
@@ -397,16 +401,16 @@ for (const language of ['ru','en']) test(`saved ${language} Review with a retain
   const legacy = mountCalendarTasks(legacyHost,{...dependencies,state:legacyState});
   t.after(legacy);
   await flush();
-  assert.equal(legacyState.filter, 'active');
+  assert.equal(legacyState.filter, 'all');
   assert.equal(legacyHost.querySelector('[data-tasks-count]').textContent, '1');
   legacy();
   const builtinState = {filter:'review',taskViewId:'all',search:'',goal:'',sphere:'',page:0};
   const builtin = mountCalendarTasks(legacyHost,{...dependencies,state:builtinState});
   t.after(builtin);
   await flush();
-  assert.equal(builtinState.filter, 'active');
-  assert.equal(builtinState.taskViewId, 'active');
-  assert.equal(legacyHost.querySelector('[data-task-view-id="active"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(builtinState.filter, 'all');
+  assert.equal(builtinState.taskViewId, 'all');
+  assert.equal(legacyHost.querySelector('[data-task-view-id="all"]').getAttribute('aria-pressed'), 'true');
   assert.equal(legacyHost.querySelector('[data-tasks-count]').textContent, '1');
 });
 
@@ -418,7 +422,7 @@ test('English view controls, save/edit/delete confirmation and modified state pr
   t.after(mounted.close);
   await flush();
   assert.equal(mounted.host.querySelector('[role="group"]').getAttribute('aria-label'), 'Task views');
-  assert.deepEqual([...mounted.host.querySelectorAll('[data-task-view-tab]')].map(item=>item.textContent), ['Active','All','Completed','Archive',authoredName]);
+  assert.deepEqual([...mounted.host.querySelectorAll('[data-task-view-tab]')].map(item=>item.textContent), ['All','Active','Completed','Archive',authoredName]);
   assert.deepEqual([...mounted.host.querySelectorAll('.ct-view-tabs-actions button')].map(item=>item.textContent), ['Save current filters','Edit view','Refresh views']);
   mounted.host.querySelector('[data-task-view-id="authored"]').click();
   mounted.state.search = 'мой поиск';
@@ -739,7 +743,7 @@ test('unavailable saved view keeps identity and restrictive counts through refre
   await flush();
   assert.equal(host.querySelector('[data-task-view-id="saved-review"]').getAttribute('aria-pressed'), 'true');
   assert.equal(db.writes, 0);
-  host.querySelector('[data-task-view-id="active"]').click();
+  host.querySelector('[data-task-view-id="all"]').click();
   assert.equal(host.querySelector('[data-tasks-count]').textContent, '2');
-  assert.equal(state.taskViewId, 'active');
+  assert.equal(state.taskViewId, 'all');
 });
