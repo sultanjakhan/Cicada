@@ -117,7 +117,12 @@ export function mountCalendarTasks(host, dependencies) {
   const appliedLabel = doc.createElement('span'); appliedLabel.dataset.tasksApplied = '';
   const reset = doc.createElement('button'); reset.type = 'button'; reset.textContent = uiCopy("Сбросить фильтры"); reset.dataset.tasksReset = '';
   applied.append(appliedLabel, reset); filterDetails.after(applied);applied.after(observationNote);
-  reset.addEventListener('click', () => { Object.assign(state, {filter:'all',search:'',goal:'',sphere:'',personal:'',groupBy:'date',source:'',project:'',tag:'',page:0}); search.value=''; goalFilter.value=''; render(); search.focus(); });
+  reset.addEventListener('click', () => {
+    Object.assign(state, {filter:'all',search:'',goal:'',sphere:'',personal:'',groupBy:'date',source:'',project:'',tag:'',page:0});
+    search.value=''; goalFilter.value='';
+    for (const select of Object.values(observationSelects)) select.value='';
+    render(); search.focus();
+  });
   search.maxLength = VIEW_LIMITS.search;
   search.value = state.search || '';
   const node = (tag, cls, text) => { const el = doc.createElement(tag); if(cls)el.className=cls; if(text!=null)el.textContent=text; return el; };
